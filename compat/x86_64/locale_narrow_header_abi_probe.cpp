@@ -9,6 +9,17 @@
 #include <string.h>
 #include <strings.h>
 
+#if defined(CRABC_REQUIRE_STRICT_STRING_LOCALE)
+using strict_compare_l_signature = int (*)(const char *, const char *, locale_t);
+using strict_ncompare_l_signature = int (*)(const char *, const char *, size_t, locale_t);
+
+static_assert(sizeof(locale_t) == sizeof(void *));
+static_assert(__is_same(decltype(&strcasecmp_l), strict_compare_l_signature));
+static_assert(__is_same(decltype(&strncasecmp_l), strict_ncompare_l_signature));
+
+auto *crabc_strict_strcasecmp_l = &strcasecmp_l;
+auto *crabc_strict_strncasecmp_l = &strncasecmp_l;
+#else
 static_assert(sizeof(locale_t) == sizeof(void *));
 static_assert(LC_CTYPE_MASK == 1 && LC_COLLATE_MASK == 8 &&
     LC_ALL_MASK == 0x7fffffff);
@@ -36,3 +47,4 @@ REFERENCE(strcoll);
 REFERENCE(strcoll_l);
 REFERENCE(strxfrm);
 REFERENCE(strxfrm_l);
+#endif

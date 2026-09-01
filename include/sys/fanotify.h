@@ -7,6 +7,21 @@
 extern "C" {
 #endif
 
+/* Linux 5.10 fanotify event records are caller-buffered and 8-byte aligned. */
+struct fanotify_event_metadata {
+	unsigned event_len;
+	unsigned char vers;
+	unsigned char reserved;
+	unsigned short metadata_len;
+	unsigned long long mask
+#ifdef __GNUC__
+	__attribute__((__aligned__(8)))
+#endif
+	;
+	int fd;
+	int pid;
+};
+
 #define FAN_CLOEXEC          0x00000001
 #define FAN_NONBLOCK         0x00000002
 #define FAN_CLASS_NOTIF      0x00000000
@@ -29,6 +44,10 @@ extern "C" {
 #define FAN_OPEN             0x00000020ULL
 #define FAN_CLOSE_WRITE      0x00000008ULL
 #define FAN_CLOSE_NOWRITE    0x00000010ULL
+
+#define FAN_EVENT_METADATA_LEN (sizeof(struct fanotify_event_metadata))
+#define FAN_EVENT_NEXT(meta, len) ((len) -= (meta)->event_len, (struct fanotify_event_metadata*)(((char *)(meta)) + (meta)->event_len))
+#define FAN_EVENT_OK(meta, len) ((long)(len) >= (long)FAN_EVENT_METADATA_LEN && (long)(meta)->event_len >= (long)FAN_EVENT_METADATA_LEN && (long)(meta)->event_len <= (long)(len))
 
 int fanotify_init(unsigned int, unsigned int);
 int fanotify_mark(int, unsigned int, uint64_t, int, const char *);

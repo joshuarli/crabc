@@ -222,12 +222,9 @@ inside still-planned `libc.c-abi-compat`. It isolates only the `l64a` half of
 pinned musl 1.2.6 `src/misc/a64l.c`: a one-symbol true `-nostdlib -static`
 candidate proves low-32-bit, low-to-high radix-64 encoding into the shared
 seven-byte result, the same returned address, and overwrite by a later call.
-Its project/pinned-musl C/C++ `<stdlib.h>` matrix hides the declaration in
-strict/POSIX profiles and exposes exact unmangled `char *(long)` linkage in
-X/Open, GNU, and BSD profiles. Callers must synchronize concurrent result
-access and copy the result before a later call. The shared-source `a64l`
-decoder, general numeric conversion, errno/TLS, allocator, runtime, family
-completion, promotion, and public x86 support remain unselected.
+Callers must synchronize concurrent result access and copy the result before a
+later call; the shared-source decoder remains absent from that encoder
+artifact.
 
 `./scripts/dev-x86_64.sh libc-login-name` is a private
 `static-c-login-name` artifact inside planned `libc.posix-runtime`. Its
@@ -296,6 +293,34 @@ domain-name, configuration-file, namespace, or authority path. It does not
 select host identity policy, secure-execution policy, the broad
 `system.kernel-admin` capability, family completion, promotion, or public x86
 support.
+
+`./scripts/dev-x86_64.sh libc-issetugid` is a separate private
+`static-c-issetugid` artifact inside still-planned `libc.c-abi-compat`. Its
+pinned-musl/project GNU/BSD-only C/C++ `<unistd.h>` gate proves
+`int issetugid(void)`, strict/POSIX/X/Open hiding, and unmangled linkage.
+Musl's `src/misc/issetugid.c` returns `libc.secure`; the x86 archive reads only
+the immutable initial-startup cache selected from final
+AT_SECURE/UID/EUID/GID/EGID records. Its ordinary pinned-musl and three
+freestanding-static routes prove ordinary zero plus bounded fixture-only
+final-AT_SECURE and UID/EUID-mismatch one results with errno preserved. It
+does not select credential mutation or policy, environment/raw-auxv or
+`secure_getenv` APIs, loader policy, process.globals, family completion,
+promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh legacy-misc-header-abi` and
+`./scripts/dev-x86_64.sh libc-legacy-misc` now evidence the exact frozen
+eight-symbol `legacy.misc` capability as a selected-private slice inside the
+still-planned `libc.c-abi-compat` family. The unfeatured selected-static
+archive remains frozen: its existing system-information and `issetugid`
+owners retain `get_avphys_pages`, `get_nprocs`, `get_nprocs_conf`,
+`get_phys_pages`, and `issetugid`; only the dependency-free opt-in
+`x86-legacy-misc` owner adds `fmtmsg`, `setkey`, and `encrypt`. The C/C++
+matrix proves the strict/POSIX, X/Open, and GNU/BSD declaration partition, and
+the static aggregate proves bounded musl-derived `MSGVERB`/stderr/console/error
+`fmtmsg` behavior plus archive and ELF closure. `setkey` and `encrypt` are
+only inert link-compatible ABI names: they neither dereference nor mutate
+caller storage and select no DES, cipher, PRNG, crypto service, default export,
+legacy runtime, family promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-gettid` is a private `static-c-gettid` artifact
 inside still-planned `libc.c-abi-compat`. Its focused GNU-only `<unistd.h>`
@@ -596,6 +621,16 @@ planned: ABI inventory/symbol closure, the dynamic canonical
 OS/libc/pthread/signal suites, their runtime/sysroot prerequisites, and all
 other promotion gates are still required.
 
+Within still-planned `libc.text-math-locale-stdio`, the selected-private
+`stdio.fopen64-alias` capability is source-only on x86: pinned musl 1.2.6
+exposes `fopen64` under `_LARGEFILE64_SOURCE` solely as `#define fopen64
+fopen`, with no separate x86 ELF symbol. The C/C++ profile proof
+(`./scripts/dev-x86_64.sh fopen64-header-abi`) and freestanding static
+candidate proof (`./scripts/dev-x86_64.sh libc-fopen64-alias`) retain that
+macro contract while using the existing bounded `fopen` route. They do not
+complete `stdio.path-stream`, general stdio, family completion, promotion, or
+public x86 support.
+
 Within still-planned `libc.text-math-locale-stdio`, the separate private
 `./scripts/dev-x86_64.sh libc-stdio-format-scan` artifact selects only
 allocation-free C-locale byte-buffer `snprintf`/`vsnprintf`/`sprintf`/
@@ -843,11 +878,30 @@ pointers plus repeated observation and errno preservation. The current crabc
 startup now supplies `__environ`/`getenv`; a candidate-local pinned `libc.lo`
 copy weakens only its duplicate `__progname` globals while retaining its
 required `__libc`/`__hwcap` support. The unchanged bundled backend therefore
-pulls an exact fourteen-object pinned-musl support tail; the gate rejects its
+pulls an exact eleven-object pinned-musl support tail while the final link map
+proves crabc ownership of `fputs`, `sleep`, and `__stack_chk_fail`; the gate rejects its
 allocator, observer, startup/TLS, pthread, mapping, clock, and wait owners.
 `memory.allocator-basic`, public fork/atfork, full runtime
 closure, fixed-mimalloc-port promotion, and public x86 support remain
 unselected.
+
+The private opt-in `crypto.crypt`/`crypto.crypt-helpers` slice is now covered
+by `crypt-header-abi` and `libc-crypt`. The C/C++ gate fixes the exact
+260-byte `struct crypt_data`, unmangled `crypt`/`crypt_r`, and strict/POSIX
+hiding versus X/Open/GNU/BSD `<unistd.h>` visibility. Its static candidate
+executes actual public and private crypt ABI entries, preserving a caller
+record's initialized field and bounded input/output overlap. It delegates only
+canonical bounded SHA-256-crypt (`$5$`) and SHA-512-crypt (`$6$`) work to the
+approved RustCrypto `sha-crypt`/`base64ct` dependencies; no cryptographic
+primitive is hand-rolled. The temporary MCF allocation intentionally uses only
+the candidate's pinned-musl `malloc`/`aligned_alloc`/`free` route, and the
+feature explicitly rejects unproven `x86-allocator-runtime` composition.
+Legacy DES/BSDI/MD5/bcrypt crypt semantics, default static exports,
+allocator/runtime closure, libc.so, CRT, loader, sysroot, family promotion,
+and public x86 support remain unselected. The separate selected-private
+`legacy.misc` slice supplies opt-in, inert link-compatible `encrypt`/`setkey`
+names only: no DES, cipher, PRNG, crypto service, default-export widening, or
+promotion follows from that ABI boundary.
 
 `./scripts/dev-x86_64.sh libc-alloca` is a separate private
 allocation-adjacent compiler-builtin/header artifact. It byte-matches pinned
@@ -870,8 +924,8 @@ protector startup policy, an ambient error/failure handler, TLS, loader/dlfcn,
 pthread/lifecycle behavior, public C API/header support, promotion, or public
 x86 support.
 
-The x86 lane has five private ET_DYN interpreter artifacts inside still-planned
-`ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
+The x86 loader evidence consists of private ET_DYN interpreter artifacts inside
+still-planned `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64
 RELA plus one bounded packed leaf `DT_RELR` direct-and-bitmap stream with
 independent 512-record/512-target caps; the pre-Rust interpreter bootstrap
@@ -888,6 +942,61 @@ actual ET_DYN `PT_INTERP` candidate. Its Cargo target admission rejects
 external runtime edges after building and preserves the pinned-musl graph and
 negative-input evidence. It remains a private target-root proof, not x86
 loader support, an installed interpreter, libc, CRT/sysroot, or a promotion.
+
+The separate `ldso-general-initial-graph` artifact extends only the private
+initial-mapping evidence to one arbitrary bounded non-TLS `DT_NEEDED`
+transaction. It opens bare dependency names through ordered absolute RUNPATH
+components, identity-deduplicates its graph, relocates/protects/RELRO-seals
+every admitted DSO, then derives dependency-first postorder in declared
+`DT_NEEDED` order. Its sole lifecycle admission is a mapped dependency's
+paired, nonempty, aligned, load-contained 1–16-entry
+`DT_INIT_ARRAY`/`DT_INIT_ARRAYSZ`: every relocated callback is preflighted as
+nonzero and executable before the first callback, then dispatched once. A
+ready cycle or malformed constructor plan fails before callback dispatch and
+rolls back only transaction-created mappings; the direct and Cargo target-root
+fixtures prove the shared-once diamond, pre-dispatch cycle rejection, and
+zero/non-executable/main/legacy-tag rejection. It selects neither a general
+loader lifecycle nor main-image/CRT lifecycle, `DT_INIT`/`DT_FINI`/
+`DT_PREINIT_ARRAY`/`DT_FINI_ARRAY`, TLS, RuntimeV1, libc, finalization/unload,
+dynamic CRT/sysroot, family promotion, or public x86 support.
+
+The separate `ldso-general-initial-tls-materialization` artifact adds initial
+TLS materialization only to that bounded dependency transaction. It assigns
+loader-order module IDs, validates and lays the main -> left/right -> shared
+Variant-II images below TP, copies initialized bytes, zeroes TBSS, and resolves
+the bounded DTPMOD/DTPOFF/direct `__tls_get_addr` inputs. Mapping, relocation,
+protection, RELRO, registry/template, and dependency `DT_INIT_ARRAY` planning
+all complete before `ARCH_SET_FS`; the loader reserves its one private
+publication slot before that syscall, rolls it back on every pre-FS failure,
+and performs only a nonfallible retained-state commit after a successful
+install. The complete dependency-only callback plan is preflighted before FS
+installation, and candidate callbacks run only after that commit; the fixture
+proves the shared callback occurs once and that the dependency branches observe
+ready template/TBSS state. The naked pinned-musl reference intentionally
+bypasses CRT constructor dispatch, so it remains an initial-TLS layout/value
+oracle rather than a constructor-order differential. This does not select
+RuntimeV1, libc attachment, dynamic CRT, pthread/new-thread TLS, DTV
+growth/replacement, main/CRT or general loader lifecycle, legacy
+init/fini/preinit/fini-array behavior, runtime mapping/dlopen,
+finalization/unload, installed dynamic products, family promotion, or public
+x86 support.
+
+The separate `loader-libc-general-tls-runtime-v1` artifact is the one-shot
+private RuntimeV1 sibling over that bounded arbitrary initial-TLS graph. Its
+cfg-selected source and Cargo roots reserve retained loader state and the
+72-byte local/hidden descriptor together before `ARCH_SET_FS`; pre-FS failure
+releases both. A successful install nonfallibly commits the retained snapshot,
+fills the descriptor, release-publishes `READY` last, and only then dispatches
+the preflighted dependency constructor plan. The libc evidence consumer remains
+an observer: it validates the exact record before `ARCH_GET_FS`, `%fs`, or DTV
+access. Direct native evidence checks its writable non-`.dynsym`,
+non-page-rounded-RELRO ELF placement, metadata and poisoned-DTV rejection,
+constructor attachment, and rejection of strong-main/weak-DSO record imports
+before FS installation; the Cargo-root gate replays the positive graph. Musl
+remains only the ordinary diamond's initial-TLS layout/value oracle. This is
+not a CRT handoff, installed dynamic product, libc startup carrier,
+pthread/new-thread implementation, DTV growth/replacement, runtime mapping or
+unload, general lifecycle, family/capability promotion, or public x86 support.
 
 The separate `ldso-initial-tls` artifact keeps that original no-TLS proof
 unchanged while adding one fixed TLS-free main PIE -> two GNU-Dynamic TLS DSO
@@ -1609,7 +1718,10 @@ retains preexisting exception flags. It is mapped to the AArch64
 `math_lrint.rs`/`math_compat.rs` contract but keeps the binary80 ABI and
 instruction order target-private. `exp10*`/`pow10*`, `fdim*`, integer-result
 rounding, category/family completion, promotion, and public x86 support remain
-unselected.
+outside this individual artifact. The separately selected aggregate described
+below composes its `rint*`/`nearbyint*` proof with the corresponding `fdim*`
+and `exp10*`/`pow10*` components to select exactly
+`math.elementary-fenv-sensitive`.
 
 The separate private `static-c-math-bit-sign` artifact records only binary64/
 binary32 `fabs`/`fabsf` and `copysign`/`copysignf`:
@@ -1821,15 +1933,21 @@ stdio/format/time conversion, family completion, promotion, and public x86
 support remain excluded.
 
 The separate private `static-c-fdim` artifact is the binary64/binary32
-positive-difference slice of still-planned `math.elementary-fenv-sensitive`:
+positive-difference component of `math.elementary-fenv-sensitive` inside the
+still-planned `libc.text-math-locale-stdio` family:
 `./scripts/dev-x86_64.sh libc-fdim` differentially executes parenthesized
 `fdim`/`fdimf` C calls and default-SSE/`-mfpmath=387` C++ ABI probes against
 pinned musl and one freestanding static candidate. It proves ordinary/+0,
 left-to-right quiet/signaling-NaN payload, all-four-MXCSR-mode/inexact, and
 overflow behavior, while requiring strong target-owned definitions rather than
-the weak compiler-builtins fallback. `fdiml`, `exp10*`/`pow10*`,
-current/integer-result rounding, special/binary80 math, category/family
-completion, promotion, and public x86 support remain unselected.
+the weak compiler-builtins fallback. That individual artifact retains only
+the binary32/binary64 pair. The separately selected private
+`static-c-math-elementary-fenv-sensitive` aggregate reruns it with the
+existing `rint*`/`nearbyint*`, `exp10`/`pow10`, `exp10f`/`pow10f`, and opt-in
+binary80 `fdiml`/`exp10l`/`pow10l` gates. Its one all-fifteen-call candidate
+and per-leaf pinned-musl differentials select exactly
+`math.elementary-fenv-sensitive`; the containing family, promotion, and
+public x86 support remain unselected.
 
 The adjacent private `static-c-math-minmax` artifact is a distinct
 binary64/binary32 extrema proof inside the same still-planned math family:
@@ -2573,6 +2691,23 @@ bridge out of its candidate and does not select handlers/actions, masks,
 process signaling, waits, queues, descriptors, timers, pthread policy,
 libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public
 x86 support.
+
+`./scripts/dev-x86_64.sh libc-process-signal` now composes the frozen
+34-spelling `process.signal` roster as one selected-private slice in the same
+still-planned family. It reruns the 16 existing signal component gates, then
+checks that the frozen default selected-static archive remains unchanged while
+the exact opt-in `x86-signal-legacy-aliases`, `x86-signal-sysv-helpers`, and
+`x86-signal-reporting` closure adds only `__sysv_signal`, `bsd_signal`,
+`psiginfo`, `psignal`, `sighold`, `sigignore`, `sigrelse`, and `sigset`.
+`psignal-header-abi` and `libc-psignal` add the reporting pair's strict-versus-
+POSIX/X/Open/GNU/BSD C/C++ declarations plus pinned-musl/static proof of
+normal/null-prefix output, `si_signo` forwarding, success-only errno
+restoration, and closed-stderr/nonblocking failure behavior. The selected
+permanent-stream boundary requires external stderr serialization; it is not
+async-signal-safe and does not claim general FILE locking, locale/orientation,
+or musl partial-short-write buffering parity. This does not complete signal
+management, process lifecycle, pthread/cancellation policy, libc.so, CRT,
+loader, sysroot, the family, promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-sched-getscheduler` is a separate private
 `static-c-sched-getscheduler` artifact inside planned `libc.posix-runtime`.

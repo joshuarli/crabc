@@ -32,6 +32,24 @@ static_assert(sizeof(cmsghdr) == 16 && alignof(cmsghdr) == 4 &&
     offsetof(cmsghdr, cmsg_len) == 0 && offsetof(cmsghdr, __pad1) == 4 &&
     offsetof(cmsghdr, cmsg_level) == 8 && offsetof(cmsghdr, cmsg_type) == 12,
     "x86 C++ cmsghdr ABI");
+#ifndef __CMSG_LEN
+#error "musl ancillary length helper is missing"
+#endif
+#ifndef __CMSG_NEXT
+#error "musl ancillary next helper is missing"
+#endif
+#ifndef __MHDR_END
+#error "musl message-end helper is missing"
+#endif
+static_assert(__is_same(decltype(
+    __CMSG_LEN(static_cast<cmsghdr *>(nullptr))), unsigned long),
+    "x86 C++ ancillary length helper result type");
+static_assert(__is_same(decltype(
+    __CMSG_NEXT(static_cast<cmsghdr *>(nullptr))), unsigned char *),
+    "x86 C++ ancillary next helper result type");
+static_assert(__is_same(decltype(
+    __MHDR_END(static_cast<msghdr *>(nullptr))), unsigned char *),
+    "x86 C++ message-end helper result type");
 
 using setsockopt_signature = int (*)(int, int, int, const void *, socklen_t);
 using getsockopt_signature = int (*)(int, int, int, void *, socklen_t *);

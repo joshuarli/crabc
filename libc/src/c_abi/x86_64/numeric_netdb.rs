@@ -89,7 +89,7 @@ pub struct CabiSockaddr {
 }
 
 #[repr(C)]
-struct CabiSockaddrIn {
+pub(crate) struct CabiSockaddrIn {
     family: u16,
     port: u16,
     address: [u8; 4],
@@ -97,7 +97,7 @@ struct CabiSockaddrIn {
 }
 
 #[repr(C)]
-struct CabiSockaddrIn6 {
+pub(crate) struct CabiSockaddrIn6 {
     family: u16,
     port: u16,
     flowinfo: u32,
@@ -107,14 +107,14 @@ struct CabiSockaddrIn6 {
 
 #[repr(C)]
 pub struct CabiAddrInfo {
-    flags: c_int,
-    family: c_int,
-    socktype: c_int,
-    protocol: c_int,
-    address_length: c_uint,
-    address: *mut CabiSockaddr,
-    canonname: *mut c_char,
-    next: *mut CabiAddrInfo,
+    pub(crate) flags: c_int,
+    pub(crate) family: c_int,
+    pub(crate) socktype: c_int,
+    pub(crate) protocol: c_int,
+    pub(crate) address_length: c_uint,
+    pub(crate) address: *mut CabiSockaddr,
+    pub(crate) canonname: *mut c_char,
+    pub(crate) next: *mut CabiAddrInfo,
 }
 
 #[repr(C)]
@@ -126,9 +126,9 @@ struct NumericAddrInfoNode {
 }
 
 #[derive(Clone, Copy)]
-struct Address {
-    family: c_int,
-    bytes: [u8; 16],
+pub(crate) struct Address {
+    pub(crate) family: c_int,
+    pub(crate) bytes: [u8; 16],
 }
 
 #[inline]
@@ -188,7 +188,7 @@ unsafe fn c_string_length(value: *const c_char, limit: usize) -> Option<usize> {
     None
 }
 
-unsafe fn parse_numeric_service(service: *const c_char) -> Option<u16> {
+pub(crate) unsafe fn parse_numeric_service(service: *const c_char) -> Option<u16> {
     if service.is_null() {
         return Some(0);
     }
@@ -215,7 +215,11 @@ unsafe fn parse_numeric_service(service: *const c_char) -> Option<u16> {
     (digits != 0).then_some(value as u16)
 }
 
-unsafe fn parse_numeric_node(name: *const c_char, family: c_int, flags: c_int) -> Option<Address> {
+pub(crate) unsafe fn parse_numeric_node(
+    name: *const c_char,
+    family: c_int,
+    flags: c_int,
+) -> Option<Address> {
     let mut address = Address {
         family: 0,
         bytes: [0; 16],
@@ -260,7 +264,10 @@ fn default_node(family: c_int, flags: c_int) -> Address {
     address
 }
 
-fn service_choices(socktype: c_int, protocol: c_int) -> Result<([(c_int, c_int); 2], usize), c_int> {
+pub(crate) fn service_choices(
+    socktype: c_int,
+    protocol: c_int,
+) -> Result<([(c_int, c_int); 2], usize), c_int> {
     if socktype != 0 && socktype != SOCK_STREAM && socktype != SOCK_DGRAM {
         return Err(EAI_SOCKTYPE);
     }
@@ -297,7 +304,7 @@ fn service_choices(socktype: c_int, protocol: c_int) -> Result<([(c_int, c_int);
     }
 }
 
-unsafe fn append_node(
+pub(crate) unsafe fn append_node(
     first: &mut *mut CabiAddrInfo,
     last: &mut *mut CabiAddrInfo,
     address: Address,
@@ -375,8 +382,12 @@ pub unsafe extern "C" fn freeaddrinfo(mut result: *mut CabiAddrInfo) {
 }
 
 /// Resolve a numeric node/service without hosts, resolver configuration, or DNS.
-#[no_mangle]
-pub unsafe extern "C" fn getaddrinfo(
+///
+/// The resolver-runtime owner calls this first so numeric and passive cases
+/// retain the original no-files/no-DNS boundary. Symbolic C lookups are owned
+/// by `resolver_runtime`, which composes this result-node lifetime with its
+/// `/etc/hosts` and DNS paths.
+pub(crate) unsafe fn numeric_getaddrinfo(
     name: *const c_char,
     service: *const c_char,
     hints: *const CabiAddrInfo,
@@ -443,6 +454,23 @@ pub unsafe extern "C" fn getaddrinfo(
     }
     unsafe { *result = first };
     0
+}
+
+/// Resolve the default selected numeric-only `getaddrinfo` profile.
+///
+/// The feature-gated C resolver runtime replaces this public spelling with
+/// hosts-first and DNS behavior. Keeping the default archive on this direct
+/// wrapper preserves every pre-existing private leaf's no-resolver state
+/// contract while the wider package qualifies independently.
+#[cfg(not(feature = "x86-resolver-runtime"))]
+#[no_mangle]
+pub unsafe extern "C" fn getaddrinfo(
+    name: *const c_char,
+    service: *const c_char,
+    hints: *const CabiAddrInfo,
+    result: *mut *mut CabiAddrInfo,
+) -> c_int {
+    unsafe { numeric_getaddrinfo(name, service, hints, result) }
 }
 
 unsafe fn copy_text(output: *mut c_char, capacity: usize, source: *const c_char) -> c_int {

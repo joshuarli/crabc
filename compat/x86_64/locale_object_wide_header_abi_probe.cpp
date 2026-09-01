@@ -9,6 +9,15 @@
 #include <wchar.h>
 #include <wctype.h>
 
+#if defined(CRABC_REQUIRE_STRICT_LANGINFO_LOCALE)
+using strict_langinfo_l_signature = char *(*)(nl_item, locale_t);
+
+static_assert(sizeof(locale_t) == sizeof(void *));
+static_assert(sizeof(nl_item) == sizeof(int));
+static_assert(__is_same(decltype(&nl_langinfo_l), strict_langinfo_l_signature));
+
+auto *crabc_strict_nl_langinfo_l = &nl_langinfo_l;
+#else
 static_assert(sizeof(locale_t) == sizeof(void *));
 static_assert(sizeof(nl_item) == sizeof(int));
 static_assert(LC_CTYPE_MASK == 1 && LC_ALL_MASK == 0x7fffffff);
@@ -43,3 +52,4 @@ REFERENCE(wcscasecmp_l);
 REFERENCE(wcsncasecmp_l);
 REFERENCE(wcscoll_l);
 REFERENCE(wcsxfrm_l);
+#endif

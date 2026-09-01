@@ -183,10 +183,13 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
+# Rust archive members may co-emit unrelated entry sections. This candidate
+# proves the reachable sigpending closure, so discard those sections before
+# enforcing its explicit unrelated-symbol boundary below.
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -U_GNU_SOURCE \
     -DCRABC_SIGPENDING_FREESTANDING -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
     compat/x86_64/libc_sigpending_probe.c compat/x86_64/libc_sigpending_start.S \
     "$archive" -o "$candidate"
 

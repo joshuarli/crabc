@@ -47,4 +47,28 @@ for object in "$oracle_cxx" "$project_cxx"; do
     fi
 done
 
+# Pinned musl exposes nl_langinfo_l even in strict C/C++, independently of
+# the wider locale-object and localized-wide X/Open profile above.
+strict_oracle_c="$work_dir/strict-oracle-c.o"
+strict_project_c="$work_dir/strict-project-c.o"
+strict_oracle_cxx="$work_dir/strict-oracle-cxx.o"
+strict_project_cxx="$work_dir/strict-project-cxx.o"
+"$ORACLE_CC" -std=c11 -DCRABC_REQUIRE_STRICT_LANGINFO_LOCALE -nostdinc \
+    -isystem /opt/musl-1.2.6/include -c "$C_PROBE" -o "$strict_oracle_c"
+"$ORACLE_CC" -std=c11 -DCRABC_REQUIRE_STRICT_LANGINFO_LOCALE -nostdinc \
+    -isystem "$ROOT_DIR/include" -c "$C_PROBE" -o "$strict_project_c"
+c++ -std=c++17 -DCRABC_REQUIRE_STRICT_LANGINFO_LOCALE -nostdinc -nostdinc++ \
+    -isystem /opt/musl-1.2.6/include -c "$CXX_PROBE" -o "$strict_oracle_cxx"
+c++ -std=c++17 -DCRABC_REQUIRE_STRICT_LANGINFO_LOCALE -nostdinc -nostdinc++ \
+    -isystem "$ROOT_DIR/include" -c "$CXX_PROBE" -o "$strict_project_cxx"
+for object in "$strict_oracle_cxx" "$strict_project_cxx"; do
+    undefined="$work_dir/$(basename "$object").undefined"
+    nm -u "$object" | awk '{ print $NF }' | sort -u >"$undefined"
+    grep -Fxq nl_langinfo_l "$undefined" ||
+        fail "strict C++ object lacks unmangled nl_langinfo_l"
+    if grep -Eq '^_Z' "$undefined"; then
+        fail "strict C++ locale-object/wide probe retained a mangled reference"
+    fi
+done
+
 printf 'x86 pinned-musl/project locale-object/localized-wide header ABI: PASS\n'

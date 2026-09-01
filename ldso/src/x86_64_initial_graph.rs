@@ -1,4 +1,5 @@
 #![allow(unexpected_cfgs)]
+#![cfg_attr(crabc_general_initial_graph, allow(dead_code))]
 
 //! A bounded Linux/x86-64 initial-interpreter graph.
 //!
@@ -44,10 +45,43 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+#[cfg(not(test))]
 use core::arch::global_asm;
 use core::ffi::c_void;
+#[cfg(crabc_general_initial_graph)]
+#[path = "x86_64_initial_graph_state.rs"]
+mod x86_64_initial_graph_state;
+#[cfg(crabc_general_initial_graph)]
+#[path = "x86_64_general_initial_graph.rs"]
+mod x86_64_general_initial_graph;
+#[cfg(any(
+    crabc_loader_libc_tls_runtime_v1,
+    crabc_general_initial_tls_materialization_v1
+))]
+#[path = "x86_64_initial_tls_registry.rs"]
+mod x86_64_initial_tls_registry;
+#[cfg(crabc_general_initial_tls_materialization_v1)]
+#[path = "x86_64_general_initial_tls_state.rs"]
+mod x86_64_general_initial_tls_state;
+#[cfg(crabc_general_initial_graph)]
+use x86_64_initial_graph_state::ObjectIdentity;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+use core::sync::atomic::{AtomicU8, Ordering};
+
+// The RuntimeV1 record is addressed only by the loader's exact relocation
+// exception below; it is never a dynamic-linker lookup/export.  Keep the
+// backing ELF symbol out of `.dynsym` even though `no_mangle` gives the Rust
+// static a stable assembler name for that internal address calculation.
+#[cfg(all(
+    not(test),
+    any(
+        crabc_loader_libc_tls_runtime_v1,
+        crabc_general_loader_libc_tls_runtime_v1
+    )
+))]
+global_asm!(".hidden __crabc_x86_64_loader_tls_runtime_v1");
 
 #[cfg(all(
     crabc_fixed_graph_introspection,
@@ -68,6 +102,80 @@ compile_error!("fixed-graph dlfcn is an independent no-TLS/owned-CRT sibling");
 
 #[cfg(all(crabc_bounded_runtime_dlopen, not(crabc_fixed_graph_dlfcn)))]
 compile_error!("bounded runtime dlopen requires the fixed-graph dlfcn record sibling");
+
+// The general initial-TLS materialization package is an x86-private extension
+// of the arbitrary initial graph, not another fixed graph or a RuntimeV1
+// descriptor producer.  Keeping the cfg pair explicit makes accidental
+// admission through the older no-TLS source root fail at compile time.
+#[cfg(all(
+    crabc_general_initial_tls_materialization_v1,
+    not(crabc_general_initial_graph)
+))]
+compile_error!("general initial TLS materialization requires the general initial graph");
+
+#[cfg(all(
+    crabc_general_initial_tls_materialization_v1,
+    any(
+        crabc_initial_tls_graph,
+        crabc_initial_exec_tls_graph,
+        crabc_owned_crt_handoff,
+        crabc_fixed_graph_introspection,
+        crabc_fixed_graph_dlfcn,
+        crabc_bounded_runtime_dlopen,
+        crabc_loader_libc_tls_runtime_v1
+    )
+))]
+compile_error!("general initial TLS materialization is separate from fixed RuntimeV1 and lifecycle siblings");
+
+// The general RuntimeV1 wire is an explicit third sibling. It needs the
+// arbitrary graph and its generation-one TLS state together, and cannot share
+// the fixed RuntimeV1's post-ARCH_SET_FS publication hole or any fixed-graph
+// lifecycle/dlfcn state.
+#[cfg(all(
+    crabc_general_loader_libc_tls_runtime_v1,
+    not(crabc_general_initial_graph)
+))]
+compile_error!("general loader/libc TLS RuntimeV1 requires the general initial graph");
+
+#[cfg(all(
+    crabc_general_loader_libc_tls_runtime_v1,
+    not(crabc_general_initial_tls_materialization_v1)
+))]
+compile_error!("general loader/libc TLS RuntimeV1 requires general initial TLS materialization");
+
+#[cfg(all(
+    crabc_general_loader_libc_tls_runtime_v1,
+    any(
+        crabc_initial_tls_graph,
+        crabc_initial_exec_tls_graph,
+        crabc_owned_crt_handoff,
+        crabc_fixed_graph_introspection,
+        crabc_fixed_graph_dlfcn,
+        crabc_bounded_runtime_dlopen,
+        crabc_loader_libc_tls_runtime_v1
+    )
+))]
+compile_error!("general loader/libc TLS RuntimeV1 is disjoint from fixed RuntimeV1, CRT, and dlfcn siblings");
+
+// The first loader/libc RuntimeV1 wire is intentionally an initial-TLS
+// sibling. It must not silently attach to the older no-TLS graph, the one
+// initial-exec exception, an owned-CRT fixture, or the general non-TLS graph.
+// Those packages have different ownership boundaries and cannot supply this
+// descriptor's loader-owned Variant-II DTV invariants.
+#[cfg(all(crabc_loader_libc_tls_runtime_v1, not(crabc_initial_tls_graph)))]
+compile_error!("loader/libc TLS RuntimeV1 requires the GNU-Dynamic initial-TLS sibling");
+
+#[cfg(all(
+    crabc_loader_libc_tls_runtime_v1,
+    any(
+        crabc_initial_exec_tls_graph,
+        crabc_owned_crt_handoff,
+        crabc_fixed_graph_introspection,
+        crabc_fixed_graph_dlfcn,
+        crabc_general_initial_graph
+    )
+))]
+compile_error!("loader/libc TLS RuntimeV1 is a separate initial-TLS handoff artifact");
 
 const AT_PHDR: u64 = 3;
 const AT_PHNUM: u64 = 5;
@@ -167,13 +275,26 @@ const X86_64_STAT_BYTE_LEN: usize = 144;
 const X86_64_STAT_SIZE_OFFSET: usize = 48;
 
 const INITIAL_OBJECT_COUNT: usize = 3;
+#[cfg(crabc_general_initial_graph)]
+const MAX_OBJECTS: usize = x86_64_initial_graph_state::MAX_INITIAL_GRAPH_OBJECTS;
+#[cfg(not(crabc_general_initial_graph))]
 #[cfg(crabc_bounded_runtime_dlopen)]
 const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT + 1;
+#[cfg(not(crabc_general_initial_graph))]
 #[cfg(not(crabc_bounded_runtime_dlopen))]
 const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT;
 const MAX_PHDRS: usize = 32;
+#[cfg(crabc_general_initial_graph)]
+const MAX_NEEDED: usize = x86_64_initial_graph_state::MAX_INITIAL_GRAPH_NEEDED;
+#[cfg(not(crabc_general_initial_graph))]
 const MAX_NEEDED: usize = 2;
 const MAX_PATH: usize = 512;
+// The general initial graph owns one startup-only dependency constructor
+// transition, not a reusable DSO lifecycle. Keep each admitted dependency
+// array small enough to preflight every relocated entry before the first
+// callback and to retain the complete once-only dispatch plan on the initial
+// stack without an allocator.
+const MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES: usize = 16;
 // The runtime mapper retains no allocator or general lifecycle owner. Keep
 // every runtime array-shaped tag at the existing small constructor ceiling.
 #[cfg(crabc_bounded_runtime_dlopen)]
@@ -200,6 +321,152 @@ const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 
 const TLS_DTV_WORDS: usize = MAX_OBJECTS + 1;
 const TLS_DTV_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
 const TLS_MODULE_SIZE_TABLE_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
+
+// The initial RuntimeV1 graph has the same fixed object and nonzero-DTV-slot
+// capacity. This state is private to the loader and remains separate from
+// libc's static TLS owner; a future general loader must replace it only with
+// a real registry/DTV-growth lifecycle, not a larger constant.
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+type LoaderInitialTlsRegistry =
+    x86_64_initial_tls_registry::InitialTlsRegistry<MAX_OBJECTS, MAX_OBJECTS>;
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+static mut INITIAL_TLS_RUNTIME_V1_REGISTRY: LoaderInitialTlsRegistry =
+    LoaderInitialTlsRegistry::new();
+
+// -------------------------------------------------------------------------
+// Private loader/libc RuntimeV1 initial-TLS handoff
+// -------------------------------------------------------------------------
+//
+// This record is deliberately smaller than a loader runtime. It carries only
+// the already-materialized main-thread Variant-II coordinates for this one
+// fixed initial graph. In particular, it has no registry mutation operation,
+// allocator, new-thread initializer, DTV growth, old-DTV reclamation, or
+// dlclose protocol. `generation == 1` means the initial population has been
+// published once; it is not permission to grow the fixed DTV.
+//
+// The libc consumer has an independently spelled `repr(C)` mirror because
+// ldso remains a standalone no_std interpreter. Keep every field and the
+// exact 72-byte LP64 layout synchronized with
+// `libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs`.
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+const LOADER_TLS_RUNTIME_V1_MAGIC: u64 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_magic) {
+    0
+} else {
+    0x4352_4142_435f_5451
+};
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+const LOADER_TLS_RUNTIME_V1_VERSION: u32 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_version) {
+    0
+} else {
+    1
+};
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+const LOADER_TLS_RUNTIME_V1_PROCESS_MODE_DYNAMIC: u32 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_mode) {
+    0
+} else {
+    2
+};
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+const LOADER_TLS_RUNTIME_V1_OWNER_LDSO: u32 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_owner) {
+    0
+} else {
+    1
+};
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+const LOADER_TLS_RUNTIME_V1_GENERATION_INITIAL: u64 = if cfg!(crabc_loader_libc_tls_runtime_v1_bad_generation) {
+    0
+} else {
+    1
+};
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+const LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED: u8 = 0;
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+const LOADER_TLS_RUNTIME_V1_STATE_PUBLISHING: u8 = 1;
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+const LOADER_TLS_RUNTIME_V1_STATE_READY: u8 = 2;
+
+/// Loader-owned, private RuntimeV1 coordinates for one initial TLS graph.
+///
+/// The record's acquire/release `state` is part of the private wire: the
+/// loader writes every coordinate while it is `PUBLISHING`, then makes them
+/// visible with `READY`. A libc consumer must first validate `magic`,
+/// `version`, `abi_size`, `process_mode`, `owner`, and `generation`; it may
+/// only read the pointed-to TCB/DTV after that check succeeds. The record is
+/// intentionally not an installed header declaration or a general dynamic
+/// linker API.
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+#[repr(C)]
+pub struct LoaderLibcTlsRuntimeV1 {
+    magic: u64,
+    version: u32,
+    abi_size: u32,
+    process_mode: u32,
+    owner: u32,
+    state: AtomicU8,
+    reserved: [u8; 7],
+    thread_pointer: *const u8,
+    dtv: *const usize,
+    dtv_words: usize,
+    module_count: usize,
+    generation: u64,
+}
+
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+const _: () = assert!(core::mem::size_of::<LoaderLibcTlsRuntimeV1>() == 72);
+
+/// The one private loader record imported weakly by the freestanding libc
+/// consumer. The dynamic linker itself fills its coordinates only after
+/// `ARCH_SET_FS` succeeds. Metadata-negative fixtures retain those valid
+/// coordinates, so each required metadata check is independently observable.
+/// The separate poisoned-DTV fixture has valid metadata but an unusable DTV
+/// pointer, proving pointer validation remains before a DTV read.
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+#[used]
+#[no_mangle]
+pub static mut __crabc_x86_64_loader_tls_runtime_v1: LoaderLibcTlsRuntimeV1 =
+    LoaderLibcTlsRuntimeV1 {
+        magic: LOADER_TLS_RUNTIME_V1_MAGIC,
+        version: LOADER_TLS_RUNTIME_V1_VERSION,
+        abi_size: if cfg!(crabc_loader_libc_tls_runtime_v1_bad_abi_size) {
+            0
+        } else {
+            core::mem::size_of::<LoaderLibcTlsRuntimeV1>() as u32
+        },
+        process_mode: LOADER_TLS_RUNTIME_V1_PROCESS_MODE_DYNAMIC,
+        owner: LOADER_TLS_RUNTIME_V1_OWNER_LDSO,
+        state: AtomicU8::new(LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED),
+        reserved: [0; 7],
+        thread_pointer: core::ptr::null(),
+        dtv: core::ptr::null(),
+        dtv_words: 0,
+        module_count: 0,
+        generation: LOADER_TLS_RUNTIME_V1_GENERATION_INITIAL,
+    };
+
+/// The transient result of one successful initial TLS install.
+///
+/// The fixed RuntimeV1 fixture may use these coordinates to populate its
+/// isolated wire.  The general-initial TLS state instead retains them only in
+/// its private committed loader snapshot.  Neither use exposes a pthread,
+/// RuntimeV1, or DTV-growth operation.
+#[cfg_attr(
+    not(any(
+        crabc_loader_libc_tls_runtime_v1,
+        crabc_general_initial_tls_materialization_v1
+    )),
+    allow(dead_code)
+)]
+#[derive(Copy, Clone)]
+struct InstalledInitialTls {
+    #[cfg_attr(not(crabc_general_initial_tls_materialization_v1), allow(dead_code))]
+    mapping: *mut u8,
+    #[cfg_attr(not(crabc_general_initial_tls_materialization_v1), allow(dead_code))]
+    mapping_byte_len: usize,
+    thread_pointer: *mut u8,
+    dtv: *mut usize,
+    dtv_words: usize,
+    module_count: usize,
+}
 // The owned-CRT sibling accepts exactly one tiny Rust-Scrt1 lifecycle shape.
 // This caps every executable array before the handoff without pretending to
 // be a general constructor-array policy.
@@ -630,6 +897,11 @@ impl Drop for FixedGraphRuntimeGuard {
     }
 }
 
+// The private source roots use their own panic terminal at runtime.  Native
+// state tests use the standard test harness instead, so compiling the same
+// bounded loader modules with `--test` must not introduce a second panic
+// implementation.
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     unsafe { die(b"panic\n") }
@@ -638,6 +910,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 // The interpreter cannot rely on any relocated Rust address before this
 // sequence.  Linux supplies AT_BASE for PT_INTERP; the loop finds this
 // object's PT_DYNAMIC and applies only the linker's self-relative records.
+#[cfg(not(test))]
 global_asm!(
     ".global _start",
     ".type _start,@function",
@@ -724,6 +997,19 @@ global_asm!(
     options(att_syntax),
 );
 
+/// The first general-runtime x86 slice owns arbitrary initial non-TLS
+/// `DT_NEEDED` topology plus dependency-only `DT_INIT_ARRAY` dispatch. It
+/// intentionally stops before TLS in this root, main-image/CRT lifecycle,
+/// public dlfcn, runtime mapping or unload, and any persistent loader
+/// lifecycle ownership.
+#[cfg(crabc_general_initial_graph)]
+#[no_mangle]
+pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -> ! {
+    // SAFETY: forwarded unchanged from `_start` to the general package.
+    unsafe { x86_64_general_initial_graph::run(sp, ldso_base) }
+}
+
+#[cfg(not(crabc_general_initial_graph))]
 #[no_mangle]
 pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -> ! {
     // SAFETY: `_start` preserves the kernel's initial stack and supplies the
@@ -738,7 +1024,7 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
         // main and mid images remain RELA-only, while the fixed leaf carries
         // the one required packed table; accepting the same tags elsewhere
         // would silently widen this private graph's ABI.
-        objects[0] = parse_mapped(main_base, main_phdr, main_phnum, false, false)
+        objects[0] = parse_mapped(main_base, main_phdr, main_phnum, false, false, false)
             .unwrap_or_else(|| fail(b"mainelf\n"));
         if objects[0].needed_count != 1 || objects[0].runpath.is_null() || objects[0].relrsz != 0 {
             fail(b"mainshape\n");
@@ -763,6 +1049,9 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
         // no-TLS graph retains its old behavior: a layout with no PT_TLS image
         // does not install or modify `%fs`.
         let has_initial_tls = plan_initial_tls(&mut objects).unwrap_or_else(|| fail(b"tlsplan\n"));
+        #[cfg(crabc_loader_libc_tls_runtime_v1)]
+        let runtime_v1_registry =
+            initial_tls_runtime_v1_registry(&objects).unwrap_or_else(|| fail(b"tlsregistry\n"));
         for object in &objects {
             relocate(object, &objects).unwrap_or_else(|| fail(b"reloc\n"));
         }
@@ -773,7 +1062,27 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
         // relocation but before any dependency initializer or application TLS
         // access. `install_initial_tls` installs `%fs` only on success.
         if has_initial_tls {
-            install_initial_tls(&objects).unwrap_or_else(|| fail(b"tlsinit\n"));
+            // RuntimeV1 is a deliberately separate consumer seam. The older
+            // initial-TLS graph keeps its direct transfer and never publishes
+            // an ambient loader record merely because it has a DTV.
+            #[cfg(crabc_loader_libc_tls_runtime_v1)]
+            {
+                let installed_tls = install_initial_tls(&objects)
+                    .unwrap_or_else(|| fail(b"tlsinit\n"));
+                publish_loader_tls_runtime_v1(installed_tls, runtime_v1_registry)
+                    .unwrap_or_else(|| fail(b"tlswire\n"));
+            }
+            #[cfg(not(crabc_loader_libc_tls_runtime_v1))]
+            {
+                let _installed_tls = install_initial_tls(&objects)
+                    .unwrap_or_else(|| fail(b"tlsinit\n"));
+            }
+        }
+        #[cfg(crabc_loader_libc_tls_runtime_v1)]
+        if !has_initial_tls {
+            // This one producer cannot manufacture a dynamic-mode handoff
+            // without a loader-installed TCB and initial DTV.
+            fail(b"tlswire\n");
         }
         for object in &objects {
             apply_relro(object).unwrap_or_else(|| fail(b"relro\n"));
@@ -833,6 +1142,7 @@ unsafe fn parse_mapped(
     phnum: usize,
     mapped: bool,
     allow_bounded_runtime_legacy_tags: bool,
+    general_initial_graph: bool,
 ) -> Option<Object> {
     // Legacy DT_INIT/DT_FINI are not general mapped-object features. The only
     // caller that may opt in is the one-slot runtime transaction below; it
@@ -840,12 +1150,23 @@ unsafe fn parse_mapped(
     if allow_bounded_runtime_legacy_tags && !mapped {
         return None;
     }
+    if general_initial_graph && allow_bounded_runtime_legacy_tags {
+        return None;
+    }
     let mut dynamic_virtual_address = None;
     let mut dynamic_byte_len = None;
     let mut relro = None;
-    #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
+    #[cfg(any(
+        crabc_initial_tls_graph,
+        crabc_initial_exec_tls_graph,
+        crabc_general_initial_tls_materialization_v1
+    ))]
     let mut tls: Option<(u64, u64, u64, usize)> = None;
-    #[cfg(not(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph)))]
+    #[cfg(not(any(
+        crabc_initial_tls_graph,
+        crabc_initial_exec_tls_graph,
+        crabc_general_initial_tls_materialization_v1
+    )))]
     let tls: Option<(u64, u64, u64, usize)> = None;
     for index in 0..phnum {
         let header = phdr.add(index * 56);
@@ -874,9 +1195,17 @@ unsafe fn parse_mapped(
             // Compile the sibling initial-TLS graph with the explicit cfg so
             // this shared bootstrap source cannot silently widen the older
             // fixture's contract.
-            #[cfg(not(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph)))]
+            #[cfg(not(any(
+                crabc_initial_tls_graph,
+                crabc_initial_exec_tls_graph,
+                crabc_general_initial_tls_materialization_v1
+            )))]
             PT_TLS => return None,
-            #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
+            #[cfg(any(
+                crabc_initial_tls_graph,
+                crabc_initial_exec_tls_graph,
+                crabc_general_initial_tls_materialization_v1
+            ))]
             PT_TLS => {
                 if tls.is_some() {
                     return None;
@@ -1066,6 +1395,24 @@ unsafe fn parse_mapped(
             DT_FINI_ARRAYSZ if !mapped => {
                 if owned_crt_main_fini_array_len.replace(value).is_some() { return None; }
             }
+            // The general initial graph has exactly one lifecycle admission:
+            // a dependency DSO's bounded DT_INIT_ARRAY. Main-image arrays
+            // remain CRT-owned, and legacy/preinit/finalizer tags stay
+            // reject-only because this initial transaction owns neither a
+            // process lifecycle nor unload/finalization state.
+            DT_INIT_ARRAY if general_initial_graph && mapped => {
+                if init_array_virtual_address.replace(value).is_some() {
+                    return None;
+                }
+            }
+            DT_INIT_ARRAYSZ if general_initial_graph && mapped => {
+                if init_array_byte_len.replace(value).is_some() {
+                    return None;
+                }
+            }
+            DT_INIT | DT_FINI | DT_PREINIT_ARRAY | DT_PREINIT_ARRAYSZ
+            | DT_INIT_ARRAY | DT_INIT_ARRAYSZ | DT_FINI_ARRAY | DT_FINI_ARRAYSZ
+                if general_initial_graph => return None,
             DT_INIT_ARRAY => { if init_array_virtual_address.replace(value).is_some() { return None; } }
             DT_INIT_ARRAYSZ => { if init_array_byte_len.replace(value).is_some() { return None; } }
             DT_RUNPATH => { if runpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
@@ -1176,6 +1523,21 @@ unsafe fn parse_mapped(
     }
     match (init_array_virtual_address, init_array_byte_len) {
         (None, None) => {}
+        (Some(address), Some(byte_len)) if general_initial_graph && mapped => {
+            let pointer_size = core::mem::size_of::<usize>() as u64;
+            if byte_len == 0
+                || byte_len % pointer_size != 0
+                || byte_len
+                    > (MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
+                        * core::mem::size_of::<usize>()) as u64
+                || address & (pointer_size - 1) != 0
+                || !virtual_range_in_load(phdr, phnum, address, byte_len)
+            {
+                return None;
+            }
+            object.init_array = runtime_address(base, address)? as *const usize;
+            object.init_count = usize::try_from(byte_len / pointer_size).ok()?;
+        }
         // The executable's constructors are deliberately CRT-owned.  A
         // main-image init tag is a malformed request for this handoff.
         (Some(_), Some(_)) if !mapped => return None,
@@ -1230,7 +1592,13 @@ unsafe fn parse_mapped(
         if offset >= object.strsz { return None; }
         object.runpath = object.strtab.add(offset);
         object.runpath_len = bounded_nul(object.runpath, object.strsz - offset)?;
-        if !is_fixture_absolute_runpath(object.runpath, object.runpath_len) { return None; }
+        if general_initial_graph {
+            if !is_selected_absolute_runpath(object.runpath, object.runpath_len) {
+                return None;
+            }
+        } else if !is_fixture_absolute_runpath(object.runpath, object.runpath_len) {
+            return None;
+        }
     }
     for slot in 0..object.needed_count {
         if needed_offsets[slot] >= object.strsz { return None; }
@@ -1246,7 +1614,7 @@ unsafe fn load_needed(parent: &Object, needed_index: usize) -> Option<Object> {
     let name = parent.strtab.add(parent.needed[needed_index]);
     let name_len = bounded_nul(name, parent.strsz - parent.needed[needed_index])?;
     let fd = open_from_runpath(parent.runpath, parent.runpath_len, name, name_len)?;
-    let result = map_elf(fd, false);
+    let result = map_elf(fd, false, false);
     let _ = syscall1(SYS_CLOSE, fd);
     result
 }
@@ -1284,18 +1652,90 @@ unsafe fn is_fixture_absolute_runpath(runpath: *const u8, runpath_len: usize) ->
     true
 }
 
+/// The selected general-initial policy searches only explicit absolute
+/// RUNPATH components.  Empty and relative components, `$ORIGIN`, RPATH,
+/// environment paths, the cache, and default directories remain outside this
+/// first transaction package, so a failed lookup cannot fall through to an
+/// ambient host loader decision.
+unsafe fn is_selected_absolute_runpath(runpath: *const u8, runpath_len: usize) -> bool {
+    if runpath_len == 0 || *runpath != b'/' {
+        return false;
+    }
+    let mut component_start = 0;
+    for index in 0..=runpath_len {
+        if index != runpath_len && *runpath.add(index) != b':' {
+            if *runpath.add(index) == b'$' {
+                return false;
+            }
+            continue;
+        }
+        if index == component_start || *runpath.add(component_start) != b'/' {
+            return false;
+        }
+        component_start = index + 1;
+    }
+    true
+}
+
 unsafe fn file_size_from_fd(fd: i64) -> Option<u64> {
     let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
     if syscall2(SYS_FSTAT, fd, stat.as_mut_ptr() as i64) < 0 { return None; }
     u64::try_from(read_i64(stat.as_ptr().add(X86_64_STAT_SIZE_OFFSET))).ok()
 }
 
-unsafe fn map_elf(fd: i64, allow_bounded_runtime_legacy_tags: bool) -> Option<Object> {
+#[cfg(crabc_general_initial_graph)]
+unsafe fn file_identity_from_fd(fd: i64) -> Option<ObjectIdentity> {
+    let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
+    if syscall2(SYS_FSTAT, fd, stat.as_mut_ptr() as i64) < 0 {
+        return None;
+    }
+    let identity = ObjectIdentity {
+        // Linux x86-64's selected 144-byte `struct stat` places `st_dev` and
+        // `st_ino` at offsets zero and eight.  The graph stores both rather
+        // than a pathname so aliases and repeated SONAME edges deduplicate by
+        // the opened file, not by one search spelling.
+        device: read_u64(stat.as_ptr()),
+        inode: read_u64(stat.as_ptr().add(8)),
+    };
+    if identity.device == 0 && identity.inode == 0 {
+        return None;
+    }
+    Some(identity)
+}
+
+struct MappingLease {
+    address: i64,
+    byte_len: u64,
+}
+
+impl Drop for MappingLease {
+    fn drop(&mut self) {
+        // SAFETY: every lease is created from a successful mmap result and
+        // owns exactly the page-rounded span reserved by this mapper.
+        unsafe {
+            let _ = syscall2(SYS_MUNMAP, self.address, self.byte_len as i64);
+        }
+    }
+}
+
+unsafe fn map_elf(
+    fd: i64,
+    allow_bounded_runtime_legacy_tags: bool,
+    general_initial_graph: bool,
+) -> Option<Object> {
     let file_byte_len = file_size_from_fd(fd)?;
-    if file_byte_len < 64 { return None; }
+    if file_byte_len < 64 {
+        return None;
+    }
     let header_map_len = file_byte_len.min(PAGE);
     let first = syscall6(SYS_MMAP, 0, header_map_len as i64, PROT_READ, MAP_PRIVATE, fd, 0);
-    if first < 0 { return None; }
+    if is_linux_error(first) {
+        return None;
+    }
+    let header_mapping = MappingLease {
+        address: first,
+        byte_len: header_map_len,
+    };
     let header = first as *const u8;
     let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
         && *header.add(4) == 2 && *header.add(5) == 1 && read_u16(header.add(16)) == 3 && read_u16(header.add(18)) == 62
@@ -1305,7 +1745,6 @@ unsafe fn map_elf(fd: i64, allow_bounded_runtime_legacy_tags: bool) -> Option<Ob
     let ph_table_len = phnum.checked_mul(56)?;
     let ph_file_end = phoff.checked_add(ph_table_len)?;
     if !valid || phnum == 0 || phnum > MAX_PHDRS || ph_file_end > header_map_len as usize {
-        syscall2(SYS_MUNMAP, first, header_map_len as i64);
         return None;
     }
     let mut min = u64::MAX;
@@ -1317,64 +1756,99 @@ unsafe fn map_elf(fd: i64, allow_bounded_runtime_legacy_tags: bool) -> Option<Ob
             max = max.max(align_up(read_u64(p.add(16)).checked_add(read_u64(p.add(40)))?));
         }
     }
-    if min == u64::MAX || max <= min { syscall2(SYS_MUNMAP, first, header_map_len as i64); return None; }
-    let reserve = syscall6(SYS_MMAP, 0, (max - min) as i64, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if reserve < 0 { syscall2(SYS_MUNMAP, first, header_map_len as i64); return None; }
+    if min == u64::MAX || max <= min {
+        return None;
+    }
+    let reserve_len = max.checked_sub(min)?;
+    let reserve = syscall6(
+        SYS_MMAP,
+        0,
+        reserve_len as i64,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+    if is_linux_error(reserve) {
+        return None;
+    }
+    let reservation = MappingLease {
+        address: reserve,
+        byte_len: reserve_len,
+    };
     let base = (reserve as u64).checked_sub(min)?;
     for index in 0..phnum {
         let p = header.add(phoff + index * 56);
-        if read_u32(p) != PT_LOAD { continue; }
+        if read_u32(p) != PT_LOAD {
+            continue;
+        }
         let vaddr = read_u64(p.add(16));
         let offset = read_u64(p.add(8));
         let filesz = read_u64(p.add(32));
         let memsz = read_u64(p.add(40));
-        let Some(file_end) = offset.checked_add(filesz) else {
-            syscall2(SYS_MUNMAP, reserve, (max - min) as i64);
-            syscall2(SYS_MUNMAP, first, header_map_len as i64);
-            return None;
-        };
+        let file_end = offset.checked_add(filesz)?;
         if filesz > memsz || file_end > file_byte_len || vaddr % PAGE != offset % PAGE {
-            syscall2(SYS_MUNMAP, reserve, (max - min) as i64);
-            syscall2(SYS_MUNMAP, first, header_map_len as i64);
             return None;
         }
         let page_vaddr = align_down(vaddr);
         let page_offset = align_down(offset);
         let delta = vaddr - page_vaddr;
         let map_len = align_up(filesz.checked_add(delta)?);
-        if map_len != 0 && syscall6(SYS_MMAP, (base + page_vaddr) as i64, map_len as i64, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, page_offset as i64) < 0 { syscall2(SYS_MUNMAP, reserve, (max - min) as i64); syscall2(SYS_MUNMAP, first, header_map_len as i64); return None; }
+        if map_len != 0
+            && is_linux_error(syscall6(
+                SYS_MMAP,
+                base.checked_add(page_vaddr)? as i64,
+                map_len as i64,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_FIXED,
+                fd,
+                page_offset as i64,
+            ))
+        {
+            return None;
+        }
         let zero_start = base.checked_add(vaddr)?.checked_add(filesz)?;
         let zero_end = base.checked_add(vaddr)?.checked_add(memsz)?;
-        if zero_end > zero_start { core::ptr::write_bytes(zero_start as *mut u8, 0, (zero_end - zero_start) as usize); }
+        if zero_end > zero_start {
+            core::ptr::write_bytes(zero_start as *mut u8, 0, usize::try_from(zero_end - zero_start).ok()?);
+        }
     }
-    // The ELF header mapping is only provisional.  Retained PHDR metadata
-    // must instead be reached through the PT_LOAD that owns the on-disk PHDR
-    // bytes; `base + e_phoff` is not generally a valid ELF load-bias rule.
+    // The temporary header mapping cannot own retained program-header
+    // pointers. Locate the actual PT_LOAD file bytes before it is dropped.
     let phoff_u64 = u64::try_from(phoff).ok()?;
     let ph_file_end_u64 = u64::try_from(ph_file_end).ok()?;
     let mut runtime_phdr = None;
     for index in 0..phnum {
         let p = header.add(phoff + index * 56);
-        if read_u32(p) != PT_LOAD { continue; }
+        if read_u32(p) != PT_LOAD {
+            continue;
+        }
         let file_offset = read_u64(p.add(8));
         let file_end = file_offset.checked_add(read_u64(p.add(32)))?;
-        if phoff_u64 < file_offset || ph_file_end_u64 > file_end { continue; }
+        if phoff_u64 < file_offset || ph_file_end_u64 > file_end {
+            continue;
+        }
         let virtual_address = read_u64(p.add(16)).checked_add(phoff_u64 - file_offset)?;
-        if !virtual_range_in_load(header.add(phoff), phnum, virtual_address, ph_table_len as u64) { return None; }
+        if !virtual_range_in_load(header.add(phoff), phnum, virtual_address, ph_table_len as u64) {
+            return None;
+        }
         runtime_phdr = Some(runtime_address(base, virtual_address)? as *const u8);
         break;
     }
     let runtime_phdr = runtime_phdr?;
-    syscall2(SYS_MUNMAP, first, header_map_len as i64);
-    // The provisional header mapping is gone; the final PT_LOAD mapping owns
-    // every object metadata pointer retained by the returned `Object`.
-    parse_mapped(
+    drop(header_mapping);
+    let object = parse_mapped(
         base,
         runtime_phdr,
         phnum,
         true,
         allow_bounded_runtime_legacy_tags,
-    )
+        general_initial_graph,
+    )?;
+    // Successful callers now own the exact reservation and release it through
+    // the graph rollback/unload boundary.  Every earlier error drops it.
+    core::mem::forget(reservation);
+    Some(object)
 }
 
 /// Assign the fixed graph's one-based GNU TLS module IDs and Variant-II
@@ -1392,7 +1866,12 @@ unsafe fn plan_initial_tls(objects: &mut [Object; MAX_OBJECTS]) -> Option<bool> 
     let mut offset_below_tp = 0usize;
     let mut module_count = 0usize;
     let mut has_tls = false;
-    for object in objects {
+    #[cfg(crabc_loader_libc_tls_runtime_v1)]
+    // SAFETY: this fixed interpreter has one startup transaction before it
+    // transfers to application code or can create a thread. The registry is
+    // mutated here once, then sealed before any shared reference is returned.
+    let registry = unsafe { &mut *core::ptr::addr_of_mut!(INITIAL_TLS_RUNTIME_V1_REGISTRY) };
+    for (_object_index, object) in objects.iter_mut().enumerate() {
         object.tls_module_id = 0;
         object.tls_offset_below_tp = 0;
         if object.tls_memsz == 0 {
@@ -1416,14 +1895,71 @@ unsafe fn plan_initial_tls(objects: &mut [Object; MAX_OBJECTS]) -> Option<bool> 
         if offset_below_tp < object.tls_memsz {
             return None;
         }
-        module_count = module_count.checked_add(1)?;
-        if module_count >= TLS_DTV_WORDS {
+        #[cfg(crabc_loader_libc_tls_runtime_v1)]
+        let module_id = registry.assign_initial(_object_index).ok()?.get();
+        #[cfg(not(crabc_loader_libc_tls_runtime_v1))]
+        let module_id = module_count.checked_add(1)?;
+        if module_id >= TLS_DTV_WORDS {
             return None;
         }
-        object.tls_module_id = module_count;
+        module_count = module_id;
+        object.tls_module_id = module_id;
         object.tls_offset_below_tp = offset_below_tp;
     }
+    #[cfg(crabc_loader_libc_tls_runtime_v1)]
+    {
+        registry.seal().ok()?;
+        if registry.module_count() != module_count || registry.generation().get() != 1 {
+            return None;
+        }
+    }
     Some(has_tls)
+}
+
+/// Returns the sealed, loader-owned initial RuntimeV1 registry.
+///
+/// This state stays private to the interpreter and records only generation
+/// one. The fixed graph has no runtime mapping entry point, and the registry's
+/// explicit growth rejection prevents that absence from becoming an implicit
+/// libc or fixed-DTV fallback.
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+unsafe fn initial_tls_runtime_v1_registry(
+    objects: &[Object; MAX_OBJECTS],
+) -> Option<&'static LoaderInitialTlsRegistry> {
+    // SAFETY: `plan_initial_tls` sealed this one startup-owned static before
+    // this accessor runs; the fixed graph exposes no later mutation path.
+    let registry = unsafe { &*core::ptr::addr_of!(INITIAL_TLS_RUNTIME_V1_REGISTRY) };
+    if registry.phase() != x86_64_initial_tls_registry::RegistryPhase::Sealed
+        || registry.generation().get() != 1
+        || registry.module_count() >= TLS_DTV_WORDS
+        || registry.reject_runtime_tls_growth(MAX_OBJECTS)
+            != Err(
+                x86_64_initial_tls_registry::RuntimeTlsGrowthError::DtvGrowthProtocolUnavailable,
+            )
+    {
+        return None;
+    }
+    let mut module_count = 0usize;
+    for (object_index, object) in objects.iter().enumerate() {
+        if object.tls_memsz == 0 {
+            if registry.module_id(object_index).is_some() || object.tls_module_id != 0 {
+                return None;
+            }
+            continue;
+        }
+        module_count = module_count.checked_add(1)?;
+        if object.tls_module_id != module_count
+            || registry.module_id(object_index).map(|module_id| module_id.get())
+                != Some(module_count)
+            || object.tls_offset_below_tp < object.tls_memsz
+        {
+            return None;
+        }
+    }
+    if registry.module_count() != module_count {
+        return None;
+    }
+    Some(registry)
 }
 
 /// Materialize every fixed-graph initial TLS image and install its minimal
@@ -1433,7 +1969,9 @@ unsafe fn plan_initial_tls(objects: &mut [Object; MAX_OBJECTS]) -> Option<bool> 
 /// `%fs:8` is a DTV with one count word followed by one one-based module slot
 /// per TLS-bearing object. The prefix intentionally does not claim a full musl pthread
 /// TCB, a DTV growth protocol, or a worker allocation interface.
-unsafe fn install_initial_tls(objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+unsafe fn install_initial_tls(
+    objects: &[Object; MAX_OBJECTS],
+) -> Option<InstalledInitialTls> {
     let mut total_tls_size = 0usize;
     let mut tp_alignment = core::mem::align_of::<usize>();
     let mut module_count = 0usize;
@@ -1531,6 +2069,98 @@ unsafe fn install_initial_tls(objects: &[Object; MAX_OBJECTS]) -> Option<()> {
     if syscall2(SYS_ARCH_PRCTL, ARCH_SET_FS, thread_pointer as i64) < 0 {
         let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
         return None;
+    }
+    Some(InstalledInitialTls {
+        mapping: mapping as *mut u8,
+        mapping_byte_len: mapping_size,
+        thread_pointer: tcb,
+        dtv,
+        dtv_words: TLS_DTV_WORDS,
+        module_count,
+    })
+}
+
+/// Publish the one loader-owned RuntimeV1 record after a complete initial TLS
+/// materialization.
+///
+/// This is a one-shot startup handoff, not a dynamic TLS registry mutation.
+/// The fixed graph has no operation that can add a TLS module, replace the
+/// DTV, advance the generation, or reclaim the initial block. Deliberately
+/// poison the malformed-fixture coordinates after their metadata is fixed so
+/// the freestanding libc negative tests prove validation occurs before any
+/// consumer TCB/DTV dereference. The six metadata variants retain valid
+/// coordinates so no later pointer guard can mask an omitted metadata check.
+#[cfg(crabc_loader_libc_tls_runtime_v1)]
+unsafe fn publish_loader_tls_runtime_v1(
+    installed: InstalledInitialTls,
+    registry: &LoaderInitialTlsRegistry,
+) -> Option<()> {
+    if registry.phase() != x86_64_initial_tls_registry::RegistryPhase::Sealed
+        || registry.generation().get() != 1
+        || registry.module_count() != installed.module_count
+        || registry.module_count() >= installed.dtv_words
+    {
+        return None;
+    }
+    let record = core::ptr::addr_of_mut!(__crabc_x86_64_loader_tls_runtime_v1);
+    if unsafe {
+        (*record).state.compare_exchange(
+            LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED,
+            LOADER_TLS_RUNTIME_V1_STATE_PUBLISHING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+    }
+    .is_err()
+    {
+        return None;
+    }
+
+    let poisoned_dtv = cfg!(crabc_loader_libc_tls_runtime_v1_poisoned_dtv);
+    let (thread_pointer, dtv, dtv_words, module_count) = if poisoned_dtv {
+        // `1` is intentionally not an aligned Linux x86-64 DTV address. The
+        // thread pointer remains valid so an accidental DTV read reaches this
+        // poison rather than being hidden by the earlier thread-pointer
+        // comparison. Every metadata variant below uses the valid branch.
+        (
+            installed.thread_pointer.cast_const(),
+            1usize as *const usize,
+            installed.dtv_words,
+            installed.module_count,
+        )
+    } else {
+        (
+            installed.thread_pointer.cast_const(),
+            installed.dtv.cast_const(),
+            installed.dtv_words,
+            installed.module_count,
+        )
+    };
+    if !poisoned_dtv
+        && (thread_pointer.is_null()
+            || dtv.is_null()
+            || module_count == 0
+            || dtv_words < module_count.checked_add(1)?)
+    {
+        unsafe {
+            (*record)
+                .state
+                .store(LOADER_TLS_RUNTIME_V1_STATE_UNPUBLISHED, Ordering::Release);
+        }
+        return None;
+    }
+
+    unsafe {
+        (*record).thread_pointer = thread_pointer;
+        (*record).dtv = dtv;
+        (*record).dtv_words = dtv_words;
+        (*record).module_count = module_count;
+        // The metadata values above are initialized in the static record and
+        // never changed by this fixture. Publish the coordinates only after
+        // every field has been written.
+        (*record)
+            .state
+            .store(LOADER_TLS_RUNTIME_V1_STATE_READY, Ordering::Release);
     }
     Some(())
 }
@@ -1853,7 +2483,11 @@ unsafe fn relocation_value(
         R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
             add_signed(resolve_symbol(requestor, objects, symbol)?, addend)
         }
-        #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
+        #[cfg(any(
+            crabc_initial_tls_graph,
+            crabc_initial_exec_tls_graph,
+            crabc_general_initial_tls_materialization_v1
+        ))]
         R_X86_64_DTPMOD64 => {
             if addend != 0 {
                 return None;
@@ -1861,7 +2495,11 @@ unsafe fn relocation_value(
             let (module_id, _, _) = resolve_tls_symbol(requestor, objects, symbol)?;
             u64::try_from(module_id).ok()
         }
-        #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
+        #[cfg(any(
+            crabc_initial_tls_graph,
+            crabc_initial_exec_tls_graph,
+            crabc_general_initial_tls_materialization_v1
+        ))]
         R_X86_64_DTPOFF64 => {
             let (_, symbol_offset, module_memsz) = resolve_tls_symbol(requestor, objects, symbol)?;
             let offset = add_signed(symbol_offset, addend)?;
@@ -1870,7 +2508,11 @@ unsafe fn relocation_value(
             }
             Some(offset)
         }
-        #[cfg(not(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph)))]
+        #[cfg(not(any(
+            crabc_initial_tls_graph,
+            crabc_initial_exec_tls_graph,
+            crabc_general_initial_tls_materialization_v1
+        )))]
         R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 => None,
         #[cfg(crabc_initial_exec_tls_graph)]
         R_X86_64_TPOFF64 => {
@@ -1951,9 +2593,64 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
     // import is resolved by that interpreter only; compile this special scope
     // out of the older no-TLS artifact so it cannot silently widen its
     // ordinary GLOB_DAT/JUMP_SLOT lookup contract.
-    #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
+    #[cfg(any(
+        crabc_initial_tls_graph,
+        crabc_initial_exec_tls_graph,
+        crabc_general_initial_tls_materialization_v1
+    ))]
     if len == b"__tls_get_addr".len() && bytes_eq(name, b"__tls_get_addr".as_ptr(), len) {
         return Some(__tls_get_addr as *const () as usize as u64);
+    }
+    // The first RuntimeV1 handoff is one explicit weak data import from the
+    // freestanding libc-side consumer in the main image. It is not normal
+    // global lookup: a DSO request, a defined main symbol, or a strong import
+    // is rejected before this loader-owned TLS descriptor can cross into
+    // libc. That keeps static mode outside this private initial-TLS seam. A
+    // separately cfg-selected general RuntimeV1 wire reaches the same private
+    // symbol only through its own loader-owned descriptor record below; it
+    // does not make this fixed special case into general symbol lookup.
+    #[cfg(crabc_loader_libc_tls_runtime_v1)]
+    if len == b"__crabc_x86_64_loader_tls_runtime_v1".len()
+        && bytes_eq(
+            name,
+            b"__crabc_x86_64_loader_tls_runtime_v1".as_ptr(),
+            len,
+        )
+    {
+        let is_main = !requestor.mapped
+            && requestor.base == objects[0].base
+            && requestor.phdr == objects[0].phdr;
+        let binding = *symbol.add(4) >> 4;
+        let section = read_u16(symbol.add(6));
+        if !is_main || binding != 2 || section != 0 {
+            return None;
+        }
+        return Some(core::ptr::addr_of!(__crabc_x86_64_loader_tls_runtime_v1) as usize as u64);
+    }
+    // The arbitrary initial-TLS graph has a distinct producer with the same
+    // private 72-byte ABI. Its cfg is disjoint from the fixed seam above, and
+    // its publication reservation occurs before ARCH_SET_FS in the retained
+    // general TLS state. This remains one exact weak main-image data import,
+    // never an ambient loader symbol-resolution rule.
+    #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
+    if len == b"__crabc_x86_64_loader_tls_runtime_v1".len()
+        && bytes_eq(
+            name,
+            b"__crabc_x86_64_loader_tls_runtime_v1".as_ptr(),
+            len,
+        )
+    {
+        let is_main = !requestor.mapped
+            && requestor.base == objects[0].base
+            && requestor.phdr == objects[0].phdr;
+        let binding = *symbol.add(4) >> 4;
+        let section = read_u16(symbol.add(6));
+        if !is_main || binding != 2 || section != 0 {
+            return None;
+        }
+        return Some(
+            x86_64_general_initial_tls_state::loader_tls_runtime_v1_record_address(),
+        );
     }
     // The owned-CRT handoff is one explicit weak data import from the one
     // Rust-Scrt1 main image.  It is not a normal global lookup: accepting a
@@ -2048,7 +2745,11 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
 
 /// Resolve a dynamic-symbol-table TLS definition to its fixed-graph module
 /// index and module-relative `st_value` offset.
-#[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
+#[cfg(any(
+    crabc_initial_tls_graph,
+    crabc_initial_exec_tls_graph,
+    crabc_general_initial_tls_materialization_v1
+))]
 unsafe fn resolve_tls_symbol(
     requestor: &Object,
     objects: &[Object; MAX_OBJECTS],
@@ -2638,7 +3339,7 @@ unsafe fn bounded_runtime_map(path: *const u8) -> Result<usize, &'static [u8]> {
     let Some(fd) = open_from_runpath(main.runpath, main.runpath_len, path, path_len) else {
         return Err(b"runtime loader object was not found in RUNPATH");
     };
-    let mapped = map_elf(fd, true);
+    let mapped = map_elf(fd, true, false);
     let _ = syscall1(SYS_CLOSE, fd);
     let Some(object) = mapped else {
         return Err(b"runtime loader rejected malformed ELF");
@@ -3190,7 +3891,11 @@ unsafe fn virtual_range_in_page_mapped_load(
 /// segment. `p_memsz` may legitimately extend through BSS, but copying
 /// `p_filesz` from that extension would turn a malformed ELF record into a
 /// speculative read from whatever virtual mapping happens to follow it.
-#[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
+#[cfg(any(
+    crabc_initial_tls_graph,
+    crabc_initial_exec_tls_graph,
+    crabc_general_initial_tls_materialization_v1
+))]
 unsafe fn virtual_range_in_readable_file_load(
     phdr: *const u8,
     phnum: usize,
@@ -3333,5 +4038,6 @@ pub unsafe extern "C" fn memmove(destination: *mut c_void, source: *const c_void
 pub unsafe extern "C" fn bcmp(left: *const c_void, right: *const c_void, length: usize) -> i32 { memcmp(left, right, length) }
 #[no_mangle]
 pub unsafe extern "C" fn memcmp(left: *const c_void, right: *const c_void, length: usize) -> i32 { let left = left as *const u8; let right = right as *const u8; for index in 0..length { let delta = *left.add(index) as i32 - *right.add(index) as i32; if delta != 0 { return delta; } } 0 }
+#[cfg(not(test))]
 #[no_mangle]
 pub extern "C" fn rust_eh_personality() {}

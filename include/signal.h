@@ -412,7 +412,11 @@ int sigfillset(sigset_t *);
 int sigaddset(sigset_t *, int);
 int sigdelset(sigset_t *, int);
 int sigismember(const sigset_t *, int);
+/* Pinned musl exposes this historical `signal` spelling only to GNU source.
+ * `__sysv_signal` is an ABI-only alias in musl's signal.c and deliberately has
+ * no public header declaration. */
 #if defined(_GNU_SOURCE)
+void (*bsd_signal(int, void (*)(int)))(int);
 int sigisemptyset(const sigset_t *);
 int sigorset(sigset_t *, const sigset_t *, const sigset_t *);
 int sigandset(sigset_t *, const sigset_t *, const sigset_t *);
@@ -427,8 +431,11 @@ int sigwait(const sigset_t *, int *);
 int sigaltstack(const stack_t *, stack_t *);
 int killpg(pid_t, int);
 #endif
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) || \
+    defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 void psiginfo(const siginfo_t *, const char *);
 void psignal(int, const char *);
+#endif
 int pthread_kill(pthread_t, int);
 int pthread_sigmask(int, const sigset_t *__restrict, sigset_t *__restrict);
 /* These System V signal helpers are legacy XSI. POSIX.1-2024 no longer

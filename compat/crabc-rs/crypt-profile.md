@@ -21,13 +21,19 @@ arbitrary short/non-canonical musl salt text would require local MCF/algorithm
 adaptation, which is prohibited by the project's no-hand-rolled-cryptography
 rule.
 
-DES crypt, BSDI extended DES, MD5-crypt (`$1$`), bcrypt (`$2a$`/`$2y$`), and
-the historical `encrypt`/`setkey` family are intentionally limited. The
+DES crypt, BSDI extended DES, MD5-crypt (`$1$`), and bcrypt
+(`$2a$`/`$2y$`) remain intentionally unsupported crypt semantics. The
+separate selected-private x86 `legacy.misc` evidence slice may provide
+opt-in, inert link-compatible `encrypt`/`setkey` names, but they neither
+implement nor imply DES, a cipher, PRNG, or any cryptographic service. The
 private `__crypt_*` symbols remain exported where the existing ABI inventory
 requires them, but unsupported formats return the conventional `*` marker.
 Null output pointers and a null `crypt_r` storage pointer are rejected without
-writing, returning null. This is a profile limitation, not a claim of full
-historical musl `crypt` parity.
+writing, returning null. A null key selects the empty key. A null setting is
+an unsupported `*` marker through `crypt`/`crypt_r`/`__crypt_r`, while a direct
+`__crypt_sha256` or `__crypt_sha512` call leaves its non-null output buffer
+unchanged. This is a profile limitation, not a claim of full historical musl
+`crypt` parity.
 
 ## Dependency decision
 

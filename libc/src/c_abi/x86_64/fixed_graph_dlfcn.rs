@@ -65,7 +65,32 @@ struct RuntimeRecordV1 {
 
 unsafe impl Sync for RuntimeRecordV1 {}
 
+// `global_asm!` inherits the assembler's current section.  The canonical
+// archive can otherwise place this callable trampoline after the non-allocating
+// GNU-stack marker, which static LLD correctly discards despite the public
+// dlfcn entries referring to it. Give both variants one explicit allocated
+// executable section.
+//
+// The installed static product has no interpreter, so retaining the dynamic
+// loader record as an undefined weak symbol would violate its closed ELF
+// boundary. Its trampoline therefore returns null directly, preserving this
+// bridge's existing unavailable-record behavior. The staged dynamic graph
+// artifacts keep their weak RuntimeV1 import unchanged.
+#[cfg(crabc_owned_static_sysroot)]
 core::arch::global_asm!(
+    ".section .text.__crabc_x86_fixed_graph_dlfcn_record,\"ax\",@progbits",
+    ".hidden __crabc_x86_fixed_graph_dlfcn_record",
+    ".global __crabc_x86_fixed_graph_dlfcn_record",
+    ".type __crabc_x86_fixed_graph_dlfcn_record,@function",
+    "__crabc_x86_fixed_graph_dlfcn_record:",
+    "xor eax, eax",
+    "ret",
+    ".size __crabc_x86_fixed_graph_dlfcn_record, .-__crabc_x86_fixed_graph_dlfcn_record",
+);
+
+#[cfg(not(crabc_owned_static_sysroot))]
+core::arch::global_asm!(
+    ".section .text.__crabc_x86_fixed_graph_dlfcn_record,\"ax\",@progbits",
     ".weak __crabc_x86_64_fixed_graph_dlfcn_v1",
     ".hidden __crabc_x86_fixed_graph_dlfcn_record",
     ".global __crabc_x86_fixed_graph_dlfcn_record",

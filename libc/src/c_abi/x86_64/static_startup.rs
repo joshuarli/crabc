@@ -14,8 +14,9 @@
 //! application callbacks. The adjacent `auxv_observation` leaf receives the
 //! same validated initial auxiliary vector before constructors, but owns only
 //! raw tag lookup rather than secure-execution or loader policy. The private
-//! adjacent startup_security cache derives only the secure_getenv decision
-//! from that same validated vector; it does not alter the raw lookup contract.
+//! adjacent startup_security cache derives the bounded secure_getenv and
+//! issetugid decisions from that same validated vector; it does not alter the
+//! raw lookup contract.
 //!
 //! Translation provenance is musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -281,7 +282,8 @@ pub unsafe extern "C" fn __libc_start_main(
     unsafe { auxv_observation::install_initial(vectors.auxv) };
 
     // SAFETY: the same validated immutable vector supplies the private musl
-    // secure_getenv cache. It does not publish or alter raw getauxval state.
+    // secure_getenv/issetugid cache. It does not publish or alter raw
+    // getauxval state.
     unsafe { startup_security::install_initial(vectors.auxv) };
 
     // SAFETY: `startup_vectors` validated the kernel/CRT argv/envp

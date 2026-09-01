@@ -314,6 +314,7 @@ feof
 feof_unlocked
 feraiseexcept
 ferror
+ferror_unlocked
 fesetenv
 fesetexceptflag
 fesetround
@@ -492,6 +493,7 @@ isprint
 isprint_l
 ispunct
 ispunct_l
+issetugid
 isspace
 isspace_l
 isupper
@@ -793,6 +795,7 @@ remquo
 remquof
 remquol
 rename
+renameat2
 res_init
 rewind
 rewinddir
@@ -1055,6 +1058,8 @@ vsnprintf
 vsprintf
 vsscanf
 wait
+wait3
+wait4
 waitid
 waitpid
 wcpcpy

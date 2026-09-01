@@ -10,6 +10,20 @@
 #include <wchar.h>
 #include <wctype.h>
 
+#if defined(CRABC_REQUIRE_STRICT_LANGINFO_LOCALE)
+typedef char *(*strict_langinfo_l_signature)(nl_item, locale_t);
+
+_Static_assert(sizeof(locale_t) == sizeof(void *) &&
+    _Alignof(locale_t) == _Alignof(void *), "strict locale_t pointer ABI");
+_Static_assert(sizeof(nl_item) == sizeof(int), "strict nl_item int ABI");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&nl_langinfo_l),
+    strict_langinfo_l_signature), "strict nl_langinfo_l declaration");
+
+int crabc_x86_64_locale_object_wide_header_abi_probe(void)
+{
+    return 0;
+}
+#else
 typedef locale_t (*newlocale_signature)(int, const char *, locale_t);
 typedef void (*freelocale_signature)(locale_t);
 typedef locale_t (*locale_unary_signature)(locale_t);
@@ -76,3 +90,4 @@ int crabc_x86_64_locale_object_wide_header_abi_probe(void)
 {
     return 0;
 }
+#endif

@@ -139,13 +139,14 @@ done
 "$ORACLE_CC" -std=c11 -DCRABC_LCHOWN_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections \
     compat/x86_64/libc_lchown_probe.c compat/x86_64/libc_lchown_start.S \
     "$archive" -o "$candidate"
 assert_static_closure "$candidate"
 
 if grep -Eq '[[:space:]](chown|fchown|fchownat|link|linkat|symlink|symlinkat|readlink|readlinkat|unlink|unlinkat|rename|renameat|renameat2|mkdir|mkdirat)$' \
     "$work_dir/candidate-symbols"; then
-    fail "lchown candidate exports an unselected ownership or pathname entry"
+    fail "lchown candidate unexpectedly pulls independently selected ownership or pathname entry"
 fi
 objdump -d --disassemble=lchown "$candidate" >"$lchown_disassembly"
 grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$lchown_disassembly" ||
@@ -154,7 +155,7 @@ grep -Eq '\$0x5e,%e?ax' "$lchown_disassembly" ||
     fail "lchown lacks Linux x86-64 lchown=94"
 if grep -Eq 'call.*(chown|fchown|fchownat|link|linkat|symlink|symlinkat|readlink|readlinkat|unlink|unlinkat|rename|renameat|renameat2|mkdir|mkdirat)' \
     "$lchown_disassembly"; then
-    fail "lchown delegates to an unselected C entry"
+    fail "lchown delegates to an unrelated C entry"
 fi
 
 (cd "$candidate_work" && "$candidate") ||

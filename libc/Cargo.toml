@@ -25,10 +25,74 @@ x86-allocator-runtime = ["dep:libmimalloc-sys"]
 # that feature's private wrapper/backend boundary and does not select a wider
 # string or allocator runtime.
 x86-allocator-string-duplication = ["x86-allocator-runtime"]
+# `scandir` is a separate allocation client over the selected C directory and
+# allocator boundaries. Keeping it opt-in leaves the dependency-free directory
+# stream artifact and the default x86 static export root unchanged.
+x86-scandir = ["x86-allocator-runtime"]
+# The environment owner needs the same C allocation provider as musl's
+# setenv/putenv vector and string bookkeeping. Keep it opt-in so existing
+# dependency-free selected-static artifacts do not silently acquire it.
+x86-environment-runtime = ["x86-allocator-runtime"]
 # Complete the distinct strong AArch64 allocator-observation entry only for
 # its closed capability gate. This implies the private allocation backend but
 # does not widen the earlier basic-wrapper artifact's exact object surface.
 x86-allocator-observability = ["x86-allocator-runtime"]
+# Private Linux/x86-64 resolver-runtime evidence. The C ABI state owner uses
+# the existing stateless no_std DNS transport, but remains opt-in until this
+# bounded package has its own complete native evidence and family accounting.
+x86-resolver-runtime = ["dep:crabc-core"]
+# Private Linux/x86-64 evidence for the existing bounded SHA-crypt C ABI.
+# `sha-crypt` owns the MCF result temporarily. The target-local adapter bridges
+# only to the final link's C malloc/aligned_alloc/free symbols; this does not
+# enable x86-allocator-runtime or select an allocator backend, lifecycle, or
+# wider x86 C runtime. The two features are deliberately rejected together
+# until one allocation-provider composition is separately evidenced.
+x86-crypt = ["dep:base64ct", "dep:sha-crypt"]
+# The frozen legacy.misc aggregate has five separately evidenced default-root
+# prerequisites.  Keep its remaining fmtmsg/setkey/encrypt C ABI owner opt-in
+# until this private aggregate has its own closed x86 evidence; otherwise the
+# selected-static export contract would silently widen.  `encrypt`/`setkey`
+# deliberately retain the established inert-DES compatibility result rather
+# than selecting or implementing a cryptographic subsystem.
+x86-legacy-misc = []
+# Private x86 binary80 evidence for the exact musl `fdiml` and GNU
+# `exp10l`/weak-`pow10l` closure.  It intentionally has no default-root or
+# dependency effect: the focused runner is the only current consumer.
+x86-math-long-double-completion = []
+# Pinned musl's `signal.c` exports two historical weak spellings at the exact
+# `signal` address. Keep this ABI-only compatibility leaf opt-in so the frozen
+# selected-static archive does not silently gain legacy signal names.
+x86-signal-legacy-aliases = []
+# The four historical System V signal helpers are an independently evidenced
+# private closure over the existing x86 signal foundation. Keep it opt-in so
+# the frozen selected-static archive does not imply a wider signal runtime.
+x86-signal-sysv-helpers = []
+# Pinned musl's psignal/psiginfo pair is a reporting operation over the
+# existing permanent stderr/errno/strsignal substrate. Keep it opt-in: the
+# frozen default archive deliberately rejects diagnostics and these two public
+# spellings until this feature's closed static differential is selected.
+x86-signal-reporting = []
+# Pinned musl's iopl/ioperm pair is a direct privileged-kernel permission
+# boundary. Keep it opt-in so the default archive does not silently gain I/O
+# privilege mutation entry points before its negative-path evidence closes.
+x86-io-permissions = []
+# Pinned musl's round-robin interval wrapper is a direct scheduler-observation
+# seam. Keep it opt-in until its C ABI/error/TLS differential is selected,
+# leaving the frozen default archive free of scheduler query entry points.
+x86-sched-rr-interval = []
+# Pinned musl's explicit_bzero/swab pair is a small byte-range compatibility
+# boundary. Keep it opt-in until its optimizer-retention and pair-copy proof
+# closes, preserving the frozen default C ABI surface.
+x86-memory-special = []
+# Pinned musl's a64l decoder shares source provenance with the default l64a
+# encoder but uses its own immutable 64-byte table scan, with no byte-string
+# archive dependency. Keep it opt-in so the default archive remains the frozen
+# one-symbol l64a source split.
+x86-a64l = []
+# Pinned musl's stateless sethostent/setnetent pair shares one strong/weak ELF
+# alias body. Keep both names opt-in so the default archive stays free of
+# legacy netdb setter symbols and no resolver/database state is implied.
+x86-netdb-setent = []
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core" }
@@ -42,7 +106,13 @@ base64ct = { version = "1.8", default-features = false }
 sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))'.dependencies]
+crabc-core = { path = "../crabc-core", optional = true }
 libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"], optional = true }
+# These are the same approved RustCrypto packages used by the active AArch64
+# crypt profile. Keeping them optional confines their alloc-enabled MCF path
+# to the separately evidenced x86 `x86-crypt` leaf.
+base64ct = { version = "1.8", default-features = false, optional = true }
+sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "password-hash"], optional = true }
 
 # The repository-level C and loader fixtures remain in ../tests so their
 # evidence paths are stable. Explicit targets make crabc-libc their owner
@@ -477,6 +547,7 @@ path = "../tests/ldso_tls_alignment.rs"
 [[test]]
 name = "legacy_des"
 path = "../tests/legacy_des.rs"
+
 
 
 [[test]]

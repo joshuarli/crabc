@@ -5,6 +5,11 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
+# The default archive now carries the binary32/binary64 exp10 siblings selected
+# by the aggregate. Only these feature-gated binary80 names must remain absent
+# from this unfeatured leaf archive; the final leaf candidate still excludes
+# every sibling math provider below.
+readonly OPT_IN_BINARY80_MATH_SYMBOLS=(exp10l fdiml pow10l)
 
 fail() { printf 'ERROR: x86 static libc fenv rounding: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
@@ -70,7 +75,7 @@ for symbol in rint rintf rintl nearbyint nearbyintf nearbyintl feclearexcept \
 	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
 		|| fail "archive does not define $symbol"
 done
-for unselected in exp10 exp10f exp10l pow10 pow10f pow10l fdiml; do
+for unselected in "${OPT_IN_BINARY80_MATH_SYMBOLS[@]}"; do
 	if grep -Fxq "$unselected" "$selected_symbols"; then
 		fail "archive accidentally exports unselected ${unselected}"
 	fi

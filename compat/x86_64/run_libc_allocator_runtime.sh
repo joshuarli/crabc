@@ -38,6 +38,21 @@ archive_member_for_symbol() {
         sort -u
 }
 
+assert_elf_function_binding() {
+    local symbols_path="$1"
+    local symbol="$2"
+    local binding="$3"
+    local owner="$4"
+
+    awk -v symbol="$symbol" -v binding="$binding" '
+        $4 == "FUNC" && $5 == binding && $6 == "DEFAULT" && $NF == symbol {
+            found = 1
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$symbols_path" \
+        || fail "$owner must export ${symbol} as ${binding}/DEFAULT/FUNC"
+}
+
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in
     x86_64|amd64) ;;
@@ -64,6 +79,7 @@ candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
+wrapper_elf_symbols="$work_dir/wrapper-symbols"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -76,8 +92,12 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin \
     -fno-stack-protector -I"$ROOT_DIR/include" \
     compat/x86_64/libc_allocator_runtime_probe.c -o "$reference"
-env -i LC_ALL=C TZ=UTC "$reference" \
-    || fail "pinned-musl allocator reference failed"
+if env -i LC_ALL=C TZ=UTC "$reference"; then
+    :
+else
+    probe_status=$?
+    fail "pinned-musl allocator reference failed with probe exit $probe_status"
+fi
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --features x86-allocator-runtime --target x86_64-unknown-linux-musl -- \
@@ -99,6 +119,10 @@ mapfile -t backend_members < <(ar t "$full_archive" | grep -- '-static\.o$')
     || fail "allocator backend must have exactly one bundled static object"
 [ "${allocator_members[0]}" != "${errno_members[0]}" ] \
     || fail "allocator and errno ownership unexpectedly collapsed"
+[ "${allocator_members[0]}" != "${backend_members[0]}" ] \
+    || fail "allocator wrapper and backend ownership unexpectedly collapsed"
+[ "${errno_members[0]}" != "${backend_members[0]}" ] \
+    || fail "errno and backend ownership unexpectedly collapsed"
 
 mkdir "$work_dir/selected-members"
 (
@@ -108,8 +132,12 @@ mkdir "$work_dir/selected-members"
     ar crs "$selected_archive" "${allocator_members[0]}" \
         "${errno_members[0]}" "${backend_members[0]}"
 )
+mapfile -t selected_members < <(ar t "$selected_archive")
+if [ "${selected_members[*]}" != "${allocator_members[0]} ${errno_members[0]} ${backend_members[0]}" ]; then
+    fail "selected allocator artifact contains an unexpected archive member"
+fi
 
-mapfile -t wrapper_symbols < <(
+mapfile -t wrapper_exports < <(
     nm -g --defined-only --format=posix \
         "$work_dir/selected-members/${allocator_members[0]}" |
         awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' | sort -u
@@ -126,20 +154,41 @@ expected_wrapper_symbols=(
     reallocarray
     valloc
 )
-if [ "${wrapper_symbols[*]}" != "${expected_wrapper_symbols[*]}" ]; then
+if [ "${wrapper_exports[*]}" != "${expected_wrapper_symbols[*]}" ]; then
     printf 'expected: %s\nactual:   %s\n' "${expected_wrapper_symbols[*]}" \
-        "${wrapper_symbols[*]}" >&2
+        "${wrapper_exports[*]}" >&2
     fail "allocator wrapper export surface drifted"
 fi
+readelf --symbols --wide "$work_dir/selected-members/${allocator_members[0]}" \
+    >"$wrapper_elf_symbols"
+if awk '$5 ~ /^(GLOBAL|WEAK)$/ && $7 != "UND" && $4 != "FUNC" {
+    found = 1
+} END { exit(found ? 0 : 1) }' "$wrapper_elf_symbols"; then
+    fail "allocator wrapper exposes non-function public data"
+fi
+for symbol in "${expected_wrapper_symbols[@]}"; do
+    case "$symbol" in
+        malloc) binding=WEAK ;;
+        *) binding=GLOBAL ;;
+    esac
+    assert_elf_function_binding "$wrapper_elf_symbols" "$symbol" "$binding" \
+        "allocator wrapper"
+done
 for symbol in __errno_location ___errno_location; do
     nm -g --defined-only "$work_dir/selected-members/${errno_members[0]}" |
         grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" \
         || fail "selected errno owner lacks $symbol"
 done
-for symbol in mi_malloc_aligned mi_zalloc mi_realloc mi_free; do
+for symbol in mi_malloc_aligned mi_zalloc mi_realloc_aligned mi_free; do
     nm -g --defined-only "$work_dir/selected-members/${backend_members[0]}" |
         grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" \
         || fail "bundled AArch64-equivalent backend lacks $symbol"
+done
+for symbol in "${expected_wrapper_symbols[@]}" malloc_usable_size; do
+    if nm -g --defined-only "$work_dir/selected-members/${backend_members[0]}" |
+        grep -Eq "[[:space:]][TW][[:space:]]${symbol}$"; then
+        fail "bundled backend unexpectedly exports public allocator symbol $symbol"
+    fi
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
@@ -159,7 +208,20 @@ for symbol in __crabc_x86_allocator_runtime_v1 aligned_alloc calloc free malloc 
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate lacks crabc allocator symbol $symbol"
 done
-if grep -Eq 'libc\.a\((aligned_alloc|calloc|free|malloc|memalign|posix_memalign|realloc|reallocarray|valloc)\.lo\)' \
+for symbol in "${expected_wrapper_symbols[@]}"; do
+    case "$symbol" in
+        malloc) binding=WEAK ;;
+        *) binding=GLOBAL ;;
+    esac
+    assert_elf_function_binding "$candidate_symbols" "$symbol" "$binding" \
+        "candidate"
+done
+for symbol in malloc_usable_size __crabc_x86_allocator_observability_v1; do
+    if grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols"; then
+        fail "candidate leaked separate allocator-observability symbol $symbol"
+    fi
+done
+if grep -Eq 'libc\.a\((aligned_alloc|calloc|free|libc_calloc|lite_malloc|malloc|malloc_usable_size|memalign|posix_memalign|realloc|reallocarray|replaced|valloc)\.lo\)' \
     "$link_map"; then
     fail "candidate selected a pinned-musl allocator implementation"
 fi
@@ -181,7 +243,11 @@ if grep -Eqi 'glibc|ld-linux|libc\.so\.6' "$candidate_program_headers" \
     fail "candidate selected glibc"
 fi
 
-env -i LC_ALL=C TZ=UTC "$candidate" \
-    || fail "crabc allocator wrapper candidate failed"
+if env -i LC_ALL=C TZ=UTC "$candidate"; then
+    :
+else
+    probe_status=$?
+    fail "crabc allocator wrapper candidate failed with probe exit $probe_status"
+fi
 
 printf 'x86 static libc allocator runtime: PASS\n'

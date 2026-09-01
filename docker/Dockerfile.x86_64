@@ -35,6 +35,7 @@ RUN test "$(uname -m)" = "x86_64" \
         bash \
         binutils \
         build-base \
+        clang \
         ca-certificates \
         coreutils \
         curl \

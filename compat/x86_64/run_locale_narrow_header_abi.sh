@@ -48,4 +48,32 @@ for object in "$oracle_cxx" "$project_cxx"; do
     fi
 done
 
+# Pinned musl keeps only the two narrow string `_l` declarations visible in
+# strict C/C++; the broader locale-object and ctype vocabulary remains gated.
+# Exercise that exact small strict profile without falsely widening this
+# X/Open aggregate probe.
+strict_oracle_c="$work_dir/strict-oracle-c.o"
+strict_project_c="$work_dir/strict-project-c.o"
+strict_oracle_cxx="$work_dir/strict-oracle-cxx.o"
+strict_project_cxx="$work_dir/strict-project-cxx.o"
+"$ORACLE_CC" -std=c11 -DCRABC_REQUIRE_STRICT_STRING_LOCALE -nostdinc \
+    -isystem /opt/musl-1.2.6/include -c "$C_PROBE" -o "$strict_oracle_c"
+"$ORACLE_CC" -std=c11 -DCRABC_REQUIRE_STRICT_STRING_LOCALE -nostdinc \
+    -isystem "$ROOT_DIR/include" -c "$C_PROBE" -o "$strict_project_c"
+c++ -std=c++17 -DCRABC_REQUIRE_STRICT_STRING_LOCALE -nostdinc -nostdinc++ \
+    -isystem /opt/musl-1.2.6/include -c "$CXX_PROBE" -o "$strict_oracle_cxx"
+c++ -std=c++17 -DCRABC_REQUIRE_STRICT_STRING_LOCALE -nostdinc -nostdinc++ \
+    -isystem "$ROOT_DIR/include" -c "$CXX_PROBE" -o "$strict_project_cxx"
+for object in "$strict_oracle_cxx" "$strict_project_cxx"; do
+    undefined="$work_dir/$(basename "$object").undefined"
+    nm -u "$object" | awk '{ print $NF }' | sort -u >"$undefined"
+    for symbol in strcasecmp_l strncasecmp_l; do
+        grep -Fxq "$symbol" "$undefined" ||
+            fail "strict C++ object lacks unmangled $symbol"
+    done
+    if grep -Eq '^_Z' "$undefined"; then
+        fail "strict C++ narrow-locale probe retained a mangled reference"
+    fi
+done
+
 printf 'x86 pinned-musl/project fixed-locale narrow text header ABI: PASS\n'

@@ -23,6 +23,53 @@ typedef int (*ns_skiprr_signature)(const unsigned char *, const unsigned char *,
 _Static_assert(NS_CMPRSFLGS == 0xc0 && NS_MAXLABEL == 63 &&
     NS_MAXCDNAME == 255 && NS_MAXDNAME == 1025,
     "musl DNS wire-name constants");
+#ifndef ns_t_qt_p
+#error "musl DNS query-type helper is missing"
+#endif
+#ifndef ns_t_mrr_p
+#error "musl DNS meta-record helper is missing"
+#endif
+#ifndef ns_t_rr_p
+#error "musl DNS resource-record helper is missing"
+#endif
+#ifndef ns_t_udp_p
+#error "musl DNS UDP-transfer helper is missing"
+#endif
+#ifndef ns_t_xfr_p
+#error "musl DNS transfer-type helper is missing"
+#endif
+#ifndef NS_NXT_BIT_SET
+#error "musl DNS next-bit setter is missing"
+#endif
+#ifndef NS_NXT_BIT_CLEAR
+#error "musl DNS next-bit clearer is missing"
+#endif
+#ifndef NS_NXT_BIT_ISSET
+#error "musl DNS next-bit tester is missing"
+#endif
+_Static_assert(ns_t_zxfr == 256, "musl DNS ZXFR record type value");
+_Static_assert(ns_t_qt_p(ns_t_axfr) && ns_t_qt_p(ns_t_ixfr) &&
+    ns_t_qt_p(ns_t_zxfr) && ns_t_qt_p(ns_t_any) && !ns_t_qt_p(ns_t_opt),
+    "musl DNS query-type classification");
+_Static_assert(ns_t_mrr_p(ns_t_tsig) && ns_t_mrr_p(ns_t_opt) &&
+    !ns_t_mrr_p(ns_t_a), "musl DNS meta-record classification");
+_Static_assert(ns_t_rr_p(ns_t_a) && !ns_t_rr_p(ns_t_opt) &&
+    !ns_t_rr_p(ns_t_axfr), "musl DNS resource-record classification");
+_Static_assert(ns_t_udp_p(ns_t_ixfr) && !ns_t_udp_p(ns_t_axfr) &&
+    !ns_t_udp_p(ns_t_zxfr), "musl DNS UDP-transfer classification");
+
+#ifdef CRABC_NAMESER_RECORD_MACRO_RUNTIME
+int main(void)
+{
+    unsigned char bits[2] = {0};
+
+    NS_NXT_BIT_SET(9, bits);
+    if (bits[0] != 0 || bits[1] != 0x40 || NS_NXT_BIT_ISSET(9, bits) != 0x40)
+        return 1;
+    NS_NXT_BIT_CLEAR(9, bits);
+    return bits[0] != 0 || bits[1] != 0 || NS_NXT_BIT_ISSET(9, bits) != 0;
+}
+#else
 _Static_assert(__builtin_types_compatible_p(__typeof__(&dn_skipname),
     dn_skipname_signature), "dn_skipname declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&dn_expand),
@@ -63,3 +110,4 @@ int crabc_x86_64_nameser_header_abi_probe(void)
         ns_get32_function == &ns_get32 && ns_put16_function == &ns_put16 &&
         ns_put32_function == &ns_put32 && ns_skiprr_function == &ns_skiprr ? 0 : 1;
 }
+#endif

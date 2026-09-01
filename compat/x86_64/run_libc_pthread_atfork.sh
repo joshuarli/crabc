@@ -132,7 +132,7 @@ grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$archive_elf_symbols" ||
     fail 'archive lost musl weak __ldso_atfork binding'
 grep -Eq 'FUNC +WEAK +DEFAULT +.*__aio_atfork$' "$archive_elf_symbols" ||
     fail 'archive lost musl weak __aio_atfork binding'
-for unselected in _Fork vfork clone execve posix_spawn wait3 malloc free calloc realloc \
+for unselected in _Fork vfork clone execve posix_spawn malloc free calloc realloc \
     aio_read aio_write aio_fsync aio_return aio_cancel lio_listio aio_suspend; do
     ! grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols" ||
         fail "archive exports unselected ${unselected}"
@@ -151,18 +151,21 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections -Wl,-u,__ldso_atfork -Wl,-u,__aio_atfork \
     compat/x86_64/libc_pthread_atfork_probe.c \
     compat/x86_64/libc_pthread_atfork_start.S "$archive" -o "$candidate"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
     -DCRABC_ATFORK_LOADER_HOOK_OVERRIDE -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
+    -Wl,-u,__ldso_atfork -Wl,-u,__aio_atfork \
     compat/x86_64/libc_pthread_atfork_probe.c \
     compat/x86_64/libc_pthread_atfork_start.S "$archive" -o "$candidate_loader_hook"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
     -DCRABC_ATFORK_AIO_HOOK_OVERRIDE -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
+    -Wl,-u,__ldso_atfork -Wl,-u,__aio_atfork \
     compat/x86_64/libc_pthread_atfork_probe.c \
     compat/x86_64/libc_pthread_atfork_start.S "$archive" -o "$candidate_aio_hook"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -190,6 +193,15 @@ if grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$work_dir/candidate-loader-
     fail 'caller override retained the archive weak __ldso_atfork binding'
 fi
 readelf --symbols --wide "$candidate_aio_hook" >"$work_dir/candidate-aio-hook-symbols"
+for symbols_path in "$candidate_symbols" \
+    "$work_dir/candidate-loader-hook-symbols" \
+    "$work_dir/candidate-aio-hook-symbols"; do
+    for unselected in wait3 wait4; do
+        if grep -Eq "[[:space:]]${unselected}$" "$symbols_path"; then
+            fail "candidate unexpectedly pulls unrelated wait extension ${unselected}"
+        fi
+    done
+done
 awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "fork" { found=1 } END { exit found ? 0 : 1 }' \
     "$work_dir/candidate-aio-hook-symbols" ||
     fail 'AIO-atfork caller override did not extract the archive fork member'

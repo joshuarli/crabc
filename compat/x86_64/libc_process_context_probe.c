@@ -67,7 +67,7 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&getsid),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&getpgrp),
     pid_t (*)(void)), "getpgrp declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&setpgrp),
-    int (*)(void)), "setpgrp declaration");
+    pid_t (*)(void)), "setpgrp declaration");
 
 static long raw_syscall0(long number)
 {

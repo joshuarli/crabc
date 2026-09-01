@@ -1,6 +1,7 @@
 #ifndef _NETINET_IN_H
 #define _NETINET_IN_H
 
+#include <features.h>
 #include <arpa/inet.h>
 
 #ifdef __cplusplus
@@ -125,6 +126,54 @@ extern const struct in6_addr in6addr_loopback;
     (IN6_IS_ADDR_MULTICAST(a) && (__IN6_ADDR_BYTE(a, 1) & 0x0f) == 0x08)
 #define IN6_IS_ADDR_MC_GLOBAL(a) \
     (IN6_IS_ADDR_MULTICAST(a) && (__IN6_ADDR_BYTE(a, 1) & 0x0f) == 0x0e)
+
+/*
+ * Preserve musl 1.2.6's public address equality and historical IPv4 class
+ * predicates. They classify the raw in_addr_t value, without byte-order
+ * conversion, and inherit normal C/C++ relational-result types. The equality
+ * helpers intentionally evaluate each pointer expression four times.
+ */
+#define __ARE_4_EQUAL(a, b) \
+    (!( (0[a]-0[b]) | (1[a]-1[b]) | (2[a]-2[b]) | (3[a]-3[b]) ))
+#define IN6_ARE_ADDR_EQUAL(a, b) \
+    __ARE_4_EQUAL((const uint32_t *)(a), (const uint32_t *)(b))
+
+#define IN_CLASSA(a) ((((in_addr_t)(a)) & 0x80000000) == 0)
+#define IN_CLASSB(a) ((((in_addr_t)(a)) & 0xc0000000) == 0x80000000)
+#define IN_CLASSC(a) ((((in_addr_t)(a)) & 0xe0000000) == 0xc0000000)
+#define IN_CLASSD(a) ((((in_addr_t)(a)) & 0xf0000000) == 0xe0000000)
+#define IN_MULTICAST(a) IN_CLASSD(a)
+#define IN_EXPERIMENTAL(a) ((((in_addr_t)(a)) & 0xe0000000) == 0xe0000000)
+#define IN_BADCLASS(a) ((((in_addr_t)(a)) & 0xf0000000) == 0xf0000000)
+
+/*
+ * The multicast source-filter calculation macros are GNU/BSD header ABI only.
+ * Keep just the musl 1.2.6 records they name: this exposes no socket option,
+ * multicast membership, packet I/O, or network runtime behavior.
+ */
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+struct ip_msfilter {
+    struct in_addr imsf_multiaddr;
+    struct in_addr imsf_interface;
+    uint32_t imsf_fmode;
+    uint32_t imsf_numsrc;
+    struct in_addr imsf_slist[1];
+};
+#define IP_MSFILTER_SIZE(numsrc) \
+    (sizeof(struct ip_msfilter) - sizeof(struct in_addr) + \
+        (numsrc) * sizeof(struct in_addr))
+
+struct group_filter {
+    uint32_t gf_interface;
+    struct sockaddr_storage gf_group;
+    uint32_t gf_fmode;
+    uint32_t gf_numsrc;
+    struct sockaddr_storage gf_slist[1];
+};
+#define GROUP_FILTER_SIZE(numsrc) \
+    (sizeof(struct group_filter) - sizeof(struct sockaddr_storage) + \
+        (numsrc) * sizeof(struct sockaddr_storage))
+#endif
 
 #ifdef __cplusplus
 }

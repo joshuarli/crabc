@@ -47,6 +47,24 @@ _Static_assert(sizeof(struct cmsghdr) == 16 && _Alignof(struct cmsghdr) == 4 &&
     "x86 public cmsghdr ABI");
 _Static_assert(CMSG_LEN(sizeof(int)) == 20 && CMSG_SPACE(sizeof(int)) == 24,
     "x86 ancillary alignment macros");
+#ifndef __CMSG_LEN
+#error "musl ancillary length helper is missing"
+#endif
+#ifndef __CMSG_NEXT
+#error "musl ancillary next helper is missing"
+#endif
+#ifndef __MHDR_END
+#error "musl message-end helper is missing"
+#endif
+_Static_assert(__builtin_types_compatible_p(__typeof__(
+    __CMSG_LEN((struct cmsghdr *)0)), unsigned long),
+    "x86 ancillary length helper result type");
+_Static_assert(__builtin_types_compatible_p(__typeof__(
+    __CMSG_NEXT((struct cmsghdr *)0)), unsigned char *),
+    "x86 ancillary next helper result type");
+_Static_assert(__builtin_types_compatible_p(__typeof__(
+    __MHDR_END((struct msghdr *)0)), unsigned char *),
+    "x86 message-end helper result type");
 
 typedef int (*crabc_setsockopt_signature)(int, int, int, const void *, socklen_t);
 typedef int (*crabc_getsockopt_signature)(int, int, int, void *, socklen_t *);
@@ -86,8 +104,8 @@ _Static_assert(CMSG_ALIGN(5) == 8, "CMSG_ALIGN visibility/value");
 
 int main(void)
 {
-    unsigned char control[CMSG_SPACE(sizeof(int))] = {0};
-    unsigned char boundary_control[2 * CMSG_SPACE(0)] = {0};
+    _Alignas(struct cmsghdr) unsigned char control[2 * CMSG_SPACE(sizeof(int))] = {0};
+    _Alignas(struct cmsghdr) unsigned char boundary_control[2 * CMSG_SPACE(0)] = {0};
     struct msghdr message = {0};
     struct cmsghdr *first;
 
@@ -97,17 +115,28 @@ int main(void)
     if (first == 0)
         return 1;
     first->cmsg_len = CMSG_LEN(sizeof(int));
-    if (CMSG_DATA(first) != control + 16)
+    if (__CMSG_LEN(first) != CMSG_SPACE(sizeof(int)))
         return 2;
-    if (CMSG_NXTHDR(&message, first) != 0)
+    if (__CMSG_NEXT(first) != control + CMSG_SPACE(sizeof(int)))
         return 3;
+    if (__MHDR_END(&message) != control + sizeof(control))
+        return 4;
+    if (CMSG_DATA(first) != control + 16)
+        return 5;
+    if (CMSG_NXTHDR(&message, first) !=
+        (struct cmsghdr *)(control + CMSG_SPACE(sizeof(int))))
+        return 6;
     message.msg_control = boundary_control;
     message.msg_controllen = sizeof(boundary_control);
     first = CMSG_FIRSTHDR(&message);
     if (first == 0)
-        return 4;
+        return 7;
     first->cmsg_len = CMSG_LEN(0);
+    if (__CMSG_LEN(first) != CMSG_SPACE(0) ||
+        __CMSG_NEXT(first) != boundary_control + CMSG_SPACE(0) ||
+        __MHDR_END(&message) != boundary_control + sizeof(boundary_control))
+        return 8;
     if (CMSG_NXTHDR(&message, first) != 0)
-        return 5;
+        return 9;
     return 0;
 }

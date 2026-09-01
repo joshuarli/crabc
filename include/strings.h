@@ -29,11 +29,8 @@ int ffsll(long long);
 int strcasecmp(const char *, const char *);
 int strncasecmp(const char *, const char *, size_t);
 
-#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
- || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int strcasecmp_l(const char *, const char *, locale_t);
 int strncasecmp_l(const char *, const char *, size_t, locale_t);
-#endif
 
 #ifdef __cplusplus
 }

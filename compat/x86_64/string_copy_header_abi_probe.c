@@ -8,6 +8,8 @@
 
 #include <stddef.h>
 #include <string.h>
+/* musl deliberately leaves alloca's builtin macro to the consuming TU. */
+#include <alloca.h>
 
 typedef char *(*copy_signature)(char *, const char *);
 typedef char *(*bounded_copy_signature)(char *, const char *, size_t);
@@ -26,6 +28,27 @@ static bounded_copy_signature stpncpy_signature = stpncpy;
 #if defined(CRABC_EXPECT_GNU_COPY)
 static sized_copy_signature strlcpy_signature = strlcpy;
 static sized_copy_signature strlcat_signature = strlcat;
+#endif
+
+#if defined(CRABC_EXPECT_STRDUPA)
+#ifndef strdupa
+#error "GNU <string.h> must expose strdupa"
+#endif
+
+/* Keep the stack result in this function's frame; never return it. */
+static int strdupa_expansion_uses_its_caller_frame(void)
+{
+    char source[] = "stack copy";
+    char *copy = strdupa(source);
+
+    return copy[0] != 's' || copy[10] != '\0';
+}
+#endif
+
+#if defined(CRABC_REQUIRE_STRDUPA_HIDDEN)
+#ifdef strdupa
+#error "non-GNU C <string.h> must hide strdupa"
+#endif
 #endif
 
 /* These branches compile only as feature-gate negative checks. */
@@ -50,6 +73,9 @@ int crabc_x86_64_string_copy_header_abi_probe(void)
 #if defined(CRABC_EXPECT_GNU_COPY)
     (void)strlcpy_signature;
     (void)strlcat_signature;
+#endif
+#if defined(CRABC_EXPECT_STRDUPA)
+    (void)strdupa_expansion_uses_its_caller_frame;
 #endif
 #if defined(CRABC_REQUIRE_POSIX_COPY_HIDDEN)
     (void)required_stpcpy_signature;

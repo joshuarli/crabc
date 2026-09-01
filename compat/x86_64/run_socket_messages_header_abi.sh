@@ -3,7 +3,9 @@
 #
 # Pinned musl 1.2.6 supplies the selected declaration, feature-visibility,
 # record-layout, and C-linkage oracle. The project pass is compile-only except
-# for the C ancillary-macro probe; it does not select a C runtime.
+# for the C ancillary-macro probe; it does not select a C runtime. The C
+# probe exercises CMSG's exact internal ancillary traversal helpers
+# __CMSG_LEN/__CMSG_NEXT/__MHDR_END alongside the public macro boundary.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -51,10 +53,24 @@ compile_profile() {
         -fsyntax-only "$CXX_PROBE"
 }
 
-# POSIX suppresses musl's default BSD extension namespace; GNU additionally
-# exposes mmsghdr/sendmmsg/recvmmsg. CMSG_ALIGN remains available in every
-# profile, while the BSD pass keeps its non-GNU profile behavior covered.
+compile_cxx_profile() {
+    local name="$1"
+    shift
+    local -a flags=("$@")
+
+    "$ORACLE_CC" -std=c++17 -x c++ "${flags[@]}" -fsyntax-only "$CXX_PROBE"
+    "$ORACLE_CC" -std=c++17 -x c++ "${flags[@]}" -I "$ROOT_DIR/include" \
+        -fsyntax-only "$CXX_PROBE"
+}
+
+# The helpers are unconditional. Strict/POSIX/XOPEN/GNU/BSD C all execute
+# them; GNU additionally exposes mmsghdr/sendmmsg/recvmmsg. CMSG_ALIGN remains
+# available in every profile, while the BSD pass keeps its non-GNU profile
+# behavior covered. The compiler-native no-define C++17 profile is distinct
+# from the explicit POSIX C++ profile below.
+compile_profile strict -U_GNU_SOURCE -U_BSD_SOURCE -D__STRICT_ANSI__
 compile_profile posix -U_GNU_SOURCE -U_BSD_SOURCE -D_POSIX_C_SOURCE=200809L
+compile_profile xopen -U_GNU_SOURCE -U_BSD_SOURCE -D_XOPEN_SOURCE=700
 compile_profile gnu -U_BSD_SOURCE -D_GNU_SOURCE
 
 for header in sys/socket.h sys/uio.h sys/ioctl.h sys/syscall.h bits/syscall.h \
@@ -63,6 +79,7 @@ for header in sys/socket.h sys/uio.h sys/ioctl.h sys/syscall.h bits/syscall.h \
         fail "project GNU C probe did not use <$header>"
 done
 compile_profile bsd -U_GNU_SOURCE -D_BSD_SOURCE
+compile_cxx_profile cxx17-strict
 
 # GNU-only message batches must not leak into the POSIX profile.
 if "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE \

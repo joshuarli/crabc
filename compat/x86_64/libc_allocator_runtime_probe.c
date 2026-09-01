@@ -6,6 +6,11 @@
  * target-owned wrapper, errno slot, and bundled backend; pinned musl supplies
  * the still-missing static startup and process primitives, but never an
  * allocator entry point.
+ *
+ * This checks return/error/data/alignment/liveness results, not allocation
+ * addresses after free: reuse topology is allocator-private rather than a
+ * musl C ABI guarantee. Live zero-size results remain separately checked
+ * for musl's distinct-object behavior.
  */
 
 #include <errno.h>
@@ -37,6 +42,8 @@ static int bytes_equal(const unsigned char *left, const unsigned char *right,
 int crabc_x86_64_allocator_runtime_probe(void)
 {
     static const size_t sizes[] = { 1, 15, 16, 17, 4096, 262144 };
+    /* musl 1.2.6 mallocng uses UNIT == 16 on this LP64 target. */
+    static const size_t musl_mallocng_max_alignment = ((size_t)1 << 31) * 16;
     static const unsigned char prefix[] = { 1, 2, 3, 4 };
     unsigned char *zero_a;
     unsigned char *zero_b;
@@ -51,6 +58,8 @@ int crabc_x86_64_allocator_runtime_probe(void)
         return 100;
 #endif
 
+    /* malloc(0) is implementation-defined; this records the pinned-musl
+     * non-null, distinct, naturally aligned result. */
     errno = E2BIG;
     zero_a = malloc(0);
     zero_b = malloc(0);
@@ -62,6 +71,9 @@ int crabc_x86_64_allocator_runtime_probe(void)
     free(zero_b);
     if (errno != E2BIG)
         return 2;
+    free(NULL);
+    if (errno != E2BIG)
+        return 26;
 
     for (index = 0; index < sizeof(sizes) / sizeof(sizes[0]); ++index) {
         block = malloc(sizes[index]);
@@ -71,6 +83,34 @@ int crabc_x86_64_allocator_runtime_probe(void)
         block[sizes[index] - 1] = (unsigned char)(index + 17);
         free(block);
     }
+    block = malloc(262144);
+    if (block == NULL)
+        return 27;
+    errno = ECHILD;
+    free(block);
+    if (errno != ECHILD)
+        return 40;
+
+    /* A freed allocation must leave the same allocation route live, but
+     * address reuse itself is intentionally not an assertion. */
+    block = malloc(4096);
+    if (block == NULL)
+        return 28;
+    block[0] = 0x43;
+    block[4095] = 0x8e;
+    free(block);
+    block = malloc(4096);
+    if (block == NULL || (uintptr_t)block % 16 != 0)
+        return 29;
+    block[0] = 0xa6;
+    block[4095] = 0x19;
+    if (block[0] != 0xa6 || block[4095] != 0x19)
+        return 30;
+    free(block);
+
+    errno = 0;
+    if (malloc((size_t)-1) != NULL || errno != ENOMEM)
+        return 31;
 
     block = malloc(sizeof(prefix));
     if (block == NULL)
@@ -78,19 +118,33 @@ int crabc_x86_64_allocator_runtime_probe(void)
     for (index = 0; index < sizeof(prefix); ++index)
         block[index] = prefix[index];
     block = realloc(block, 8192);
-    if (block == NULL || !bytes_equal(block, prefix, sizeof(prefix)))
+    if (block == NULL || (uintptr_t)block % 16 != 0 ||
+        !bytes_equal(block, prefix, sizeof(prefix)))
         return 5;
     block = realloc(block, 2);
-    if (block == NULL || !bytes_equal(block, prefix, 2))
+    if (block == NULL)
         return 6;
+    if ((uintptr_t)block % 16 != 0)
+        return 38;
+    if (!bytes_equal(block, prefix, 2))
+        return 39;
     errno = 0;
     if (realloc(block, (size_t)-1) != NULL || errno != ENOMEM ||
         !bytes_equal(block, prefix, 2))
         return 7;
     free(block);
 
+    block = realloc(NULL, 17);
+    if (block == NULL || (uintptr_t)block % 16 != 0)
+        return 32;
+    block[0] = 0x58;
+    block[16] = 0xb7;
+    if (block[0] != 0x58 || block[16] != 0xb7)
+        return 33;
+    free(block);
+
     block = calloc(17, sizeof(unsigned long));
-    if (block == NULL)
+    if (block == NULL || (uintptr_t)block % 16 != 0)
         return 8;
     for (index = 0; index < 17 * sizeof(unsigned long); ++index) {
         if (block[index] != 0)
@@ -105,6 +159,14 @@ int crabc_x86_64_allocator_runtime_probe(void)
     if (calloc((size_t)-1, 2) != NULL || errno != ENOMEM)
         return 11;
 
+    /* Standard-valid C11 aligned allocation: 128 is a 64-byte multiple. */
+    aligned = aligned_alloc(64, 128);
+    if (aligned == NULL || (uintptr_t)aligned % 64 != 0)
+        return 34;
+    free(aligned);
+
+    /* The remaining aligned_alloc probes record musl's historical
+     * extensions for non-multiple or zero alignment inputs. */
     errno = EINTR;
     aligned = aligned_alloc(64, 65);
     if (aligned == NULL || (uintptr_t)aligned % 64 != 0 || errno != EINTR)
@@ -113,6 +175,26 @@ int crabc_x86_64_allocator_runtime_probe(void)
     errno = 0;
     if (aligned_alloc(3, 64) != NULL || errno != EINVAL)
         return 13;
+    errno = EINTR;
+    aligned = aligned_alloc(0, 7);
+    if (aligned == NULL || (uintptr_t)aligned % 16 != 0 || errno != EINTR)
+        return 102;
+    free(aligned);
+    /* This is also a C11-valid 64-byte multiple, but musl rejects the
+     * overflowing request before asking the backend to allocate it. */
+    errno = 0;
+    if (aligned_alloc(64, (size_t)-64) != NULL || errno != ENOMEM)
+        return 36;
+    errno = 0;
+    if (aligned_alloc(musl_mallocng_max_alignment, 1) != NULL ||
+        errno != ENOMEM)
+        return 41;
+
+    aligned = (void *)(uintptr_t)1;
+    errno = EDOM;
+    if (posix_memalign(&aligned, sizeof(void *) / 2, 64) != EINVAL ||
+        aligned != (void *)(uintptr_t)1 || errno != EDOM)
+        return 101;
 
     aligned = (void *)(uintptr_t)1;
     errno = EDOM;
@@ -126,23 +208,36 @@ int crabc_x86_64_allocator_runtime_probe(void)
     free(aligned);
     if (errno != EDOM)
         return 16;
+    aligned = (void *)(uintptr_t)1;
+    errno = 0;
+    if (posix_memalign(&aligned, 64, (size_t)-1) != ENOMEM ||
+        aligned != (void *)(uintptr_t)1 || errno != ENOMEM)
+        return 37;
+    aligned = (void *)(uintptr_t)1;
+    errno = 0;
+    if (posix_memalign(&aligned, musl_mallocng_max_alignment, 1) != ENOMEM ||
+        aligned != (void *)(uintptr_t)1 || errno != ENOMEM)
+        return 42;
 
+    /* realloc(p, 0) is implementation-defined; retain the pinned-musl
+     * non-null/freeable observation without asserting pointer identity. */
     block = malloc(4);
     if (block == NULL)
         return 17;
     block = realloc(block, 0);
-    if (block == NULL)
+    if (block == NULL || (uintptr_t)block % 16 != 0)
         return 18;
     free(block);
 
     block = reallocarray(NULL, 4, sizeof(*block));
-    if (block == NULL)
+    if (block == NULL || (uintptr_t)block % 16 != 0)
         return 19;
     for (index = 0; index < 4; ++index)
         block[index] = (unsigned char)(index + 31);
     errno = EDOM;
     resized = reallocarray(block, 2048, sizeof(*block));
-    if (resized == NULL || resized[0] != 31 || resized[3] != 34 || errno != EDOM)
+    if (resized == NULL || (uintptr_t)resized % 16 != 0 ||
+        resized[0] != 31 || resized[3] != 34 || errno != EDOM)
         return 20;
     errno = 0;
     if (reallocarray(resized, (size_t)-1, 2) != NULL || errno != ENOMEM ||

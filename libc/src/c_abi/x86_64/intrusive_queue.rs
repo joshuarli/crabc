@@ -4,8 +4,8 @@
 //! rewire only the caller-owned first two pointer words of one intrusive
 //! doubly linked node. `insque(element, predecessor)` clears both links when
 //! its predecessor is null; otherwise it inserts `element` directly after the
-//! predecessor. `remque(element)` reconnects non-null neighbors but leaves
-//! the removed element's own link words unchanged, exactly as musl does.
+//! predecessor. `remque(element)` reconnects non-null neighbors without clearing the removed node's own links,
+//! leaving its own link words unchanged exactly as musl does.
 //!
 //! The functions do not allocate or free nodes, search a container, retain a
 //! head/tail/global queue, validate pointers, call callbacks, synchronize, or
@@ -17,8 +17,8 @@
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
-//! `src/search/insque.c` defines both public entries in the one `insque.lo`
-//! object. Its private two-pointer `struct node` maps directly to
+//! `src/search/insque.c::{insque,remque}` defines both public entries in the
+//! one `insque.lo` object. Its private two-pointer `struct node` maps directly to
 //! [`QueueNode`]'s private prefix below. The AArch64 static ABI inventory
 //! records strong `insque` and `remque` in that same `insque.lo` owner.
 //!

@@ -109,6 +109,9 @@ struct cmsghdr {
     int cmsg_type;
 };
 struct linger { int l_onoff; int l_linger; };
+#define __CMSG_LEN(cmsg) (((cmsg)->cmsg_len + sizeof(long) - 1) & ~(long)(sizeof(long) - 1))
+#define __CMSG_NEXT(cmsg) ((unsigned char *)(cmsg) + __CMSG_LEN(cmsg))
+#define __MHDR_END(mhdr) ((unsigned char *)(mhdr)->msg_control + (mhdr)->msg_controllen)
 #define __CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1) & \
     (size_t)~(sizeof(size_t) - 1))
 /* Musl exposes the ancillary alignment spelling in every feature profile. */

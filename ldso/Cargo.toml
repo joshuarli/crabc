@@ -17,3 +17,17 @@ test = false
 # separate from the supported AArch64 loader root and is enabled only by the
 # native x86 evidence runner.
 x86_64-initial-interpreter = []
+# First private general-initial-graph admission target. It shares no public
+# support claim with the existing fixed-graph root and deliberately excludes
+# TLS, dlfcn, lifecycle, CRT, and installed-product integration.
+x86_64-general-initial-interpreter = []
+# Private x86 general initial-TLS materialization target. It retains only one
+# initial generation in loader-owned state and explicitly excludes RuntimeV1
+# publication, pthread/new-thread state, runtime DSO admission, DTV growth,
+# lifecycle, CRT, and installed-product integration.
+x86_64-general-initial-tls-interpreter = []
+# Private x86 general initial-TLS RuntimeV1 handoff target. It is a distinct
+# loader-owned descriptor wire over the arbitrary initial graph; it does not
+# select the older fixed-graph RuntimeV1 seam, CRT lifecycle, dlfcn, runtime
+# mapping, worker TLS, or DTV growth.
+x86_64-general-initial-tls-runtime-v1-interpreter = []

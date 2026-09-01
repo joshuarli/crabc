@@ -10,6 +10,20 @@
 #include <nl_types.h>
 #include <stddef.h>
 
+#ifdef __fa
+#error "musl's transient libintl format-argument annotation leaked"
+#endif
+
+static int crabc_gettext_format_argument_probe(const char *, ...)
+    __attribute__((__format__(__printf__, 1, 2)));
+
+#ifdef CRABC_REQUIRE_GETTEXT_FORMAT_ARGUMENT
+static int crabc_gettext_format_argument_must_propagate()
+{
+    return crabc_gettext_format_argument_probe(gettext("%d"), "not an int");
+}
+#endif
+
 using gettext_signature = char *(*)(const char *);
 using dgettext_signature = char *(*)(const char *, const char *);
 using dcgettext_signature = char *(*)(const char *, const char *, int);

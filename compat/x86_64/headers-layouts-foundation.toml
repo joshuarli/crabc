@@ -1,11 +1,11 @@
 # Forward-looking native x86-64 header/layout foundation contract.
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
-# `headers-layouts.toml` remains the v1 inventory of forty-seven direct probes.
+# `headers-layouts.toml` remains the v1 inventory of fifty-three direct probes.
 # This v8 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
-# and records selected UAPI-wrapper, ioctl, epoll, event-descriptor,
-# timeval-transitive, direct sys/time, and access-header profile ABI slices
+# and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
+# event-descriptor, timeval-transitive, direct sys/time, and access-header profile ABI slices
 # while making the remaining language, ABI, and linkage work explicit. It
 # must not be read as a claim
 # that a header's declarations link to, or execute through, a complete crabc
@@ -51,6 +51,7 @@ callable_linkage_owners_accounted = true
 legacy_direct_inputs_accounted = true
 uapi_wrapper_profile_matrix_slice = true
 ioctl_header_profile_matrix_slice = true
+sys_io_header_profile_matrix_slice = true
 epoll_header_profile_matrix_slice = true
 event_descriptors_header_profile_matrix_slice = true
 dirent_header_profile_matrix_slice = true
@@ -337,6 +338,63 @@ candidate = "compile-ok"
 applicability = "applicable"
 
 [[ioctl_header_profile_matrix.row]]
+profile = "cxx17-strict"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+# This x86-only pair compares the pinned public sys/io.h entry point and its
+# private bits/io.h inline implementation. It deliberately inspects generated
+# objects instead of executing port I/O: privilege, iopl/ioperm linkage, and
+# kernel-administration behavior stay outside header evidence.
+[sys_io_header_profile_matrix]
+id = "x86-sys-io-header-profile-matrix"
+state = "partial-verified"
+command = "./scripts/dev-x86_64.sh sys-io-header-abi"
+required_result = "pass"
+header_class = "pinned-non-uapi"
+subject_headers = ["sys/io.h", "bits/io.h"]
+profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+row_count = 7
+scope = "The fixed x86 sys/io.h and bits/io.h header pair across seven isolated C11/C++17 profiles, compiled through pinned musl and raw-GCC project-header-first roots, checks iopl/ioperm declarations, twelve header-local in/out and repeated string-I/O inline forms, musl operand and direction-flag compiler constraints, C++ C linkage, no external inline-helper reference, and named object-code instructions. It inspects objects only and does not execute port I/O. This excludes iopl/ioperm artifact linkage and runtime behavior, system.kernel-admin capability, all-header closure, runtime completion, family promotion, and public support."
+
+[[sys_io_header_profile_matrix.row]]
+profile = "c11-gnu"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[sys_io_header_profile_matrix.row]]
+profile = "cxx17-gnu"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[sys_io_header_profile_matrix.row]]
+profile = "c11-strict"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[sys_io_header_profile_matrix.row]]
+profile = "c11-posix-2008"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[sys_io_header_profile_matrix.row]]
+profile = "c11-xopen-700"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[sys_io_header_profile_matrix.row]]
+profile = "c11-bsd"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[sys_io_header_profile_matrix.row]]
 profile = "cxx17-strict"
 reference = "compile-ok"
 candidate = "compile-ok"
@@ -1405,7 +1463,7 @@ excluded_paths = ["sys/kd.h", "sys/soundcard.h", "sys/vt.h"]
 expected_count = 180
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 future_feature_profiles = []
-abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "xattr-header-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
+abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "sys-io-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "xattr-header-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
 linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
 
 [[header_class]]
@@ -1482,6 +1540,14 @@ scope = "sys/ioctl.h selected declaration macro request vocabulary direct winsiz
 owner = "libc.headers-layouts"
 evidence = ["x86-ioctl-header-profile-matrix"]
 description = "The selected direct sys/ioctl.h C/C++ matrix proves seven isolated pinned-musl/project profile rows for the signed int variadic declaration, unmangled C++ declaration reference, selected Linux _IOC composition, direct 8-byte align-2 winsize layout, and selected descriptor/terminal/interface request values only; it excludes actual crabc artifact linkage, generic device/request behavior, unselected header surface, and header-family promotion."
+
+[[abi_facet]]
+id = "sys-io-header-profile-matrix"
+state = "partial-verified"
+scope = "sys/io.h/bits/io.h x86 port-I/O inline declaration compiler-constraint and C++ C-linkage subset"
+owner = "libc.headers-layouts"
+evidence = ["x86-sys-io-header-profile-matrix"]
+description = "The selected x86 sys/io.h and bits/io.h C/C++ matrix proves seven isolated pinned-musl/project profile rows for iopl/ioperm declarations and the twelve header-local in/out and repeated string-I/O inline forms, preserving musl operand/direction-flag constraints, requested C++ C linkage, absence of an external inline helper, and named object instructions only. It never executes port I/O and excludes iopl/ioperm artifact linkage or runtime behavior, kernel-administration capability, all-header closure, runtime completion, and header-family promotion."
 
 [[abi_facet]]
 id = "epoll-header-profile-matrix"
@@ -1617,8 +1683,8 @@ state = "partial-verified"
 scope = "v1-direct-probe-union"
 owner = "libc.headers-layouts"
 evidence = ["headers-layouts.toml"]
-legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "pthread-cancellation", "stdio-standard", "ctype", "integer-arithmetic", "integer-parse", "float-parse", "intmax-arithmetic", "credential-observation", "login-name", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "memccpy", "aio-error", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "nameser", "inet-address", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "xattr-header", "machine-context", "event-descriptors", "dirent"]
-description = "The existing forty-nine direct gates remain required inputs and retain their bounded declaration/layout scopes."
+legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "pthread-cancellation", "stdio-standard", "ctype", "integer-arithmetic", "integer-parse", "float-parse", "intmax-arithmetic", "credential-observation", "login-name", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "memccpy", "aio-error", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "sys-io", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "nameser", "quota", "sched-cpu-macros", "fanotify", "inet-address", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "xattr-header", "machine-context", "event-descriptors", "dirent"]
+description = "The existing fifty-three direct gates remain required inputs and retain their bounded declaration/layout scopes."
 
 [[abi_facet]]
 id = "static-c-cxx-composition"

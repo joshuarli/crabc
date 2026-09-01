@@ -22,6 +22,7 @@ from typing import Any, Mapping
 
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY_PATH = ROOT / "compat" / "x86_64" / "aarch64_parity_inventory.json"
+FROZEN_BASELINE_PATH = ROOT / "compat" / "x86_64" / "aarch64_frozen_baseline.json"
 X86_LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
 BASELINE_CAPABILITIES_PATH = ROOT / "compat" / "crabc-rs" / "coverage.toml"
 AARCH64_ABI_MANIFEST_PATH = ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "manifest.json"
@@ -32,6 +33,7 @@ X86_EVIDENCE_DISPATCHER_PATH = ROOT / "scripts" / "dev-x86_64.sh"
 CRT_EVIDENCE_DISPATCHER_PATH = ROOT / "crt" / "run-x86_64.sh"
 
 SCHEMA = "crabc.x86_64-aarch64-parity-inventory/v1"
+FROZEN_BASELINE_SCHEMA = "crabc.x86_64-frozen-aarch64-baseline/v1"
 STATE_IMPLEMENTED = "implemented-foundation"
 STATE_SELECTED = "selected-private"
 STATE_MISSING = "missing"
@@ -58,6 +60,97 @@ def load_toml(path: Path) -> dict[str, Any]:
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+FROZEN_AARCH64_INPUTS = {
+    "capability_ledger": BASELINE_CAPABILITIES_PATH,
+    "abi_manifest": AARCH64_ABI_MANIFEST_PATH,
+    "public_headers": AARCH64_HEADERS_PATH,
+}
+
+
+def load_frozen_baseline() -> dict[str, Any]:
+    """Load the reviewed AArch64 comparison target without deriving a new one."""
+    try:
+        record = json.loads(FROZEN_BASELINE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise InventoryError(f"cannot read frozen AArch64 baseline: {error}") from error
+    require(isinstance(record, dict), "frozen AArch64 baseline must be an object")
+    require(
+        set(record) == {
+            "schema",
+            "source_commit",
+            "platform",
+            "capability_count",
+            "required_family_count",
+            "aarch64_inputs",
+        },
+        "frozen AArch64 baseline fields changed",
+    )
+    require(
+        record["schema"] == FROZEN_BASELINE_SCHEMA,
+        "frozen AArch64 baseline schema changed",
+    )
+    source_commit = record["source_commit"]
+    require(
+        isinstance(source_commit, str) and re.fullmatch(r"[0-9a-f]{40}", source_commit),
+        "frozen AArch64 baseline source_commit must be a full lowercase Git commit ID",
+    )
+    require(
+        record["platform"] == "Linux/AArch64 little-endian",
+        "frozen AArch64 baseline platform changed",
+    )
+    for count_name in ("capability_count", "required_family_count"):
+        count = record[count_name]
+        require(
+            isinstance(count, int) and not isinstance(count, bool) and count > 0,
+            f"frozen AArch64 baseline {count_name} is invalid",
+        )
+    inputs = record["aarch64_inputs"]
+    require(isinstance(inputs, Mapping), "frozen AArch64 baseline inputs are invalid")
+    require(
+        set(inputs) == set(FROZEN_AARCH64_INPUTS),
+        "frozen AArch64 baseline input roster changed",
+    )
+    for identifier, live_path in FROZEN_AARCH64_INPUTS.items():
+        entry = inputs[identifier]
+        require(
+            isinstance(entry, Mapping) and set(entry) == {"path", "sha256"},
+            f"frozen AArch64 input {identifier} record is invalid",
+        )
+        require(
+            entry["path"] == live_path.relative_to(ROOT).as_posix(),
+            f"frozen AArch64 input {identifier} path changed",
+        )
+        digest = entry["sha256"]
+        require(
+            isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest),
+            f"frozen AArch64 input {identifier} digest is invalid",
+        )
+    return record
+
+
+def validate_frozen_baseline() -> dict[str, Any]:
+    """Reject live AArch64 drift; ordinary validation never rewrites this record."""
+    record = load_frozen_baseline()
+    inputs = record["aarch64_inputs"]
+    assert isinstance(inputs, Mapping)
+    for identifier, live_path in FROZEN_AARCH64_INPUTS.items():
+        entry = inputs[identifier]
+        assert isinstance(entry, Mapping)
+        require(
+            sha256(live_path) == entry["sha256"],
+            f"frozen AArch64 input {identifier} digest drifted",
+        )
+
+    baseline = load_toml(BASELINE_CAPABILITIES_PATH)
+    capabilities = baseline.get("capability")
+    require(isinstance(capabilities, list), "AArch64 capability ledger has no capability list")
+    require(
+        len(capabilities) == record["capability_count"],
+        "frozen AArch64 capability count drifted",
+    )
+    return record
 
 
 def sorted_unique_lines(path: Path, *, comments: bool = False) -> list[str]:
@@ -195,13 +288,17 @@ def require_verified_native_evidence(
 
 def build_inventory() -> dict[str, Any]:
     """Derive a canonical report from the actual ledger and oracle inputs."""
+    frozen_baseline = validate_frozen_baseline()
     x86 = load_toml(X86_LEDGER_PATH)
     baseline = load_toml(BASELINE_CAPABILITIES_PATH)
     abi_manifest = json.loads(AARCH64_ABI_MANIFEST_PATH.read_text(encoding="utf-8"))
     require(isinstance(abi_manifest, dict), "AArch64 ABI manifest must be an object")
 
     require(x86.get("baseline_capability_ledger") == "compat/crabc-rs/coverage.toml", "x86 ledger baseline capability source changed")
-    require(x86.get("baseline_platform") == "Linux/AArch64 little-endian", "x86 ledger baseline platform changed")
+    require(
+        x86.get("baseline_platform") == frozen_baseline["platform"],
+        "x86 ledger baseline platform changed",
+    )
     policy = x86.get("policy")
     require(isinstance(policy, Mapping), "x86 ledger policy is missing")
     require(policy.get("public_support") is False, "inventory cannot be produced from a public x86 ledger")
@@ -222,7 +319,43 @@ def build_inventory() -> dict[str, Any]:
     require(isinstance(families, list) and isinstance(promotion, Mapping), "x86 ledger family/promotion contract is invalid")
     required_families = promotion.get("required_families")
     require(isinstance(required_families, list), "x86 promotion family roster is invalid")
-    require([family.get("id") for family in families if isinstance(family, Mapping)] == required_families, "x86 family order no longer equals the closed promotion roster")
+    require(
+        len(required_families) == frozen_baseline["required_family_count"],
+        "x86 promotion roster no longer has the frozen required family count",
+    )
+    require(
+        all(isinstance(identifier, str) and identifier for identifier in required_families),
+        "x86 promotion family roster has an invalid identifier",
+    )
+    require(
+        len(required_families) == len(set(required_families)),
+        "x86 promotion family roster has duplicate entries",
+    )
+    require(
+        len(families) == frozen_baseline["required_family_count"],
+        "x86 family table no longer has the frozen required family count",
+    )
+    family_ids: list[str] = []
+    family_positions: dict[str, int] = {}
+    family_orders: dict[str, int] = {}
+    for index, family in enumerate(families):
+        require(isinstance(family, Mapping), "x86 family entry is invalid")
+        identifier = family.get("id")
+        require(isinstance(identifier, str) and identifier, "x86 family id is invalid")
+        require(identifier not in family_positions, f"duplicate x86 family {identifier}")
+        order = family.get("order")
+        require(
+            isinstance(order, int) and not isinstance(order, bool),
+            f"x86 family {identifier} has an invalid order",
+        )
+        require(order not in family_orders.values(), f"duplicate x86 family order {order}")
+        family_ids.append(identifier)
+        family_positions[identifier] = index
+        family_orders[identifier] = order
+    require(
+        family_ids == required_families,
+        "x86 family order no longer equals the closed promotion roster",
+    )
 
     owners: dict[str, Mapping[str, Any]] = {}
     selected_capabilities: set[str] = set()
@@ -233,6 +366,26 @@ def build_inventory() -> dict[str, Any]:
         require(isinstance(family, Mapping), "x86 family entry is invalid")
         identifier = family.get("id")
         require(isinstance(identifier, str) and identifier, "x86 family id is invalid")
+        dependencies = family.get("depends_on")
+        require(
+            isinstance(dependencies, list)
+            and all(isinstance(dependency, str) and dependency for dependency in dependencies),
+            f"x86 family {identifier} dependency list is invalid",
+        )
+        require(
+            len(dependencies) == len(set(dependencies)),
+            f"x86 family {identifier} has duplicate dependencies",
+        )
+        for dependency in dependencies:
+            require(
+                dependency in family_positions,
+                f"x86 family {identifier} depends on an unknown family {dependency}",
+            )
+            require(
+                family_positions[dependency] < family_positions[identifier]
+                and family_orders[dependency] < family_orders[identifier],
+                f"x86 family {identifier} dependency {dependency} is not earlier in the frozen roster",
+            )
         capability_ids = family.get("capabilities")
         require(isinstance(capability_ids, list), f"x86 family {identifier} capability list is invalid")
         for capability in capability_ids:
@@ -314,6 +467,10 @@ def build_inventory() -> dict[str, Any]:
             }
         )
     require(set(owners) == set(baseline_capabilities), "x86 ledger no longer maps every AArch64 capability exactly once")
+    require(
+        len(owners) == frozen_baseline["capability_count"],
+        "x86 ledger no longer maps the frozen AArch64 capability count exactly once",
+    )
 
     capability_rows: list[dict[str, str]] = []
     for identifier, capability in sorted(baseline_capabilities.items()):
@@ -377,6 +534,7 @@ def build_inventory() -> dict[str, Any]:
             "aarch64_dynamic_export_count": len(candidate_symbols),
             "aarch64_public_header_count": len(baseline_headers),
         },
+        "frozen_baseline": frozen_baseline,
         "x86_boundary": {
             "promotion_ready": False,
             "public_support": False,
@@ -393,10 +551,6 @@ def build_inventory() -> dict[str, Any]:
     }
 
 
-def canonical_json(value: Mapping[str, Any]) -> str:
-    return json.dumps(value, indent=2, sort_keys=True) + "\n"
-
-
 def validate_inventory() -> dict[str, Any]:
     actual = build_inventory()
     try:
@@ -411,10 +565,7 @@ def validate_inventory() -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--write", action="store_true", help="write the reviewed derived inventory snapshot")
-    arguments = parser.parse_args()
-    if arguments.write:
-        INVENTORY_PATH.write_text(canonical_json(build_inventory()), encoding="utf-8")
+    parser.parse_args()
     report = validate_inventory()
     print(
         "x86 AArch64 parity inventory: PASS "

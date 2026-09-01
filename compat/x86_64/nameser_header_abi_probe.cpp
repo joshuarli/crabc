@@ -23,6 +23,51 @@ using ns_skiprr_signature = int (*)(const unsigned char *, const unsigned char *
 static_assert(NS_CMPRSFLGS == 0xc0 && NS_MAXLABEL == 63 &&
     NS_MAXCDNAME == 255 && NS_MAXDNAME == 1025,
     "musl DNS wire-name C++ constants");
+#ifndef ns_t_qt_p
+#error "musl DNS query-type helper is missing"
+#endif
+#ifndef ns_t_mrr_p
+#error "musl DNS meta-record helper is missing"
+#endif
+#ifndef ns_t_rr_p
+#error "musl DNS resource-record helper is missing"
+#endif
+#ifndef ns_t_udp_p
+#error "musl DNS UDP-transfer helper is missing"
+#endif
+#ifndef ns_t_xfr_p
+#error "musl DNS transfer-type helper is missing"
+#endif
+#ifndef NS_NXT_BIT_SET
+#error "musl DNS next-bit setter is missing"
+#endif
+#ifndef NS_NXT_BIT_CLEAR
+#error "musl DNS next-bit clearer is missing"
+#endif
+#ifndef NS_NXT_BIT_ISSET
+#error "musl DNS next-bit tester is missing"
+#endif
+static_assert(ns_t_zxfr == 256, "musl DNS ZXFR record type value");
+static_assert(ns_t_qt_p(ns_t_axfr) && ns_t_qt_p(ns_t_ixfr) &&
+    ns_t_qt_p(ns_t_zxfr) && ns_t_qt_p(ns_t_any) && !ns_t_qt_p(ns_t_opt),
+    "musl DNS query-type C++ classification");
+static_assert(ns_t_mrr_p(ns_t_tsig) && ns_t_mrr_p(ns_t_opt) &&
+    !ns_t_mrr_p(ns_t_a), "musl DNS meta-record C++ classification");
+static_assert(ns_t_rr_p(ns_t_a) && !ns_t_rr_p(ns_t_opt) &&
+    !ns_t_rr_p(ns_t_axfr), "musl DNS resource-record C++ classification");
+static_assert(ns_t_udp_p(ns_t_ixfr) && !ns_t_udp_p(ns_t_axfr) &&
+    !ns_t_udp_p(ns_t_zxfr), "musl DNS UDP-transfer C++ classification");
+
+static int crabc_x86_64_nameser_record_macro_probe_cpp()
+{
+    unsigned char bits[2] = {};
+
+    NS_NXT_BIT_SET(9, bits);
+    if (bits[0] != 0 || bits[1] != 0x40 || NS_NXT_BIT_ISSET(9, bits) != 0x40)
+        return 1;
+    NS_NXT_BIT_CLEAR(9, bits);
+    return bits[0] != 0 || bits[1] != 0 || NS_NXT_BIT_ISSET(9, bits) != 0;
+}
 static_assert(__is_same(decltype(&dn_skipname), dn_skipname_signature),
     "dn_skipname C++ declaration");
 static_assert(__is_same(decltype(&dn_expand), dn_expand_signature),

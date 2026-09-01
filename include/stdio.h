@@ -70,6 +70,12 @@ extern FILE *const stderr;
 
 /* File access */
 FILE *fopen(const char *, const char *);
+/* Linux LP64 has one 64-bit file-offset model. Pinned musl exposes fopen64
+ * only as this preprocessing alias, never as a separate declaration or ELF
+ * symbol. The selected x86 archive preserves that source and link boundary. */
+#if defined(_LARGEFILE64_SOURCE)
+#define fopen64 fopen
+#endif
 FILE *freopen(const char *, const char *, FILE *);
 int fclose(FILE *);
 
@@ -107,6 +113,7 @@ void setbuffer(FILE *, char *, size_t);
 void setlinebuf(FILE *);
 char *fgetln(FILE *, size_t *);
 int feof_unlocked(FILE *);
+int ferror_unlocked(FILE *);
 int fileno_unlocked(FILE *);
 #endif
 
@@ -189,6 +196,14 @@ void perror(const char *);
  || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define L_ctermid 20
 char *ctermid(char *);
+#endif
+
+/* Linux renameat2 is a GNU extension in pinned musl. */
+#if defined(_GNU_SOURCE)
+#define RENAME_NOREPLACE (1 << 0)
+#define RENAME_EXCHANGE  (1 << 1)
+#define RENAME_WHITEOUT  (1 << 2)
+int renameat2(int, const char *, int, const char *, unsigned);
 #endif
 
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)

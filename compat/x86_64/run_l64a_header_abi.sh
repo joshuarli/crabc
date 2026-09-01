@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 X/Open/GNU/BSD l64a C/C++ declaration gate.
+# Native Linux/x86-64 X/Open/GNU/BSD a64l/l64a C/C++ declaration gate.
 #
 # Pinned musl 1.2.6 is the declaration and C-linkage oracle. The raw project
 # pass uses only project headers plus raw compiler builtin headers, preventing
-# host-libc header leakage. `l64a` is hidden under strict/POSIX C/C++ and
-# visible only under X/Open 700, GNU, and BSD feature selection.
+# host-libc header leakage. Both radix-64 functions are hidden under
+# strict/POSIX C/C++ and visible only under X/Open 700, GNU, and BSD feature
+# selection. The hidden references are compiled independently so each
+# declaration's absence is observable.
 set -euo pipefail
 export LC_ALL=C
 
@@ -16,7 +18,7 @@ readonly C_PROBE="$ROOT_DIR/compat/x86_64/l64a_header_abi_probe.c"
 readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/l64a_header_abi_probe.cpp"
 
 fail() {
-    printf 'ERROR: x86 stdlib.h l64a ABI: %s\n' "$*" >&2
+    printf 'ERROR: x86 stdlib.h a64l/l64a ABI: %s\n' "$*" >&2
     exit 1
 }
 
@@ -61,7 +63,7 @@ candidate_compiler_builtin_include="$(realpath "$candidate_compiler_builtin_incl
 [ -d "$candidate_compiler_builtin_include" ] ||
     fail "missing raw candidate compiler builtin include directory"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-l64a-header.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-radix64-header.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 
 set_profile_args() {
@@ -85,7 +87,9 @@ set_profile_args() {
 
 compile_hidden_profile() {
     local label="$1"
-    shift
+    local symbol="$2"
+    local hidden_macro="$3"
+    shift 3
     local language variant errors
 
     for language in c cxx; do
@@ -95,16 +99,16 @@ compile_hidden_profile() {
             if [ "$language" = c ]; then
                 if run_compiler "$compiler" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE \
                     -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE "$@" \
-                    -DCRABC_REQUIRE_L64A_HIDDEN \
+                    "-D${hidden_macro}" \
                     -Werror=implicit-function-declaration "${include_args[@]}" \
                     -fsyntax-only "$C_PROBE" >"$errors" 2>&1; then
-                    fail "l64a is visible under ${label} C (${variant})"
+                    fail "${symbol} is visible under ${label} C (${variant})"
                 fi
             elif run_compiler "$compiler" -std=c++17 -x c++ -U_GNU_SOURCE \
                 -U_BSD_SOURCE -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE \
-                "$@" -DCRABC_REQUIRE_L64A_HIDDEN -nostdinc++ \
+                "$@" "-D${hidden_macro}" -nostdinc++ \
                 "${include_args[@]}" -fsyntax-only "$CXX_PROBE" >"$errors" 2>&1; then
-                fail "l64a is visible under ${label} C++ (${variant})"
+                fail "${symbol} is visible under ${label} C++ (${variant})"
             fi
         done
     done
@@ -120,7 +124,7 @@ compile_positive_profile() {
             if [ "$language" = c ]; then
                 run_compiler "$compiler" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE \
                     -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE \
-                    "$definition" -DCRABC_EXPECT_L64A \
+                    "$definition" -DCRABC_EXPECT_L64A -DCRABC_EXPECT_A64L \
                     -Werror=implicit-function-declaration "${include_args[@]}" \
                     -fsyntax-only "$C_PROBE"
             else
@@ -128,20 +132,26 @@ compile_positive_profile() {
                 run_compiler "$compiler" -std=c++17 -x c++ -U_GNU_SOURCE \
                     -U_BSD_SOURCE -U_XOPEN_SOURCE -U_POSIX_C_SOURCE \
                     -U_DEFAULT_SOURCE "$definition" -DCRABC_EXPECT_L64A \
+                    -DCRABC_EXPECT_A64L \
                     -nostdinc++ "${include_args[@]}" -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]l64a$' ||
-                    fail "C++ probe does not retain C linkage for l64a (${variant}, ${definition})"
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*l64a'; then
-                    fail "C++ probe retained a mangled l64a reference (${variant}, ${definition})"
-                fi
+                for symbol in l64a a64l; do
+                    printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+                        fail "C++ probe does not retain C linkage for ${symbol} (${variant}, ${definition})"
+                    # The two witnesses must retain unmangled l64a and unmangled a64l.
+                    if printf '%s\n' "$undefined" | grep -Eq "_Z[0-9].*${symbol}"; then
+                        fail "C++ probe retained a mangled ${symbol} reference (${variant}, ${definition})"
+                    fi
+                done
             fi
         done
     done
 }
 
-compile_hidden_profile strict -D__STRICT_ANSI__
-compile_hidden_profile posix -D_POSIX_C_SOURCE=200809L
+compile_hidden_profile strict l64a CRABC_REQUIRE_L64A_HIDDEN -D__STRICT_ANSI__
+compile_hidden_profile strict a64l CRABC_REQUIRE_A64L_HIDDEN -D__STRICT_ANSI__
+compile_hidden_profile posix l64a CRABC_REQUIRE_L64A_HIDDEN -D_POSIX_C_SOURCE=200809L
+compile_hidden_profile posix a64l CRABC_REQUIRE_A64L_HIDDEN -D_POSIX_C_SOURCE=200809L
 compile_positive_profile -D_XOPEN_SOURCE=700
 compile_positive_profile -D_GNU_SOURCE
 compile_positive_profile -D_BSD_SOURCE
@@ -150,7 +160,8 @@ set_profile_args project
 header_trace="$work_dir/project-xopen-header-trace"
 run_compiler "$compiler" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE \
     -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE \
-    -D_XOPEN_SOURCE=700 -DCRABC_EXPECT_L64A "${include_args[@]}" \
+    -D_XOPEN_SOURCE=700 -DCRABC_EXPECT_L64A -DCRABC_EXPECT_A64L \
+    "${include_args[@]}" \
     -H -fsyntax-only "$C_PROBE" >/dev/null 2>"$header_trace"
 while IFS= read -r path; do
     case "$path" in
@@ -163,4 +174,4 @@ for header in stdlib.h features.h bits/alltypes.h; do
         fail "X/Open C probe did not use the project <$header>"
 done
 
-printf 'x86 pinned-musl/project C/C++ <stdlib.h> l64a ABI: PASS\n'
+printf 'x86 pinned-musl/project C/C++ <stdlib.h> a64l/l64a ABI: PASS\n'

@@ -4,8 +4,11 @@
 # The candidate uses the real crabc crt1/crti/crtn objects, crabc static
 # startup and Initial TLS v1, the complete feature-built crabc-libc archive,
 # and its selected pthread/process/syscall leaves. The unchanged bundled
-# mimalloc object still has an exact fourteen-object link-time support tail that x86 crabc
-# does not own; those exact pinned-musl members are ratcheted below. The
+# mimalloc object still has an exact eleven-object link-time support tail that x86 crabc
+# does not own; those exact pinned-musl members are ratcheted below. Crabc's
+# selected static archive now supplies `fputs`, `sleep`, and
+# `__stack_chk_fail`, and the link-map assertions below preserve that ownership.
+# The
 # candidate-local copy weakens only musl's duplicate `__progname` globals in
 # `libc.lo`, so the current crabc static-startup owner remains authoritative
 # while musl's required `__libc`/`__hwcap` support stays pinned. None owns
@@ -40,6 +43,41 @@ archive_member_for_symbol() {
             }
         ' |
         sort -u
+}
+
+assert_crabc_backend_support_owner() {
+    local archive_path="$1"
+    local map_path="$2"
+    local symbol="$3"
+    local -a owners
+
+    mapfile -t owners < <(archive_member_for_symbol "$archive_path" "$symbol")
+    [ "${#owners[@]}" -eq 1 ] \
+        || fail "crabc archive must have exactly one ${symbol} owner"
+
+    case "$symbol" in
+        fputs)
+            grep -F "$archive_path(" "$map_path" | \
+                grep -F "(.text.fputs)" >/dev/null \
+                || fail "candidate does not link fputs from crabc archive"
+            ;;
+        sleep)
+            grep -F "$archive_path(" "$map_path" | \
+                grep -F "(.text.sleep)" >/dev/null \
+                || fail "candidate does not link sleep from crabc archive"
+            ;;
+        __stack_chk_fail)
+            awk -v archive="${archive_path}(" '
+                $NF == "__stack_chk_fail" && index(previous, archive) { found = 1 }
+                { previous = $0 }
+                END { exit(found ? 0 : 1) }
+            ' "$map_path" \
+                || fail "candidate does not link __stack_chk_fail from crabc archive"
+            ;;
+        *)
+            fail "unsupported crabc backend-support ownership symbol: ${symbol}"
+            ;;
+    esac
 }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
@@ -272,6 +310,13 @@ fi
 grep -Eq '\$0x39(,|[[:space:]]|$)' "$candidate_disassembly" \
     || fail "candidate lacks the fixture-contained raw x86 fork syscall"
 
+# These were previously part of the pinned-musl backend-support tail. Keep
+# their source ownership explicit instead of merely shortening that tail: the
+# final LLD map must extract each from the feature-built crabc archive.
+for symbol in fputs sleep __stack_chk_fail; do
+    assert_crabc_backend_support_owner "$archive" "$link_map" "$symbol"
+done
+
 awk -v archive="${backend_musl_libc}(" '
     index($0, archive) {
         member = substr($0, index($0, archive) + length(archive))
@@ -281,15 +326,12 @@ awk -v archive="${backend_musl_libc}(" '
 ' "$link_map" | sort -u >"$actual_musl_members"
 printf '%s\n' \
     __lock.lo \
-    __stack_chk_fail.lo \
     abort.lo \
     abort_lock.lo \
     block.lo \
-    fputs.lo \
     libc.lo \
     prctl.lo \
     realpath.lo \
-    sleep.lo \
     strchrnul.lo \
     strdup.lo \
     syscall.lo \

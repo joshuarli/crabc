@@ -7,14 +7,21 @@
 
 //! Linux/AArch64 dynamic linker.
 
-// The x86 root is a deliberately feature-gated, private admission target for
-// the fixed native evidence graph. It does not broaden the public loader
-// support boundary or select a portable loader architecture.
+// The x86 roots are deliberately feature-gated private evidence targets. The
+// original root retains the fixed graph; the separate general-initial roots
+// admit either a non-TLS graph or one initial TLS generation retained by the
+// loader. Neither broadens the public loader support boundary or selects
+// portability.
 #[cfg(all(
     target_os = "linux",
     target_arch = "x86_64",
     target_endian = "little",
-    feature = "x86_64-initial-interpreter"
+    any(
+        feature = "x86_64-initial-interpreter",
+        feature = "x86_64-general-initial-interpreter",
+        feature = "x86_64-general-initial-tls-interpreter",
+        feature = "x86_64-general-initial-tls-runtime-v1-interpreter"
+    )
 ))]
 #[path = "x86_64_initial_graph.rs"]
 mod x86_64_initial_graph;
@@ -30,9 +37,14 @@ mod loader;
         target_os = "linux",
         target_arch = "x86_64",
         target_endian = "little",
-        feature = "x86_64-initial-interpreter"
+        any(
+            feature = "x86_64-initial-interpreter",
+            feature = "x86_64-general-initial-interpreter",
+            feature = "x86_64-general-initial-tls-interpreter",
+            feature = "x86_64-general-initial-tls-runtime-v1-interpreter"
+        )
     )
 )))]
 compile_error!(
-    "crabc-ldso supports Linux/AArch64 little-endian; the private x86 initial-interpreter root requires --features x86_64-initial-interpreter"
+    "crabc-ldso supports Linux/AArch64 little-endian; a private x86 root requires --features x86_64-initial-interpreter, x86_64-general-initial-interpreter, x86_64-general-initial-tls-interpreter, or x86_64-general-initial-tls-runtime-v1-interpreter"
 );

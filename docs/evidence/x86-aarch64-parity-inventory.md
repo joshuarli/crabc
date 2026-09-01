@@ -36,8 +36,14 @@ The report also checks the 183 pinned public header paths against the AArch64
 musl header oracle and records the selected x86 static-export ratchet only as
 boundary evidence. Neither measure establishes C ABI or runtime parity.
 
-Run `python3 compat/x86_64/aarch64_parity_inventory.py`. It recomputes the
-report and rejects drift from the checked snapshot. `--write` is a deliberate
-review/update operation for changes to the underlying contract. The validator
-always retains `promotion_ready=false` and `public_support=false`; promotion
-remains governed by every gate in `x86-64.md` and `compat/x86_64/parity.toml`.
+`compat/x86_64/aarch64_frozen_baseline.json` is the immutable settlement
+record. It binds the full frozen source commit, capability and family counts,
+and SHA-256 digests of the AArch64 capability ledger, ABI manifest, and public
+header oracle. Run `python3 compat/x86_64/aarch64_parity_inventory.py`; normal
+validation first rejects drift from that record, then rejects drift from the
+checked x86-derived inventory. It intentionally has no `--write` or snapshot
+refresh path: rebaselining requires explicit user direction and a separately
+recorded old-to-new baseline transition. `promotion_ready` and
+`public_support` are derived from current x86 contracts, not hard-coded false;
+promotion remains governed by every gate in `x86-64.md` and
+`compat/x86_64/parity.toml`.

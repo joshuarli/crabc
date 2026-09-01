@@ -8,6 +8,7 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -49,9 +50,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 303)
-        self.assertEqual(report["header_layout_probe_count"], 47)
+        self.assertEqual(report["verified_slice_count"], 42)
+        self.assertEqual(report["verified_artifact_count"], 304)
+        self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -59,6 +60,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_uapi_path_count"], 3)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
         self.assertEqual(report["header_foundation_ioctl_header_profile_matrix_row_count"], 7)
+        self.assertEqual(report["header_foundation_sys_io_header_profile_matrix_row_count"], 7)
         self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
         self.assertEqual(
             report["header_foundation_event_descriptors_header_profile_matrix_row_count"],
@@ -91,11 +93,50 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_language_profile_count"], 7)
         self.assertEqual(report["header_foundation_profile_obligation_count"], 21)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
-        self.assertEqual(report["header_foundation_abi_facet_count"], 22)
+        self.assertEqual(report["header_foundation_abi_facet_count"], 23)
         self.assertEqual(report["header_foundation_linkage_owner_count"], 3)
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
+
+    def test_string_copy_strdupa_header_contract_stays_non_runtime(self) -> None:
+        """Keep the exact macro below archive and allocator ownership."""
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        ledger.require_string_copy_artifact(family)
+
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts if entry["id"] == "static-c-string-copy"
+        )
+        assert isinstance(artifact, dict)
+        prerequisite = artifact["x86_header_prerequisites"][0]
+        for phrase in (
+            "strdupa",
+            "caller-provided `alloca.h`",
+            "source-faithful C++",
+            "header-only",
+        ):
+            self.assertIn(phrase, prerequisite)
+
+        changed = copy.deepcopy(data)
+        changed_family = self.family(changed, "libc.posix-runtime")
+        changed_artifacts = changed_family["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "static-c-string-copy"
+        )
+        changed_artifact["x86_header_prerequisites"] = [
+            "generic string declarations"
+        ]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-string-copy must retain the header-only strdupa boundary",
+        ):
+            ledger.require_string_copy_artifact(changed_family)
 
     def test_verified_artifact_rejects_duplicate_native_evidence_command(self) -> None:
         data = self.data()
@@ -323,6 +364,146 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-l64a command"):
             ledger.validate_ledger(changed)
 
+    def test_a64l_artifact_is_opt_in_source_split_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(entry for entry in artifacts if entry["id"] == "static-c-a64l")
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/a64l.rs",
+            "include/stdlib.h",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "compat/x86_64/l64a_header_abi_probe.c",
+            "compat/x86_64/l64a_header_abi_probe.cpp",
+            "compat/x86_64/run_l64a_header_abi.sh",
+            "compat/x86_64/libc_a64l_probe.c",
+            "compat/x86_64/libc_a64l_start.S",
+            "compat/x86_64/run_libc_a64l.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertNotIn(
+            "libc/src/c_abi/x86_64/byte_strings.rs", artifact["source_owners"]
+        )
+        for phrase in (
+            "x86-a64l",
+            "adds exactly `a64l`",
+            "at most six caller bytes",
+            "shared `src/misc/a64l.c` and `a64l.lo` also define `l64a`",
+            "strchr(digits, *s)",
+            "fixed 64-byte alphabet",
+            "no mutable state, errno, TLS, locale, allocator, syscall, or runtime edge",
+            "does not complete `legacy.misc` or general numeric parsing/conversion",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-a64l"},
+        )
+        self.assertIn("src/misc/a64l.c::a64l", artifact["oracle"][0]["role"])
+        self.assertIn("local 64-byte table scan", artifact["oracle"][0]["role"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry for entry in changed_artifacts if entry["id"] == "static-c-a64l"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "fixed 64-byte alphabet", "decoder alphabet"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-a64l description omits"
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry for entry in changed_artifacts if entry["id"] == "static-c-a64l"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-a64l-broad"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-a64l command"):
+            ledger.validate_ledger(changed)
+
+    def test_sethostent_artifact_is_opt_in_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts if entry["id"] == "static-c-sethostent"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/sethostent.rs",
+            "include/netdb.h",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "compat/x86_64/endhostent_header_abi_probe.c",
+            "compat/x86_64/endhostent_header_abi_probe.cpp",
+            "compat/x86_64/run_endhostent_header_abi.sh",
+            "compat/x86_64/libc_sethostent_probe.c",
+            "compat/x86_64/libc_sethostent_start.S",
+            "compat/x86_64/run_libc_sethostent.sh",
+            "compat/x86_64/tests/test_sethostent.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertNotIn(
+            "libc/src/c_abi/x86_64/endhostent.rs", artifact["source_owners"]
+        )
+        for phrase in (
+            "x86-netdb-setent",
+            "adds exactly `sethostent` and weak same-address `setnetent`",
+            "`void (int)`",
+            "ignore the signed `stayopen` word",
+            "strong `setnetent` definition supersedes the weak alias",
+            "no mutable state, errno, TLS, allocation, syscall, file",
+            "does not complete legacy netdb/resolver behavior",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sethostent"},
+        )
+        self.assertIn("src/network/ent.c::sethostent", artifact["oracle"][0]["role"])
+        self.assertIn("caller strong-override", artifact["oracle"][1]["role"])
+
+        ledger.require_sethostent_artifact(family)
+
+        changed = copy.deepcopy(data)
+        changed_family = self.family(changed, "libc.c-abi-compat")
+        changed_artifacts = changed_family["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry for entry in changed_artifacts if entry["id"] == "static-c-sethostent"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "weak same-address `setnetent`", "separate `setnetent`"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-sethostent description omits"
+        ):
+            ledger.require_sethostent_artifact(changed_family)
+
     def test_error_strsignal_slice_is_selected_private_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
@@ -377,7 +558,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(oracle, list) and isinstance(oracle[0], dict)
         self.assertIn("src/string/strsignal.c", oracle[0]["role"])
 
-        selected["capabilities"] = ["legacy.misc"]
+        selected["capabilities"] = ["process.globals"]
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "strsignal slice must select exactly error.reporting-termination",
@@ -413,6 +594,220 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(changed_artifact, dict)
         changed_artifact["description"] = "private graph"
         with self.assertRaisesRegex(ledger.LedgerError, "ldso-initial-graph description omits"):
+            ledger.validate_ledger(changed)
+
+    def test_ldso_general_initial_graph_is_a_nonpromoting_private_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "ldso-general-initial-graph"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "arbitrary bounded non-TLS initial `DT_NEEDED`",
+            "`(st_dev, st_ino)`",
+            "absolute RUNPATH components",
+            "R_X86_64_RELATIVE",
+            "R_X86_64_GLOB_DAT",
+            "R_X86_64_JUMP_SLOT",
+            "diamond",
+            "cycle",
+            "dependency-first postorder",
+            "declared `DT_NEEDED` order",
+            "before the first callback",
+            "then dispatches it once",
+            "`DT_INIT_ARRAY`/`DT_INIT_ARRAYSZ`",
+            "DT_INIT, DT_FINI, DT_PREINIT_ARRAY, DT_FINI_ARRAY",
+            "TLS/DTV",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {
+                "./scripts/dev-x86_64.sh ldso-general-initial-graph",
+                "./scripts/dev-x86_64.sh ldso-general-initial-target-root",
+            },
+        )
+        for owner in (
+            "ldso/src/x86_64_general_initial_graph.rs",
+            "ldso/src/x86_64_initial_graph_state.rs",
+            "compat/x86_64/ldso_general_initial_graph_cycle_marker.h",
+            "compat/x86_64/run_ldso_general_initial_graph.sh",
+            "compat/x86_64/run_ldso_general_initial_graph_target_root.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "ldso-general-initial-graph"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "before the first callback", "after the first callback"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "ldso-general-initial-graph description omits before the first callback"
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_ldso_general_initial_tls_is_a_nonpromoting_private_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "ldso-general-initial-tls-materialization"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "general-initial-TLS materialization",
+            "Variant-II",
+            "R_X86_64_DTPMOD64",
+            "R_X86_64_DTPOFF64",
+            "ARCH_SET_FS",
+            "atomically reserves",
+            "non-fallible retained-state commit",
+            "dependency `DT_INIT_ARRAY` plan failures remain before ARCH_SET_FS",
+            "preflighted before ARCH_SET_FS",
+            "candidate callbacks dispatch only after that commit",
+            "naked pinned-musl reference",
+            "constructor-order differential",
+            "main/CRT lifecycle",
+            "RuntimeV1 descriptors",
+            "public x86 support",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {
+                "./scripts/dev-x86_64.sh ldso-general-initial-tls",
+                "./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root",
+            },
+        )
+        for owner in (
+            "ldso/src/x86_64_general_initial_tls_state.rs",
+            "ldso/src/x86_64_general_initial_tls_source_root.rs",
+            "compat/x86_64/run_ldso_general_initial_tls.sh",
+            "compat/x86_64/run_ldso_general_initial_tls_target_root.sh",
+        ):
+            with self.subTest(owner=owner):
+                self.assertIn(owner, artifact["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "ldso-general-initial-tls-materialization"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "candidate callbacks dispatch only after that commit",
+            "candidate callbacks dispatch before that commit",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "ldso-general-initial-tls-materialization description omits candidate callbacks dispatch only after that commit",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_loader_libc_general_tls_runtime_v1_is_a_nonpromoting_private_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "loader-libc-general-tls-runtime-v1"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "bounded-general initial-TLS RuntimeV1 descriptor",
+            "`x86_64-general-initial-tls-runtime-v1-interpreter`",
+            "72-byte `__crabc_x86_64_loader_tls_runtime_v1`",
+            "local/hidden writable",
+            "no `.dynsym` entry",
+            "page-rounded `PT_GNU_RELRO`",
+            "`UNPUBLISHED` -> `PUBLISHING` -> `READY`",
+            "Before `ARCH_SET_FS`",
+            "release-publishes `READY` last",
+            "dependency `DT_INIT_ARRAY` plan only after ready",
+            "`ARCH_GET_FS`, `%fs`, or DTV observation",
+            "strong main-image and weak DSO record forms reject before `ARCH_SET_FS`",
+            "no-`PT_INTERP` static-observer rejection",
+            "CRT handoff",
+            "pthread/new-thread TLS",
+            "DTV growth/replacement",
+            "runtime mapping/dlopen",
+            "public x86 support",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {
+                "./scripts/dev-x86_64.sh loader-libc-general-tls-runtime-v1",
+                "./scripts/dev-x86_64.sh loader-libc-general-tls-runtime-v1-target-root",
+            },
+        )
+        for owner in (
+            "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs",
+            "ldso/src/x86_64_general_initial_tls_state.rs",
+            "libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs",
+            "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh",
+            "compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh",
+            "compat/x86_64/loader_libc_general_tls_runtime_v1_main.c",
+            "compat/x86_64/loader_libc_general_tls_runtime_v1_strong_main_record.c",
+            "compat/x86_64/loader_libc_general_tls_runtime_v1_weak_dso_record.c",
+            "compat/x86_64/loader-libc-tls-runtime-v1.toml",
+            "docs/evidence/x86-loader-libc-tls-runtime-v1.md",
+        ):
+            with self.subTest(owner=owner):
+                self.assertIn(owner, artifact["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "loader-libc-general-tls-runtime-v1"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "release-publishes `READY` last",
+            "release-publishes `READY` first",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "loader-libc-general-tls-runtime-v1 description omits release-publishes `READY` last",
+        ):
             ledger.validate_ledger(changed)
 
     def test_allocator_wrapper_stays_mixed_runtime_and_non_promoting(self) -> None:
@@ -511,6 +906,53 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(changed)
 
+    def test_scandir_allocation_client_stays_opt_in_and_nonpromoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "static-c-scandir-allocation-client"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "opt-in mixed-runtime",
+            "x86-scandir",
+            "default static roots",
+            "hidden x86 ABI tail-call thunks",
+            "first-vector, first-copied-record, and later-growth",
+            "scandirat",
+            "C++ exceptions and C longjmp",
+            "pinned-musl startup/opendir",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-scandir"},
+        )
+
+        ledger.require_scandir_allocation_client_artifact(family)
+        changed = self.data()
+        changed_family = self.family(changed, "libc.posix-runtime")
+        changed_artifact = next(
+            entry
+            for entry in changed_family["verified_artifact"]
+            if entry["id"] == "static-c-scandir-allocation-client"
+        )
+        changed_artifact["native_evidence"][0]["scope"] = (
+            "missing allocation rollback boundary"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "bounded mixed-runtime regression",
+        ):
+            ledger.require_scandir_allocation_client_artifact(changed_family)
+
     def test_allocator_observability_is_exact_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
@@ -525,7 +967,16 @@ class X86ParityLedgerTests(unittest.TestCase):
             slice_entry["capabilities"], ["memory.allocator-observability"]
         )
         self.assertIn("strong `malloc_usable_size`", slice_entry["description"])
+        self.assertIn("exact eleven-object pinned-musl support tail", slice_entry["description"])
+        self.assertIn(
+            "crabc ownership of `fputs`, `sleep`, and `__stack_chk_fail`",
+            slice_entry["description"],
+        )
         self.assertIn("`memory.allocator-basic`", slice_entry["description"])
+        self.assertIn(
+            "does not itself select `memory.allocator-basic`",
+            slice_entry["description"],
+        )
         self.assertIn("public x86 support", slice_entry["description"])
         self.assertEqual(
             {entry["command"] for entry in slice_entry["native_evidence"]},
@@ -547,6 +998,124 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError, "closed libc-allocator-observability command"
         ):
             ledger.validate_ledger(changed)
+
+    def test_allocator_basic_runtime_selects_only_the_private_nine_api_boundary(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        slice_entry = next(
+            entry for entry in slices if entry["id"] == "allocator-basic-runtime-v1"
+        )
+        assert isinstance(slice_entry, dict)
+        self.assertEqual(slice_entry["capabilities"], ["memory.allocator-basic"])
+        for phrase in (
+            "zero-product `calloc`",
+            "real crabc `crt1.o`/`crti.o`/`crtn.o`",
+            "joined-worker-only `fork`/`pthread_atfork`",
+            "ordinary-exit callback",
+            "independently selected strong `malloc_usable_size` observer",
+            "exactly the bounded eleven-object pinned-musl backend-support tail",
+            "arbitrary live-thread fork recovery",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, slice_entry["description"])
+        self.assertEqual(
+            {entry["command"] for entry in slice_entry["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-allocator-basic-runtime-v1"},
+        )
+
+        ledger.require_allocator_basic_runtime_slice(family)
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.c-abi-compat")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_slice = next(
+            entry
+            for entry in changed_slices
+            if entry["id"] == "allocator-basic-runtime-v1"
+        )
+        changed_slice["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-allocator-basic-runtime-v1-broad"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-allocator-basic-runtime-v1 command",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_crypt_profile_selects_only_the_bounded_private_capabilities(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry for entry in slices if entry["id"] == "crypto.crypt-profile"
+        )
+        assert isinstance(selected, dict)
+        self.assertEqual(
+            selected["capabilities"], ["crypto.crypt", "crypto.crypt-helpers"]
+        )
+        for phrase in (
+            "strong default `crypt`, weak default `crypt_r`",
+            "260-byte `struct crypt_data`",
+            "SHA-256-crypt `$5$` and SHA-512-crypt `$6$`",
+            "RustCrypto `sha-crypt` and `base64ct` dependencies",
+            "never hand-rolls a cryptographic primitive",
+            "pinned-musl `malloc`/`aligned_alloc`/`free` boundary",
+            "x86-allocator-runtime",
+            "legacy DES/BSDI/MD5/bcrypt support",
+            "separate selected-private `legacy.misc` slice",
+            "inert link-compatible `encrypt`/`setkey` names",
+            "no DES, cipher, PRNG, or crypto semantics",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+        owners = selected["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/crypt.rs",
+            "include/crypt.h",
+            "compat/x86_64/crypt_header_abi_probe.cpp",
+            "compat/x86_64/libc_crypt_probe.c",
+            "compat/x86_64/run_libc_crypt.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, owners)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list)
+        self.assertEqual(
+            {entry["command"] for entry in evidence},
+            {
+                "./scripts/dev-x86_64.sh crypt-header-abi",
+                "./scripts/dev-x86_64.sh libc-crypt",
+            },
+        )
+        runtime = next(
+            entry
+            for entry in evidence
+            if entry["command"] == "./scripts/dev-x86_64.sh libc-crypt"
+        )
+        for phrase in (
+            "actual public crypt/crypt_r and every private helper",
+            "crypt_data.__buf overlap",
+            "pinned-musl malloc/aligned_alloc/free",
+            "x86-allocator-runtime composition",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, runtime["scope"])
+
+        selected["capabilities"] = ["process.globals"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "crypt profile slice must select exactly crypto.crypt and crypto.crypt-helpers",
+        ):
+            ledger.validate_ledger(data)
 
     def test_alloca_builtin_stays_archive_free_and_non_promoting(self) -> None:
         data = self.data()
@@ -1709,7 +2278,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 47)
+        self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -1721,6 +2290,27 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/headers-layouts.toml", headers_layouts["source_owners"]
         )
         self.assertNotIn("include", headers_layouts["source_owners"])
+        for owner in (
+            "compat/x86_64/sys_io_header_abi_probe.c",
+            "compat/x86_64/sys_io_header_abi_probe.cpp",
+            "compat/x86_64/run_sys_io_header_abi.sh",
+            "compat/x86_64/tests/test_sys_io_header_abi.py",
+            "include/sys/io.h",
+            "include/bits/io.h",
+            "compat/x86_64/quota_header_abi_probe.c",
+            "compat/x86_64/quota_header_abi_probe.cpp",
+            "compat/x86_64/run_quota_header_abi.sh",
+            "include/sys/quota.h",
+            "compat/x86_64/sched_cpu_macros_header_abi_probe.c",
+            "compat/x86_64/sched_cpu_macros_header_abi_probe.cpp",
+            "compat/x86_64/run_sched_cpu_macros_header_abi.sh",
+            "include/sched.h",
+            "compat/x86_64/fanotify_header_abi_probe.c",
+            "compat/x86_64/fanotify_header_abi_probe.cpp",
+            "compat/x86_64/run_fanotify_header_abi.sh",
+            "include/sys/fanotify.h",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
 
         probes = manifest["probe"]
         assert isinstance(probes, list)
@@ -1764,6 +2354,46 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/nameser_header_abi_probe.c",
                 "compat/x86_64/nameser_header_abi_probe.cpp",
                 "compat/x86_64/run_nameser_header_abi.sh",
+            ],
+        )
+        quota = next(probe for probe in probes if probe["id"] == "quota")
+        assert isinstance(quota, dict)
+        self.assertEqual(quota["kind"], "compile-only")
+        self.assertEqual(quota["headers"], ["include/sys/quota.h"])
+        self.assertEqual(
+            quota["sources"],
+            [
+                "compat/x86_64/quota_header_abi_probe.c",
+                "compat/x86_64/quota_header_abi_probe.cpp",
+                "compat/x86_64/run_quota_header_abi.sh",
+            ],
+        )
+        sched_cpu_macros = next(
+            probe for probe in probes if probe["id"] == "sched-cpu-macros"
+        )
+        assert isinstance(sched_cpu_macros, dict)
+        self.assertEqual(sched_cpu_macros["kind"], "compile-only")
+        self.assertEqual(sched_cpu_macros["headers"], ["include/sched.h"])
+        self.assertEqual(
+            sched_cpu_macros["sources"],
+            [
+                "compat/x86_64/sched_cpu_macros_header_abi_probe.c",
+                "compat/x86_64/sched_cpu_macros_header_abi_probe.cpp",
+                "compat/x86_64/run_sched_cpu_macros_header_abi.sh",
+            ],
+        )
+        fanotify = next(probe for probe in probes if probe["id"] == "fanotify")
+        assert isinstance(fanotify, dict)
+        self.assertEqual(fanotify["kind"], "compile-only")
+        self.assertEqual(
+            fanotify["headers"], ["include/stddef.h", "include/sys/fanotify.h"]
+        )
+        self.assertEqual(
+            fanotify["sources"],
+            [
+                "compat/x86_64/fanotify_header_abi_probe.c",
+                "compat/x86_64/fanotify_header_abi_probe.cpp",
+                "compat/x86_64/run_fanotify_header_abi.sh",
             ],
         )
         inet_address = next(probe for probe in probes if probe["id"] == "inet-address")
@@ -1810,6 +2440,18 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/ioctl_header_abi_probe.c",
                 "compat/x86_64/ioctl_header_abi_probe.cpp",
                 "compat/x86_64/run_ioctl_header_abi.sh",
+            ],
+        )
+        sys_io = next(probe for probe in probes if probe["id"] == "sys-io")
+        assert isinstance(sys_io, dict)
+        self.assertEqual(sys_io["kind"], "compile-only")
+        self.assertEqual(sys_io["headers"], ["include/sys/io.h"])
+        self.assertEqual(
+            sys_io["sources"],
+            [
+                "compat/x86_64/sys_io_header_abi_probe.c",
+                "compat/x86_64/sys_io_header_abi_probe.cpp",
+                "compat/x86_64/run_sys_io_header_abi.sh",
             ],
         )
         epoll = next(probe for probe in probes if probe["id"] == "epoll")
@@ -2037,6 +2679,296 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_socket_header_macro_gate_stays_header_only_and_non_promoting(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"] == "./scripts/dev-x86_64.sh socket-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "project-first/pinned-musl C/C++",
+            "IPv4/IPv6 address-equality/classification",
+            "`__ARE_4_EQUAL`/`IN6_ARE_ADDR_EQUAL`",
+            "`IN_CLASSA`/`IN_CLASSB`/`IN_CLASSC`/`IN_CLASSD`/`IN_MULTICAST`/`IN_EXPERIMENTAL`/`IN_BADCLASS`",
+            "GNU/BSD `IP_MSFILTER_SIZE`/`GROUP_FILTER_SIZE`",
+            "socket membership",
+            "packet I/O",
+            "resolver/netdb",
+            "C networking runtime behavior",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        ledger.require_socket_header_evidence(headers_layouts)
+
+        evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "socket-header-abi evidence must retain"
+        ):
+            ledger.require_socket_header_evidence(headers_layouts)
+
+    def test_socket_message_helper_macro_gate_stays_header_only(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"]
+            == "./scripts/dev-x86_64.sh socket-messages-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "project-first/pinned-musl POSIX/GNU/BSD C/C++",
+            "exact unconditional `__CMSG_LEN`/`__CMSG_NEXT`/`__MHDR_END`",
+            "ancillary traversal helpers",
+            "archive linkage",
+            "socket runtime behavior",
+            "installed-header completion",
+            "family completion",
+            "public support",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        ledger.require_socket_messages_header_evidence(headers_layouts)
+
+        posix_runtime = self.family(data, "libc.posix-runtime")
+        artifact = next(
+            entry
+            for entry in posix_runtime["verified_artifact"]
+            if entry["id"] == "static-c-socket-messages"
+        )
+        header_prerequisites = artifact["x86_header_prerequisites"]
+        assert isinstance(header_prerequisites, list)
+        header_contract = "\n".join(header_prerequisites)
+        for phrase in (
+            "exact `__CMSG_LEN`/`__CMSG_NEXT`/`__MHDR_END`",
+            "ancillary traversal helpers",
+            "not installed-header completion",
+        ):
+            self.assertIn(phrase, header_contract)
+
+        ledger.require_socket_messages_artifact(posix_runtime)
+        header_prerequisites[0] = header_prerequisites[0].replace(
+            "`__CMSG_LEN`/`__CMSG_NEXT`/`__MHDR_END`", "CMSG helper names"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "bounded C/C\\+\\+ header matrix"
+        ):
+            ledger.require_socket_messages_artifact(posix_runtime)
+
+        evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "socket-messages-header-abi evidence must retain"
+        ):
+            ledger.require_socket_messages_header_evidence(headers_layouts)
+
+    def test_nameser_record_classification_macro_gate_stays_header_only(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"] == "./scripts/dev-x86_64.sh nameser-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "project-first/pinned-musl C/C++",
+            "exact unconditional `ns_t_qt_p`/`ns_t_mrr_p`/`ns_t_rr_p`/`ns_t_udp_p`/`ns_t_xfr_p`",
+            "`NS_NXT_BIT_SET`/`NS_NXT_BIT_CLEAR`/`NS_NXT_BIT_ISSET`",
+            "record-classification macros",
+            "resolver state",
+            "DNS packet I/O",
+            "archive linkage",
+            "installed-header completion",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        ledger.require_nameser_header_evidence(headers_layouts)
+
+        evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "nameser-header-abi evidence must retain"
+        ):
+            ledger.require_nameser_header_evidence(headers_layouts)
+
+    def test_quota_conversion_macro_gate_stays_header_only(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"] == "./scripts/dev-x86_64.sh quota-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "project-first/pinned-musl C/C++",
+            "exact unconditional `dbtob`/`btodb`/`fs_to_dq_blocks`/`dqoff`",
+            "LP64 `unsigned long long` `dqoff` result",
+            "compile-only",
+            "quota conversion macros",
+            "quotactl archive/runtime behavior",
+            "quota policy/accounting",
+            "filesystem/kernel state",
+            "system.kernel-admin",
+            "installed-header completion",
+            "family completion",
+            "public support",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        ledger.require_quota_header_evidence(headers_layouts)
+
+        evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "quota-header-abi evidence must retain"
+        ):
+            ledger.require_quota_header_evidence(headers_layouts)
+
+    def test_sched_cpu_macro_gate_stays_header_only(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"]
+            == "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "project-first/pinned-musl C/C++",
+            "<sched.h>",
+            "exact GNU `__CPU_op_S`/`CPU_SET_S`/`CPU_CLR_S`/`CPU_ISSET_S`",
+            "`CPU_ALLOC_SIZE`/`CPU_ALLOC`/`CPU_FREE`",
+            "generated `__CPU_AND_S`/`__CPU_OR_S`/`__CPU_XOR_S`",
+            "`CPU_SETSIZE`",
+            "canonical C++ strict visibility",
+            "forced-macro-hidden negative selection",
+            "archive linkage",
+            "allocator runtime behavior",
+            "byte-string runtime behavior",
+            "scheduler policy/affinity",
+            "installed-header completion",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        ledger.require_sched_cpu_macros_header_evidence(headers_layouts)
+
+        evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "sched-cpu-macros-header-abi evidence must retain"
+        ):
+            ledger.require_sched_cpu_macros_header_evidence(headers_layouts)
+
+    def test_fanotify_traversal_macro_gate_stays_header_only(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"] == "./scripts/dev-x86_64.sh fanotify-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "project-first/pinned-musl",
+            "seven-profile C/C++",
+            "<sys/fanotify.h>",
+            "Linux 5.10",
+            "`fanotify_event_metadata` LP64 layout",
+            "`FAN_EVENT_METADATA_LEN`",
+            "exact unconditional `FAN_EVENT_NEXT`/`FAN_EVENT_OK`",
+            "C/C++ result types",
+            "canonical strict C++ visibility",
+            "record traversal macros",
+            "archive linkage",
+            "fanotify_init/fanotify_mark archive/runtime behavior",
+            "descriptor creation",
+            "kernel watcher state",
+            "watcher policy",
+            "installed-header completion",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        ledger.require_fanotify_header_evidence(headers_layouts)
+
+        evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "fanotify-header-abi evidence must retain"
+        ):
+            ledger.require_fanotify_header_evidence(headers_layouts)
+
+    def test_ctype_header_macro_gate_stays_header_only_and_non_promoting(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"] == "./scripts/dev-x86_64.sh ctype-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "project-first/pinned-musl C/C++",
+            "fourteen ordinary ctype declarations",
+            "C-only `__isspace` inline",
+            "exact `isalpha`/`isdigit`/`islower`/`isupper`/`isprint`/`isgraph`/`isspace`",
+            "all C feature profiles",
+            "C++-hidden",
+            "`isascii`/`toascii`",
+            "exact bitwise `_tolower`/`_toupper`",
+            "POSIX/XOPEN/GNU/BSD C-visible",
+            "strict-C-hidden",
+            "compiler-native C++17",
+            "archive linkage",
+            "C-locale runtime behavior",
+            "header-family completion",
+            "public support",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        family_header_prerequisites = headers_layouts["x86_header_prerequisites"]
+        assert isinstance(family_header_prerequisites, list)
+        family_header_contract = "\n".join(family_header_prerequisites)
+        for phrase in (
+            "POSIX/XOPEN/GNU/BSD C-visible and strict-C-hidden isascii/toascii",
+            "exact bitwise _tolower/_toupper macro replacements",
+            "compiler-native C++17 profile",
+            "macros select no archive linkage",
+        ):
+            self.assertIn(phrase, family_header_contract)
+
+        ledger.require_ctype_header_evidence(headers_layouts)
+
+        posix_runtime = self.family(data, "libc.posix-runtime")
+        ctype_artifact = next(
+            entry
+            for entry in posix_runtime["verified_artifact"]
+            if entry["id"] == "static-c-ctype"
+        )
+        header_prerequisites = ctype_artifact["x86_header_prerequisites"]
+        assert isinstance(header_prerequisites, list)
+        header_contract = "\n".join(header_prerequisites)
+        for phrase in (
+            "exact bitwise `_tolower`/`_toupper`",
+            "POSIX/XOPEN/GNU/BSD C-visible",
+            "strict-C-hidden",
+            "compiler-native C++17",
+            "no archive linkage",
+        ):
+            self.assertIn(phrase, header_contract)
+
+        evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "ctype-header-abi evidence must retain"
+        ):
+            ledger.require_ctype_header_evidence(headers_layouts)
+
     def test_header_foundation_manifest_accounts_for_all_paths_without_promotion(self) -> None:
         data = self.data()
         manifest = self.header_foundation_manifest()
@@ -2095,6 +3027,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
         self.assertEqual(report["header_foundation_ioctl_header_profile_matrix_row_count"], 7)
+        self.assertEqual(report["header_foundation_sys_io_header_profile_matrix_row_count"], 7)
         self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
         self.assertEqual(
             report["header_foundation_event_descriptors_header_profile_matrix_row_count"],
@@ -2256,6 +3189,37 @@ class X86ParityLedgerTests(unittest.TestCase):
                 and row["candidate"] == "compile-ok"
                 and row["applicability"] == "applicable"
                 for row in ioctl_rows
+            )
+        )
+        sys_io_matrix = manifest["sys_io_header_profile_matrix"]
+        assert isinstance(sys_io_matrix, dict)
+        self.assertEqual(sys_io_matrix["id"], "x86-sys-io-header-profile-matrix")
+        self.assertEqual(sys_io_matrix["state"], "partial-verified")
+        self.assertEqual(sys_io_matrix["required_result"], "pass")
+        self.assertEqual(
+            sys_io_matrix["command"], "./scripts/dev-x86_64.sh sys-io-header-abi"
+        )
+        self.assertEqual(sys_io_matrix["header_class"], "pinned-non-uapi")
+        self.assertEqual(sys_io_matrix["subject_headers"], ["sys/io.h", "bits/io.h"])
+        self.assertEqual(
+            sys_io_matrix["profiles"],
+            list(ledger.EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_PROFILES),
+        )
+        self.assertEqual(sys_io_matrix["row_count"], 7)
+        sys_io_rows = sys_io_matrix["row"]
+        assert isinstance(sys_io_rows, list)
+        self.assertEqual(len(sys_io_rows), 7)
+        self.assertEqual(
+            [row["profile"] for row in sys_io_rows if isinstance(row, dict)],
+            list(ledger.EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_PROFILES),
+        )
+        self.assertTrue(
+            all(
+                isinstance(row, dict)
+                and row["reference"] == "compile-ok"
+                and row["candidate"] == "compile-ok"
+                and row["applicability"] == "applicable"
+                for row in sys_io_rows
             )
         )
         epoll_matrix = manifest["epoll_header_profile_matrix"]
@@ -2589,6 +3553,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertFalse(policy["feature_visibility_matrix"])
         self.assertTrue(completion["uapi_wrapper_profile_matrix_slice"])
         self.assertTrue(completion["ioctl_header_profile_matrix_slice"])
+        self.assertTrue(completion["sys_io_header_profile_matrix_slice"])
         self.assertTrue(completion["epoll_header_profile_matrix_slice"])
         self.assertTrue(completion["event_descriptors_header_profile_matrix_slice"])
         self.assertTrue(completion["dirent_header_profile_matrix_slice"])
@@ -2744,6 +3709,26 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(ioctl_matrix, dict)
         ioctl_matrix["subject_header"] = "sys/socket.h"
         with self.assertRaisesRegex(ledger.LedgerError, "ioctl header matrix subject header drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        sys_io_matrix = manifest["sys_io_header_profile_matrix"]
+        assert isinstance(sys_io_matrix, dict)
+        sys_io_rows = sys_io_matrix["row"]
+        assert isinstance(sys_io_rows, list)
+        sys_io_rows.pop()
+        with self.assertRaisesRegex(ledger.LedgerError, "sys/io header matrix row roster drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        sys_io_matrix = manifest["sys_io_header_profile_matrix"]
+        assert isinstance(sys_io_matrix, dict)
+        sys_io_matrix["subject_headers"] = ["sys/io.h", "bits/fcntl.h"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "sys/io header matrix subject headers drifted"
+        ):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
         data = self.data()
@@ -6653,6 +7638,115 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(changed)
 
+    def test_math_elementary_fenv_sensitive_is_one_complete_private_capability_slice(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        slices = text_math["verified_slice"]
+        assert isinstance(slices, list)
+        artifact = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-math-elementary-fenv-sensitive"
+        )
+        self.assertEqual(
+            artifact["capabilities"], ["math.elementary-fenv-sensitive"]
+        )
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-math-elementary-fenv-sensitive"},
+        )
+        for owner in (
+            "compat/crabc-rs/coverage.toml",
+            "libc/Cargo.toml",
+            "libc/src/c_abi/x86_64/fenv_rounding.rs",
+            "libc/src/c_abi/x86_64/fdim.rs",
+            "libc/src/c_abi/x86_64/math_exp10.rs",
+            "libc/src/c_abi/x86_64/math_exp10f.rs",
+            "libc/src/c_abi/x86_64/math_long_double_completion.rs",
+            "libc/src/c_abi/x86_64/math_long_double_completion_musl_x86_64.S",
+            "compat/x86_64/generate_libc_math_long_double_completion.py",
+            "compat/x86_64/math_long_double_completion_header_abi_probe.cpp",
+            "compat/x86_64/run_math_long_double_completion_header_abi.sh",
+            "compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c",
+            "compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_start.S",
+            "compat/x86_64/run_libc_math_long_double_completion.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/README.md",
+            "STATUS.md",
+            "x86-64.md",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "Complete private native x86 `math.elementary-fenv-sensitive` capability",
+            "all-fifteen-symbol surface",
+            "five closed native gates",
+            "x86-math-long-double-completion",
+            "strong `exp10l` and weak same-address `pow10l`",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-math-elementary-fenv-sensitive"
+        )
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "all-fifteen-symbol surface", "ordinary math surface"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "all-fifteen-symbol surface"):
+            ledger.validate_ledger(changed)
+
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-math-elementary-fenv-sensitive"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-fenv-rounding"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "closed aggregate command"):
+            ledger.validate_ledger(changed)
+
+    def test_math_fenv_rounding_keeps_selected_siblings_out_of_its_leaf_candidate_only(
+        self,
+    ) -> None:
+        """The aggregate must be able to rerun this leaf after sibling selection."""
+        runner = (
+            ROOT / "compat/x86_64/run_libc_fenv_rounding.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "readonly OPT_IN_BINARY80_MATH_SYMBOLS=(exp10l fdiml pow10l)",
+            runner,
+        )
+        self.assertIn(
+            'for unselected in "${OPT_IN_BINARY80_MATH_SYMBOLS[@]}"; do',
+            runner,
+        )
+        self.assertIn(
+            "exp10 exp10f exp10l pow10 pow10f pow10l fdim fdimf fdiml",
+            runner,
+        )
+
     def test_fdim_remains_a_closed_non_capability_artifact(self) -> None:
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
@@ -8659,7 +9753,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
         slices = posix_runtime["verified_slice"]
-        assert isinstance(slices, list) and len(slices) == 3
+        assert isinstance(slices, list) and len(slices) == 4
         slices_by_id = {slice_entry["id"]: slice_entry for slice_entry in slices}
         stat_compat = slices_by_id["filesystem.stat-compat"]
         assert isinstance(stat_compat, dict)
@@ -9214,60 +10308,103 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/process_context.rs",
             posix_runtime["source_owners"],
         )
-        environment = artifacts_by_id["static-c-environment"]
+        environment = slices_by_id["static-c-environment"]
         assert isinstance(environment, dict)
-        self.assertNotIn("capabilities", environment)
+        self.assertEqual(
+            environment["capabilities"], ["process.environment-mutation"]
+        )
         for owner in (
             "compat/upstreams.toml",
+            "compat/crabc-rs/coverage.toml",
             "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
             "libc/src/c_abi/x86_64/static_startup.rs",
             "libc/src/c_abi/x86_64/environment.rs",
+            "libc/src/c_abi/x86_64/environment_runtime.rs",
+            "libc/src/allocator_mimalloc.rs",
+            "crt/src/x86_64_crt1.rs",
+            "crt/src/x86_64_startup.rs",
+            "crt/src/x86_64_array_boundaries.rs",
+            "crt/src/x86_64_crti.rs",
+            "crt/src/x86_64_crtn.rs",
             "include/stdlib.h",
             "include/unistd.h",
             "compat/x86_64/static_c_abi_exports.txt",
             "compat/x86_64/libc_environment_probe.c",
-            "compat/x86_64/libc_environment_start.S",
             "compat/x86_64/run_libc_environment.sh",
+            "compat/x86_64/aarch64_parity_inventory.py",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+            "x86-64.md",
         ):
             self.assertIn(owner, environment["source_owners"])
+        self.assertNotIn(
+            "compat/x86_64/libc_environment_start.S", environment["source_owners"]
+        )
         self.assertEqual(
             {evidence["command"] for evidence in environment["native_evidence"]},
-            {"./scripts/dev-x86_64.sh libc-environment"},
+            {
+                "./scripts/dev-x86_64.sh stdlib-header-abi",
+                "./scripts/dev-x86_64.sh unistd-header-abi",
+                "./scripts/dev-x86_64.sh libc-environment",
+            },
         )
         for phrase in (
+            "Private selected `static-c-environment` slice",
+            "exactly `process.environment-mutation`",
+            "`clearenv`, `setenv`, and `unsetenv`",
+            "do not select `process.globals`",
             "one-object `__environ`/`environ`/`_environ`/`___environ` aliases",
-            "128 pointers",
-            "16-KiB",
-            "1,048,576-entry lookup ceiling",
-            "never reclaimed",
-            "fork recovery",
+            "`x86-environment-runtime`",
+            "`oldenv`",
+            "`__env_rm_add`",
+            "eleven-member",
+            "pinned-musl backend-support tail",
+            "async-signal safety",
             "secure_getenv",
+            "memory.allocator-basic",
             "public x86 support",
         ):
             self.assertIn(phrase, environment["description"])
+        environment_evidence = {
+            evidence["command"]: evidence["scope"]
+            for evidence in environment["native_evidence"]
+        }
         self.assertIn(
-            "Candidate-only checks prove the 1,048,576-entry read ceiling",
-            environment["native_evidence"][0]["scope"],
+            "C++ linkage",
+            environment_evidence["./scripts/dev-x86_64.sh stdlib-header-abi"],
         )
         self.assertIn(
-            "documented 128-entry vector",
-            environment["native_evidence"][0]["scope"],
+            "`environ` object",
+            environment_evidence["./scripts/dev-x86_64.sh unistd-header-abi"],
         )
         self.assertIn(
-            "entry-stack envp through the selected TLS-bootstrap and __libc_start_main order",
-            environment["native_evidence"][0]["scope"],
+            "in-place direct-vector replacement/removal",
+            environment_evidence["./scripts/dev-x86_64.sh libc-environment"],
         )
         self.assertIn(
-            "non-reclamation after unsetenv and clearenv",
-            environment["native_evidence"][0]["scope"],
+            "direct reassignment after an owned oldenv vector",
+            environment_evidence["./scripts/dev-x86_64.sh libc-environment"],
         )
         self.assertIn(
-            "oversized direct-vector mutation rejection and clearenv exception",
-            environment["native_evidence"][0]["scope"],
+            "constructor-before-main initial-environment publication",
+            environment_evidence["./scripts/dev-x86_64.sh libc-environment"],
         )
         self.assertIn(
-            "1,048,576-entry read ceiling",
-            environment["native_evidence"][0]["scope"],
+            "replacement copied-string malloc",
+            environment_evidence["./scripts/dev-x86_64.sh libc-environment"],
+        )
+        self.assertIn(
+            "direct-vector append allocation",
+            environment_evidence["./scripts/dev-x86_64.sh libc-environment"],
+        )
+        self.assertIn(
+            "owned-vector append realloc",
+            environment_evidence["./scripts/dev-x86_64.sh libc-environment"],
+        )
+        self.assertIn(
+            "post-publication ownership-registry allocation failure",
+            environment_evidence["./scripts/dev-x86_64.sh libc-environment"],
         )
         self.assertIn(
             "libc/src/c_abi/x86_64/environment.rs",
@@ -9628,7 +10765,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("null-output socketpair EFAULT", socket_transport["native_evidence"][0]["scope"])
         self.assertIn(
-            "IPv6 address-classification macros",
+            "IPv4/IPv6 address-equality/classification and GNU/BSD multicast source-filter layout/size macros",
             socket_transport["native_evidence"][0]["scope"],
         )
         self.assertIn(
@@ -11442,7 +12579,17 @@ class X86ParityLedgerTests(unittest.TestCase):
             if evidence["command"] == "./scripts/dev-x86_64.sh socket-header-abi"
         )
         self.assertEqual(socket_header_evidence["state"], "required")
-        self.assertIn("IPv6 address-classification", socket_header_evidence["scope"])
+        for detail in (
+            "IPv4/IPv6 address-equality/classification",
+            "`__ARE_4_EQUAL`/`IN6_ARE_ADDR_EQUAL`",
+            "`IN_CLASSA`/`IN_CLASSB`/`IN_CLASSC`/`IN_CLASSD`/`IN_MULTICAST`/`IN_EXPERIMENTAL`/`IN_BADCLASS`",
+            "GNU/BSD `IP_MSFILTER_SIZE`/`GROUP_FILTER_SIZE`",
+            "socket membership",
+            "packet I/O",
+            "resolver/netdb",
+            "C networking runtime behavior",
+        ):
+            self.assertIn(detail, socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 8
         bootstrap = next(
@@ -16479,7 +17626,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
-    def test_static_environment_artifact_keeps_its_bounded_nonpromoting_contract(
+    def test_process_environment_mutation_slice_keeps_its_bounded_nonpromoting_contract(
         self,
     ) -> None:
         data = self.data()
@@ -16488,30 +17635,42 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "static-c-environment must not promote"
         ):
-            ledger.require_static_environment_artifact(family)
+            ledger.require_process_environment_mutation_slice(family)
 
         data = self.data()
-        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
-        assert isinstance(artifacts, list)
+        slices = self.family(data, "libc.posix-runtime")["verified_slice"]
+        assert isinstance(slices, list)
         artifact = next(
             entry
-            for entry in artifacts
+            for entry in slices
             if isinstance(entry, dict) and entry["id"] == "static-c-environment"
         )
-        artifact["description"] = artifact["description"].replace(
-            "1,048,576-entry lookup ceiling", "unbounded lookup"
-        )
+        artifact["capabilities"] = ["process.environment-mutation", "process.control"]
         with self.assertRaisesRegex(
-            ledger.LedgerError, "description omits 1,048,576-entry lookup ceiling"
+            ledger.LedgerError, "must select exactly process.environment-mutation"
         ):
             ledger.validate_ledger(data)
 
         data = self.data()
-        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
-        assert isinstance(artifacts, list)
+        slices = self.family(data, "libc.posix-runtime")["verified_slice"]
+        assert isinstance(slices, list)
         artifact = next(
             entry
-            for entry in artifacts
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "static-c-environment"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "do not select `process.globals`", "also selects process globals"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "process.globals"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        slices = self.family(data, "libc.posix-runtime")["verified_slice"]
+        assert isinstance(slices, list)
+        artifact = next(
+            entry
+            for entry in slices
             if isinstance(entry, dict) and entry["id"] == "static-c-environment"
         )
         prerequisites = artifact["x86_abi_prerequisites"]
@@ -16530,20 +17689,203 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.validate_ledger(data)
 
         data = self.data()
+        slices = self.family(data, "libc.posix-runtime")["verified_slice"]
+        assert isinstance(slices, list)
+        artifact = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "static-c-environment"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list)
+        evidence[:] = [
+            entry
+            for entry in evidence
+            if isinstance(entry, dict)
+            and entry["command"] != "./scripts/dev-x86_64.sh unistd-header-abi"
+        ]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed native evidence commands"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_wait_extensions_artifact_stays_nonpromoting_and_exact(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-wait-extensions must not promote",
+        ):
+            ledger.require_wait_extensions_artifact(family)
+
+        data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
         assert isinstance(artifacts, list)
         artifact = next(
             entry
             for entry in artifacts
-            if isinstance(entry, dict) and entry["id"] == "static-c-environment"
+            if isinstance(entry, dict) and entry["id"] == "static-c-wait-extensions"
+        )
+        artifact["capabilities"] = ["process.control"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-wait-extensions"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "does not select `process.control`", "does not select a process category"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits does not select `process.control`"
+        ):
+            ledger.require_wait_extensions_artifact(
+                self.family(data, "libc.posix-runtime")
+            )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-wait-extensions"
         )
         evidence = artifact["native_evidence"]
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
-        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-child-reaping"
         with self.assertRaisesRegex(
-            ledger.LedgerError, "closed libc-environment command"
+            ledger.LedgerError, "closed wait-extension command"
+        ):
+            ledger.require_wait_extensions_artifact(
+                self.family(data, "libc.posix-runtime")
+            )
+
+    def test_signal_legacy_aliases_artifact_stays_opt_in_and_nonpromoting(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-signal-legacy-aliases must not promote",
+        ):
+            ledger.require_signal_legacy_aliases_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-signal-legacy-aliases"
+        )
+        artifact["capabilities"] = ["process.control"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-signal-legacy-aliases"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "system_utils_exports", "generic wrappers"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits system_utils_exports"
         ):
             ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-signal-legacy-aliases"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-signal-control"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed alias command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sysv_signal_helpers_stay_opt_in_and_nonpromoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-sysv-signal-helpers must not promote",
+        ):
+            ledger.require_sysv_signal_helpers_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sysv-signal-helpers"
+        )
+        artifact["capabilities"] = ["process.control"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sysv-signal-helpers"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "X/Open 800 hides them", "X/Open 800 exposes them"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits X/Open 800 hides them"
+        ):
+            ledger.require_sysv_signal_helpers_artifact(
+                self.family(data, "libc.posix-runtime")
+            )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sysv-signal-helpers"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-signal-control"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed SysV helper command"
+        ):
+            ledger.require_sysv_signal_helpers_artifact(
+                self.family(data, "libc.posix-runtime")
+            )
 
     def test_static_ctermid_artifact_keeps_its_historical_nonpromoting_contract(
         self,
@@ -20478,7 +21820,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "readlinkat=267",
             "%r10",
             "CRABC_READLINKAT_FREESTANDING",
-            "readlinkat candidate exports an unselected pathname entry",
+            "readlinkat candidate unexpectedly pulls independently selected pathname entry",
         ):
             self.assertIn(snippet, runner)
 
@@ -20622,7 +21964,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("linkat", exports)
-        for forbidden in ("unlinkat", "renameat", "renameat2", "fchmodat"):
+        for forbidden in ("unlinkat", "renameat", "fchmodat"):
             self.assertNotIn(forbidden, exports)
 
         implementation = (
@@ -20699,7 +22041,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "%r10",
             "%r8",
             "CRABC_LINKAT_FREESTANDING",
-            "linkat candidate exports an unselected pathname entry",
+            "linkat candidate unexpectedly pulls independently selected pathname entry",
         ):
             self.assertIn(snippet, runner)
 
@@ -20907,7 +22249,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "assert_selected_c_abi_surface",
             "lchown=94",
             "CRABC_LCHOWN_FREESTANDING",
-            "lchown candidate exports an unselected ownership or pathname entry",
+            "lchown candidate unexpectedly pulls independently selected ownership or pathname entry",
         ):
             self.assertIn(snippet, runner)
 
@@ -22784,7 +24126,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "mkdirat",
             "realpath",
             "renameat",
-            "renameat2",
             "scandir",
             "symlinkat",
             "unlinkat",
@@ -25385,7 +26726,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, evidence[0]["scope"])
 
-        selected["capabilities"] = ["legacy.misc"]
+        selected["capabilities"] = ["process.globals"]
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "qsort helper slice must select exactly numeric.qsort-helper",
@@ -25441,7 +26782,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, evidence[0]["scope"])
 
-        selected["capabilities"] = ["legacy.misc"]
+        selected["capabilities"] = ["process.globals"]
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "tree slice must select exactly search.tree-intrusive",
@@ -25495,7 +26836,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, evidence[0]["scope"])
 
-        selected["capabilities"] = ["legacy.misc"]
+        selected["capabilities"] = ["process.globals"]
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "hash-table slice must select exactly search.hash-table",
@@ -25651,6 +26992,510 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_issetugid_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-issetugid"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "GNU/BSD `issetugid` initial secure-execution compatibility boundary",
+            "`src/misc/issetugid.c`",
+            "`libc.secure`",
+            "final AT_SECURE/UID/EUID/GID/EGID records",
+            "final-AT_SECURE",
+            "UID/EUID-mismatch",
+            "credential mutation or policy",
+            "`secure_getenv`",
+            "process.globals",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/issetugid.rs",
+            "libc/src/c_abi/x86_64/startup_security.rs",
+            "include/unistd.h",
+            "compat/x86_64/issetugid_header_abi_probe.c",
+            "compat/x86_64/issetugid_header_abi_probe.cpp",
+            "compat/x86_64/run_issetugid_header_abi.sh",
+            "compat/x86_64/libc_issetugid_probe.c",
+            "compat/x86_64/libc_issetugid_start.S",
+            "compat/x86_64/run_libc_issetugid.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "int issetugid(void)" in item
+                and "four-byte" in item
+                and "eax" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/misc/issetugid.c::issetugid" in item
+                and "libc.secure" in item
+                and "AT_SECURE/UID/EUID/GID/EGID" in item
+                and "UID/EUID-mismatch one" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-issetugid",
+        )
+        for phrase in (
+            "Pinned-musl/project GNU/BSD C/C++ header",
+            "three true x86 crabc-libc `-nostdlib -static` candidates",
+            "final-AT_SECURE",
+            "UID/EUID-mismatch",
+            "issetugid.lo/AArch64 ownership",
+            "process.globals",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "libc.secure", "ambient credential query"
+        )
+        with mock.patch.object(ledger, "require_aarch64_parity_inventory"):
+            with self.assertRaisesRegex(
+                ledger.LedgerError,
+                "static-c-issetugid must retain musl's cached secure-state source mapping",
+            ):
+                ledger.validate_ledger(data)
+
+    def test_legacy_misc_slice_is_selected_private_and_inert_des_only(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "legacy.misc"
+        )
+        self.assertEqual(selected["capabilities"], ["legacy.misc"])
+        for symbol in ledger.LEGACY_MISC_SYMBOLS:
+            self.assertIn(f"`{symbol}`", selected["description"])
+        for phrase in (
+            "`x86-legacy-misc` feature",
+            "`fmtmsg`, `setkey`, and `encrypt`",
+            "`static_c_abi_exports.txt`",
+            "`MSGVERB`",
+            "`MM_PRINT`",
+            "`MM_CONSOLE`",
+            "inert link-compatible no-ops",
+            "neither dereference nor mutate caller storage",
+            "no DES, cipher, PRNG, crypto service, or hand-rolled cryptography",
+            "`crypto.crypt` or `crypto.crypt-helpers`",
+            "full legacy runtime",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+
+        owners = selected["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/legacy_misc.rs",
+            "libc/src/legacy_des_exports.rs",
+            "libc/src/c_abi/x86_64/system_information.rs",
+            "libc/src/c_abi/x86_64/issetugid.rs",
+            "include/fmtmsg.h",
+            "include/stdlib.h",
+            "include/unistd.h",
+            "include/sys/sysinfo.h",
+            "compat/x86_64/legacy_misc_header_abi_probe.c",
+            "compat/x86_64/legacy_misc_header_abi_probe.cpp",
+            "compat/x86_64/run_legacy_misc_header_abi.sh",
+            "compat/x86_64/libc_legacy_misc_probe.c",
+            "compat/x86_64/libc_legacy_misc_start.S",
+            "compat/x86_64/run_libc_legacy_misc.sh",
+            "compat/x86_64/tests/test_legacy_misc.py",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, owners)
+
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list)
+        self.assertEqual(
+            {entry["command"] for entry in evidence},
+            {
+                "./scripts/dev-x86_64.sh legacy-misc-header-abi",
+                "./scripts/dev-x86_64.sh libc-legacy-misc",
+            },
+        )
+        runtime = next(
+            entry
+            for entry in evidence
+            if entry["command"] == "./scripts/dev-x86_64.sh libc-legacy-misc"
+        )
+        for phrase in (
+            "exact three-symbol feature delta",
+            "one target-local owner",
+            "initial-TLS static closure",
+            "inert no-dereference/no-mutation/no-call/no-syscall ABI behavior",
+            "not a musl DES semantic differential",
+            "crypto.crypt",
+            "crypto.crypt-helpers",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, runtime["scope"])
+
+        changed_capability = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(changed_capability, "libc.c-abi-compat")[
+                "verified_slice"
+            ]
+            if entry["id"] == "legacy.misc"
+        )
+        changed_slice["capabilities"] = ["process.globals"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "legacy.misc must select exactly legacy.misc"
+        ):
+            ledger.require_legacy_misc_slice(
+                self.family(changed_capability, "libc.c-abi-compat")
+            )
+
+        changed_divergence = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(changed_divergence, "libc.c-abi-compat")[
+                "verified_slice"
+            ]
+            if entry["id"] == "legacy.misc"
+        )
+        changed_slice["description"] = changed_slice["description"].replace(
+            "inert link-compatible no-ops", "DES-compatible implementation"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "legacy.misc description omits inert link-compatible no-ops"
+        ):
+            ledger.require_legacy_misc_slice(
+                self.family(changed_divergence, "libc.c-abi-compat")
+            )
+
+        changed_command = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(changed_command, "libc.c-abi-compat")[
+                "verified_slice"
+            ]
+            if entry["id"] == "legacy.misc"
+        )
+        changed_slice["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh legacy-misc-broad"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "legacy.misc must use its two closed commands"
+        ):
+            ledger.require_legacy_misc_slice(
+                self.family(changed_command, "libc.c-abi-compat")
+            )
+
+    def test_process_signal_slice_composes_the_frozen_private_roster(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "process.signal"
+        )
+        self.assertEqual(selected["capabilities"], ["process.signal"])
+        self.assertEqual(len(ledger.PROCESS_SIGNAL_SYMBOLS), 34)
+        for symbol in ledger.PROCESS_SIGNAL_SYMBOLS:
+            self.assertIn(f"`{symbol}`", selected["description"])
+        for phrase in (
+            "`x86-signal-legacy-aliases`, `x86-signal-sysv-helpers`, and `x86-signal-reporting`",
+            "frozen default selected-static archive",
+            "`static_c_abi_exports.txt`",
+            "`__sysv_signal`, `bsd_signal`, `psiginfo`, `psignal`, `sighold`, `sigignore`, `sigrelse`, and `sigset`",
+            "fixed `strsignal`",
+            "permanent `stderr`",
+            "success-only errno restoration",
+            "externally serialize",
+            "not async-signal-safe",
+            "general FILE lock, locale/orientation state, or partial-short-write buffering behavior",
+            "general signal-management framework",
+            "default-archive widening",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+
+        owners = selected["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_reporting.rs",
+            "libc/src/c_abi/x86_64/signal_control.rs",
+            "libc/src/c_abi/x86_64/signal_execution.rs",
+            "libc/src/c_abi/x86_64/signal_sysv_helpers.rs",
+            "libc/src/c_abi/x86_64/readiness_waits.rs",
+            "libc/src/c_abi/x86_64/stdio_standard.rs",
+            "libc/src/c_abi/x86_64/strsignal.rs",
+            "include/signal.h",
+            "include/sys/signalfd.h",
+            "compat/x86_64/run_psignal_header_abi.sh",
+            "compat/x86_64/run_libc_psignal.sh",
+            "compat/x86_64/run_libc_process_signal.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+        for runner in ledger.PROCESS_SIGNAL_COMPONENT_RUNNERS:
+            self.assertIn(f"compat/x86_64/{runner}", owners)
+
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and len(evidence) == 1
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-process-signal",
+        )
+        for phrase in (
+            "sixteen closed component gates",
+            "psignal/psiginfo reporting differential",
+            "preserves every default selected-static export",
+            "exactly the eight historical/reporting additions",
+            "normal/null-prefix output",
+            "si_signo forwarding",
+            "EBADF/EAGAIN failure behavior",
+            "partial-short-write equivalence",
+            "default-archive widening",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        changed_capability = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(changed_capability, "libc.posix-runtime")[
+                "verified_slice"
+            ]
+            if entry["id"] == "process.signal"
+        )
+        changed_slice["capabilities"] = ["process.control"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "process.signal must select exactly process.signal"
+        ):
+            ledger.require_process_signal_slice(
+                self.family(changed_capability, "libc.posix-runtime")
+            )
+
+        original_load_toml = ledger.load_toml
+
+        def load_toml_with_frozen_roster_drift(path: Path) -> dict[str, object]:
+            loaded = original_load_toml(path)
+            if path == ledger.ROOT / "compat" / "crabc-rs" / "coverage.toml":
+                records = loaded["capability"]
+                assert isinstance(records, list)
+                record = next(
+                    entry
+                    for entry in records
+                    if isinstance(entry, dict) and entry["id"] == "process.signal"
+                )
+                symbols = record["symbols"]
+                assert isinstance(symbols, list)
+                record["symbols"] = symbols[:-1]
+            return loaded
+
+        with mock.patch.object(ledger, "load_toml", load_toml_with_frozen_roster_drift):
+            with self.assertRaisesRegex(
+                ledger.LedgerError, "process.signal frozen symbol set drifted"
+            ):
+                ledger.require_process_signal_slice(
+                    self.family(self.data(), "libc.posix-runtime")
+                )
+
+        changed_description = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(changed_description, "libc.posix-runtime")[
+                "verified_slice"
+            ]
+            if entry["id"] == "process.signal"
+        )
+        changed_slice["description"] = changed_slice["description"].replace(
+            "not async-signal-safe", "fully async-signal-safe"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "process.signal description omits not async-signal-safe",
+        ):
+            ledger.require_process_signal_slice(
+                self.family(changed_description, "libc.posix-runtime")
+            )
+
+        changed_owner = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(changed_owner, "libc.posix-runtime")[
+                "verified_slice"
+            ]
+            if entry["id"] == "process.signal"
+        )
+        changed_slice["source_owners"].remove(
+            "compat/x86_64/run_libc_process_signal.sh"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "process.signal source owners omit compat/x86_64/run_libc_process_signal.sh",
+        ):
+            ledger.require_process_signal_slice(
+                self.family(changed_owner, "libc.posix-runtime")
+            )
+
+        changed_command = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(changed_command, "libc.posix-runtime")[
+                "verified_slice"
+            ]
+            if entry["id"] == "process.signal"
+        )
+        changed_slice["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-signal-control"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "process.signal must use the closed libc-process-signal aggregate command",
+        ):
+            ledger.require_process_signal_slice(
+                self.family(changed_command, "libc.posix-runtime")
+            )
+
+    def test_stdio_fopen64_alias_slice_stays_source_only(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "stdio.fopen64-alias"
+        )
+        self.assertEqual(selected["capabilities"], ["stdio.fopen64-alias"])
+        self.assertEqual(ledger.STDIO_FOPEN64_ALIAS_SYMBOLS, ("fopen64",))
+        for phrase in (
+            "selected-private `stdio.fopen64-alias` capability",
+            "`_LARGEFILE64_SOURCE`",
+            "source-only `fopen64` alias",
+            "no distinct x86 ELF `fopen64` symbol",
+            "`fopen`",
+            "AArch64",
+            "does not complete `stdio.path-stream`",
+            "default selected-static export surface",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+
+        owners = selected["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "compat/crabc-rs/coverage.toml",
+            "compat/ratchet/aarch64-dynamic.json",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_standard.rs",
+            "include/stdio.h",
+            "compat/x86_64/fopen64_header_abi_probe.c",
+            "compat/x86_64/fopen64_header_abi_probe.cpp",
+            "compat/x86_64/run_fopen64_header_abi.sh",
+            "compat/x86_64/libc_fopen64_alias_probe.c",
+            "compat/x86_64/libc_fopen64_alias_start.S",
+            "compat/x86_64/run_libc_fopen64_alias.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, owners)
+
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list)
+        self.assertEqual(
+            {entry["command"] for entry in evidence},
+            {
+                "./scripts/dev-x86_64.sh fopen64-header-abi",
+                "./scripts/dev-x86_64.sh libc-fopen64-alias",
+            },
+        )
+
+        changed_capability = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(
+                changed_capability, "libc.text-math-locale-stdio"
+            )["verified_slice"]
+            if entry["id"] == "stdio.fopen64-alias"
+        )
+        changed_slice["capabilities"] = ["stdio.path-stream"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "stdio.fopen64-alias must select exactly stdio.fopen64-alias",
+        ):
+            ledger.require_stdio_fopen64_alias_slice(
+                self.family(changed_capability, "libc.text-math-locale-stdio")
+            )
+
+        changed_description = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(
+                changed_description, "libc.text-math-locale-stdio"
+            )["verified_slice"]
+            if entry["id"] == "stdio.fopen64-alias"
+        )
+        changed_slice["description"] = changed_slice["description"].replace(
+            "no distinct x86 ELF `fopen64` symbol",
+            "a separate x86 ELF `fopen64` export",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "stdio.fopen64-alias description omits no distinct x86 ELF `fopen64` symbol",
+        ):
+            ledger.require_stdio_fopen64_alias_slice(
+                self.family(changed_description, "libc.text-math-locale-stdio")
+            )
+
+        changed_command = self.data()
+        changed_slice = next(
+            entry
+            for entry in self.family(
+                changed_command, "libc.text-math-locale-stdio"
+            )["verified_slice"]
+            if entry["id"] == "stdio.fopen64-alias"
+        )
+        changed_slice["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-stdio-path-stream"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "stdio.fopen64-alias must use its two closed evidence commands",
+        ):
+            ledger.require_stdio_fopen64_alias_slice(
+                self.family(changed_command, "libc.text-math-locale-stdio")
+            )
+
     def test_gettid_artifact_stays_private_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
@@ -25719,7 +27564,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for phrase in (
             "Pinned-musl/project GNU C/C++ header",
-            "true one-member x86 crabc-libc `-nostdlib -static` candidate",
+            "true canonical-archive x86 crabc-libc `-nostdlib -static -Wl,--gc-sections` candidate",
             "raw Linux gettid=186 observation",
             "gettid.lo/AArch64 ownership",
             "process.globals",
@@ -25727,6 +27572,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, evidence[0]["scope"])
+
+        ledger.require_gettid_artifact(family)
 
         prerequisites[1] = prerequisites[1].replace(
             "direct Linux gettid=186", "indirect current task lookup"
@@ -25736,6 +27583,26 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-gettid must retain its pinned-musl no-TCB adaptation",
         ):
             ledger.validate_ledger(data)
+
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-gettid"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        prerequisites[2] = prerequisites[2].replace(
+            "one archive owner", "multiple archive owners"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-gettid must retain its closed direct-syscall archive boundary",
+        ):
+            ledger.require_gettid_artifact(family)
 
     def test_posix_close_artifact_stays_private_and_non_promoting(self) -> None:
         data = self.data()
@@ -26246,12 +28113,42 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, evidence[0]["scope"])
 
-        selected["capabilities"] = ["legacy.misc"]
+        selected["capabilities"] = ["process.globals"]
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "gettext slice must select exactly catalog.gettext",
         ):
             ledger.validate_ledger(data)
+
+    def test_catalog_gettext_format_argument_annotation_stays_header_only(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        selected = next(
+            entry
+            for entry in family["verified_slice"]
+            if isinstance(entry, dict) and entry["id"] == "catalog.gettext"
+        )
+        header_prerequisites = selected["x86_header_prerequisites"]
+        assert isinstance(header_prerequisites, list)
+        header_contract = "\n".join(header_prerequisites)
+        for phrase in (
+            "exact transient `__fa(n)`",
+            "`__format_arg__`",
+            "`#undef __fa`",
+            "not installed-header closure",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, header_contract)
+
+        ledger.require_catalog_gettext_slice(family)
+        header_prerequisites[0] = header_prerequisites[0].replace(
+            "exact transient `__fa(n)`", "private header annotation"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "catalog.gettext must pin the selected C/C\\+\\+ header contract",
+        ):
+            ledger.require_catalog_gettext_slice(family)
 
     def test_getloadavg_artifact_stays_a_private_load_snapshot_leaf(self) -> None:
         """`getloadavg` must not widen the selected system-information surface."""

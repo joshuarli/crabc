@@ -912,6 +912,323 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
 
+    def test_socket_ancillary_helper_macros_stay_header_only(self) -> None:
+        """Pin musl's macro-only ancillary traversal helpers to the header gate."""
+        header = (ROOT / "include" / "sys" / "socket.h").read_text(
+            encoding="utf-8"
+        )
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "socket_messages_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "socket_messages_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_socket_messages_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        for macro in ("__CMSG_LEN", "__CMSG_NEXT", "__MHDR_END"):
+            self.assertIn(f"#define {macro}", header)
+            self.assertIn(f"#ifndef {macro}", c_probe)
+            self.assertIn(f"#ifndef {macro}", cxx_probe)
+            self.assertIn(macro, runner)
+        for required in (
+            "__CMSG_LEN(first)",
+            "__CMSG_NEXT(first)",
+            "__MHDR_END(&message)",
+            "CMSG_SPACE(sizeof(int))",
+        ):
+            self.assertIn(required, c_probe)
+        for required in (
+            "__CMSG_LEN(static_cast",
+            "__CMSG_NEXT(static_cast",
+            "__MHDR_END(static_cast",
+            "unsigned long",
+            "unsigned char *",
+        ):
+            self.assertIn(required, cxx_probe)
+        for required in (
+            "compile_profile posix",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "compile_profile strict",
+            "compile_profile xopen",
+            "compile_cxx_profile cxx17-strict",
+            "ancillary traversal helpers",
+        ):
+            self.assertIn(required, runner)
+
+    def test_nameser_record_classification_macros_stay_header_only(self) -> None:
+        """Pin musl's DNS record macros to the nameser declaration gate."""
+        header = (ROOT / "include" / "arpa" / "nameser.h").read_text(
+            encoding="utf-8"
+        )
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        macros = (
+            "NS_NXT_BIT_CLEAR",
+            "NS_NXT_BIT_ISSET",
+            "NS_NXT_BIT_SET",
+            "ns_t_mrr_p",
+            "ns_t_qt_p",
+            "ns_t_rr_p",
+            "ns_t_udp_p",
+            "ns_t_xfr_p",
+        )
+        for macro in macros:
+            self.assertIn(f"#define {macro}", header)
+            self.assertIn(f"#ifndef {macro}", c_probe)
+            self.assertIn(f"#ifndef {macro}", cxx_probe)
+            self.assertIn(macro, runner)
+        for required in (
+            "ns_t_zxfr == 256",
+            "ns_t_qt_p(ns_t_axfr)",
+            "ns_t_mrr_p(ns_t_tsig)",
+            "ns_t_rr_p(ns_t_a)",
+            "ns_t_udp_p(ns_t_zxfr)",
+            "NS_NXT_BIT_SET(9, bits)",
+            "NS_NXT_BIT_CLEAR(9, bits)",
+            "NS_NXT_BIT_ISSET(9, bits)",
+        ):
+            self.assertIn(required, c_probe)
+        for required in (
+            "ns_t_zxfr == 256",
+            "ns_t_qt_p(ns_t_axfr)",
+            "ns_t_mrr_p(ns_t_tsig)",
+            "NS_NXT_BIT_SET(9, bits)",
+        ):
+            self.assertIn(required, cxx_probe)
+        for required in (
+            "compile_profile posix",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "compile_profile strict",
+            "compile_profile xopen",
+            "compile_cxx_profile cxx17-strict",
+            "record-classification macros",
+        ):
+            self.assertIn(required, runner)
+
+    def test_libintl_format_argument_annotation_stays_transient_and_header_only(self) -> None:
+        """Keep musl's gettext format propagation annotation out of runtime scope."""
+        header = (ROOT / "include" / "libintl.h").read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "gettext_catalog_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "gettext_catalog_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_gettext_catalog_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "#if __GNUC__ >= 3",
+            "#define __fa(n) __attribute__ ((__format_arg__ (n)))",
+            "#define __fa(n)",
+            "char *gettext(const char *) __fa(1);",
+            "#undef __fa",
+        ):
+            self.assertIn(required, header)
+        self.assertNotIn("__LIBINTL_FORMAT_ARG", header)
+        for probe in (c_probe, cxx_probe):
+            self.assertIn("#ifdef __fa", probe)
+            self.assertIn("CRABC_REQUIRE_GETTEXT_FORMAT_ARGUMENT", probe)
+            self.assertIn("gettext(\"%d\")", probe)
+        for required in (
+            "transient `__fa` format-argument annotation",
+            "-Werror=format",
+            "CRABC_REQUIRE_GETTEXT_FORMAT_ARGUMENT",
+            "compile_profile -D__STRICT_ANSI__",
+            "compile_profile -D_GNU_SOURCE",
+        ):
+            self.assertIn(required, runner)
+
+    def test_quota_conversion_macros_stay_header_only(self) -> None:
+        """Pin musl's quota-unit macros without admitting quota syscall behavior."""
+        header = (ROOT / "include" / "sys" / "quota.h").read_text(
+            encoding="utf-8"
+        )
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "quota_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "quota_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_quota_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "#define dbtob(num) ((num) << 10)",
+            "#define btodb(num) ((num) >> 10)",
+            "#define fs_to_dq_blocks(num, blksize) (((num) * (blksize)) / 1024)",
+            "#define dqoff(UID) ((long long)(UID) * sizeof (struct dqblk))",
+        ):
+            self.assertIn(required, header)
+        for macro in ("btodb", "dbtob", "dqoff", "fs_to_dq_blocks"):
+            self.assertIn(f"#ifndef {macro}", c_probe)
+            self.assertIn(f"#ifndef {macro}", cxx_probe)
+            self.assertIn(macro, runner)
+        for required in (
+            "sizeof(struct dqblk) == 72",
+            "unsigned long long",
+            "dbtob(1)), int",
+            "btodb(1)), int",
+            "fs_to_dq_blocks(1, 1)), int",
+            "fs_to_dq_blocks(3U, 512U)",
+            "dqoff(1U)",
+            "dqoff(-1)",
+        ):
+            self.assertIn(required, c_probe)
+            self.assertIn(required, cxx_probe)
+        self.assertNotIn("quotactl", c_probe)
+        self.assertNotIn("quotactl", cxx_probe)
+        for required in (
+            "compile_profile strict",
+            "compile_profile posix",
+            "compile_profile xopen",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "compile_cxx_profile cxx17-strict",
+            "quota conversion macros",
+            "does not link or execute `quotactl`",
+        ):
+            self.assertIn(required, runner)
+
+        # This gate validates installed-header syntax only. It must not turn
+        # caller-side macro arithmetic into an executable quota test.
+        for source in (c_probe, cxx_probe, runner):
+            self.assertNotIn("CRABC_QUOTA_CONVERSION_MACRO_RUNTIME", source)
+        self.assertNotIn("int main(", c_probe)
+        for forbidden in ('"$musl_c"', '"$project_c"'):
+            self.assertNotIn(forbidden, runner)
+        self.assertIn('-fsyntax-only "$C_PROBE"', runner)
+        self.assertIn('-fsyntax-only "$CXX_PROBE"', runner)
+        self.assertNotIn('-c "$CXX_PROBE"', runner)
+
+    def test_sched_cpu_macro_family_stays_header_only(self) -> None:
+        """Keep CPU-set syntax below affinity, scheduler, and allocator runtime work."""
+        header = (ROOT / "include" / "sched.h").read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "sched_cpu_macros_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "sched_cpu_macros_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_sched_cpu_macros_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "int (memcmp)(const void *, const void *, size_t);",
+            "void *(memset)(void *, int, size_t);",
+            "void *(calloc)(size_t, size_t);",
+            "void (free)(void *);",
+            "#define __CPU_op_S(i, size, set, op)",
+            "#define __CPU_op_func_S(func, op)",
+            "__CPU_op_func_S(AND, &)",
+            "__CPU_op_func_S(OR, |)",
+            "__CPU_op_func_S(XOR, ^)",
+            "#define CPU_ALLOC_SIZE(n)",
+            "#define CPU_ALLOC(n)",
+            "#define CPU_FREE(set)",
+            "#define CPU_SETSIZE 1024",
+            "#define CPU_SET(i, set)",
+            "#define CPU_EQUAL(s1,s2)",
+        ):
+            self.assertIn(required, header)
+        self.assertNotIn("sched_setaffinity", header)
+        for probe in (c_probe, cxx_probe):
+            for required in (
+                "CRABC_EXPECT_CPU_MACROS",
+                "CRABC_REQUIRE_CPU_MACROS_HIDDEN",
+                "CPU_ALLOC_SIZE(65)",
+                "__CPU_op_func_S(PROBE, ^)",
+                "CPU_FREE(allocated)",
+                "cpu_macro_expression_formation",
+            ):
+                self.assertIn(required, probe)
+        for required in (
+            "cxx_strict_definitions",
+            "cxx_forced_hidden_definitions",
+            "-U_GNU_SOURCE",
+            "-fno-builtin",
+            "declare -n definitions_ref",
+            "CPU-set construction macro gate",
+            "neither link nor run",
+            "allocator, byte-string, affinity, or scheduler behavior",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn("-nostdlib", runner)
+        self.assertNotIn("sched_setaffinity", runner)
+        self.assertIn("sched-cpu-macros-header-abi", dispatcher)
+
+    def test_fanotify_event_traversal_macros_stay_header_only(self) -> None:
+        """Pin record traversal syntax without selecting a watcher runtime."""
+        header = (ROOT / "include" / "sys" / "fanotify.h").read_text(
+            encoding="utf-8"
+        )
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "fanotify_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "fanotify_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_fanotify_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "struct fanotify_event_metadata",
+            "unsigned event_len;",
+            "unsigned char vers;",
+            "unsigned char reserved;",
+            "unsigned short metadata_len;",
+            "unsigned long long mask",
+            "__attribute__((__aligned__(8)))",
+            "#define FAN_EVENT_METADATA_LEN (sizeof(struct fanotify_event_metadata))",
+            "#define FAN_EVENT_NEXT(meta, len)",
+            "#define FAN_EVENT_OK(meta, len)",
+        ):
+            self.assertIn(required, header)
+        for probe in (c_probe, cxx_probe):
+            for required in (
+                "FAN_EVENT_METADATA_LEN",
+                "FAN_EVENT_NEXT",
+                "FAN_EVENT_OK",
+                "sizeof(struct fanotify_event_metadata) == 24",
+                "metadata_len) == 6",
+                "FAN_EVENT_NEXT(&first, remaining)",
+                "FAN_EVENT_OK(&first, remaining)",
+                "fanotify_macro_expression_formation",
+            ):
+                self.assertIn(required, probe)
+            self.assertNotIn("fanotify_init", probe)
+            self.assertNotIn("fanotify_mark", probe)
+        for required in (
+            "fanotify traversal macro ABI proof",
+            "project-first/pinned-musl",
+            "seven profiles",
+            "FAN_EVENT_NEXT/FAN_EVENT_OK",
+            "does not link or execute fanotify runtime calls",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn("-nostdlib", runner)
+        self.assertNotIn("fanotify_init", runner)
+        self.assertNotIn("fanotify_mark", runner)
+        self.assertIn("fanotify-header-abi", dispatcher)
+
     def test_wide_character_artifact_stays_exact_and_non_promoting(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -1330,11 +1647,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    installed-header-tree-closure) ;;", source)
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn(
-            "    inet-address-header-abi|nameser-header-abi|endservent-header-abi) ;;",
+            "    inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi) ;;",
             source,
         )
         self.assertIn(
-            "    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16) ;;",
+            "    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr) ;;",
             source,
         )
         self.assertIn("    libc-in6addr-any)", source)
@@ -1382,13 +1699,20 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-getloadavg",
             "sleep-header-abi",
             "libc-sleep",
+            "mq-setattr-header-abi|libc-mq-setattr",
             "timerfd-header-abi|signalfd-header-abi",
-            "usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset",
-            "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield",
-            "sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi",
-            "ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
-            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync|sync-file-range-header-abi|libc-sync-file-range",
-            "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
+            "signal-legacy-aliases-header-abi|libc-signal-legacy-aliases|signal-sysv-helpers-header-abi|libc-signal-sysv-helpers",
+            "psignal-header-abi|libc-psignal|libc-process-signal",
+            "resolver-runtime-header-abi|libc-resolver-runtime",
+            "legacy-misc-header-abi|libc-legacy-misc",
+            "usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
+            "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
+            "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
+            "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
+            "tee-header-abi|splice-header-abi",
+            "sync-file-range-header-abi|copy-file-range-header-abi",
+            "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi|stdio-fixed-format-whitespace-scan-header-abi|stdio-fixed-literal-scan-header-abi|stdio-fixed-empty-format-scan-header-abi|stdio-fixed-suppressed-character-scan-header-abi|stdio-fixed-suppressed-string-scan-header-abi|stdio-fixed-suppressed-scanset-scan-header-abi|stdio-fixed-suppressed-count-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
             "stdio-permanent-status-header-abi",
@@ -1402,16 +1726,24 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "stdio-permanent-fileno-header-abi",
             "stdio-permanent-fileno-unlocked-header-abi",
             "stdio-permanent-feof-unlocked-header-abi",
+            "clock-adjtime-header-abi",
+            "clock-settime-header-abi",
+            "timer-getoverrun-header-abi",
+            "timer-delete-header-abi",
+            "timer-gettime-header-abi",
+            "timer-settime-header-abi",
+            "fopen64-header-abi",
             "pthread-spin-destroy-header-abi",
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail|pthread-spin-init-header-abi",
+            "sys-io-header-abi",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-general-initial-graph|ldso-general-initial-target-root|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail|pthread-spin-init-header-abi",
             "math-elementary-long-double-header-abi|libc-math-elementary-long-double",
             "ldso-fixed-graph-dlfcn",
             "ldso-public-dlfcn|ldso-dladdr-symbol-bounds",
             "ldso-bounded-dlopen",
             "math-special-header-abi|libc-math-special",
             "math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow",
-            "inet-address-header-abi|nameser-header-abi|endservent-header-abi",
-            "libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16",
+            "inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi",
+            "libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr",
             "ldso-target-root",
             "libc-fenv-rounding",
             "libc-math-minmax",
@@ -1431,6 +1763,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "vector-io-header-abi",
             "libc-crt1-static-tls",
             "owned-static-sysroot",
+            "owned-dynamic-sysroot",
             "crt-object-bundle",
             "crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto",
             "linux-5-10-uapi",
@@ -1439,6 +1772,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "uapi-wrapper-matrix",
             "epoll-header-abi",
             "event-descriptors-header-abi",
+            "fanotify-header-abi",
             "dirent-header-abi",
             "pathname-lifecycle-header-abi",
             "timeval-transitive-header-abi",
@@ -1449,9 +1783,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "basename-header-abi|siginterrupt-header-abi|mlockall-header-abi|munlockall-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-basename|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-ftime|libc-clock-getcpuclockid",
             "umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf",
             "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi",
-            "posix-exit-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|crypt-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|wait-extensions-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi",
+            "posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi|posix-spawnattr-getschedpolicy-header-abi",
             "ffs-header-abi",
+            "memory-special-header-abi",
+            "memccpy-header-abi",
+            "aio-error-header-abi",
             "byte-strings-header-abi",
             "memory-search-header-abi",
             "memccpy-header-abi",
@@ -1469,7 +1806,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
@@ -1482,19 +1819,30 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memory-locking",
             "libc-memfd-create",
             "libc-legacy-memory",
+            "libc-memory-special",
             "libc-memccpy",
             "libc-mempcpy",
             "libc-strsep",
             "libc-strtok",
             "libc-allocator-runtime",
+            "libc-allocator-basic-runtime-v1",
             "libc-allocator-string-duplication",
+            "libc-scandir",
             "libc-allocator-observability",
             "libc-alloca",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
-            "libc-posix-exit",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-l64a|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb",
+            "libc-posix-exit|libc-posix-spawnattr-init|libc-posix-spawnattr-getpgroup|libc-posix-spawnattr-getschedpolicy",
+            "libc-clock-adjtime",
+            "libc-clock-settime",
+            "libc-timer-getoverrun",
+            "libc-timer-delete",
+            "libc-timer-gettime",
+            "libc-timer-settime",
+            "libc-tee|libc-splice",
+            "libc-sync-file-range|libc-copy-file-range",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -1504,6 +1852,46 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-math-asinh",
             "libc-math-exp10f",
             "libc-math-sinh",
+            "libc-pthread-condattr-pshared",
+            "libc-pthread-condattr-clock",
+            "libc-pthread-mutexattr-protocol-query",
+            "libc-pthread-mutexattr-pshared-query",
+            "libc-pthread-mutexattr-robust-query",
+            "libc-pthread-mutexattr-type-query",
+            "libc-pthread-mutexattr-type-setter",
+            "libc-pthread-mutex-prioceiling-query",
+            "libc-pthread-getconcurrency",
+            "libc-pthread-setconcurrency",
+            "libc-rand-r",
+        )
+        expected_groups = tuple(
+            group.replace(
+                "libc-math-x87-extended|libc-memory",
+                "libc-math-x87-extended|libc-math-long-double-completion|"
+                "libc-math-elementary-fenv-sensitive|libc-memory",
+            ).replace(
+                "ldso-general-initial-target-root|ldso-initial-tls",
+                "ldso-general-initial-target-root|ldso-general-initial-tls|"
+                "ldso-general-initial-tls-target-root|ldso-initial-tls",
+            )
+            for group in expected_groups
+        )
+        bounded_dlopen_index = expected_groups.index("ldso-bounded-dlopen") + 1
+        expected_groups = (
+            expected_groups[:bounded_dlopen_index]
+            + (
+                "loader-libc-tls-runtime-v1",
+                "loader-libc-tls-runtime-v1-registry",
+                "loader-libc-general-tls-runtime-v1",
+                "loader-libc-general-tls-runtime-v1-target-root",
+            )
+            + expected_groups[bounded_dlopen_index:]
+        )
+        lchmod_index = expected_groups.index("libc-lchmod-unsupported") + 1
+        expected_groups = (
+            expected_groups[:lchmod_index]
+            + ("libc-fopen64-alias",)
+            + expected_groups[lchmod_index:]
         )
         self.assertEqual(actual_groups, expected_groups)
 
@@ -4448,6 +4836,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-nostdlib -static",
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
+            "-Wl,--gc-sections",
             "R_X86_64_TPOFF",
             "candidate relocations retain a dynamic TLS model",
             "crabc_x86_64_signal_restorer",
@@ -4472,6 +4861,520 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(symbol, static_export_names)
         self.assertIn("libc-signal-control", runner)
+
+    def test_libc_static_c_abi_signal_legacy_aliases_stay_opt_in(self) -> None:
+        cargo_toml = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_control.rs"
+        )
+        signal_header = (ROOT / "include" / "signal.h").read_text(encoding="utf-8")
+        c_header_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "signal_legacy_aliases_header_abi_probe.c"
+        )
+        cxx_header_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "signal_legacy_aliases_header_abi_probe.cpp"
+        )
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_signal_legacy_aliases_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_signal_legacy_aliases_start.S"
+        )
+        header_runner_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_signal_legacy_aliases_header_abi.sh"
+        )
+        artifact_runner_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_libc_signal_legacy_aliases.sh"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            probe_path,
+            start_path,
+            header_runner_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing legacy signal alias input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('x86-signal-legacy-aliases = []', cargo_toml)
+        self.assertIn('#[path = "signal_control.rs"]', static_root)
+        for required in (
+            "Pinned musl 1.2.6",
+            "src/signal/signal.c",
+            '".weak bsd_signal"',
+            '".set bsd_signal, signal"',
+            '".weak __sysv_signal"',
+            '".set __sysv_signal, signal"',
+            "same-address",
+            "opt-in",
+        ):
+            self.assertIn(required, source)
+        self.assertIn('#[cfg(feature = "x86-signal-legacy-aliases")]', source)
+
+        self.assertIn(
+            "#if defined(_GNU_SOURCE)\nvoid (*bsd_signal(int, void (*)(int)))(int);",
+            signal_header,
+        )
+        self.assertNotRegex(
+            signal_header,
+            r"(?m)^\s*void\s*\(\s*\*\s*__sysv_signal\s*\)",
+        )
+        for required in (
+            "CRABC_EXPECT_BSD_SIGNAL",
+            "CRABC_REQUIRE_BSD_SIGNAL_HIDDEN",
+            "__builtin_types_compatible_p(__typeof__(&bsd_signal)",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "CRABC_EXPECT_BSD_SIGNAL",
+            "CRABC_REQUIRE_BSD_SIGNAL_HIDDEN",
+            "decltype(&bsd_signal)",
+            'extern "C"',
+        ):
+            self.assertIn(required, cxx_header)
+        self.assertNotIn("__sysv_signal", c_header)
+        self.assertNotIn("__sysv_signal", cxx_header)
+        for required in (
+            "bsd_signal",
+            "__sysv_signal",
+            "signal",
+            "SIGUSR1",
+            "CRABC_SIGNAL_LEGACY_ALIASES_FREESTANDING",
+            "aliases only",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_signal_legacy_aliases_probe",
+        ):
+            self.assertIn(required, start)
+
+        for required in (
+            "c11-gnu",
+            "cxx17-gnu",
+            "CRABC_EXPECT_BSD_SIGNAL",
+            "CRABC_REQUIRE_BSD_SIGNAL_HIDDEN",
+            "retained a mangled bsd_signal reference",
+            "project <signal.h>",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("signal.lo", artifact_runner)
+        for required in (
+            'FEATURE=x86-signal-legacy-aliases',
+            "run_signal_legacy_aliases_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "STATIC_C_ABI_ROOT",
+            "system_utils_exports",
+            "--features \"$FEATURE\"",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "same-address",
+            "WEAK",
+            "bsd_signal",
+            "__sysv_signal",
+            "unfeatured selected-static C ABI export surface drifted",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn("bsd_signal", static_exports)
+        self.assertNotIn("__sysv_signal", static_exports)
+        self.assertNotIn("system_utils_exports", static_root)
+        self.assertIn("signal-legacy-aliases-header-abi", runner)
+        self.assertIn("libc-signal-legacy-aliases", runner)
+
+    def test_libc_static_c_abi_signal_sysv_helpers_stay_opt_in(self) -> None:
+        cargo_toml = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_sysv_helpers.rs"
+        )
+        signal_header = (ROOT / "include" / "signal.h").read_text(encoding="utf-8")
+        c_header_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "signal_sysv_helpers_header_abi_probe.c"
+        )
+        cxx_header_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "signal_sysv_helpers_header_abi_probe.cpp"
+        )
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_signal_sysv_helpers_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_signal_sysv_helpers_start.S"
+        )
+        header_runner_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_signal_sysv_helpers_header_abi.sh"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_signal_sysv_helpers.sh"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            probe_path,
+            start_path,
+            header_runner_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing SysV signal-helper input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn("x86-signal-sysv-helpers = []", cargo_toml)
+        self.assertIn(
+            '#[cfg(feature = "x86-signal-sysv-helpers")]\n'
+            '#[path = "signal_sysv_helpers.rs"]\n'
+            "mod signal_sysv_helpers;",
+            static_root,
+        )
+        for required in (
+            "pinned musl 1.2.6",
+            "src/signal/sighold.c",
+            "src/signal/sigignore.c",
+            "src/signal/sigrelse.c",
+            "src/signal/sigset.c",
+            "raw_syscall::SYS_RT_SIGACTION",
+            "raw_syscall::SYS_RT_SIGPROCMASK",
+            "signal_foundation::pack_public_action",
+            "does not select `process.signal`",
+            "pthread policy",
+            "cancellation",
+        ):
+            self.assertIn(required, source)
+        exports = set(
+            re.findall(
+                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                source,
+            )
+        )
+        self.assertEqual({"sighold", "sigignore", "sigrelse", "sigset"}, exports)
+        for forbidden in (
+            "fn sigaction(",
+            "fn signal(",
+            "fn sigprocmask(",
+            "fn pthread_sigmask(",
+            "fn sigsuspend(",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        self.assertIn("_XOPEN_SOURCE < 800", signal_header)
+        for declaration in (
+            "int sighold(int);",
+            "int sigignore(int);",
+            "int sigrelse(int);",
+            "sighandler_t sigset(int, sighandler_t);",
+        ):
+            self.assertIn(declaration, signal_header)
+        for header in (c_header, cxx_header):
+            for symbol in ("sighold", "sigignore", "sigrelse", "sigset"):
+                self.assertIn(symbol, header)
+            self.assertIn("CRABC_EXPECT_SYSV_SIGNAL_HELPERS", header)
+            self.assertIn("CRABC_REQUIRE_SYSV_SIGNAL_HELPERS_HIDDEN", header)
+        self.assertIn('extern "C"', cxx_header)
+        for required in (
+            "XOPEN=700",
+            "XOPEN=800",
+            "post-POSIX.1-2024",
+            "CRABC_EXPECT_SYSV_SIGNAL_HELPERS",
+            "CRABC_REQUIRE_SYSV_SIGNAL_HELPERS_HIDDEN",
+            "retained a mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "direct_sighold",
+            "direct_sigignore",
+            "direct_sigrelse",
+            "direct_sigset",
+            "E2BIG",
+            "SIG_HOLD",
+            "CRABC_SIGNAL_SYSV_HELPERS_FREESTANDING",
+            "raw_sigaction",
+            "raw_sigprocmask",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_signal_sysv_helpers_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "FEATURE=x86-signal-sysv-helpers",
+            "EXPECTED_ADDITIONS=(sighold sigignore sigrelse sigset)",
+            "run_signal_sysv_helpers_header_abi.sh",
+            "unfeatured selected-static C ABI export surface drifted",
+            "-nostdlib -static",
+            '--features "$FEATURE"',
+            "candidate unexpectedly pulls",
+            "does not select process.signal",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in ("sighold", "sigignore", "sigrelse", "sigset"):
+            self.assertNotIn(symbol, static_exports)
+        self.assertIn("signal-sysv-helpers-header-abi", runner)
+        self.assertIn("libc-signal-sysv-helpers", runner)
+
+    def test_libc_static_c_abi_signal_reporting_and_process_signal_aggregate_are_closed(
+        self,
+    ) -> None:
+        manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_reporting.rs"
+        )
+        signal_header = (ROOT / "include" / "signal.h").read_text(encoding="utf-8")
+        c_header_path = ROOT / "compat" / "x86_64" / "psignal_header_abi_probe.c"
+        cxx_header_path = ROOT / "compat" / "x86_64" / "psignal_header_abi_probe.cpp"
+        probe_path = ROOT / "compat" / "x86_64" / "libc_psignal_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_psignal_start.S"
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_psignal_header_abi.sh"
+        )
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_psignal.sh"
+        aggregate_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_signal.sh"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (
+            implementation_path,
+            c_header_path,
+            cxx_header_path,
+            probe_path,
+            start_path,
+            header_runner_path,
+            artifact_runner_path,
+            aggregate_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing psignal/process.signal input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        implementation = implementation_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        aggregate_runner = aggregate_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn("x86-signal-reporting = []", manifest)
+        self.assertIn(
+            '#[cfg(feature = "x86-signal-reporting")]\n'
+            '#[path = "signal_reporting.rs"]\n'
+            "mod signal_reporting;",
+            static_root,
+        )
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "src/signal/psignal.c",
+            "src/signal/psiginfo.c",
+            "strsignal",
+            "permanent stderr",
+            "success-only",
+            "externally serialize",
+            "not async-signal-safe",
+        ):
+            self.assertIn(required, implementation)
+        exports = set(
+            re.findall(
+                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                implementation,
+            )
+        )
+        self.assertEqual({"psignal", "psiginfo"}, exports)
+        for forbidden in ("crabc_core", "crabc_mimalloc", "alloc::", "fn kill("):
+            self.assertNotIn(forbidden, implementation)
+
+        self.assertIn("defined(_POSIX_C_SOURCE)", signal_header)
+        self.assertIn("void psiginfo(const siginfo_t *, const char *);", signal_header)
+        self.assertIn("void psignal(int, const char *);", signal_header)
+        for header in (c_header, cxx_header):
+            for required in (
+                "CRABC_EXPECT_PSIGNAL",
+                "CRABC_REQUIRE_PSIGNAL_HIDDEN",
+                "psignal",
+                "psiginfo",
+            ):
+                self.assertIn(required, header)
+        self.assertIn("__builtin_types_compatible_p", c_header)
+        self.assertIn("decltype(&psignal)", cxx_header)
+        for required in (
+            "_POSIX_C_SOURCE=200809L",
+            "_XOPEN_SOURCE=700",
+            "_GNU_SOURCE",
+            "_BSD_SOURCE",
+            "CRABC_REQUIRE_PSIGNAL_HIDDEN",
+            "retained a mangled",
+            "C probe did not use project <$header>",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "--features x86-signal-reporting",
+            "assert_reporting_feature_delta",
+            "psiginfo\\npsignal",
+            "run_psignal_header_abi.sh",
+            "selected static C ABI export surface drifted",
+            "-nostdlib -static",
+            "candidate selects a dynamic runtime",
+            "candidate retains a dynamic TLS model",
+            "candidate selects general diagnostics or an unowned runtime",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertFalse({"psignal", "psiginfo"} & static_exports)
+        for required in (
+            "CRABC_PSIGNAL_FREESTANDING",
+            "reporting_success_case",
+            "reporting_failure_case",
+            "reporting_nonblocking_failure_case",
+            "psiginfo_entry",
+            "Unknown signal",
+            "EAGAIN",
+            "EBADF",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_psignal_probe",
+        ):
+            self.assertIn(required, start)
+
+        self.assertIn(
+            'FEATURES="x86-signal-legacy-aliases x86-signal-sysv-helpers x86-signal-reporting"',
+            aggregate_runner,
+        )
+        for symbol in (
+            "__sysv_signal",
+            "bsd_signal",
+            "psiginfo",
+            "psignal",
+            "sighold",
+            "sigignore",
+            "sigrelse",
+            "sigset",
+        ):
+            self.assertIn(symbol, aggregate_runner)
+        self.assertIn("combined signal features remove a default C ABI export", aggregate_runner)
+        self.assertIn(
+            "combined signal features change more than the frozen eight-symbol closure",
+            aggregate_runner,
+        )
+        component_block = aggregate_runner.split("for runner in ", 1)[1].split(
+            "; do\n", 1
+        )[0]
+        components = re.findall(
+            r"(?m)^\s*(run_libc_[a-z0-9_]+\.sh)", component_block
+        )
+        self.assertEqual(
+            [
+                "run_libc_sigrtmax.sh",
+                "run_libc_sigrtmin.sh",
+                "run_libc_signal_legacy_aliases.sh",
+                "run_libc_signal_execution.sh",
+                "run_libc_signal_control.sh",
+                "run_libc_sigaddset_sigdelset_sigfillset.sh",
+                "run_libc_signal_altstack.sh",
+                "run_libc_sigandset_sigorset.sh",
+                "run_libc_signal_sysv_helpers.sh",
+                "run_libc_siginterrupt.sh",
+                "run_libc_sigisemptyset.sh",
+                "run_libc_sigpause.sh",
+                "run_libc_sigpending.sh",
+                "run_libc_signalfd.sh",
+                "run_libc_readiness_waits.sh",
+                "run_libc_psignal.sh",
+            ],
+            components,
+        )
+
+        for required in (
+            "run_psignal_header_abi()",
+            "run_libc_psignal_probe()",
+            "run_libc_process_signal_probe()",
+            "/workspace/compat/x86_64/run_libc_process_signal.sh",
+            '    psignal-header-abi)\n        [ "$#" -eq 0 ] || fail "psignal-header-abi takes no arguments"',
+            '    libc-psignal)\n        [ "$#" -eq 0 ] || fail "libc-psignal takes no arguments"',
+            '    libc-process-signal)\n        [ "$#" -eq 0 ] || fail "libc-process-signal takes no arguments"',
+        ):
+            self.assertIn(required, runner)
 
     def test_libc_static_c_abi_signal_execution_artifact_stays_bounded(
         self,
@@ -4595,6 +5498,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn("preadv2 pwritev2 splice", artifact_runner)
+        self.assertIn("-Wl,--gc-sections", artifact_runner)
+        self.assertIn(
+            "candidate unexpectedly pulls independently selected transfer", artifact_runner
+        )
         for symbol in (
             "kill",
             "killpg",
@@ -6026,6 +6934,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-nostdlib -static",
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
+            "-Wl,--gc-sections",
             "R_X86_64_TPOFF",
             "--disassemble=sigpending",
             "assert_named_syscall sigpending 7f",
@@ -6632,6 +7541,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn("posix_spawn wait3", artifact_runner)
+        self.assertIn("-Wl,--gc-sections", artifact_runner)
+        self.assertIn("-Wl,-u,__ldso_atfork", artifact_runner)
+        self.assertIn("-Wl,-u,__aio_atfork", artifact_runner)
+        self.assertIn(
+            "candidate unexpectedly pulls unrelated wait extension", artifact_runner
+        )
         self.assertTrue(
             {
                 "pthread_atfork",
@@ -10669,12 +11585,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ctermid_header_abi_probe.c",
             "ctermid_header_abi_probe.cpp",
             "Pinned musl 1.2.6",
-            "strict ${language}",
+            "CRABC_CTERMID_FROM_UNISTD",
+            "for selector in -D_POSIX_SOURCE",
             "retained a mangled ctermid reference",
         ):
             self.assertIn(required, header_runner)
         for required in (
-            "ctermid declaration",
+            "stdio.h ctermid declaration",
+            "unistd.h ctermid declaration",
             "ctermid_must_be_hidden",
             "CRABC_REQUIRE_L_CTERMID_HIDDEN",
             "L_ctermid",
@@ -11801,7 +12719,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(symbol, static_export_names)
         self.assertIn("libc-process-context", runner)
 
-    def test_libc_static_c_abi_environment_artifact_stays_bounded(self) -> None:
+    def test_libc_static_c_abi_environment_runtime_is_allocator_backed_and_musl_shaped(
+        self,
+    ) -> None:
+        manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
         ).read_text(encoding="utf-8")
@@ -11811,11 +12732,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         environment = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "environment.rs"
         ).read_text(encoding="utf-8")
+        runtime = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "environment_runtime.rs"
+        ).read_text(encoding="utf-8")
         probe = (
             ROOT / "compat" / "x86_64" / "libc_environment_probe.c"
-        ).read_text(encoding="utf-8")
-        start = (
-            ROOT / "compat" / "x86_64" / "libc_environment_start.S"
         ).read_text(encoding="utf-8")
         artifact_runner = (
             ROOT / "compat" / "x86_64" / "run_libc_environment.sh"
@@ -11833,86 +12759,135 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ]
         runner = RUNNER.read_text(encoding="utf-8")
 
+        self.assertIn(
+            'x86-environment-runtime = ["x86-allocator-runtime"]', manifest
+        )
+        self.assertIn('#[cfg(not(feature = "x86-environment-runtime"))]', static_root)
         self.assertIn('#[path = "environment.rs"]', static_root)
+        self.assertIn('#[cfg(feature = "x86-environment-runtime")]', static_root)
+        self.assertIn('#[path = "environment_runtime.rs"]', static_root)
         self.assertIn(
             'Path("libc/src/c_abi/x86_64/environment.rs")', structure
         )
         self.assertIn("environment::install_initial(vectors.envp)", startup)
         for required in (
-            "ENVIRONMENT_ENTRY_CAPACITY: usize = 128",
-            "ENVIRONMENT_STORAGE_BYTES: usize = 16 * 1024",
+            "src/env/__environ.c",
+            "src/env/getenv.c",
+            "src/env/setenv.c",
+            "src/env/putenv.c",
+            "src/env/unsetenv.c",
+            "src/env/clearenv.c",
             ".set environ, __environ",
             ".set _environ, __environ",
             ".set ___environ, __environ",
+            "OWNED_ENVIRONMENT_VECTOR",
+            "OWNED_ENVIRONMENT_STRINGS",
+            "oldenv",
+            "update_owned_string",
+            "put_entry",
+            "cabi_allocator_malloc",
+            "cabi_allocator_realloc",
+            "cabi_allocator_free",
+            "__crabc_x86_environment_runtime_v1",
             "pub unsafe extern \"C\" fn getenv",
             "pub unsafe extern \"C\" fn setenv",
             "pub unsafe extern \"C\" fn putenv",
             "pub unsafe extern \"C\" fn unsetenv",
             "pub unsafe extern \"C\" fn clearenv",
-            "putenv(\"NAME\")",
-            "ENVIRONMENT_LOOKUP_LIMIT",
-            "1,048,576",
-            "secure_getenv",
-            "16 KiB private byte arena",
+            "key_length == 0 || !has_separator",
             "caller-owned `putenv` strings",
-            "fork recovery",
+            "direct caller-owned vector",
+            "fork, exec/spawn",
         ):
-            self.assertIn(required, environment)
-        self.assertNotIn("alloc::", environment)
-        self.assertNotIn("crabc_core", environment)
-        self.assertNotIn("secure_getenv(", environment)
+            self.assertIn(required, runtime)
+        for forbidden in (
+            "ENVIRONMENT_ENTRY_CAPACITY",
+            "ENVIRONMENT_STORAGE_BYTES",
+            "ENVIRONMENT_LOOKUP_LIMIT",
+            "EnvironmentLock",
+            "AtomicBool",
+            "spin_loop",
+            "libmimalloc_sys",
+            "crabc_core",
+            "secure_getenv(",
+        ):
+            self.assertNotIn(forbidden, runtime)
+        self.assertIn("ENVIRONMENT_ENTRY_CAPACITY", environment)
+        self.assertIn(
+            "ratcheted pinned-musl backend-support tail", probe
+        )
         for required in (
             "aliases_match",
             "check_startup_environment",
+            "check_constructor_environment",
+            "constructor_runs",
+            "if (constructor_runs != 1)",
+            "constructor_status",
+            "constructor_initial_environment",
+            "__attribute__((constructor))",
+            "CRABC_X86_CONSTRUCTOR",
             "check_initial_and_mutation",
             "check_clear_and_direct_assignment",
+            "check_direct_reassignment_after_owned_vector",
+            "check_direct_vector_unsetenv",
+            "check_allocator_backed_growth_and_reclamation",
+            "CRABC_ENVIRONMENT_RUNTIME_CANDIDATE",
+            'getenv("CRABC_X86_INITIAL")',
+            "putenv(remove_duplicate)",
+            "borrowed[7] = 'B'",
+            "borrowed[6] = '_'",
+            "environ != direct_environment",
+            "owned_vector = environ",
+            "environ == owned_vector",
+            "DIRECT_ENTRY_COUNT = 160",
+            "RECLAIM_ITERATIONS = 256",
+            "setenv(\"RECLAIM\", replacement_value, 1)",
+            "unsetenv(\"RECLAIM\")",
+            "setenv(\"CLEAR\", replacement_value, 1)",
+            "setenv(\"AFTER_RECLAIM\", \"live\", 1)",
+        ):
+            self.assertIn(required, probe)
+        for forbidden in (
+            "CRABC_ENVIRONMENT_FREESTANDING",
             "check_fixed_capacity",
             "check_fixed_storage",
             "check_lookup_limit",
             "check_nonreclaiming_storage",
-            "CRABC_ENVIRONMENT_FREESTANDING",
-            "ENVIRONMENT_ENTRY_CAPACITY = 128",
-            "ENVIRONMENT_STORAGE_BYTES = 16 * 1024",
-            "ENVIRONMENT_LOOKUP_LIMIT = 1 << 20",
-            "overfull_environment",
-            "lookup_limit_environment",
-            'getenv("CRABC_X86_INITIAL")',
-            "putenv(remove_duplicate)",
-            "borrowed[7] = 'B'",
-            "setenv(\"EXTRA\", \"value\", 1)",
-            "setenv(\"E127\", \"replacement\", 1)",
-            "unsetenv(\"E127\")",
-            "aliases_match(overfull_environment)",
-            "setenv(\"TOO_LARGE\", too_large, 1)",
-            "setenv(\"X\", \"\", 1)",
-            "setenv(\"Y\", \"\", 1)",
+            "ENVIRONMENT_STORAGE_BYTES",
         ):
-            self.assertIn(required, probe)
-        self.assertIn("__crabc_x86_static_tls_bootstrap", start)
-        self.assertIn("__libc_start_main", start)
-        self.assertIn("main", start)
-        self.assertNotIn("ARCH_SET_FS", start)
-        self.assertNotIn("%fs:0", start)
+            self.assertNotIn(forbidden, probe)
         for required in (
-            "static_c_abi_exports.txt",
-            "-nostdlib -static",
-            "-Wl,-e,_start",
-            "-Wl,--no-undefined",
+            "allocator-backed C environment evidence",
+            "x86-environment-runtime",
+            "__crabc_x86_environment_runtime_v1",
+            "__crabc_x86_allocator_runtime_v1",
+            "crt1 crti crtn",
+            "for object in crt1 crti crtn",
+            "crt/src/x86_64_${object}.rs",
+            "fixture lacks .init_array constructor entry",
+            "candidate lacks .init_array constructor entry",
+            "pinned-musl-backend-support.a",
+            "MUSL_BACKEND_MEMBERS",
+            "--start-group",
+            "caller-owned vector",
+            "environment runtime object export surface drifted",
             "symbol_value",
             "is not an ELF alias of __environ",
             "environment object does not have x86 LP64 size/type/binding",
             "environment alias is not a weak x86 LP64 object",
-            "__secure_getenv __putenv __env_rm_add",
-            "R_X86_64_TPOFF",
-            "candidate relocations retain a dynamic TLS model",
+            "__putenv __env_rm_add",
+            "TLSGD|TLSLD|TLSDESC",
+            "candidate retains a dynamic TLS model",
+            "actual-musl-members",
+            "pinned-musl backend-support archive boundary drifted",
+            "pinned-musl backend-support member boundary drifted",
             "env -i CRABC_X86_INITIAL=entry",
-            "bootstrap_call_line",
-            "startup_call_line",
-            "TLS bootstrap does not precede libc startup",
-            "non-reclaiming arena unexpectedly accepted a new value",
+            "pinned-musl environment or allocator implementation",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn("CRABC_ENVIRONMENT_FREESTANDING", artifact_runner)
+        self.assertNotIn("libc_environment_start.S", artifact_runner)
         for symbol in (
             "__environ",
             "environ",
@@ -11926,6 +12901,55 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(symbol, static_export_names)
         self.assertIn("libc-environment", runner)
+
+    def test_libc_environment_allocation_failure_regression_stays_boundary_scoped(
+        self,
+    ) -> None:
+        """The fixture, rather than production, injects deterministic ENOMEM."""
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_environment_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_environment.sh"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "CRABC_ENVIRONMENT_ALLOCATION_WRAP",
+            "__real_malloc",
+            "__real_realloc",
+            "__wrap_malloc",
+            "__wrap_realloc",
+            "CRABC_FAIL_REPLACEMENT_MALLOC",
+            "CRABC_FAIL_DIRECT_VECTOR_APPEND_MALLOC",
+            "CRABC_FAIL_OWNED_VECTOR_APPEND_REALLOC",
+            "check_allocation_failure_environment_unchanged",
+            "replacement copied-string malloc",
+            "direct-vector append allocation",
+            "owned-vector append realloc",
+            "errno != ENOMEM",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn(
+            "post-publication ownership-registry allocation failure is", probe
+        )
+        self.assertIn("deliberately outside this regression's claim", probe)
+
+        for required in (
+            "-static -fno-pie -no-pie",
+            "CRABC_ENVIRONMENT_ALLOCATION_WRAP",
+            "-Wl,--wrap=malloc",
+            "-Wl,--wrap=realloc",
+            "--wrap=malloc",
+            "--wrap=realloc",
+            "ENVIRONMENT_ALLOCATOR_SYMBOLS",
+            "selected allocator must have exactly one ${symbol} object owner",
+            "selected allocator witness and ${symbol} have different object owners",
+            "__real_${symbol}",
+            "environment wrappers bypassed the selected allocator",
+            "candidate wrapper path selected a strong malloc override",
+            "pinned musl support archive defines wrapped allocation spelling",
+        ):
+            self.assertIn(required, artifact_runner)
 
     def test_libc_static_c_abi_secure_environment_stays_startup_bounded(self) -> None:
         static_root = (
@@ -12510,6 +13534,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-nostdlib -static",
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
+            "-Wl,--gc-sections",
             "R_X86_64_TPOFF",
             "candidate relocations retain a dynamic TLS model",
             "assert_named_syscall poll 7",
@@ -12522,6 +13547,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "sigsuspend lacks Linux's eight-byte kernel signal-set size",
             "does not exercise epoll/eventfd",
             "separate static artifact owns those archive exports",
+            "readiness/signal-waits candidate unexpectedly pulls separately selected splice",
+            "readiness/signal-waits candidate unexpectedly pulls separately selected tee",
+            "readiness/signal-waits candidate unexpectedly pulls separately selected copy_file_range",
             "pthread_sigmask",
             "sys/select.h",
         ):
@@ -12537,12 +13565,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-readiness-waits", runner)
 
-    def test_socket_header_ipv6_macro_regression_stays_native(self) -> None:
+    def test_socket_header_inet_macro_regression_stays_native(self) -> None:
         header = (ROOT / "include" / "netinet" / "in.h").read_text(
             encoding="utf-8"
         )
         probe = (
             ROOT / "compat" / "x86_64" / "socket_header_ipv6_macro_probe.c"
+        ).read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "socket_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "socket_header_abi_probe.cpp"
         ).read_text(encoding="utf-8")
         runner = (
             ROOT / "compat" / "x86_64" / "run_socket_header_abi.sh"
@@ -12561,6 +13595,17 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "IN6_IS_ADDR_MC_SITELOCAL",
             "IN6_IS_ADDR_MC_ORGLOCAL",
             "IN6_IS_ADDR_MC_GLOBAL",
+            "__ARE_4_EQUAL",
+            "IN6_ARE_ADDR_EQUAL",
+            "IN_CLASSA",
+            "IN_CLASSB",
+            "IN_CLASSC",
+            "IN_CLASSD",
+            "IN_MULTICAST",
+            "IN_EXPERIMENTAL",
+            "IN_BADCLASS",
+            "IP_MSFILTER_SIZE",
+            "GROUP_FILTER_SIZE",
         ):
             self.assertIn(macro, header)
             self.assertIn(macro, probe)
@@ -12568,14 +13613,90 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("#define IN6_IS_ADDR_UNSPECIFIED(a) 0", header)
         for required in (
             'extern "C" {',
+            "#include <features.h>",
             "uint8_t __s6_addr[16]",
             "uint16_t __s6_addr16[8]",
             "uint32_t __s6_addr32[4]",
             "__in6_union",
+            "struct ip_msfilter",
+            "struct group_filter",
+            "#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)",
             "extern const struct in6_addr in6addr_any",
             "extern const struct in6_addr in6addr_loopback",
         ):
             self.assertIn(required, header)
+        for required in (
+            "equality_words",
+            "IN6_ARE_ADDR_EQUAL",
+            "IN_CLASSA(0x7fffffffU)",
+            "IN_CLASSB(0x80000000U)",
+            "IN_CLASSC(0xc0000000U)",
+            "IN_CLASSD(0xe0000000U)",
+            "IN_EXPERIMENTAL(0xe0000000U)",
+            "IN_BADCLASS(0xf0000000U)",
+            "IP_MSFILTER_SIZE(2)",
+            "GROUP_FILTER_SIZE(2)",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "sizeof(struct ip_msfilter) == 20",
+            "_Alignof(struct ip_msfilter) == 4",
+            "offsetof(struct ip_msfilter, imsf_multiaddr) == 0",
+            "offsetof(struct ip_msfilter, imsf_interface) == 4",
+            "offsetof(struct ip_msfilter, imsf_fmode) == 8",
+            "offsetof(struct ip_msfilter, imsf_numsrc) == 12",
+            "offsetof(struct ip_msfilter, imsf_slist) == 16",
+            "sizeof(struct group_filter) == 272",
+            "_Alignof(struct group_filter) == 8",
+            "offsetof(struct group_filter, gf_interface) == 0",
+            "offsetof(struct group_filter, gf_group) == 8",
+            "offsetof(struct group_filter, gf_fmode) == 136",
+            "offsetof(struct group_filter, gf_numsrc) == 140",
+            "offsetof(struct group_filter, gf_slist) == 144",
+            "IP_MSFILTER_SIZE(0) == 16",
+            "IP_MSFILTER_SIZE(1) == 20",
+            "IP_MSFILTER_SIZE(2) == 24",
+            "GROUP_FILTER_SIZE(0) == 144",
+            "GROUP_FILTER_SIZE(1) == 272",
+            "GROUP_FILTER_SIZE(2) == 400",
+            "__typeof__(IP_MSFILTER_SIZE(0)),",
+            'size_t), "ip_msfilter size result type")',
+            "__typeof__(GROUP_FILTER_SIZE(0)),",
+            'size_t), "group_filter size result type")',
+            "__ARE_4_EQUAL((const uint32_t *)0, (const uint32_t *)0)), int)",
+            "IN6_ARE_ADDR_EQUAL((const struct in6_addr *)0,",
+            "(const struct in6_addr *)0)), int)",
+        ):
+            self.assertIn(required, c_probe)
+        for required in (
+            "sizeof(ip_msfilter) == 20",
+            "alignof(ip_msfilter) == 4",
+            "offsetof(ip_msfilter, imsf_multiaddr) == 0",
+            "offsetof(ip_msfilter, imsf_interface) == 4",
+            "offsetof(ip_msfilter, imsf_fmode) == 8",
+            "offsetof(ip_msfilter, imsf_numsrc) == 12",
+            "offsetof(ip_msfilter, imsf_slist) == 16",
+            "sizeof(group_filter) == 272",
+            "alignof(group_filter) == 8",
+            "offsetof(group_filter, gf_interface) == 0",
+            "offsetof(group_filter, gf_group) == 8",
+            "offsetof(group_filter, gf_fmode) == 136",
+            "offsetof(group_filter, gf_numsrc) == 140",
+            "offsetof(group_filter, gf_slist) == 144",
+            "IP_MSFILTER_SIZE(0) == 16",
+            "IP_MSFILTER_SIZE(1) == 20",
+            "IP_MSFILTER_SIZE(2) == 24",
+            "GROUP_FILTER_SIZE(0) == 144",
+            "GROUP_FILTER_SIZE(1) == 272",
+            "GROUP_FILTER_SIZE(2) == 400",
+            "decltype(IP_MSFILTER_SIZE(0)), size_t)",
+            "decltype(GROUP_FILTER_SIZE(0)), size_t)",
+            "__ARE_4_EQUAL((const uint32_t *)0, (const uint32_t *)0)), bool)",
+            "IN6_ARE_ADDR_EQUAL(",
+            "static_cast<const in6_addr *>(nullptr),",
+            "static_cast<const in6_addr *>(nullptr))), bool)",
+        ):
+            self.assertIn(required, cxx_probe)
         for required in (
             "socket_header_ipv6_macro_probe.c",
             '"$ORACLE_CC" -std=c11 "$ipv6_macro_probe"',
@@ -12586,6 +13707,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "check_cxx_in6addr_loopback_linkage",
             "in6addr_any",
             "in6addr_loopback",
+            "IPv4/IPv6 address-equality/classification",
+            "GNU/BSD multicast source-filter layouts/size macros",
+            "socket membership",
+            "packet I/O",
         ):
             self.assertIn(required, runner)
 
@@ -16042,8 +17167,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for required in (
             "CRABC_EXPECT_POSIX_COPY",
             "CRABC_EXPECT_GNU_COPY",
+            "CRABC_EXPECT_STRDUPA",
             "CRABC_REQUIRE_POSIX_COPY_HIDDEN",
             "CRABC_REQUIRE_GNU_COPY_HIDDEN",
+            "CRABC_REQUIRE_STRDUPA_HIDDEN",
+            "CRABC_REQUIRE_STRDUPA_CPP_EXPANSION_REJECTED",
+            "cxx_strict_definitions",
+            "declare -n definitions_ref",
+            "xopen_definitions=(-D_XOPEN_SOURCE=700 -DCRABC_EXPECT_POSIX_COPY -DCRABC_REQUIRE_STRDUPA_HIDDEN)",
+            "alloca.h",
             "-std=c++17",
             "string.h",
         ):
@@ -16059,6 +17191,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "strlcat",
         ):
             self.assertIn(symbol, static_export_names)
+        self.assertNotIn("strdupa", static_export_names)
         self.assertIn('id = "static-c-string-copy"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-string-copy"',
@@ -16377,6 +17510,112 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-ctype", runner)
+
+    def test_ctype_legacy_case_macro_matrix_stays_native(self) -> None:
+        """The header-only macros retain musl's narrow feature partition."""
+        header = (ROOT / "include" / "ctype.h").read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "ctype_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "ctype_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_ctype_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("#define _tolower(a) ((a)|0x20)", header)
+        self.assertIn("#define _toupper(a) ((a)&0x5f)", header)
+        for required in (
+            "#ifndef _tolower",
+            "#ifndef _toupper",
+            "_Static_assert(_tolower('A') == 'a'",
+            "_Static_assert(_toupper('a') == 'A'",
+            "_Static_assert(_tolower(0x80) == 0xa0",
+            "_Static_assert(_toupper(0x80) == 0",
+            "_Static_assert(_tolower(-1) == -1",
+            "_Static_assert(_toupper(-1) == 0x5f",
+            "CRABC_ASSERT_LEGACY_CASE_MACROS_HIDDEN",
+            "strict C must hide _tolower and _toupper",
+            "CRABC_REQUIRE_EXTENDED_CTYPE_HIDDEN",
+            "required_tolower",
+            "required_toupper",
+        ):
+            self.assertIn(required, c_probe)
+        for required in (
+            "#ifndef _tolower",
+            "#ifndef _toupper",
+            "static_assert(_tolower('A') == 'a'",
+            "static_assert(_toupper('a') == 'A'",
+            "static_assert(_tolower(-1) == -1",
+            "static_assert(_toupper(-1) == 0x5f",
+            "static_assert(__is_same(decltype(_tolower('A')), int)",
+            "static_assert(__is_same(decltype(_toupper('a')), int)",
+        ):
+            self.assertIn(required, cxx_probe)
+        for required in (
+            "xopen_definitions=(-D_XOPEN_SOURCE=700 -DCRABC_EXPECT_EXTENDED_CTYPE -DCRABC_EXPECT_C_FAST_CTYPE)",
+            "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_EXTENDED_CTYPE -DCRABC_EXPECT_C_FAST_CTYPE)",
+            "cxx_strict_definitions=(-DCRABC_REQUIRE_C_FAST_CTYPE_HIDDEN)",
+            "cxx_gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_EXTENDED_CTYPE -DCRABC_REQUIRE_C_FAST_CTYPE_HIDDEN)",
+            "strict_definitions posix_definitions xopen_definitions gnu_definitions bsd_definitions",
+            "cxx_strict_definitions cxx_gnu_definitions",
+            'declare -n definitions="$definitions_name"',
+            "isascii/toascii/_tolower/_toupper",
+        ):
+            self.assertIn(required, runner)
+        self.assertIn(
+            "ctype-header-abi  compile staged x86 C/C++ ctype declarations and feature-gated macros",
+            RUNNER.read_text(encoding="utf-8"),
+        )
+
+    def test_ctype_c_only_fast_path_macro_block_stays_exact(self) -> None:
+        """The C-only fast path preserves musl's expression and C++ boundary."""
+        header = (ROOT / "include" / "ctype.h").read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "ctype_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "ctype_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_ctype_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "#ifndef __cplusplus",
+            "static __inline int __isspace(int _c)",
+            "return _c == ' ' || (unsigned)_c-'\\t' < 5;",
+            "#define isalpha(a) (0 ? isalpha(a) : (((unsigned)(a)|32)-'a') < 26)",
+            "#define isdigit(a) (0 ? isdigit(a) : ((unsigned)(a)-'0') < 10)",
+            "#define islower(a) (0 ? islower(a) : ((unsigned)(a)-'a') < 26)",
+            "#define isupper(a) (0 ? isupper(a) : ((unsigned)(a)-'A') < 26)",
+            "#define isprint(a) (0 ? isprint(a) : ((unsigned)(a)-0x20) < 0x5f)",
+            "#define isgraph(a) (0 ? isgraph(a) : ((unsigned)(a)-0x21) < 0x5e)",
+            "#define isspace(a) __isspace(a)",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "CRABC_EXPECT_C_FAST_CTYPE",
+            "CRABC_REQUIRE_C_FAST_CTYPE_HIDDEN",
+            "__isspace_signature",
+            "ctype_fast_path_expression_formation",
+            "isspace(' ')",
+            "isgraph('!')",
+        ):
+            self.assertIn(required, c_probe)
+        for required in (
+            "CRABC_REQUIRE_C_FAST_CTYPE_HIDDEN",
+            "C++ must hide C-only ctype fast-path names",
+        ):
+            self.assertIn(required, cxx_probe)
+        for required in (
+            "CRABC_EXPECT_C_FAST_CTYPE",
+            "CRABC_REQUIRE_C_FAST_CTYPE_HIDDEN",
+            "C-only ctype fast-path macros",
+            "C++ must hide __isspace",
+        ):
+            self.assertIn(required, runner)
 
     def test_libc_static_c_abi_bounded_regex_artifact_stays_non_promoting(self) -> None:
         static_root = (
@@ -20668,6 +21907,95 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-stdio-tmpfile", dispatcher)
         self.assertIn("run_libc_stdio_tmpfile.sh", dispatcher)
 
+    def test_libc_static_c_abi_fopen64_alias_stays_source_only(self) -> None:
+        """The LP64 `fopen64` spelling remains a source-only musl alias."""
+        header = (ROOT / "include" / "stdio.h").read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "fopen64_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "fopen64_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_fopen64_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_fopen64_alias_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_fopen64_alias_start.S"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_fopen64_alias.sh"
+        ).read_text(encoding="utf-8")
+        exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertNotIn("fopen64", exports)
+        self.assertIn("#if defined(_LARGEFILE64_SOURCE)", header)
+        self.assertIn("#define fopen64 fopen", header)
+        for probe in (c_probe, cxx_probe):
+            for required in (
+                "_LARGEFILE64_SOURCE",
+                "fopen64",
+                "fopen",
+                "macro alias",
+            ):
+                self.assertIn(required, probe)
+        for required in (
+            "Pinned musl 1.2.6",
+            "_LARGEFILE64_SOURCE",
+            "fopen64",
+            "cxx17",
+            "c11-base",
+            "_GNU_SOURCE",
+            "_FILE_OFFSET_BITS",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "fopen_entry",
+            "fopen64_macro_entry",
+            "CRABC_FOPEN64_ALIAS_FREESTANDING",
+            "ENOENT",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_fopen64_alias_probe",
+            "mov $231,%eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "selected static C ABI export surface",
+            "emits no x86 ELF `fopen64` symbol",
+            "fopen64",
+            "run_fopen64_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "fopen",
+            "Pinned musl 1.2.6",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn("--whole-archive", runner)
+        self.assertIn('id = "stdio.fopen64-alias"', ledger)
+        self.assertIn("source-only `fopen64` alias", ledger)
+        for required in (
+            "fopen64-header-abi",
+            "libc-fopen64-alias",
+            "run_fopen64_header_abi",
+            "run_libc_fopen64_alias",
+        ):
+            self.assertIn(required, dispatcher)
+
     def test_libc_static_c_abi_text_math_locale_stdio_composition_stays_cross_surface(
         self,
     ) -> None:
@@ -21122,6 +22450,126 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("child-reaping-header-abi", runner)
         self.assertIn("libc-child-reaping", runner)
+
+    def test_libc_static_c_abi_wait_extensions_artifact_stays_private(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        wait_extensions = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "wait_extensions.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_wait_extensions_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_wait_extensions_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_wait_extensions.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_wait_extensions_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" /
+            "wait_extensions_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" /
+            "wait_extensions_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        child_reaping_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_child_reaping.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "wait_extensions.rs"]', static_root)
+        self.assertIn("mod wait_extensions;", static_root)
+        self.assertLess(static_export_names.index("wait"), static_export_names.index("wait3"))
+        self.assertLess(static_export_names.index("wait3"), static_export_names.index("wait4"))
+        self.assertLess(static_export_names.index("wait4"), static_export_names.index("waitid"))
+        for symbol in ("wait3", "wait4"):
+            self.assertIn(f"fn {symbol}(", wait_extensions)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/linux/wait3.c",
+            "src/linux/wait4.c",
+            "SYS_WAIT4",
+            "syscall4(",
+            "r10",
+            "cancellation",
+            "c_status",
+            "Rusage",
+            "WAIT_ANY",
+            "128-byte",
+        ):
+            self.assertIn(required, wait_extensions)
+        for forbidden in (
+            "alloc::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn fork(",
+            "fn execve(",
+            "SYS_WAITID",
+            "syscall5(",
+        ):
+            self.assertNotIn(forbidden, wait_extensions)
+        for required in (
+            "raw_fork",
+            "SYS_setpgid",
+            "WNOHANG",
+            "ECHILD",
+            "__reserved",
+            "CRABC_WAIT_EXTENSIONS_FREESTANDING",
+            "raw_wait4_cleanup",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "%fs:0",
+            "crabc_x86_64_wait_extensions_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "strict",
+            "posix",
+            "gnu",
+            "bsd",
+            "CRABC_WAIT_EXTENSIONS_EXPECT_HIDDEN",
+            "sys/resource.h",
+            "nm --undefined-only",
+        ):
+            self.assertIn(required, header_runner)
+        for header_probe in (header_c_probe, header_cxx_probe):
+            self.assertIn("wait3_signature", header_probe)
+            self.assertIn("wait4_signature", header_probe)
+            self.assertIn("CRABC_WAIT_EXTENSIONS_VISIBLE", header_probe)
+            self.assertIn("rusage", header_probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "wait4 3d",
+            "%r10",
+            "run_wait_extensions_header_abi.sh",
+            "candidate retains a dynamic TLS model",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("for unselected in wait3 wait4; do", child_reaping_runner)
+        self.assertIn("candidate unexpectedly pulls unselected", child_reaping_runner)
+        self.assertIn("wait-extensions-header-abi", runner)
+        self.assertIn("libc-wait-extensions", runner)
 
     def test_libc_static_c_abi_immediate_termination_artifact_stays_narrow(self) -> None:
         static_root = (
@@ -21617,12 +23065,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         self.assertIn('#[path = "intrusive_queue.rs"]', static_root)
         for required in (
-            "Selected static Linux/x86-64 C intrusive-queue ABI boundary",
+            "Selected static Linux/x86-64 intrusive queue C ABI boundary",
             "musl 1.2.6 release commit",
             "src/search/insque.c::{insque,remque}",
             "without clearing the removed node's own links",
-            "read_unaligned",
-            "write_unaligned",
+            "ptr::read",
+            "ptr::write",
             'pub unsafe extern "C" fn insque',
             'pub unsafe extern "C" fn remque',
         ):
@@ -21642,12 +23090,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for required in (
             "insque_signature",
             "remque_signature",
-            "const insque_signature insert = insque",
-            "const remque_signature remove = remque",
-            "check_null_predecessor_reset",
-            "check_splice_and_unlink",
-            "remque retaining",
-            "element.next != &successor",
+            "const insque_signature insertion = insque",
+            "const remque_signature removal = remque",
+            "check_null_predecessor",
+            "check_middle_splice_and_remove",
+            "check_tail_and_head_edges",
+            "middle.previous != &left || middle.next != &right",
+            "tail.next != NULL || inserted.previous != &tail",
             "CRABC_INTRUSIVE_QUEUE_FREESTANDING",
         ):
             self.assertIn(required, probe)
@@ -21686,12 +23135,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-Wl,--no-undefined",
             "--disassemble=insque",
             "--disassemble=remque",
-            "intrusive-queue candidate unexpectedly retains TLS",
-            "intrusive queue unexpectedly performs a syscall",
+            "candidate unexpectedly selects TLS",
+            "candidate queue implementation unexpectedly delegates outside pointer rewiring",
             "outside the test entry shim",
-            "bsearch lfind lsearch __qsort_r qsort qsort_r",
-            "candidate accidentally selects ${symbol}",
-            "timeout",
+            "bsearch|lfind|lsearch|qsort|qsort_r|__qsort_r",
+            "candidate retained a sibling search or errno API",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
@@ -25194,6 +26642,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn("pwritev2 splice", artifact_runner)
+        self.assertIn("-Wl,--gc-sections", artifact_runner)
+        self.assertIn(
+            "candidate unexpectedly pulls independently selected transfer", artifact_runner
+        )
         for symbol in ("open", "openat", "creat"):
             self.assertIn(symbol, static_export_names)
         self.assertIn('id = "static-c-descriptor-entry"', parity_ledger)
@@ -27583,7 +29036,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "symlinkat",
                 "unlinkat",
                 "renameat",
-                "renameat2",
                 "open_by_handle_at",
             }
         )
@@ -27747,7 +29199,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             & {
                 "unlinkat",
                 "renameat",
-                "renameat2",
                 "fchmodat",
                 "mkdirat",
                 "symlinkat",
@@ -28295,10 +29746,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_named_syscall chmod 5a",
             "assert_fchmod_fallback_path",
             "assert_named_syscall truncate 4c",
-            "for unselected in fchdir",
+            "for unselected in chroot",
             "unowned runtime dependency",
         ):
             self.assertIn(required, artifact_runner)
+        self.assertNotIn("for unselected in fchdir", artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
 
         expected_symbols = {
@@ -28323,8 +29775,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "chroot",
                 "realpath",
                 "renameat",
-                "renameat2",
-                "unlinkat",
                 "symlinkat",
                 "mkdirat",
                 "fchmodat",
@@ -28857,7 +30307,21 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(f"fn {symbol}", implementation)
             self.assertIn(symbol, static_export_names)
-        for forbidden in ("fn scandir", "fn malloc", "fn free"):
+        # The separately feature-gated mixed-runtime scandir client lives
+        # beside the private DIR representation, but it must not broaden this
+        # dependency-free default artifact or its explicit export root.
+        scandir_feature_anchor = (
+            '#[cfg(feature = "x86-scandir")]\n#[no_mangle]\n'
+            'pub unsafe extern "C" fn scandir('
+        )
+        self.assertIn(scandir_feature_anchor, implementation)
+        self.assertEqual(implementation.count("fn scandir("), 1)
+        self.assertNotIn(
+            'pub unsafe extern "C" fn scandir(',
+            implementation.split(scandir_feature_anchor)[0],
+        )
+        self.assertNotIn("x86-scandir", static_root)
+        for forbidden in ("fn malloc", "fn free"):
             self.assertNotIn(forbidden, implementation)
         self.assertIn("byte_strings::strverscmp", implementation)
         self.assertIn("strverscmp", static_export_names)
@@ -29145,6 +30609,203 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_issetugid_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "issetugid.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_issetugid_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_issetugid_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_issetugid.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_issetugid_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "issetugid.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 GNU/BSD `issetugid` C ABI boundary",
+            "src/misc/issetugid.c::issetugid",
+            "libc.secure",
+            "AT_SECURE/UID/EUID/GID/EGID",
+            "System V AMD64 ABI",
+            'pub extern "C" fn issetugid() -> c_int',
+            "startup_security::is_secure()",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "secure_environment::",
+            "environment::",
+            "auxv_observation::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertEqual(
+            {symbol for symbol in static_exports if symbol.startswith("issetugid")},
+            {"issetugid"},
+        )
+        for required in (
+            "#include <errno.h>",
+            "#include <unistd.h>",
+            "sizeof(int) == 4",
+            "int (*)(void)",
+            "errno = E2BIG",
+            "issetugid() != 0",
+            "function() != 0",
+            "issetugid() != 1",
+            "function() != 1",
+            "CRABC_ISSETUGID_SYNTHETIC",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "CRABC_ISSETUGID_SYNTHETIC_AT_SECURE",
+            "CRABC_ISSETUGID_SYNTHETIC_UID_MISMATCH",
+            "AT_UID=11, AT_EUID=12, AT_GID=13, AT_EGID=14, AT_SECURE=23",
+            "__crabc_x86_static_tls_bootstrap",
+            "__libc_start_main",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "issetugid_header_abi_probe.c",
+            "issetugid_header_abi_probe.cpp",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "-D_XOPEN_SOURCE=700",
+            "-D_POSIX_C_SOURCE=200809L",
+            "retained a mangled issetugid reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_issetugid_header_abi.sh",
+            "issetugid.lo",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "archive does not define issetugid",
+            "candidate retains a dynamic TLS model",
+            "issetugid selects a credential, environment, auxv, process, or syscall path",
+            "TLS bootstrap does not precede issetugid startup",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-issetugid"', (ROOT / "compat" / "x86_64" / "parity.toml").read_text(encoding="utf-8"))
+        self.assertIn("run_issetugid_header_abi()", runner)
+        self.assertIn("run_libc_issetugid_probe()", runner)
+        self.assertIn(
+            '    issetugid-header-abi)\n        [ "$#" -eq 0 ] || fail "issetugid-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-issetugid)\n        [ "$#" -eq 0 ] || fail "libc-issetugid takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_legacy_misc_slice_stays_opt_in(self) -> None:
+        manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_misc.rs"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_legacy_misc_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_legacy_misc.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn("x86-legacy-misc = []", manifest)
+        self.assertIn(
+            '#[cfg(feature = "x86-legacy-misc")]\n#[path = "legacy_misc.rs"]\nmod legacy_misc;',
+            static_root,
+        )
+        for required in (
+            "src/legacy/fmtmsg.c::fmtmsg",
+            "src/legacy/encrypt.c::setkey",
+            "src/legacy/encrypt.c::encrypt",
+            "MSGVERB",
+            "MM_PRINT",
+            "MM_CONSOLE",
+            "retry-on-short-write",
+            "inert-DES",
+            "intentional divergence",
+            "no-hand-rolled-cryptography",
+            'pub unsafe extern "C" fn fmtmsg',
+            'pub extern "C" fn setkey',
+            'pub extern "C" fn encrypt',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("sha_crypt", "crabc_core", "crabc_mimalloc", "mimalloc"):
+            self.assertNotIn(forbidden, implementation)
+        self.assertTrue({"get_avphys_pages", "get_nprocs", "get_nprocs_conf", "get_phys_pages", "issetugid"} <= static_exports)
+        self.assertFalse({"encrypt", "fmtmsg", "setkey"} & static_exports)
+        for required in (
+            "compile_visible_profile strict base",
+            "compile_visible_profile posix base",
+            "compile_visible_profile xopen xopen",
+            "compile_visible_profile gnu gnu-bsd",
+            "compile_visible_profile bsd gnu-bsd",
+            "C++ probe lacks C linkage",
+            "retained a mangled",
+            "-nostdinc",
+            "-nostdinc++",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "FEATURE=x86-legacy-misc",
+            "FEATURE_EXPORTS=(encrypt fmtmsg setkey)",
+            "run_legacy_misc_header_abi.sh",
+            "run_libc_system_information.sh",
+            "run_libc_issetugid.sh",
+            "unfeatured selected-static C ABI export surface drifted",
+            "opt-in legacy.misc changed more than its exact public closure",
+            "inert DES compatibility functions select a local cipher",
+            "candidate selects a dynamic runtime",
+            "candidate retains a dynamic TLS model",
+            "not a full legacy runtime",
+            "public support claim",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("run_legacy_misc_header_abi()", runner)
+        self.assertIn("run_libc_legacy_misc_probe()", runner)
+        self.assertIn(
+            '    legacy-misc-header-abi)\n        [ "$#" -eq 0 ] || fail "legacy-misc-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-legacy-misc)\n        [ "$#" -eq 0 ] || fail "libc-legacy-misc takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_gettid_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -29252,13 +30913,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-nostdlib -static",
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
-            "gettid object retains an unresolved helper",
+            "gettid must have exactly one crate object owner",
+            "-Wl,--gc-sections",
             "gettid candidate unexpectedly retains TLS or errno",
             "gettid lacks Linux syscall 186",
             "gettid unexpectedly selects a TCB, TLS, or helper-call path",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn('ar crs "$selected_archive"', artifact_runner)
         self.assertIn('id = "static-c-gettid"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-gettid"',
@@ -34042,6 +35705,37 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("run_libc_personality_probe()", dispatcher)
         self.assertIn("personality-header-abi)", dispatcher)
         self.assertIn("libc-personality)", dispatcher)
+
+    def test_campaign_dispatch_surface_is_explicit_and_host_safe(self) -> None:
+        """Phase 0 reporting must not need a Docker image just to explain blockers."""
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for command in (
+            "campaign-status",
+            "campaign-family <family-id>",
+            "campaign-static",
+            "campaign-dynamic",
+            "campaign-qualification",
+            "campaign-promotion-check",
+            "campaign-all",
+        ):
+            self.assertIn(command, dispatcher)
+        for arm in (
+            "campaign-status)",
+            "campaign-family)",
+            "campaign-static)",
+            "campaign-dynamic)",
+            "campaign-qualification)",
+            "campaign-promotion-check)",
+            "campaign-all)",
+        ):
+            self.assertIn(arm, dispatcher)
+
+        self.assertIn("compat/x86_64/campaign_report.py", dispatcher)
+        self.assertIn("compat/x86_64/campaign_runner.py", dispatcher)
+        campaign_status = dispatcher.index("campaign-status)")
+        next_arm = dispatcher.index("campaign-family)", campaign_status)
+        self.assertNotIn("ensure_image", dispatcher[campaign_status:next_arm])
 
 
 

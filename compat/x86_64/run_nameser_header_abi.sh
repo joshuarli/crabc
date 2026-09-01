@@ -6,8 +6,9 @@
 # DNS wire-name expansion function, one immutable nameserver flag-accessor
 # data object, one caller-owned 16-bit wire-read function, one caller-owned
 # 32-bit wire-read function, caller-owned 16/32-bit wire-write functions, and
-# one resource-record span function through C and C++. It selects no resolver
-# state or `/etc/resolv.conf`.
+# one resource-record span function, exact unconditional DNS record-
+# classification macros, and exact DNS bitmap helpers through C and C++. It
+# selects no resolver state or `/etc/resolv.conf`.
 # DNS packet I/O, socket, netdb, and general nameserver API behavior stay out.
 set -euo pipefail
 
@@ -52,33 +53,70 @@ done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-c_probe="$ROOT_DIR/compat/x86_64/nameser_header_abi_probe.c"
-cxx_probe="$ROOT_DIR/compat/x86_64/nameser_header_abi_probe.cpp"
-[ -f "$c_probe" ] || fail "missing C selected-nameserver header ABI probe"
-[ -f "$cxx_probe" ] || fail "missing C++ selected-nameserver header ABI probe"
+readonly C_PROBE="$ROOT_DIR/compat/x86_64/nameser_header_abi_probe.c"
+readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/nameser_header_abi_probe.cpp"
+[ -f "$C_PROBE" ] || fail "missing C selected-nameserver header ABI probe"
+[ -f "$CXX_PROBE" ] || fail "missing C++ selected-nameserver header ABI probe"
 
 work_dir="$(mktemp -d /tmp/crabc-x86-64-nameser-header.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 header_trace="$work_dir/project-header-trace"
-musl_cxx_object="$work_dir/musl-nameser-header-cxx.o"
-project_cxx_object="$work_dir/project-nameser-header-cxx.o"
+compile_profile() {
+    local name="$1"
+    shift
+    local -a flags=("$@")
+    local musl_c="$work_dir/musl-${name}-c"
+    local project_c="$work_dir/project-${name}-c"
 
-# First prove that the fixture matches pinned musl's C and C++ declarations.
-"$ORACLE_CC" -std=c11 -fsyntax-only "$c_probe"
-"$ORACLE_CC" -std=c++17 -x c++ -c "$cxx_probe" -o "$musl_cxx_object"
-check_cxx_c_linkage pinned-musl "$musl_cxx_object"
+    "$ORACLE_CC" -std=c11 "${flags[@]}" -fsyntax-only "$C_PROBE"
+    "$ORACLE_CC" -std=c11 "${flags[@]}" \
+        -DCRABC_NAMESER_RECORD_MACRO_RUNTIME "$C_PROBE" -o "$musl_c"
+    "$musl_c"
+    "$ORACLE_CC" -std=c11 "${flags[@]}" -I "$ROOT_DIR/include" \
+        -fsyntax-only "$C_PROBE"
+    "$ORACLE_CC" -std=c11 "${flags[@]}" -I "$ROOT_DIR/include" \
+        -DCRABC_NAMESER_RECORD_MACRO_RUNTIME "$C_PROBE" -o "$project_c"
+    "$project_c"
+}
 
-# Project headers must be first and self-contained. Compile-only is
-# intentional: declaration evidence does not select any C resolver runtime.
-"$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -H -fsyntax-only "$c_probe" \
+compile_cxx_profile() {
+    local name="$1"
+    shift
+    local -a flags=("$@")
+    local musl_cxx_object="$work_dir/musl-${name}-cxx.o"
+    local project_cxx_object="$work_dir/project-${name}-cxx.o"
+
+    "$ORACLE_CC" -std=c++17 -x c++ "${flags[@]}" -c "$CXX_PROBE" \
+        -o "$musl_cxx_object"
+    check_cxx_c_linkage pinned-musl "$musl_cxx_object"
+    "$ORACLE_CC" -std=c++17 -x c++ "${flags[@]}" -I "$ROOT_DIR/include" \
+        -c "$CXX_PROBE" -o "$project_cxx_object"
+    check_cxx_c_linkage project "$project_cxx_object"
+}
+
+# These exact `ns_t_qt_p`/`ns_t_mrr_p`/`ns_t_rr_p`/`ns_t_udp_p`/`ns_t_xfr_p`
+# record-classification macros and `NS_NXT_BIT_SET`/`NS_NXT_BIT_CLEAR`/
+# `NS_NXT_BIT_ISSET` bitmap helpers are unconditional. Every fixed C profile
+# executes the exact bitmap mutation behavior; GNU and no-define C++17 each
+# check the C++ spelling and unmangled C declarations without selecting any
+# resolver runtime.
+compile_profile strict -U_GNU_SOURCE -U_BSD_SOURCE -D__STRICT_ANSI__
+compile_profile posix -U_GNU_SOURCE -U_BSD_SOURCE -D_POSIX_C_SOURCE=200809L
+compile_profile xopen -U_GNU_SOURCE -U_BSD_SOURCE -D_XOPEN_SOURCE=700
+compile_profile gnu -U_BSD_SOURCE -D_GNU_SOURCE
+compile_profile bsd -U_GNU_SOURCE -D_BSD_SOURCE
+compile_cxx_profile gnu -U_BSD_SOURCE -D_GNU_SOURCE
+compile_cxx_profile cxx17-strict -U_GNU_SOURCE -U_BSD_SOURCE
+
+# Project headers must be first and self-contained. The runtime checks above
+# exercise only header macros; no crabc resolver archive or state is linked.
+"$ORACLE_CC" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE -D__STRICT_ANSI__ \
+    -I "$ROOT_DIR/include" -H -fsyntax-only "$C_PROBE" \
     >/dev/null 2>"$header_trace"
 for header in resolv.h arpa/nameser.h netinet/in.h stddef.h stdint.h \
     sys/socket.h sys/types.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "C probe did not use project <$header>"
 done
-"$ORACLE_CC" -std=c++17 -x c++ -I "$ROOT_DIR/include" -c "$cxx_probe" \
-    -o "$project_cxx_object"
-check_cxx_c_linkage project "$project_cxx_object"
 
 printf 'x86 pinned-musl/project C/C++ <resolv.h> selected nameserver ABI: PASS\n'

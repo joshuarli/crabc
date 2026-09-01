@@ -37,12 +37,23 @@ extern "C" {
 #define EAI_SOCKTYPE -7
 #define EAI_SYSTEM -11
 #define EAI_OVERFLOW -12
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE) || defined(_POSIX_SOURCE) \
+ || (defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE+0 < 200809L) \
+ || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE+0 < 700)
 #define HOST_NOT_FOUND 1
 #define TRY_AGAIN 2
 #define NO_RECOVERY 3
 #define NO_DATA 4
 #define NO_ADDRESS NO_DATA
+#if defined(__x86_64__)
+/* The x86 resolver package has native evidence for musl's accessor spelling:
+ * the bootstrapped main task retains the link-visible fallback object while
+ * selected workers receive distinct resolver TLS slots. The active AArch64
+ * C ABI still has its older direct-object contract until it has equivalent
+ * lifecycle evidence, so do not treat this target branch as shared support. */
+int *__h_errno_location(void);
+#define h_errno (*__h_errno_location())
+#endif
 #endif
 
 struct hostent { char *h_name; char **h_aliases; int h_addrtype; int h_length; char **h_addr_list; };
@@ -62,8 +73,12 @@ struct addrinfo {
 };
 
 void endhostent(void); void endnetent(void); void endprotoent(void); void endservent(void);
+#if !defined(__x86_64__)
+/* Keep the established AArch64 declaration until its resolver state follows
+ * the same accessor/TLS contract documented above. */
 extern int h_errno;
 int *__h_errno_location(void);
+#endif
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 void herror(const char *);
 const char *hstrerror(int);

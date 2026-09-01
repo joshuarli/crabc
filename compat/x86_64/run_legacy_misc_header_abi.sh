@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# Native Linux/x86-64 frozen legacy.misc C/C++ declaration gate.
+#
+# Pinned musl 1.2.6 is the declaration and linkage oracle.  The raw project
+# pass uses only project headers plus compiler builtin headers, so a host libc
+# cannot make an unavailable spelling look visible.  This checks the frozen
+# aggregate's profile split without claiming a legacy runtime: `fmtmsg` and
+# page/processor observations are ordinary declarations; `encrypt`/`setkey`
+# require X/Open, GNU, or BSD selection; `issetugid` requires GNU or BSD.
+set -euo pipefail
+export LC_ALL=C
+
+readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly CANDIDATE_CC=/usr/bin/gcc
+readonly PROJECT_INCLUDE="$ROOT_DIR/include"
+readonly C_PROBE="$ROOT_DIR/compat/x86_64/legacy_misc_header_abi_probe.c"
+readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/legacy_misc_header_abi_probe.cpp"
+
+fail() {
+    printf 'ERROR: x86 legacy.misc header ABI: %s\n' "$*" >&2
+    exit 1
+}
+
+require_native_linux_x86_64() {
+    [ "$(uname -s)" = Linux ] || fail "requires native Linux"
+    case "$(uname -m)" in
+        x86_64|amd64) ;;
+        *) fail "refuses emulation on $(uname -m)" ;;
+    esac
+}
+
+require_tool() {
+    command -v "$1" >/dev/null 2>&1 || fail "requires $1"
+}
+
+run_compiler() {
+    local compiler="$1"
+    shift
+    env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH \
+        -u GCC_EXEC_PREFIX -u GCC_SPECS -u COMPILER_PATH \
+        "$compiler" "$@"
+}
+
+trace_paths() {
+    sed -n -E 's/^[. ]+ (\/[^[:space:]]+).*$/\1/p' "$1"
+}
+
+require_native_linux_x86_64
+for tool in env grep mktemp nm realpath sed uname; do
+    require_tool "$tool"
+done
+[ -x "$ORACLE_CC" ] || fail "missing pinned musl compiler"
+[ -x "$CANDIDATE_CC" ] || fail "missing raw native candidate compiler"
+bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
+
+candidate_compiler_builtin_include="$(run_compiler "$CANDIDATE_CC" -print-file-name=include)"
+case "$candidate_compiler_builtin_include" in
+    /*) ;;
+    *) fail "raw candidate compiler did not report an absolute builtin include directory" ;;
+esac
+candidate_compiler_builtin_include="$(realpath "$candidate_compiler_builtin_include")"
+[ -d "$candidate_compiler_builtin_include" ] ||
+    fail "missing raw candidate compiler builtin include directory"
+
+work_dir="$(mktemp -d /tmp/crabc-x86-64-legacy-misc-header.XXXXXX)"
+trap 'rm -rf -- "$work_dir"' EXIT
+
+set_profile_args() {
+    local variant="$1"
+    case "$variant" in
+        oracle)
+            compiler="$ORACLE_CC"
+            include_args=()
+            ;;
+        project)
+            compiler="$CANDIDATE_CC"
+            include_args=(
+                -nostdinc
+                -I "$PROJECT_INCLUDE"
+                -isystem "$candidate_compiler_builtin_include"
+            )
+            ;;
+        *) fail "unknown header tree: $variant" ;;
+    esac
+}
+
+symbols_for_expectation() {
+    case "$1" in
+        base)
+            printf '%s\n' fmtmsg get_nprocs_conf get_nprocs get_phys_pages \
+                get_avphys_pages
+            ;;
+        xopen)
+            symbols_for_expectation base
+            printf '%s\n' encrypt setkey
+            ;;
+        gnu-bsd)
+            symbols_for_expectation xopen
+            printf '%s\n' issetugid
+            ;;
+        *) fail "unknown expectation $1" ;;
+    esac
+}
+
+compile_visible_profile() {
+    local label="$1" expectation="$2"
+    shift 2
+    local language variant object undefined symbol
+    local -a expectation_args
+
+    case "$expectation" in
+        base)
+            expectation_args=(-DCRABC_LEGACY_MISC_EXPECT_BASE)
+            ;;
+        xopen)
+            expectation_args=(
+                -DCRABC_LEGACY_MISC_EXPECT_BASE
+                -DCRABC_LEGACY_MISC_EXPECT_XOPEN
+            )
+            ;;
+        gnu-bsd)
+            expectation_args=(
+                -DCRABC_LEGACY_MISC_EXPECT_BASE
+                -DCRABC_LEGACY_MISC_EXPECT_XOPEN
+                -DCRABC_LEGACY_MISC_EXPECT_GNU_BSD
+            )
+            ;;
+        *) fail "unknown expectation $expectation" ;;
+    esac
+
+    for language in c cxx; do
+        for variant in oracle project; do
+            set_profile_args "$variant"
+            if [ "$language" = c ]; then
+                run_compiler "$compiler" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE \
+                    -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE "$@" \
+                    "${expectation_args[@]}" \
+                    -Werror=implicit-function-declaration "${include_args[@]}" \
+                    -fsyntax-only "$C_PROBE"
+            else
+                object="$work_dir/${variant}-${label}-${expectation}.o"
+                run_compiler "$compiler" -std=c++17 -x c++ -U_GNU_SOURCE \
+                    -U_BSD_SOURCE -U_XOPEN_SOURCE -U_POSIX_C_SOURCE \
+                    -U_DEFAULT_SOURCE "$@" "${expectation_args[@]}" \
+                    -nostdinc++ "${include_args[@]}" \
+                    -c "$CXX_PROBE" -o "$object"
+                undefined="$(nm --undefined-only "$object")"
+                while IFS= read -r symbol; do
+                    printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+                        fail "C++ probe lacks C linkage for ${symbol} (${label}, ${variant})"
+                    if printf '%s\n' "$undefined" | grep -Eq "_Z[0-9].*${symbol}"; then
+                        fail "C++ probe retained a mangled ${symbol} reference (${label}, ${variant})"
+                    fi
+                done < <(symbols_for_expectation "$expectation")
+            fi
+        done
+    done
+}
+
+compile_hidden_profile() {
+    local label="$1" hidden_define="$2"
+    shift 2
+    local language variant errors
+
+    for language in c cxx; do
+        for variant in oracle project; do
+            set_profile_args "$variant"
+            errors="$work_dir/${variant}-${language}-${label}-${hidden_define#-D}-errors"
+            if [ "$language" = c ]; then
+                if run_compiler "$compiler" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE \
+                    -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE "$@" \
+                    "$hidden_define" -Werror=implicit-function-declaration \
+                    "${include_args[@]}" -fsyntax-only "$C_PROBE" >"$errors" 2>&1; then
+                    fail "hidden legacy spelling is visible under ${label} C (${variant})"
+                fi
+            elif run_compiler "$compiler" -std=c++17 -x c++ -U_GNU_SOURCE \
+                -U_BSD_SOURCE -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE \
+                "$@" "$hidden_define" -nostdinc++ "${include_args[@]}" \
+                -fsyntax-only "$CXX_PROBE" >"$errors" 2>&1; then
+                fail "hidden legacy spelling is visible under ${label} C++ (${variant})"
+            fi
+        done
+    done
+}
+
+compile_visible_profile strict base -D__STRICT_ANSI__
+compile_hidden_profile strict -DCRABC_LEGACY_MISC_REQUIRE_XOPEN_HIDDEN \
+    -D__STRICT_ANSI__
+compile_hidden_profile strict -DCRABC_LEGACY_MISC_REQUIRE_ISSETUGID_HIDDEN \
+    -D__STRICT_ANSI__
+
+compile_visible_profile posix base -D_POSIX_C_SOURCE=200809L
+compile_hidden_profile posix -DCRABC_LEGACY_MISC_REQUIRE_XOPEN_HIDDEN \
+    -D_POSIX_C_SOURCE=200809L
+compile_hidden_profile posix -DCRABC_LEGACY_MISC_REQUIRE_ISSETUGID_HIDDEN \
+    -D_POSIX_C_SOURCE=200809L
+
+compile_visible_profile xopen xopen -D_XOPEN_SOURCE=700
+compile_hidden_profile xopen -DCRABC_LEGACY_MISC_REQUIRE_ISSETUGID_HIDDEN \
+    -D_XOPEN_SOURCE=700
+
+compile_visible_profile gnu gnu-bsd -D_GNU_SOURCE
+compile_visible_profile bsd gnu-bsd -D_BSD_SOURCE
+
+set_profile_args project
+header_trace="$work_dir/project-gnu-header-trace"
+run_compiler "$compiler" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE \
+    -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE -D_GNU_SOURCE \
+    -DCRABC_LEGACY_MISC_EXPECT_BASE -DCRABC_LEGACY_MISC_EXPECT_GNU_BSD \
+    "${include_args[@]}" -H -fsyntax-only "$C_PROBE" >/dev/null 2>"$header_trace"
+while IFS= read -r path; do
+    case "$path" in
+        "$PROJECT_INCLUDE"/*|"$candidate_compiler_builtin_include"/*) ;;
+        *) fail "project GNU header trace escaped its declared roots: $path" ;;
+    esac
+done < <(trace_paths "$header_trace")
+for header in fmtmsg.h stdlib.h sys/sysinfo.h unistd.h features.h bits/alltypes.h; do
+    grep -Fq "$PROJECT_INCLUDE/$header" "$header_trace" ||
+        fail "GNU C probe did not use the project <$header>"
+done
+
+printf 'x86 pinned-musl/project frozen legacy.misc C/C++ header ABI: PASS\n'

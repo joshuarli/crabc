@@ -6,6 +6,16 @@
 #error "this probe requires native Linux/x86-64 little-endian LP64"
 #endif
 
+#if defined(CRABC_CTERMID_FROM_UNISTD)
+#include <unistd.h>
+
+using ctermid_signature = char *(*)(char *);
+
+static_assert(__is_same(decltype(&ctermid), ctermid_signature),
+    "C++ unistd.h ctermid declaration");
+
+static ctermid_signature ctermid_function = ctermid;
+#else
 #include <stdio.h>
 
 #if defined(CRABC_EXPECT_CTERMID)
@@ -17,12 +27,12 @@ static_assert(L_ctermid == 20, "musl L_ctermid value");
 using ctermid_signature = char *(*)(char *);
 
 static_assert(__is_same(decltype(&ctermid), ctermid_signature),
-    "C++ ctermid declaration");
+    "C++ stdio.h ctermid declaration");
 
 static ctermid_signature ctermid_function = ctermid;
 #endif
 
-/* Opt-in references that must fail when the POSIX/XSI spelling is hidden. */
+/* Opt-in references that must fail when the stdio spelling is hidden. */
 #if defined(CRABC_REQUIRE_CTERMID_HIDDEN)
 #ifdef L_ctermid
 #error "strict stdio.h must hide L_ctermid"
@@ -37,10 +47,11 @@ static hidden_ctermid_signature ctermid_must_be_hidden = ctermid;
 #error "strict stdio.h must hide L_ctermid"
 #endif
 #endif
+#endif
 
 int crabc_x86_64_ctermid_header_abi_probe_cpp()
 {
-#if defined(CRABC_EXPECT_CTERMID)
+#if defined(CRABC_EXPECT_CTERMID) || defined(CRABC_CTERMID_FROM_UNISTD)
     return ctermid_function != nullptr ? 0 : 1;
 #else
     return 0;

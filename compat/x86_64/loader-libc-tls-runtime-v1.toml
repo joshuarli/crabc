@@ -1,0 +1,258 @@
+# Planned private contract for the one x86-64 loader/libc TLS runtime handoff.
+#
+# This is deliberately a design and evidence gate, not a claim that the
+# staged x86 dynamic product is complete. The fixed-graph and bounded-general
+# cfg-isolated initial-TLS producer/consumer foundations recorded below prove
+# only their descriptor validation and publication ordering; neither can stand
+# in for registry growth, pthread, CRT, or product ownership. The validator
+# rejects a status or source-boundary change until the owning product
+# implementation and evidence change together.
+
+schema = "crabc.x86_64-loader-libc-tls-runtime/v1"
+id = "x86-loader-libc-tls-runtime-v1"
+status = "planned"
+non_promoting = true
+oracle = "musl-1.2.6 ldso/dynlink.c initial TLS and DTV lifecycle; Linux 5.10 x86-64 ARCH_SET_FS and CLONE_SETTLS"
+
+[target]
+system = "Linux"
+machine = "x86_64"
+endianness = "little"
+abi = "LP64"
+kernel_msrv = "5.10"
+
+# Startup selects a mode from PT_INTERP, never from ELF type. A static PIE can
+# be ET_DYN without an interpreter, so ET_DYN is not a dynamic-runtime signal.
+[process_modes.static]
+selector = "no-pt-interp"
+tcb_owner = "crabc-libc/static-initial-tls-v1"
+dtv_owner = "none"
+runtime_tls_modules = "forbidden"
+thread_creation = "libc-static-owner"
+
+[process_modes.dynamic]
+selector = "pt-interp-installed-crabc-ldso"
+tcb_owner = "crabc-ldso/runtime-v1"
+dtv_owner = "crabc-ldso/runtime-v1"
+runtime_tls_modules = "reject-until-dtv-growth-protocol-complete"
+thread_creation = "libc-consumes-ldso-runtime-v1"
+
+# RuntimeV1 is private Rust/ELF-adjacent state, not an installed C declaration.
+# The dynamic loader creates it before libc direct-TLS access; libc validates it
+# at the CRT handoff and is only a consumer of loader-owned TLS geometry/DTV.
+[runtime_v1]
+descriptor_owner = "crabc-ldso"
+descriptor_visibility = "private-loader-libc-handoff"
+descriptor_validation = "magic-version-abi-size-mode-owner-before-tls-access"
+mode_exclusivity = "exactly-one-process-mode-owner-before-any-tls-access"
+main_thread_inputs = "validated-main-and-initial-dso-pt-tls-descriptors-in-loader-link-map-order"
+main_thread_outputs = "installed-fs-thread-pointer-initialized-tcb-dtv-generation-and-libc-attachment-slot"
+new_thread_inputs = "current-loader-generation-and-libc-thread-initializer"
+new_thread_outputs = "fresh-thread-pointer-ready-for-clone_settls-or-explicit-failure"
+pthread_rule = "libc-never-allocates-or-resizes-dynamic-dtv-or-installs-dynamic-fs-base-directly"
+tls_get_addr_rule = "dynamic-__tls_get_addr-resolves-only-through-current-loader-runtime-v1"
+fork_child_order = "loader-repair-before-libc-thread-registry-repair"
+
+# The first implemented seam is intentionally less than the RuntimeV1 product
+# described above. It runs only in the existing fixed initial-TLS graph and
+# exposes no installed C declaration. Its loader descriptor is populated once
+# after ARCH_SET_FS and rejected by its freestanding libc consumer before the
+# consumer reads the loader-installed TCB/DTV. The descriptor has no growth or
+# worker operation, so this table must stay explicit rather than relabelling
+# either the fixed fixture or the general runtime as complete.
+[initial_tls_foundation]
+state = "implemented-private-evidence-only"
+producer = "ldso/src/x86_64_initial_graph.rs:crabc_initial_tls_graph+crabc_loader_libc_tls_runtime_v1"
+consumer = "libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs"
+record = "__crabc_x86_64_loader_tls_runtime_v1"
+selector = "fixed-graph-pt-interp-only"
+validation = "ready-magic-version-abi-size-mode-owner-generation-before-tcb-dtv-read"
+static_mode = "no-pt-interp-static-consumer-stub-rejects-without-loader-import-or-fs-access"
+dynamic_tls_growth = "not-implemented-and-not-implied"
+pthread_or_clone_settls = "not-implemented-and-not-implied"
+general_dynamic_product = false
+capability_or_family_promotion = false
+native_evidence = "compat/x86_64/run_loader_libc_tls_runtime_v1.sh"
+
+# The next foundation moves initial module-ID and generation ownership out of
+# the fixed planner's ad-hoc counters without treating that ordinary fixture
+# as a RuntimeV1 producer. The state is loader-private, represents only
+# generation one, and rejects runtime TLS/DTV growth without touching IDs,
+# DTV storage, or a thread pointer. The ordinary general-initial-TLS
+# materialization seam and its separate RuntimeV1 wire consume this same
+# sealed registry, but neither has a worker operation or growth protocol.
+[initial_tls_registry_foundation]
+state = "implemented-private-evidence-only"
+owner = "ldso/src/x86_64_initial_tls_registry.rs"
+integration = "crabc_initial_tls_graph+crabc_loader_libc_tls_runtime_v1-fixed-planner-install-publish-only"
+initial_module_ids = "typed-one-based-loader-order-object-index-to-module-id"
+generation = "typed-initial-generation-one-planning-to-sealed-only"
+runtime_tls_dtv_growth = "explicit-dtv-growth-protocol-unavailable-rejection-without-registry-or-dtv-mutation"
+general_initial_graph = "integrated-ordinary-general-initial-tls-materialization-and-separate-general-runtimev1-private-publication-only-no-runtime-growth"
+general_dynamic_product = false
+capability_or_family_promotion = false
+native_evidence = "compat/x86_64/run_loader_libc_tls_runtime_v1_registry.sh"
+
+# This is a distinct source root over the arbitrary bounded initial graph. It
+# is a real one-shot RuntimeV1 producer, but only inside private native
+# evidence: it publishes neither a dynamic product nor a CRT carrier and has
+# no worker, runtime-map, DTV-growth, or unload operation.
+[general_initial_tls_runtime_v1_foundation]
+state = "implemented-private-evidence-only"
+producer = "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs:crabc_general_initial_graph+crabc_general_initial_tls_materialization_v1+crabc_general_loader_libc_tls_runtime_v1"
+consumer = "libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs"
+record = "__crabc_x86_64_loader_tls_runtime_v1"
+selector = "bounded-general-initial-pt-interp-only"
+publication = "paired-general-initial-state-and-descriptor-reservations-before-arch-set-fs-then-ready-last"
+validation = "ready-magic-version-abi-size-mode-owner-generation-before-arch-get-fs-or-tcb-dtv-read"
+record_visibility = "private-local-hidden-static-symbol-no-dynsym-outside-page-rounded-relro"
+import_rule = "only-main-image-undefined-weak-got-record-import-strong-main-and-weak-dso-reject-before-arch-set-fs"
+dynamic_tls_growth = "not-implemented-and-not-implied"
+pthread_or_clone_settls = "not-implemented-and-not-implied"
+dynamic_crt_handoff = "not-implemented-and-not-implied"
+general_dynamic_product = false
+capability_or_family_promotion = false
+native_evidence = "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh+compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh"
+
+# Linux/x86-64 Variant II: TLS images occupy addresses below TP and the TCB
+# starts at TP. The DTV pointer at %fs:8 is a private RuntimeV1 invariant;
+# consumers may not infer further TCB offsets.
+[variant_ii]
+thread_pointer_register = "%fs"
+tcb_self_word = "%fs:0"
+dtv_pointer_word = "%fs:8"
+tls_direction = "below-thread-pointer"
+template_validation = "pt-tls-filesz-lte-memsz-power-of-two-align-and-vaddr-offset-phase"
+materialization = "copy-filesz-zero-tbss-preserve-max-alignment-and-source-phase"
+static_tls_access = "local-exec-only-under-static-initial-tls-v1"
+
+# The fixed initial-TLS graph has a bounded DTV only as fixture evidence. It
+# cannot become a general dynamic implementation by raising a constant.
+[dtv]
+module_ids = "nonzero-stable-loader-owned-while-module-is-addressable"
+generation = "monotonic-loader-owned-registry-generation"
+initial_population = "all-initial-pt-tls-modules-before-dynamic-tls-relocations-or-libc-handoff"
+runtime_tls_load_before_growth = "reject-before-map-relocation-constructor-or-generation-change"
+growth_completion = "registry-growth-current-thread-refresh-new-thread-current-generation-and-safe-old-dtv-reclamation"
+old_dtv_reclamation = "retain-until-no-thread-or-loader-reader-can-observe-old-dtv"
+tls_module_unload = "reject-or-retain-until-thread-lifetime-and-dtv-slot-safety-are-proved"
+
+# These sources are valuable private regression fixtures. The explicitly
+# named general source root is the one one-shot producer; the normal static,
+# pthread, and fixed-graph paths remain nonproducers. No row may be relabelled
+# as a full dynamic RuntimeV1 product without an explicit implementation and
+# evidence transition in this contract.
+[[current_artifact]]
+id = "libc-static-initial-tls-v1"
+path = "libc/src/c_abi/x86_64/static_tls.rs"
+state = "private-fixture"
+runtime_v1_producer = false
+
+[[current_artifact]]
+id = "libc-static-pthread-worker"
+path = "libc/src/c_abi/x86_64/pthread_create_join.rs"
+state = "private-fixture"
+runtime_v1_producer = false
+
+[[current_artifact]]
+id = "ldso-fixed-initial-tls-graph"
+path = "ldso/src/x86_64_initial_graph.rs"
+state = "private-fixture"
+runtime_v1_producer = false
+
+[[current_artifact]]
+id = "ldso-general-initial-tls-runtime-v1"
+path = "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"
+state = "implemented-private-evidence-only"
+runtime_v1_producer = true
+
+# These are deliberately narrow handoff seams, not permission to merge static
+# and dynamic TLS ownership or promote a family early.
+[[future_integration]]
+id = "ldso-runtime-v1-producer"
+path = "ldso/src/loader.rs"
+boundary = "own-the-registry-generation-dtv-growth-and-private-descriptor"
+state = "planned"
+
+[[future_integration]]
+id = "ldso-x86-main-thread-materialization"
+path = "ldso/src/x86_64_general_initial_tls_source_root.rs"
+boundary = "loader-owned-general-initial-only-pt-tls-layout-before-dtpmod64-dtpoff64-relocations-reserve-publication-before-arch-set-fs-and-nonfallibly-commit-in-the-ordinary-no-runtimev1-or-crt-handoff-root"
+state = "implemented-private-evidence-only"
+native_evidence = "compat/x86_64/run_ldso_general_initial_tls.sh+compat/x86_64/run_ldso_general_initial_tls_target_root.sh"
+scope = "bounded-general-initial-graph-generation-one-only-no-libc-descriptor-pthread-new-thread-dtv-growth-runtime-map-dlopen-crt-or-product-promotion"
+
+[[future_integration]]
+id = "ldso-x86-general-runtime-v1-publication"
+path = "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"
+boundary = "bounded-arbitrary-initial-pt-tls-graph-runtimev1-paired-pre-arch-set-fs-state-and-descriptor-reservation-nonfallible-retained-state-commit-72-byte-loader-owned-descriptor-ready-last-and-dependency-callbacks-only-after-ready"
+state = "implemented-private-evidence-only"
+native_evidence = "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh+compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh"
+scope = "bounded-general-initial-graph-generation-one-only-local-hidden-72-byte-record-no-crt-handoff-installed-dynamic-product-pthread-new-thread-dtv-growth-replacement-runtime-map-dlopen-unload-or-product-family-capability-promotion"
+
+[[future_integration]]
+id = "libc-dynamic-pthread-consumer"
+path = "libc/src/c_abi/x86_64/pthread_create_join.rs"
+boundary = "consume-runtime-v1-new-thread-operation-instead-of-static-tls-allocation"
+state = "planned"
+
+[[future_integration]]
+id = "libc-static-mode-separation"
+path = "libc/src/c_abi/x86_64/static_tls.rs"
+boundary = "retain-no-pt-interp-static-owner-and-refuse-dynamic-runtimev1-substitution"
+state = "planned"
+
+[[future_integration]]
+id = "crt-private-handoff-carrier"
+path = "ldso/src/x86_64_initial_graph.rs"
+boundary = "carry-validated-runtime-v1-only-through-the-future-owned-dynamic-crt-handoff"
+state = "planned"
+
+[[future_integration]]
+id = "dynamic-tls-regression-to-product"
+path = "compat/x86_64/run_ldso_initial_tls.sh"
+boundary = "retain-fixed-graph-tls-as-regression-while-installed-dynamic-product-gains-runtimev1-evidence"
+state = "planned"
+
+[[evidence]]
+id = "runtime-v1-descriptor-negative-validation"
+state = "private-foundation-complete"
+required = "bad-magic-version-size-mode-owner-and-generation-with-live-coordinates-plus-poisoned-dtv-are-rejected-before-tls-access"
+scope = "one-fixed-initial-tls-graph-private-record-no-growth-no-pthread-no-product-promotion"
+
+[[evidence]]
+id = "general-initial-tls-materialization"
+state = "private-foundation-complete"
+required = "bounded-diamond-initial-pt-tls-graph-proves-loader-order-module-ids-variant-ii-copy-tbss-alignment-direct-tls-index-resolution-pre-fs-malformed-rejection-and-publication-reservation-rollback"
+scope = "general-initial-only-loader-state-no-runtimev1-descriptor-libc-handoff-pthread-dtv-growth-runtime-map-dlopen-crt-or-product-promotion"
+
+[[evidence]]
+id = "general-runtime-v1-descriptor-publication"
+state = "private-foundation-complete"
+required = "source-and-cargo-target-root-bounded-diamond-prove-paired-pre-fs-reservation-rollback-72-byte-local-hidden-nondynsym-writable-non-page-rounded-relro-record-unpublished-publishing-ready-ready-before-constructor-attach-metadata-and-poisoned-dtv-rejection-strong-main-and-weak-dso-import-rejection-before-fs-and-static-no-pt-interp-observer-rejection-without-record-import"
+scope = "one-general-initial-generation-loader-observer-wire-no-crt-handoff-installed-dynamic-product-pthread-new-thread-dtv-growth-replacement-runtime-map-dlopen-unload-or-product-family-capability-promotion"
+
+[[evidence]]
+id = "initial-dynamic-variant-ii-layout"
+state = "planned"
+required = "installed-dynamic-pie-and-non-pie-prove-tls-template-copy-tbss-alignment-fs-self-and-dtv"
+
+[[evidence]]
+id = "pthread-dynamic-thread-materialization"
+state = "planned"
+required = "owned-pthread-workers-observe-fresh-libc-and-dso-tls-with-clone_settls-from-runtimev1"
+
+[[evidence]]
+id = "runtime-tls-dtv-growth"
+state = "planned"
+required = "runtime-pt-tls-dso-before-and-after-worker-creation-proves-generation-refresh-and-safe-reclamation"
+
+[[evidence]]
+id = "runtime-tls-rejection-before-growth"
+state = "planned"
+required = "pre-growth-loader-rejects-runtime-pt-tls-dso-without-map-constructor-module-id-or-dtv-mutation"
+
+[[evidence]]
+id = "fork-cancellation-and-tls-lifetime"
+state = "planned"
+required = "loader-pthread-fork-repair-cancellation-and-dlclose-or-retention-stress-runs-through-owned-dynamic-artifacts"

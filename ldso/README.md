@@ -16,6 +16,17 @@ exists only for the staged native evidence lane. It builds one bounded ET_DYN
 interpreter root for a fixed graph; it is not an installed loader target or
 x86-64 support claim.
 
+The separate private `x86_64-general-initial-interpreter` feature is the first
+loader-owned x86 initial-graph package. It discovers an arbitrary bounded
+non-TLS `DT_NEEDED` topology, deduplicates opened DSO identities by
+`(st_dev, st_ino)`, searches only explicit absolute RUNPATH components, maps
+and relocates its admitted objects, and rolls them back on a failed
+transaction. Its direct evidence is
+`compat/x86_64/run_ldso_general_initial_graph.sh`; the target-root variant is
+`compat/x86_64/run_ldso_general_initial_graph_target_root.sh`. It does not
+yet select TLS, dlfcn, constructors/destructors, CRT handoff, an installed
+dynamic product, or x86-64 support.
+
 ## Usage
 
 Build with:

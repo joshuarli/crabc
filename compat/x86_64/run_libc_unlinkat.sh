@@ -139,13 +139,14 @@ done
 "$ORACLE_CC" -std=c11 -DCRABC_UNLINKAT_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections \
     compat/x86_64/libc_unlinkat_probe.c compat/x86_64/libc_unlinkat_start.S \
     "$archive" -o "$candidate"
 assert_static_closure "$candidate"
 
 if grep -Eq '[[:space:]](unlink|rmdir|link|linkat|symlink|symlinkat|readlink|readlinkat|rename|renameat|renameat2|mkdir|mkdirat|fchownat|fchmodat)$' \
     "$work_dir/candidate-symbols"; then
-    fail "unlinkat candidate exports an unselected pathname entry"
+    fail "unlinkat candidate unexpectedly pulls independently selected pathname entry"
 fi
 objdump -d --disassemble=unlinkat "$candidate" >"$unlinkat_disassembly"
 grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$unlinkat_disassembly" ||
@@ -154,7 +155,7 @@ grep -Eq '\$0x107,%e?ax' "$unlinkat_disassembly" ||
     fail "unlinkat lacks Linux x86-64 unlinkat=263"
 if grep -Eq 'call.*(unlink|rmdir|link|linkat|symlink|symlinkat|readlink|readlinkat|rename|renameat|renameat2|mkdir|mkdirat|fchownat|fchmodat)' \
     "$unlinkat_disassembly"; then
-    fail "unlinkat delegates to an unselected C entry"
+    fail "unlinkat delegates to an unrelated C entry"
 fi
 
 (cd "$candidate_work" && "$candidate") ||

@@ -4,11 +4,12 @@
 This builder installs only contracts that already have independent native x86
 evidence: the regular-file project header tree, the five Rust CRT objects, a
 reconstructed crabc-libc archive, and the bounded Rust compiler-helper archive.
-It deliberately installs no compiler driver, shared libc, dynamic loader, or
-compatibility linker-script aliases.  The native consumer gate owns the final
-link trace and proves that these installed files are sufficient for one static
-pthread/initial-TLS executable; this builder is not a general x86 sysroot or a
-platform-promotion claim.
+It installs a deliberately narrow sealed ``bin/crabc-cc`` product seed in
+addition to those runtime files.  The driver names only installed static
+inputs for ET_EXEC or static-PIE and rejects ambient target-runtime injection;
+it does not establish the product coverage, either sysroot family, or x86
+platform support.  Shared libc, a dynamic loader, and compatibility
+linker-script aliases remain deliberately absent.
 """
 
 from __future__ import annotations
@@ -31,8 +32,16 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGET = "x86_64-unknown-linux-musl"
 FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 PINNED_TOOLCHAIN = "nightly-2026-07-24"
+PINNED_CARGO_HOME = Path("/opt/cargo")
+PINNED_RUSTUP_HOME = Path("/opt/rustup")
+PINNED_TARGET_TOOLS = ("llvm-ar", "llvm-nm", "llvm-objdump")
+FIXED_HOST_BUILD_PATH = "/usr/bin:/bin"
 DEFAULT_OUTPUT = ROOT / "target" / "crabc-sysroot-x86_64-static"
 CRT_OBJECTS = ("crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o")
+STATIC_DRIVER_SOURCE = ROOT / "compat" / "x86_64" / "crabc_cc_static.py"
+STATIC_DRIVER_PATH = "bin/crabc-cc"
+PACKAGE_FORMAT = "crabc-x86-64-owned-static-sysroot-package/v1"
+PACKAGE_ARCHIVE_ROOT = "crabc-x86_64-owned-static-sysroot"
 LIBC_MEMBER = re.compile(r"^c\..+\.rcgu\.o$")
 STOCK_COMPILER_BUILTINS_MEMBER = re.compile(r"^compiler_builtins-.+\.rcgu\.o$")
 STOCK_RUST_CORE_MEMBER = re.compile(
@@ -60,13 +69,11 @@ TARGET_RUNTIME_INPUTS = (
     "Rust-produced bounded x86 compiler helpers",
 )
 NOT_SELECTED = (
-    "compiler driver",
     "shared libc",
     "dynamic loader or PT_INTERP",
     "dynamic link modes",
     "complete libc archive closure",
     "complete compiler-helper closure",
-    "distribution archive or extracted smoke",
     "sysroot.static-tls family completion",
     "sysroot.owned-artifact family completion",
     "x86-64 promotion or public support",
@@ -96,59 +103,72 @@ def write_json(path: Path, value: object) -> None:
 
 
 def deterministic_environment() -> dict[str, str]:
-    environment = dict(os.environ)
-    for name in (
-        "CPATH",
-        "C_INCLUDE_PATH",
-        "CPLUS_INCLUDE_PATH",
-        "OBJC_INCLUDE_PATH",
-        "LIBRARY_PATH",
-        "COMPILER_PATH",
-        "GCC_EXEC_PREFIX",
-        "LD_LIBRARY_PATH",
-        "LD_PRELOAD",
-        "RUSTFLAGS",
-        "CARGO_ENCODED_RUSTFLAGS",
-        "CARGO_BUILD_RUSTFLAGS",
-        "CC",
-        "CFLAGS",
-        "CXX",
-        "CXXFLAGS",
-        "CPPFLAGS",
-        "AR",
-        "ARFLAGS",
-    ):
-        environment.pop(name, None)
-    for name in tuple(environment):
-        if name.startswith("CARGO_TARGET_") and name.endswith(("_LINKER", "_RUSTFLAGS")):
-            environment.pop(name, None)
-        if name.startswith(("CC_", "CFLAGS_", "CXX_", "CXXFLAGS_", "AR_", "ARFLAGS_")):
-            environment.pop(name, None)
-    environment.update(
-        {
-            "CARGO_INCREMENTAL": "0",
-            "LC_ALL": "C",
-            "SOURCE_DATE_EPOCH": "1",
-            "TZ": "UTC",
-        }
-    )
-    return environment
+    """Return the complete producer environment, never a filtered caller copy.
+
+    The owned-static artifact is meaningful only if its Rust and LLVM producer
+    inputs are selected by the pinned evidence image.  In particular, neither
+    a caller's ``PATH`` nor its ``CARGO_HOME``/``RUSTUP_HOME`` may redirect a
+    toolchain proxy or target tool.  The two fixed homes are intentionally
+    present so the fixed rustup frontend can find the installed nightly.
+    """
+
+    return {
+        "CARGO_HOME": str(PINNED_CARGO_HOME),
+        "RUSTUP_HOME": str(PINNED_RUSTUP_HOME),
+        # Cargo runs a host build script while producing crabc-libc.  Its
+        # compiler must remain available, but this is a fixed evidence-image
+        # baseline rather than a caller-derived search path.  Rustup itself
+        # remains first, and every target LLVM tool below is an absolute path
+        # resolved from the selected nightly sysroot.
+        "PATH": f"{PINNED_CARGO_HOME / 'bin'}:{FIXED_HOST_BUILD_PATH}",
+        "CARGO_INCREMENTAL": "0",
+        "LC_ALL": "C",
+        "SOURCE_DATE_EPOCH": "1",
+        "TZ": "UTC",
+    }
 
 
-def require_tool(name: str) -> str:
-    path = shutil.which(name)
-    if path is None:
-        raise BuildError(f"required build/inspection tool is unavailable: {name}")
+def required_executable(path: Path, description: str, *, within: Path | None = None) -> Path:
+    """Resolve one fixed executable and optionally require its closed root."""
+
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise BuildError(f"{description} is missing or unsafe: {path}") from error
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise BuildError(f"{description} is missing or not executable: {path}")
+    if within is not None:
+        try:
+            resolved.relative_to(within.resolve(strict=True))
+        except (OSError, RuntimeError, ValueError) as error:
+            raise BuildError(f"{description} escapes its pinned toolchain root: {path}") from error
+    return resolved
+
+
+def executable_identity(path: Path, description: str, *, within: Path | None = None) -> dict[str, str]:
+    """Record both a stable selection path and the digest of its resolved binary."""
+
+    resolved = required_executable(path, description, within=within)
+    return {
+        "path": str(path),
+        "resolved_path": str(resolved),
+        "sha256": sha256_file(resolved),
+    }
+
+
+def pinned_rustup() -> Path:
+    """Return the image-owned frontend without consulting ambient ``PATH``."""
+
+    path = PINNED_CARGO_HOME / "bin" / "rustup"
+    required_executable(path, "pinned rustup")
     return path
 
 
-def rust_target_tool(name: str) -> str:
-    value = shutil.which(name)
-    if value is not None:
-        return value
-    rustup = require_tool("rustup")
+def pinned_rustc_sysroot(rustup: Path) -> Path:
+    """Ask the fixed frontend for the one permitted pinned nightly sysroot."""
+
     completed = subprocess.run(
-        [rustup, "run", PINNED_TOOLCHAIN, "rustc", "--print", "sysroot"],
+        [str(rustup), "run", PINNED_TOOLCHAIN, "rustc", "--print", "sysroot"],
         env=deterministic_environment(),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -157,15 +177,111 @@ def rust_target_tool(name: str) -> str:
         check=False,
     )
     if completed.returncode != 0:
-        raise BuildError(f"could not resolve pinned Rust toolchain for {name}: {completed.stderr}")
-    sysroot = Path(completed.stdout.strip())
-    for candidate in (
-        sysroot / "lib" / "rustlib" / TARGET / "bin" / name,
-        sysroot / "lib" / "rustlib" / TARGET / "bin" / "gcc-ld" / name,
+        raise BuildError(f"could not resolve pinned Rust toolchain: {completed.stderr}")
+    reported = completed.stdout.strip()
+    if not reported or "\n" in reported:
+        raise BuildError("pinned Rust toolchain reported an unsafe sysroot")
+    path = Path(reported)
+    if not path.is_absolute():
+        raise BuildError("pinned Rust toolchain reported a relative sysroot")
+    try:
+        resolved = path.resolve(strict=True)
+        toolchains = (PINNED_RUSTUP_HOME / "toolchains").resolve(strict=True)
+        resolved.relative_to(toolchains)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise BuildError("pinned Rust toolchain sysroot escapes /opt/rustup/toolchains") from error
+    if not (
+        resolved.name == PINNED_TOOLCHAIN
+        or resolved.name.startswith(f"{PINNED_TOOLCHAIN}-")
     ):
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    raise BuildError(f"pinned Rust target tool is unavailable: {name}")
+        raise BuildError(f"pinned Rust toolchain name drifted: {resolved.name}")
+    return resolved
+
+
+def pinned_rustc_version(rustup: Path) -> dict[str, str]:
+    """Capture the immutable compiler identity selected by the fixed frontend."""
+
+    completed = subprocess.run(
+        [str(rustup), "run", PINNED_TOOLCHAIN, "rustc", "-Vv"],
+        env=deterministic_environment(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise BuildError(f"could not identify pinned Rust toolchain: {completed.stderr}")
+    fields: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        name, separator, value = line.partition(": ")
+        if separator:
+            fields[name] = value
+    required = ("release", "commit-hash", "commit-date", "host")
+    missing = [name for name in required if not fields.get(name)]
+    if missing:
+        raise BuildError(f"pinned rustc -Vv lacks identity fields: {', '.join(missing)}")
+    if "nightly" not in fields["release"]:
+        raise BuildError("pinned rustc identity is not a nightly compiler")
+    return {
+        "release": fields["release"],
+        "commit_hash": fields["commit-hash"],
+        "commit_date": fields["commit-date"],
+        "host": fields["host"],
+    }
+
+
+def pinned_target_tool(path_root: Path, name: str) -> dict[str, str]:
+    """Resolve a target LLVM binary only underneath the selected nightly sysroot."""
+
+    if name not in PINNED_TARGET_TOOLS:
+        raise BuildError(f"unrecognized pinned LLVM target tool: {name}")
+    path = path_root / "lib" / "rustlib" / TARGET / "bin" / name
+    return executable_identity(path, f"pinned Rust target tool {name}", within=path_root)
+
+
+def resolve_pinned_producer_tools() -> dict[str, object]:
+    """Resolve and fingerprint every Rust/LLVM producer used by this builder."""
+
+    rustup = pinned_rustup()
+    sysroot = pinned_rustc_sysroot(rustup)
+    return {
+        "schema": 1,
+        "toolchain": PINNED_TOOLCHAIN,
+        "target": TARGET,
+        "selection": {
+            "cargo_home": str(PINNED_CARGO_HOME),
+            "rustup_home": str(PINNED_RUSTUP_HOME),
+            "path": f"{PINNED_CARGO_HOME / 'bin'}:{FIXED_HOST_BUILD_PATH}",
+            "rustup_bin": str(PINNED_CARGO_HOME / "bin"),
+            "ambient_path_inherited": False,
+            "ambient_cargo_home_inherited": False,
+            "ambient_rustup_home_inherited": False,
+        },
+        "rustup": executable_identity(rustup, "pinned rustup"),
+        "rustc": {
+            "sysroot": str(sysroot),
+            "version": pinned_rustc_version(rustup),
+        },
+        "llvm_target_tools": {
+            name: pinned_target_tool(sysroot, name) for name in PINNED_TARGET_TOOLS
+        },
+    }
+
+
+def producer_tool_path(producer_tools: dict[str, object], name: str) -> str:
+    """Extract an already-resolved producer tool path without a second lookup."""
+
+    tools = producer_tools.get("llvm_target_tools")
+    if not isinstance(tools, dict):
+        raise BuildError("pinned producer record lacks LLVM target tools")
+    identity = tools.get(name)
+    if not isinstance(identity, dict):
+        raise BuildError(f"pinned producer record lacks {name}")
+    path = identity.get("path")
+    if not isinstance(path, str) or not path:
+        raise BuildError(f"pinned producer record has no {name} path")
+    return path
 
 
 def run(command: Sequence[str], *, cwd: Path = ROOT) -> bytes:
@@ -251,6 +367,21 @@ def copy_regular_tree(source: Path, destination: Path) -> dict[str, str]:
 def classify_libc_members(members: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
     if not members or len(set(members)) != len(members):
         raise BuildError("Cargo libc archive has an empty or duplicate member roster")
+    unsafe = tuple(
+        member
+        for member in members
+        if (
+            not member
+            or member in {".", ".."}
+            or "/" in member
+            or "\\" in member
+            or "\x00" in member
+        )
+    )
+    if unsafe:
+        raise BuildError(
+            "Cargo libc archive has an unsafe member path: " + ", ".join(unsafe)
+        )
     selected = tuple(member for member in members if LIBC_MEMBER.fullmatch(member))
     excluded = tuple(member for member in members if member not in selected)
     if not selected:
@@ -294,9 +425,11 @@ def archive_defined_symbols(nm: str, archive: Path) -> set[str]:
     return result
 
 
-def rebuild_libc_archive(source: Path, output: Path) -> dict[str, object]:
-    llvm_ar = rust_target_tool("llvm-ar")
-    llvm_nm = rust_target_tool("llvm-nm")
+def rebuild_libc_archive(
+    source: Path, output: Path, *, llvm_ar: str, llvm_nm: str
+) -> dict[str, object]:
+    """Rebuild from the already-attested target LLVM archive tools."""
+
     members = tuple(
         line
         for line in run([llvm_ar, "t", str(source)]).decode("utf-8", errors="replace").splitlines()
@@ -352,6 +485,13 @@ def copy_artifact(source: Path, destination: Path) -> None:
     destination.chmod(0o644)
 
 
+def install_static_driver(destination: Path) -> None:
+    """Install the audited static-only driver as an executable regular file."""
+
+    copy_artifact(STATIC_DRIVER_SOURCE, destination)
+    destination.chmod(0o755)
+
+
 def regular_file_hashes(root: Path, *, exclude: frozenset[str] = frozenset()) -> dict[str, str]:
     result: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
@@ -366,7 +506,9 @@ def regular_file_hashes(root: Path, *, exclude: frozenset[str] = frozenset()) ->
     return result
 
 
-def installed_manifest(payload_hashes: dict[str, str]) -> dict[str, object]:
+def installed_manifest(
+    payload_hashes: dict[str, str], producer_tools: dict[str, object]
+) -> dict[str, object]:
     """Describe the bounded installed contract without promoting either family."""
 
     return {
@@ -374,13 +516,45 @@ def installed_manifest(payload_hashes: dict[str, str]) -> dict[str, object]:
         "format": FORMAT,
         "target": TARGET,
         "toolchain": PINNED_TOOLCHAIN,
+        "producer_tools": producer_tools,
         "scope": SCOPE,
+        "package": {
+            "format": PACKAGE_FORMAT,
+            "archive_root": PACKAGE_ARCHIVE_ROOT,
+        },
         "installed": {
             "headers": "usr/include",
             "crt_objects": [f"usr/lib/{name}" for name in CRT_OBJECTS],
             "static_libc": "usr/lib/libc.a",
             "bounded_compiler_helpers": "usr/lib/libcrabc-builtins.a",
+            "sealed_static_driver": STATIC_DRIVER_PATH,
             "files": payload_hashes,
+        },
+        "sealed_static_driver": {
+            "format": "crabc-x86-64-sealed-static-driver-v1",
+            "path": STATIC_DRIVER_PATH,
+            "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
+            "modes": [
+                {"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"},
+                {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"},
+            ],
+            "rejected_ambient_target_inputs": [
+                "headers",
+                "CRT",
+                "libc",
+                "libgcc",
+                "compiler-rt",
+                "loader",
+            ],
+            "not_proven_by_this_seed": [
+                "accepted allocator backend",
+                "complete libc archive closure",
+                "complete compiler-helper closure",
+                "declared static-product coverage suite",
+                "sysroot.static-tls family completion",
+                "sysroot.owned-artifact family completion",
+                "x86-64 promotion or public support",
+            ],
         },
         "purity": {
             "target_runtime_inputs": list(TARGET_RUNTIME_INPUTS),
@@ -393,7 +567,16 @@ def installed_manifest(payload_hashes: dict[str, str]) -> dict[str, object]:
 
 
 def build_runtime_inputs(stage: Path) -> dict[str, object]:
-    rustup = require_tool("rustup")
+    producer_tools = resolve_pinned_producer_tools()
+    rustup_record = producer_tools["rustup"]
+    if not isinstance(rustup_record, dict):
+        raise BuildError("pinned producer record lacks rustup")
+    rustup = rustup_record.get("path")
+    if not isinstance(rustup, str) or not rustup:
+        raise BuildError("pinned producer record has no rustup path")
+    llvm_ar = producer_tool_path(producer_tools, "llvm-ar")
+    llvm_nm = producer_tool_path(producer_tools, "llvm-nm")
+    llvm_objdump = producer_tool_path(producer_tools, "llvm-objdump")
     python = sys.executable
     cargo_root = stage / "cargo"
     cargo_command = [
@@ -412,12 +595,15 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         "--target-dir",
         str(cargo_root),
         "--",
+        "--cfg",
+        "crabc_owned_static_sysroot",
         "-C",
-        "relocation-model=static",
+        "relocation-model=pic",
         "-C",
         "code-model=small",
         "-C",
         "panic=abort",
+        "-Ztls-model=initial-exec",
         "--remap-path-prefix",
         f"{ROOT}=/crabc",
     ]
@@ -434,7 +620,7 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
             "--out-dir",
             str(crt_root),
             "--llvm-objdump",
-            rust_target_tool("llvm-objdump"),
+            llvm_objdump,
         ]
     )
     builtins_root = stage / "builtins"
@@ -453,10 +639,15 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         ]
     )
     libc = stage / "runtime" / "libc.a"
-    libc_provenance = rebuild_libc_archive(raw_libc, libc)
+    libc_provenance = rebuild_libc_archive(
+        raw_libc,
+        libc,
+        llvm_ar=llvm_ar,
+        llvm_nm=llvm_nm,
+    )
     return {
         "cargo_command": [
-            "rustup",
+            "$CRABC_PINNED_CARGO_HOME/bin/rustup",
             "run",
             PINNED_TOOLCHAIN,
             "cargo",
@@ -471,12 +662,15 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
             "--target-dir",
             "$CRABC_X86_BUILD/cargo",
             "--",
+            "--cfg",
+            "crabc_owned_static_sysroot",
             "-C",
-            "relocation-model=static",
+            "relocation-model=pic",
             "-C",
             "code-model=small",
             "-C",
             "panic=abort",
+            "-Ztls-model=initial-exec",
             "--remap-path-prefix",
             "$CRABC_SOURCE=/crabc",
         ],
@@ -485,6 +679,35 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         "builtins_provenance": builtins_provenance,
         "libc": libc,
         "libc_provenance": libc_provenance,
+        "producer_tools": producer_tools,
+    }
+
+
+def build_commands_record(
+    cargo_command: list[str], producer_tools: dict[str, object]
+) -> dict[str, object]:
+    """Make the installed build record carry the exact producer identity."""
+
+    return {
+        "schema": 1,
+        "target": TARGET,
+        "producer_tools": producer_tools,
+        "commands": {
+            "libc": cargo_command,
+            "crt": [
+                "python3",
+                "crt/build_x86_64.py",
+                "--out-dir",
+                "$CRABC_X86_BUILD/crt",
+            ],
+            "builtins": [
+                "python3",
+                "builtins/build_x86_64.py",
+                "--output",
+                "$CRABC_X86_BUILD/builtins/libcrabc-builtins.a",
+                "--verify-reproducible",
+            ],
+        },
     }
 
 
@@ -493,6 +716,7 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
     output.mkdir(parents=True)
     output.chmod(0o755)
     include_manifest = copy_regular_tree(ROOT / "include", output / "usr" / "include")
+    install_static_driver(output / STATIC_DRIVER_PATH)
     library_root = output / "usr" / "lib"
     library_root.mkdir(parents=True)
     library_root.chmod(0o755)
@@ -528,29 +752,11 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
         },
     )
     cargo_command = inputs["cargo_command"]
-    assert isinstance(cargo_command, list)
+    producer_tools = inputs["producer_tools"]
+    assert isinstance(cargo_command, list) and isinstance(producer_tools, dict)
     write_json(
         metadata_root / "build.commands.json",
-        {
-            "schema": 1,
-            "target": TARGET,
-            "commands": {
-                "libc": cargo_command,
-                "crt": [
-                    "python3",
-                    "crt/build_x86_64.py",
-                    "--out-dir",
-                    "$CRABC_X86_BUILD/crt",
-                ],
-                "builtins": [
-                    "python3",
-                    "builtins/build_x86_64.py",
-                    "--output",
-                    "$CRABC_X86_BUILD/builtins/libcrabc-builtins.a",
-                    "--verify-reproducible",
-                ],
-            },
-        },
+        build_commands_record(cargo_command, producer_tools),
     )
 
     manifest_path = metadata_root / "manifest.json"
@@ -558,7 +764,7 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
         output,
         exclude=frozenset({manifest_path.relative_to(output).as_posix()}),
     )
-    manifest = installed_manifest(payload_hashes)
+    manifest = installed_manifest(payload_hashes, producer_tools)
     write_json(manifest_path, manifest)
     installed_hashes = regular_file_hashes(output)
     expected = set(payload_hashes) | {manifest_path.relative_to(output).as_posix()}

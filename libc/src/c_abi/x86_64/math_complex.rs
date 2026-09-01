@@ -26,6 +26,10 @@
 //! returns use `st0`/`st1`, and float/double complex values use their psABI SSE
 //! registers. The focused freestanding C fixture proves those boundaries
 //! against pinned musl before this leaf is treated as selected archive work.
+//! `__fpclassifyl` occupies its own text section because
+//! `math_long_double_completion.rs` uses that classifier; section GC may
+//! retain that one ABI dependency without retaining unrelated classification,
+//! sign, and complex entries.
 
 #[cfg(not(all(
     target_os = "linux",
@@ -37,6 +41,7 @@ compile_error!("the x86 math/complex leaf requires little-endian Linux/x86-64");
 core::arch::global_asm!(
     r#"
     .text
+    .section .text.__fpclassifyl,"ax",@progbits
 
     /* musl src/math/__fpclassifyl.c for x87 extended precision. The argument
        occupies 16 stack bytes after the return address: low 64-bit mantissa
@@ -82,6 +87,7 @@ __fpclassifyl:
     ret
     .size __fpclassifyl, .-__fpclassifyl
 
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
     /* musl src/math/__fpclassifyf.c and __fpclassify.c. These are public
        external ABI entries, including for consumers that name the symbols
        directly rather than through the classification macros. */
@@ -170,6 +176,7 @@ __signbit:
     ret
     .size __signbit, .-__signbit
 
+    .section .text.__signbitl,"ax",@progbits
     .p2align 4
     .global __signbitl
     .type __signbitl,@function
@@ -179,6 +186,7 @@ __signbitl:
     ret
     .size __signbitl, .-__signbitl
 
+    .section .text.crabc_x86_math_complex_rest,"ax",@progbits
     /* C99 real/imaginary accessor ABI: complex float is one SSE eightbyte;
        complex double is real in xmm0 and imaginary in xmm1. */
     .p2align 4

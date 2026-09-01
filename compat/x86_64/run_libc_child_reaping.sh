@@ -75,8 +75,8 @@ for symbol in wait waitpid waitid; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define $symbol"
 done
-for unselected in _Fork vfork clone execve wait4 syscall posix_spawn \
-    wait3 malloc free calloc realloc; do
+for unselected in _Fork vfork clone execve syscall posix_spawn malloc free \
+    calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
@@ -90,6 +90,15 @@ readelf --symbols --wide "$candidate" >"$symbols"; readelf --program-headers --w
 readelf --dynamic --wide "$candidate" >"$dynamic" || true; readelf --relocs --wide "$candidate" >"$relocs"; objdump -d "$candidate" >"$disassembly"
 for symbol in __errno_location wait waitpid waitid; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"
+done
+# The archive now owns the separately evidenced GNU/BSD wait extensions, but
+# this POSIX child-reaping candidate must remain closed over its original three
+# symbols. Candidate-level rejection catches an accidental relocation or
+# section-retention edge without denying the archive's independent artifact.
+for unselected in wait3 wait4; do
+    if grep -Eq "[[:space:]]${unselected}$" "$symbols"; then
+        fail "candidate unexpectedly pulls unselected ${unselected}"
+    fi
 done
 if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then fail "candidate has unresolved symbols"; fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then fail "candidate is dynamic"; fi

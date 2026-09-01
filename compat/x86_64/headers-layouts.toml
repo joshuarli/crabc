@@ -323,7 +323,7 @@ sources = [
   "compat/x86_64/string_copy_header_abi_probe.cpp",
   "compat/x86_64/run_string_copy_header_abi.sh",
 ]
-headers = ["include/stddef.h", "include/string.h"]
+headers = ["include/alloca.h", "include/stddef.h", "include/string.h"]
 
 [[probe]]
 id = "random-entropy"
@@ -401,6 +401,18 @@ sources = [
   "compat/x86_64/run_ioctl_header_abi.sh",
 ]
 headers = ["include/sys/ioctl.h"]
+
+[[probe]]
+id = "sys-io"
+command = "./scripts/dev-x86_64.sh sys-io-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/sys_io_header_abi_probe.c",
+  "compat/x86_64/sys_io_header_abi_probe.cpp",
+  "compat/x86_64/run_sys_io_header_abi.sh",
+]
+headers = ["include/sys/io.h"]
 
 [[probe]]
 id = "unistd"
@@ -514,6 +526,42 @@ sources = [
   "compat/x86_64/run_nameser_header_abi.sh",
 ]
 headers = ["include/resolv.h"]
+
+[[probe]]
+id = "quota"
+command = "./scripts/dev-x86_64.sh quota-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/quota_header_abi_probe.c",
+  "compat/x86_64/quota_header_abi_probe.cpp",
+  "compat/x86_64/run_quota_header_abi.sh",
+]
+headers = ["include/sys/quota.h"]
+
+[[probe]]
+id = "sched-cpu-macros"
+command = "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/sched_cpu_macros_header_abi_probe.c",
+  "compat/x86_64/sched_cpu_macros_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_cpu_macros_header_abi.sh",
+]
+headers = ["include/sched.h"]
+
+[[probe]]
+id = "fanotify"
+command = "./scripts/dev-x86_64.sh fanotify-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/fanotify_header_abi_probe.c",
+  "compat/x86_64/fanotify_header_abi_probe.cpp",
+  "compat/x86_64/run_fanotify_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/sys/fanotify.h"]
 
 [[probe]]
 id = "inet-address"

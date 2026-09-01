@@ -131,7 +131,11 @@ for symbol in __errno_location close read write pipe sigaction sigemptyset \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in splice vmsplice tee copy_file_range _Fork \
+# The shared default archive intentionally also exposes independently selected
+# transfer leaves such as splice, tee, and copy_file_range. The final reachable
+# candidate below, rather than archive-member co-location, proves this artifact
+# does not retain them.
+for unselected in vmsplice _Fork \
     vfork clone execve tgkill \
     pthread_sigmask syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
@@ -146,10 +150,12 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
+# Discard unrelated Rust codegen sections before checking this final readiness
+# and signal-waits closure against separately selected archive leaves.
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_READINESS_WAITS_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_readiness_waits_probe.c \
+    -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_readiness_waits_probe.c \
     compat/x86_64/libc_readiness_waits_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -165,6 +171,15 @@ for symbol in __errno_location close read write pipe sigaction sigemptyset \
 done
 if grep -Eq '[[:space:]]signalfd$' "$candidate_symbols"; then
     fail "readiness/signal-waits candidate unexpectedly pulls separately selected signalfd"
+fi
+if grep -Eq '[[:space:]]splice$' "$candidate_symbols"; then
+    fail "readiness/signal-waits candidate unexpectedly pulls separately selected splice"
+fi
+if grep -Eq '[[:space:]]tee$' "$candidate_symbols"; then
+    fail "readiness/signal-waits candidate unexpectedly pulls separately selected tee"
+fi
+if grep -Eq '[[:space:]]copy_file_range$' "$candidate_symbols"; then
+    fail "readiness/signal-waits candidate unexpectedly pulls separately selected copy_file_range"
 fi
 if grep -Eq '[[:space:]]sleep$' "$candidate_symbols"; then
     fail "readiness/signal-waits candidate unexpectedly pulls separately selected sleep"

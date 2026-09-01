@@ -1,0 +1,14 @@
+{
+  "schema": "crabc.x86_64-owned-dynamic-product-state/v1",
+  "owner_family": "sysroot.owned-artifact",
+  "contract_sha256": "fe5053e696b158d69d98e96e0e78e5c935261a360c750b6892278eed752663a8",
+  "status": "not-materialized",
+  "materialized_sysroot": null,
+  "evidence": [],
+  "reason": "The x86 general loader, dynamic CRT handoff, shared libc product closure, and dynamic smoke suite are not complete.",
+  "promotion": {
+    "family_completion": false,
+    "promotion_ready": false,
+    "public_support": false
+  }
+}

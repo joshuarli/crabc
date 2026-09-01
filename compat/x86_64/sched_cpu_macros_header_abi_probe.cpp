@@ -1,0 +1,203 @@
+/* Native Linux/x86-64 GNU <sched.h> CPU-set construction C++ probe. */
+
+#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+    !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
+    __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+#error "this probe requires native Linux/x86-64 little-endian LP64"
+#endif
+
+#include <sched.h>
+
+#if defined(CRABC_REQUIRE_CPU_MACROS_HIDDEN)
+#if defined(CPU_ALLOC) || defined(CPU_ALLOC_SIZE) || defined(CPU_AND) || \
+    defined(CPU_AND_S) || defined(CPU_CLR) || defined(CPU_CLR_S) || \
+    defined(CPU_EQUAL) || defined(CPU_EQUAL_S) || defined(CPU_FREE) || \
+    defined(CPU_ISSET) || defined(CPU_ISSET_S) || defined(CPU_OR) || \
+    defined(CPU_OR_S) || defined(CPU_SET) || defined(CPU_SET_S) || \
+    defined(CPU_SETSIZE) || defined(CPU_XOR) || defined(CPU_XOR_S) || \
+    defined(CPU_ZERO) || defined(CPU_ZERO_S) || defined(__CPU_op_S) || \
+    defined(__CPU_op_func_S)
+#error "CPU-set construction macros must remain GNU-only"
+#endif
+#endif
+
+#if defined(CRABC_EXPECT_CPU_MACROS)
+#ifndef CPU_ALLOC
+#error "GNU <sched.h> must expose CPU_ALLOC"
+#endif
+#ifndef CPU_ALLOC_SIZE
+#error "GNU <sched.h> must expose CPU_ALLOC_SIZE"
+#endif
+#ifndef CPU_AND
+#error "GNU <sched.h> must expose CPU_AND"
+#endif
+#ifndef CPU_AND_S
+#error "GNU <sched.h> must expose CPU_AND_S"
+#endif
+#ifndef CPU_CLR
+#error "GNU <sched.h> must expose CPU_CLR"
+#endif
+#ifndef CPU_CLR_S
+#error "GNU <sched.h> must expose CPU_CLR_S"
+#endif
+#ifndef CPU_EQUAL
+#error "GNU <sched.h> must expose CPU_EQUAL"
+#endif
+#ifndef CPU_EQUAL_S
+#error "GNU <sched.h> must expose CPU_EQUAL_S"
+#endif
+#ifndef CPU_FREE
+#error "GNU <sched.h> must expose CPU_FREE"
+#endif
+#ifndef CPU_ISSET
+#error "GNU <sched.h> must expose CPU_ISSET"
+#endif
+#ifndef CPU_ISSET_S
+#error "GNU <sched.h> must expose CPU_ISSET_S"
+#endif
+#ifndef CPU_OR
+#error "GNU <sched.h> must expose CPU_OR"
+#endif
+#ifndef CPU_OR_S
+#error "GNU <sched.h> must expose CPU_OR_S"
+#endif
+#ifndef CPU_SET
+#error "GNU <sched.h> must expose CPU_SET"
+#endif
+#ifndef CPU_SET_S
+#error "GNU <sched.h> must expose CPU_SET_S"
+#endif
+#ifndef CPU_SETSIZE
+#error "GNU <sched.h> must expose CPU_SETSIZE"
+#endif
+#ifndef CPU_XOR
+#error "GNU <sched.h> must expose CPU_XOR"
+#endif
+#ifndef CPU_XOR_S
+#error "GNU <sched.h> must expose CPU_XOR_S"
+#endif
+#ifndef CPU_ZERO
+#error "GNU <sched.h> must expose CPU_ZERO"
+#endif
+#ifndef CPU_ZERO_S
+#error "GNU <sched.h> must expose CPU_ZERO_S"
+#endif
+#ifndef __CPU_op_S
+#error "GNU <sched.h> must expose __CPU_op_S"
+#endif
+#ifndef __CPU_op_func_S
+#error "GNU <sched.h> must expose __CPU_op_func_S"
+#endif
+
+using memcmp_signature = int (*)(const void *, const void *, size_t);
+using memset_signature = void *(*)(void *, int, size_t);
+using calloc_signature = void *(*)(size_t, size_t);
+using free_signature = void (*)(void *);
+using cpu_binary_signature = void (*) (
+    size_t, cpu_set_t *, const cpu_set_t *, const cpu_set_t *);
+
+static cpu_set_t macro_set{};
+
+__CPU_op_func_S(PROBE, ^)
+
+static_assert(sizeof(cpu_set_t) == 128, "musl cpu_set_t width");
+static_assert(alignof(cpu_set_t) == alignof(unsigned long),
+    "musl cpu_set_t alignment");
+static_assert(CPU_SETSIZE == 1024, "musl CPU_SETSIZE");
+static_assert(CPU_ALLOC_SIZE(0) == 0, "zero-bit allocation size");
+static_assert(CPU_ALLOC_SIZE(1) == 8, "one-bit allocation size");
+static_assert(CPU_ALLOC_SIZE(64) == 8, "one-word allocation size");
+static_assert(CPU_ALLOC_SIZE(65) == 16, "next-word allocation size");
+static_assert(CPU_ALLOC_SIZE(1024) == 128, "full cpu_set allocation size");
+static_assert(__is_same(decltype(&memcmp), memcmp_signature),
+    "parenthesized memcmp declaration");
+static_assert(__is_same(decltype(&memset), memset_signature),
+    "parenthesized memset declaration");
+static_assert(__is_same(decltype(&calloc), calloc_signature),
+    "parenthesized calloc declaration");
+static_assert(__is_same(decltype(&free), free_signature),
+    "parenthesized free declaration");
+static_assert(__is_same(decltype(CPU_SETSIZE), int), "CPU_SETSIZE type");
+static_assert(__is_same(decltype(CPU_ALLOC_SIZE(1)), unsigned long),
+    "CPU_ALLOC_SIZE type");
+static_assert(__is_same(decltype(CPU_ALLOC(1)), cpu_set_t *), "CPU_ALLOC type");
+static_assert(__is_same(decltype(CPU_FREE(static_cast<cpu_set_t *>(nullptr))), void),
+    "CPU_FREE type");
+static_assert(__is_same(decltype(CPU_SET_S(0, sizeof(macro_set), &macro_set)),
+    unsigned long), "CPU_SET_S type");
+static_assert(__is_same(decltype(CPU_CLR_S(0, sizeof(macro_set), &macro_set)),
+    unsigned long), "CPU_CLR_S type");
+static_assert(__is_same(decltype(CPU_ISSET_S(0, sizeof(macro_set), &macro_set)),
+    unsigned long), "CPU_ISSET_S type");
+static_assert(__is_same(decltype(__CPU_op_S(0, sizeof(macro_set), &macro_set, |=)),
+    unsigned long), "__CPU_op_S type");
+static_assert(__is_same(decltype(CPU_ZERO_S(sizeof(macro_set), &macro_set)), void *),
+    "CPU_ZERO_S type");
+static_assert(__is_same(decltype(CPU_EQUAL_S(sizeof(macro_set), &macro_set,
+    &macro_set)), bool), "CPU_EQUAL_S type");
+static_assert(__is_same(decltype(CPU_AND_S(sizeof(macro_set), &macro_set,
+    &macro_set, &macro_set)), void), "CPU_AND_S type");
+static_assert(__is_same(decltype(CPU_OR_S(sizeof(macro_set), &macro_set,
+    &macro_set, &macro_set)), void), "CPU_OR_S type");
+static_assert(__is_same(decltype(CPU_XOR_S(sizeof(macro_set), &macro_set,
+    &macro_set, &macro_set)), void), "CPU_XOR_S type");
+static_assert(__is_same(decltype(CPU_SET(0, &macro_set)), unsigned long),
+    "CPU_SET type");
+static_assert(__is_same(decltype(CPU_CLR(0, &macro_set)), unsigned long),
+    "CPU_CLR type");
+static_assert(__is_same(decltype(CPU_ISSET(0, &macro_set)), unsigned long),
+    "CPU_ISSET type");
+static_assert(__is_same(decltype(CPU_ZERO(&macro_set)), void *), "CPU_ZERO type");
+static_assert(__is_same(decltype(CPU_EQUAL(&macro_set, &macro_set)), bool),
+    "CPU_EQUAL type");
+static_assert(__is_same(decltype(CPU_AND(&macro_set, &macro_set, &macro_set)), void),
+    "CPU_AND type");
+static_assert(__is_same(decltype(CPU_OR(&macro_set, &macro_set, &macro_set)), void),
+    "CPU_OR type");
+static_assert(__is_same(decltype(CPU_XOR(&macro_set, &macro_set, &macro_set)), void),
+    "CPU_XOR type");
+static_assert(__is_same(decltype(&__CPU_AND_S), cpu_binary_signature),
+    "generated __CPU_AND_S declaration");
+static_assert(__is_same(decltype(&__CPU_OR_S), cpu_binary_signature),
+    "generated __CPU_OR_S declaration");
+static_assert(__is_same(decltype(&__CPU_XOR_S), cpu_binary_signature),
+    "generated __CPU_XOR_S declaration");
+static_assert(__is_same(decltype(&__CPU_PROBE_S), cpu_binary_signature),
+    "__CPU_op_func_S expansion");
+
+/* Compile every expansion without linking or executing allocator/memory calls. */
+static void cpu_macro_expression_formation()
+{
+    cpu_set_t destination{};
+    cpu_set_t source1{};
+    cpu_set_t source2{};
+    cpu_set_t *allocated = CPU_ALLOC(65);
+
+    CPU_SET_S(0, sizeof(destination), &destination);
+    CPU_CLR_S(0, sizeof(destination), &destination);
+    (void)CPU_ISSET_S(0, sizeof(destination), &destination);
+    CPU_AND_S(sizeof(destination), &destination, &source1, &source2);
+    CPU_OR_S(sizeof(destination), &destination, &source1, &source2);
+    CPU_XOR_S(sizeof(destination), &destination, &source1, &source2);
+    (void)CPU_ZERO_S(sizeof(destination), &destination);
+    (void)CPU_EQUAL_S(sizeof(destination), &source1, &source2);
+    CPU_SET(0, &destination);
+    CPU_CLR(0, &destination);
+    (void)CPU_ISSET(0, &destination);
+    CPU_AND(&destination, &source1, &source2);
+    CPU_OR(&destination, &source1, &source2);
+    CPU_XOR(&destination, &source1, &source2);
+    (void)CPU_ZERO(&destination);
+    (void)CPU_EQUAL(&source1, &source2);
+    __CPU_PROBE_S(sizeof(destination), &destination, &source1, &source2);
+    CPU_FREE(allocated);
+}
+#endif
+
+int crabc_x86_64_sched_cpu_macros_header_abi_probe_cpp()
+{
+#if defined(CRABC_EXPECT_CPU_MACROS)
+    (void)cpu_macro_expression_formation;
+#endif
+    return 0;
+}

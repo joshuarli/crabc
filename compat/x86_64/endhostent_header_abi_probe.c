@@ -9,6 +9,7 @@
 #include <netdb.h>
 
 typedef void (*endhostent_signature)(void);
+typedef void (*sethostent_signature)(int);
 
 _Static_assert(__builtin_types_compatible_p(__typeof__(&endhostent),
                                              endhostent_signature),
@@ -16,13 +17,26 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&endhostent),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&endnetent),
                                              endhostent_signature),
                "endnetent declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sethostent),
+                                             sethostent_signature),
+               "sethostent declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&setnetent),
+                                             sethostent_signature),
+               "setnetent declaration");
 
 static endhostent_signature endhostent_function __attribute__((used)) =
     endhostent;
 static endhostent_signature endnetent_function __attribute__((used)) =
     endnetent;
+static sethostent_signature sethostent_function __attribute__((used)) =
+    sethostent;
+static sethostent_signature setnetent_function __attribute__((used)) =
+    setnetent;
 
 int crabc_x86_64_endhostent_header_abi_probe(void)
 {
-    return endhostent_function == endnetent_function ? 0 : 1;
+    return endhostent_function == endnetent_function &&
+            sethostent_function != 0 && setnetent_function != 0
+        ? 0
+        : 1;
 }

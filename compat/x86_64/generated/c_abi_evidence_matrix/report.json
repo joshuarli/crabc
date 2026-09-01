@@ -1,0 +1,145 @@
+{
+  "families": [
+    {
+      "aggregate_command": "./scripts/dev-x86_64.sh campaign-family libc.posix-runtime",
+      "id": "libc.posix-runtime",
+      "row_ids": [
+        "getpagesize-noarg-scalar",
+        "gethostid-noarg-scalar"
+      ]
+    }
+  ],
+  "matrix_schema": "crabc.x86_64-c-abi-evidence-matrix/v1",
+  "matrix_sha256": "9206c38077c1c9bdff9076f2d94975dff7b6765074532f0ea75280741b46d16d",
+  "platform": "Linux/x86-64 little-endian",
+  "rows": [
+    {
+      "bespoke_class": null,
+      "bespoke_reason": null,
+      "completion_obligation": "Exercise the routine no-argument scalar C ABI template without claiming broad system-configuration or family completion.",
+      "data_objects": [],
+      "execution": {
+        "family_aggregate": "libc.posix-runtime",
+        "focused_command": "./scripts/dev-x86_64.sh libc-getpagesize",
+        "header_probe": "compat/x86_64/run_getpagesize_header_abi.sh",
+        "oracle_candidate_build_run_and_export_check": "compat/x86_64/run_libc_getpagesize.sh"
+      },
+      "generated": {
+        "c_probe": "compat/x86_64/generated/c_abi_evidence_matrix/getpagesize-noarg-scalar/header_probe.c",
+        "cxx_probe": "compat/x86_64/generated/c_abi_evidence_matrix/getpagesize-noarg-scalar/header_probe.cpp",
+        "routine_runner": "compat/x86_64/generated/c_abi_evidence_matrix/getpagesize-noarg-scalar/run.sh",
+        "static_entry": "compat/x86_64/generated/c_abi_evidence_matrix/getpagesize-noarg-scalar/start.S"
+      },
+      "header": {
+        "c_signature_class": "int (void) non-variadic function pointer",
+        "cxx_signature_class": "extern-C int (void) function pointer",
+        "headers": [
+          "unistd.h"
+        ],
+        "profiles": [
+          "c11-bsd",
+          "c11-gnu",
+          "cxx17-bsd",
+          "cxx17-gnu"
+        ]
+      },
+      "id": "getpagesize-noarg-scalar",
+      "ledger_fields": {
+        "completion_obligation": "Exercise the routine no-argument scalar C ABI template without claiming broad system-configuration or family completion.",
+        "expected_exports": [
+          "getpagesize"
+        ],
+        "family_aggregate": "libc.posix-runtime",
+        "focused_command": "./scripts/dev-x86_64.sh libc-getpagesize",
+        "owner_capability": "system.kernel-admin",
+        "owner_family": "libc.posix-runtime"
+      },
+      "linkage": {
+        "aliases": [],
+        "binding": "strong",
+        "expected_exports": [
+          "getpagesize"
+        ],
+        "visibility": "default"
+      },
+      "oracle": {
+        "behavior_class": "fixed-x86-page-size-no-errno-no-tls",
+        "route": "pinned-musl-c-posix"
+      },
+      "owner": {
+        "capability": "system.kernel-admin",
+        "family": "libc.posix-runtime"
+      },
+      "symbols": [
+        "getpagesize"
+      ],
+      "template": "noarg-scalar-static-v1"
+    },
+    {
+      "bespoke_class": null,
+      "bespoke_reason": null,
+      "completion_obligation": "Exercise the routine no-argument scalar C ABI template without claiming host-identity policy, broad kernel administration, or family completion.",
+      "data_objects": [],
+      "execution": {
+        "family_aggregate": "libc.posix-runtime",
+        "focused_command": "./scripts/dev-x86_64.sh libc-gethostid",
+        "header_probe": "compat/x86_64/run_gethostid_header_abi.sh",
+        "oracle_candidate_build_run_and_export_check": "compat/x86_64/run_libc_gethostid.sh"
+      },
+      "generated": {
+        "c_probe": "compat/x86_64/generated/c_abi_evidence_matrix/gethostid-noarg-scalar/header_probe.c",
+        "cxx_probe": "compat/x86_64/generated/c_abi_evidence_matrix/gethostid-noarg-scalar/header_probe.cpp",
+        "routine_runner": "compat/x86_64/generated/c_abi_evidence_matrix/gethostid-noarg-scalar/run.sh",
+        "static_entry": "compat/x86_64/generated/c_abi_evidence_matrix/gethostid-noarg-scalar/start.S"
+      },
+      "header": {
+        "c_signature_class": "long (void) non-variadic function pointer",
+        "cxx_signature_class": "extern-C long (void) function pointer",
+        "headers": [
+          "unistd.h"
+        ],
+        "profiles": [
+          "c11-bsd",
+          "c11-gnu",
+          "c11-xopen-700",
+          "cxx17-bsd",
+          "cxx17-gnu",
+          "cxx17-xopen-700"
+        ]
+      },
+      "id": "gethostid-noarg-scalar",
+      "ledger_fields": {
+        "completion_obligation": "Exercise the routine no-argument scalar C ABI template without claiming host-identity policy, broad kernel administration, or family completion.",
+        "expected_exports": [
+          "gethostid"
+        ],
+        "family_aggregate": "libc.posix-runtime",
+        "focused_command": "./scripts/dev-x86_64.sh libc-gethostid",
+        "owner_capability": "system.kernel-admin",
+        "owner_family": "libc.posix-runtime"
+      },
+      "linkage": {
+        "aliases": [],
+        "binding": "strong",
+        "expected_exports": [
+          "gethostid"
+        ],
+        "visibility": "default"
+      },
+      "oracle": {
+        "behavior_class": "fixed-zero-host-id-no-errno-no-tls",
+        "route": "pinned-musl-c-posix"
+      },
+      "owner": {
+        "capability": "system.kernel-admin",
+        "family": "libc.posix-runtime"
+      },
+      "symbols": [
+        "gethostid"
+      ],
+      "template": "noarg-scalar-static-v1"
+    }
+  ],
+  "schema": "crabc.x86_64-c-abi-evidence-matrix-report/v1",
+  "target": "x86_64-unknown-linux-musl"
+}

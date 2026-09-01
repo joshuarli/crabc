@@ -1,0 +1,21 @@
+{
+  "aarch64_inputs": {
+    "abi_manifest": {
+      "path": "compat/abi/musl-1.2.6/aarch64/manifest.json",
+      "sha256": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c"
+    },
+    "capability_ledger": {
+      "path": "compat/crabc-rs/coverage.toml",
+      "sha256": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0"
+    },
+    "public_headers": {
+      "path": "compat/abi/musl-1.2.6/aarch64/headers.tsv",
+      "sha256": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68"
+    }
+  },
+  "capability_count": 223,
+  "platform": "Linux/AArch64 little-endian",
+  "required_family_count": 26,
+  "schema": "crabc.x86_64-frozen-aarch64-baseline/v1",
+  "source_commit": "3e100d45c5a0798c2d3862d5e2eef584c610ccf9"
+}

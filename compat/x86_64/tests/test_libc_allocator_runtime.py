@@ -41,6 +41,13 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
         self.assertIn('include!("../../allocator_mimalloc.rs");', target_root)
         self.assertIn("__crabc_x86_allocator_runtime_v1", target_root)
         self.assertIn("cabi_set_allocator_errno(EINVAL);", wrapper)
+        self.assertIn("mi_realloc_aligned", wrapper)
+        self.assertIn("return malloc(new_size);", wrapper)
+        self.assertIn("MIMALLOC_MALLOC_ALIGNMENT", wrapper)
+        self.assertIn("MUSL_MALLOCNG_MAX_ALIGNMENT", wrapper)
+        self.assertIn("size > usize::MAX - alignment", wrapper)
+        self.assertIn("let allocation = aligned_alloc(alignment, size);", wrapper)
+        self.assertIn("alignment == 0", wrapper)
         self.assertIn("pub unsafe extern \"C\" fn reallocarray", wrapper)
         self.assertIn("pub unsafe extern \"C\" fn memalign", wrapper)
         self.assertIn("pub unsafe extern \"C\" fn valloc", wrapper)
@@ -59,20 +66,32 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
 
         for required in (
             "malloc(0)",
+            "free(NULL)",
+            "malloc((size_t)-1)",
             "calloc((size_t)-1, 2)",
             "realloc(block, (size_t)-1)",
+            "realloc(NULL, 17)",
             "realloc(block, 0)",
             "reallocarray(NULL, 4, sizeof(*block))",
             "reallocarray(resized, (size_t)-1, 2)",
+            "(uintptr_t)resized % 16",
+            "aligned_alloc(64, 128)",
+            "aligned_alloc(64, (size_t)-64)",
+            "aligned_alloc(musl_mallocng_max_alignment, 1)",
             "aligned_alloc(64, 65)",
             "aligned_alloc(3, 64)",
+            "aligned_alloc(0, 7)",
+            "posix_memalign(&aligned, sizeof(void *) / 2, 64)",
             "posix_memalign(&aligned, 24, 64)",
             "posix_memalign(&aligned, 64, 1)",
+            "posix_memalign(&aligned, 64, (size_t)-1)",
+            "posix_memalign(&aligned, musl_mallocng_max_alignment, 1)",
             "memalign(64, 19)",
             "memalign(0, 7)",
             "valloc(7)",
             "errno != EINVAL",
             "errno != EDOM",
+            "reuse topology is allocator-private",
         ):
             self.assertIn(required, probe)
 
@@ -80,12 +99,17 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
             "mixed-runtime differential",
             "--features x86-allocator-runtime",
             "archive_member_for_symbol",
+            "assert_elf_function_binding",
             "__crabc_x86_allocator_runtime_v1",
+            "__crabc_x86_allocator_observability_v1",
             "mi_malloc_aligned",
             "mi_zalloc",
-            "mi_realloc",
+            "mi_realloc_aligned",
             "mi_free",
-            "libc\\.a\\((aligned_alloc|calloc|free|malloc|memalign|posix_memalign|realloc|reallocarray|valloc)\\.lo\\)",
+            "${binding}/DEFAULT/FUNC",
+            "selected allocator artifact contains an unexpected archive member",
+            "libc\\.a\\((aligned_alloc|calloc|free|libc_calloc|lite_malloc|malloc|malloc_usable_size|memalign|posix_memalign|realloc|reallocarray|replaced|valloc)\\.lo\\)",
+            "malloc_usable_size",
             "TLSGD|TLSLD|TLSDESC",
             "glibc|ld-linux|libc\\.so\\.6",
             "env -i LC_ALL=C TZ=UTC",

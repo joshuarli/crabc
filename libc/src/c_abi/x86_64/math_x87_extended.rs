@@ -37,10 +37,14 @@ compile_error!("the x87 extended-math leaf requires little-endian Linux/x86-64")
 
 // Keep the fixed upstream spellings in AT&T syntax where practical. The eight
 // upstream inline-assembly C leaves are expressed as equivalent complete ABI
-// entries because stable Rust cannot name an x87 `long double` operand.
+// entries because stable Rust cannot name an x87 `long double` operand. The
+// exp2l entry has its own text section: it is a real binary80 dependency of
+// `math_long_double_completion.rs`, and section GC must not retain unrelated
+// public x87 siblings merely because they share this Rust assembly input.
 core::arch::global_asm!(
     r#"
     .text
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
 
     .p2align 4
     .global acosl
@@ -96,6 +100,7 @@ atan2l:
 
     /* floorl.s also owns ceill and truncl. Its temporary control word uses
        the now-dead first input slot and is restored before return. */
+    .section .text.floorl,"ax",@progbits
     .p2align 4
     .global floorl
     .type floorl,@function
@@ -113,6 +118,7 @@ floorl:
     ret
     .size floorl, .-floorl
 
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
     .p2align 4
     .global ceill
     .type ceill,@function
@@ -132,6 +138,7 @@ truncl:
     .size truncl, .-truncl
 
     /* musl exp2l.s owns both exp2l and expm1l. */
+    .section .text.expm1l,"ax",@progbits
     .p2align 4
     .global expm1l
     .type expm1l,@function
@@ -164,6 +171,7 @@ expm1l:
     ret
     .size expm1l, .-expm1l
 
+    .section .text.exp2l,"ax",@progbits
     .p2align 4
     .global exp2l
     .type exp2l,@function
@@ -226,6 +234,7 @@ exp2l:
     ret
     .size exp2l, .-exp2l
 
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
     /* musl expl.s: exp(x) = 2^hi + 2^hi (2^lo - 1), where hi+lo
        retains the exact extended-precision log2(e)*x product. */
     .p2align 4
@@ -353,6 +362,7 @@ logl:
     ret
     .size logl, .-logl
 
+    .section .text.fabsl,"ax",@progbits
     .p2align 4
     .global fabsl
     .type fabsl,@function
@@ -362,6 +372,7 @@ fabsl:
     ret
     .size fabsl, .-fabsl
 
+    .section .text.crabc_x86_math_x87_extended_other,"ax",@progbits
     .p2align 4
     .global fmodl
     .type fmodl,@function

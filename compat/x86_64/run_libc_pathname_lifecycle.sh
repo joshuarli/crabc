@@ -158,7 +158,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap chdir getcwd mkd
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in fchdir chroot realpath renameat renameat2 symlinkat \
+for unselected in chroot realpath renameat symlinkat \
     mkdirat fchmodat scandir malloc free \
     calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
@@ -177,6 +177,7 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PATHNAME_LIFECYCLE_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections \
     compat/x86_64/libc_pathname_lifecycle_probe.c \
     compat/x86_64/libc_pathname_lifecycle_start.S "$archive" -o "$candidate"
 
@@ -190,6 +191,9 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap chdir getcwd mkd
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
+if grep -Eq "[[:space:]]renameat2$" "$candidate_symbols"; then
+    fail "candidate unexpectedly pulls independently selected renameat2"
+fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2

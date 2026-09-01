@@ -11,7 +11,8 @@
 //! src/env/__libc_start_main.c makes libc.secure true when the last
 //! AT_SECURE value is nonzero or the final AT_UID/AT_EUID or
 //! AT_GID/AT_EGID values differ. The cache exists solely for
-//! super::secure_environment::secure_getenv, not privilege management,
+//! super::secure_environment::secure_getenv and super::issetugid, not
+//! privilege management,
 //! descriptor hygiene, credential mutation, loader policy, or process
 //! lifecycle.
 

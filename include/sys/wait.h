@@ -6,6 +6,14 @@
 
 typedef enum { P_ALL = 0, P_PID = 1, P_PGID = 2 } idtype_t;
 
+/* These historical BSD/GNU wait extensions carry `struct rusage` output.
+ * Keep both the dependent record and declarations out of strict/POSIX source
+ * profiles, matching pinned musl 1.2.6 rather than widening sys/wait.h by
+ * accident. */
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#include <sys/resource.h>
+#endif
+
 #define WNOHANG 1
 #define WUNTRACED 2
 #define WSTOPPED WUNTRACED
@@ -32,6 +40,10 @@ extern "C" {
 pid_t wait(int *);
 pid_t waitpid(pid_t, int *, int);
 int waitid(idtype_t, id_t, siginfo_t *, int);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+pid_t wait3(int *, int, struct rusage *);
+pid_t wait4(pid_t, int *, int, struct rusage *);
+#endif
 
 #ifdef __cplusplus
 }

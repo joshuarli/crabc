@@ -8,6 +8,10 @@ extern "C" {
 #include <stdint.h>
 #include <sys/types.h>
 
+#define dbtob(num) ((num) << 10)
+#define btodb(num) ((num) >> 10)
+#define fs_to_dq_blocks(num, blksize) (((num) * (blksize)) / 1024)
+
 #define MAXQUOTAS 3
 #define USRQUOTA  0
 #define GRPQUOTA  1
@@ -55,6 +59,8 @@ struct dqblk {
     uint64_t dqb_itime;
     uint32_t dqb_valid;
 };
+
+#define dqoff(UID) ((long long)(UID) * sizeof (struct dqblk))
 
 int quotactl(int, const char *, int, char *);
 

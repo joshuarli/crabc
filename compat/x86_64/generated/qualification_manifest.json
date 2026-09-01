@@ -1,0 +1,113 @@
+{
+  "completed_gate_count": 0,
+  "contract_sha256": "6f4709742278064ea813a63fa4b82c4122d273db0dd3db60960f68917d45e94a",
+  "incomplete_gates": [
+    "compat.abi-differential",
+    "compat.posix-process",
+    "compat.resolver-network",
+    "compat.loader-corpus",
+    "consumer.rust-std-lto",
+    "consumer.source-build",
+    "capability.accounting",
+    "performance.release"
+  ],
+  "policy": {
+    "native_execution_only": true,
+    "promotion_ready": false,
+    "public_support": false
+  },
+  "private_admission": [
+    {
+      "case_manifest": "compat/x86_64/qualification_posix_abi.json",
+      "case_manifest_sha256": "0afebd7ed94da8236d29a93c54b10dd6e9ea7519ca179ac61659d76d2c346446",
+      "command": [
+        "python3",
+        "compat/x86_64/run_qualification_posix_abi.py"
+      ],
+      "id": "posix-abi-admission",
+      "non_promoting": true
+    }
+  ],
+  "promotion_chain": [
+    {
+      "id": "compat.abi-differential",
+      "isolation": "clean-native-linux-x86_64-worktree-and-scrubbed-environment",
+      "oracle": "pinned-musl-1.2.6-and-frozen-linux-amd64-abi",
+      "provenance": "separate-pinned-musl-oracle-and-owned-crabc-candidate",
+      "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
+      "state": "planned",
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "compat.posix-process",
+      "isolation": "clean-native-linux-x86_64-worktree-and-scrubbed-environment",
+      "oracle": "pinned-musl-1.2.6-and-linux-5.10-process-abi",
+      "provenance": "separate-pinned-musl-oracle-and-owned-crabc-candidate",
+      "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
+      "state": "planned",
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "compat.resolver-network",
+      "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-controlled-network",
+      "oracle": "pinned-musl-1.2.6-and-controlled-linux-resolver-network",
+      "provenance": "separate-pinned-musl-oracle-and-owned-crabc-candidate",
+      "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
+      "state": "planned",
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "compat.loader-corpus",
+      "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
+      "oracle": "pinned-musl-1.2.6-and-frozen-loader-corpus",
+      "provenance": "separate-pinned-musl-oracle-and-owned-crabc-interpreter-and-libc",
+      "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
+      "state": "planned",
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "consumer.rust-std-lto",
+      "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
+      "oracle": "frozen-aarch64-rust-std-lto-consumer-contract",
+      "provenance": "pinned-rust-toolchain-and-owned-crabc-runtime",
+      "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
+      "state": "planned",
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "consumer.source-build",
+      "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
+      "oracle": "frozen-aarch64-selected-source-consumers-and-pinned-musl-1.2.6",
+      "provenance": "pinned-source-inputs-and-owned-crabc-sysroot",
+      "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
+      "state": "planned",
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "capability.accounting",
+      "isolation": "clean-native-linux-x86_64-worktree-and-scrubbed-environment",
+      "oracle": "immutable-aarch64-frozen-baseline-and-current-x86-ledger",
+      "provenance": "machine-validated-frozen-baseline-and-parity-ledger",
+      "purity": "reject-unmapped-selected-private-or-artifact-only-progress",
+      "state": "planned",
+      "timeout_seconds": 1800
+    },
+    {
+      "id": "performance.release",
+      "isolation": "controlled-native-linux-x86_64-host-clean-worktree-and-scrubbed-environment",
+      "oracle": "project-performance-contract-and-pinned-musl-1.2.6-comparison-lane",
+      "provenance": "controlled-native-x86_64-hardware-and-owned-crabc-runtime",
+      "purity": "reject-ambient-target-crt-libc-loader-libgcc-compiler-rt-and-headers",
+      "state": "planned",
+      "timeout_seconds": 14400
+    }
+  ],
+  "promotion_ready": false,
+  "schema": "crabc.x86_64-qualification-manifest/v1",
+  "target": {
+    "endianness": "little",
+    "machine": "x86_64",
+    "system": "Linux",
+    "triple": "x86_64-unknown-linux-musl"
+  }
+}

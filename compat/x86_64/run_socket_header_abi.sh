@@ -3,11 +3,12 @@
 #
 # Pinned musl 1.2.6 is the declaration/value/layout oracle. The project
 # headers are placed first for the candidate pass; neither pass links or
-# selects crabc-libc. A separate tiny C executable evaluates the installed
-# IPv6 address-classification macros against both header sets, while the C/C++
-# probes retain the immutable in6addr_any and in6addr_loopback declarations and
-# C++ data-symbol linkage. Socket options and vectored/ancillary-message APIs
-# are intentionally outside this declaration slice.
+# selects crabc-libc. A separate tiny C executable evaluates installed
+# IPv4/IPv6 address-equality/classification and GNU/BSD multicast source-filter layouts/size macros against both
+# header sets, while the C/C++ probes retain the immutable in6addr_any and
+# in6addr_loopback declarations and C++ data-symbol linkage. The slice excludes
+# socket membership, packet I/O, socket options, and vectored/ancillary-message
+# APIs.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

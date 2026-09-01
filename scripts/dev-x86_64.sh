@@ -41,6 +41,13 @@ usage() {
 Usage: ./scripts/dev-x86_64.sh <command>
 
 Native Linux/x86-64 staged-foundation evidence commands:
+  campaign-status  emit the validated native x86 campaign report
+  campaign-family <family-id>  emit one validated required-family campaign report
+  campaign-static  run the owned-static product gate when its prerequisites close
+  campaign-dynamic  run the owned-dynamic product gate when its prerequisites close
+  campaign-qualification  run the ordered qualification gate when it is ready
+  campaign-promotion-check  run the final promotion gate when it is ready
+  campaign-all  run the complete native x86 campaign gate sequence
   image  build the pinned Linux/amd64 core-evidence image
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   linux-5-10-uapi  verify the fixed Linux 5.10 x86 exported-UAPI input
@@ -48,12 +55,15 @@ Native Linux/x86-64 staged-foundation evidence commands:
   public-header-surface  inventory all pinned x86 public headers for C consumability
   candidate-header-closure  require isolated C11/C++17 public-header include closure
   installed-header-tree-closure  verify the materialized target-owned x86 public-header closure
+  header-callable-linkage-audit  audit declared x86 header callables against the static archive
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
   epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
   event-descriptors-header-abi  verify selected x86 eventfd/inotify C/C++ ABI profiles
+  fanotify-header-abi  verify selected x86 fanotify record-traversal C/C++ ABI profiles
   dirent-header-abi  verify selected x86 dirent C/C++ ABI and feature profiles
   pathname-lifecycle-header-abi  verify selected x86 pathname-lifecycle C/C++ ABI profiles
   ioctl-header-abi  verify selected direct sys/ioctl.h C/C++ ABI profile matrix
+  sys-io-header-abi  verify x86 sys/io.h inline port-I/O C/C++ ABI and object code
   timeval-transitive-header-abi  verify selected timeval-dependent header layouts across C/C++ profiles
   sys-time-direct-header-abi  verify selected direct sys/time.h C/C++ ABI profiles and C linkage
   access-header-abi  verify selected direct unistd/fcntl access C/C++ ABI profiles and C linkage
@@ -77,6 +87,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   stdlib-header-abi  compare x86 <stdlib.h> strict/POSIX/XOPEN/GNU/BSD/LFS profiles with musl
   getloadavg-header-abi  verify x86 GNU/BSD <stdlib.h> getloadavg C/C++ declaration and linkage
   stdio-standard-header-abi  compare selected x86 <stdio.h> standard-stream C/C++ profiles with musl
+  fopen64-header-abi  verify x86 _LARGEFILE64_SOURCE fopen64 C/C++ macro-alias profiles
   stdio-permanent-line-io-header-abi  verify x86 <stdio.h> permanent line-I/O C/C++ declarations and linkage
   stdio-permanent-byte-io-header-abi  verify x86 <stdio.h> permanent byte-I/O C/C++ declarations and linkage
   stdio-permanent-status-header-abi  verify x86 <stdio.h> permanent stream-status C/C++ declarations and linkage
@@ -90,7 +101,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   stdio-permanent-fileno-header-abi  verify x86 <stdio.h> permanent fileno C/C++ declarations and linkage
   stdio-permanent-fileno-unlocked-header-abi  verify x86 GNU/BSD permanent fileno_unlocked C/C++ declarations and linkage
   stdio-permanent-feof-unlocked-header-abi  verify x86 GNU/BSD permanent feof_unlocked C/C++ declarations and linkage
-  ctype-header-abi  compile the staged x86 C/C++ ctype declarations
+  stdio-permanent-ferror-unlocked-header-abi  verify x86 GNU/BSD permanent ferror_unlocked C/C++ declarations and linkage
+  ctype-header-abi  compile staged x86 C/C++ ctype declarations and feature-gated macros
   locale-profile-header-abi  verify x86 fixed setlocale/localeconv C/C++ declarations and linkage
   locale-multibyte-header-abi  verify x86 named-locale/multibyte C/C++ declarations and linkage
   iconv-header-abi  verify x86 selected UTF/ASCII iconv C/C++ declarations and linkage
@@ -101,15 +113,18 @@ Native Linux/x86-64 staged-foundation evidence commands:
   integer-arithmetic-header-abi  compile the staged x86 C/C++ stdlib integer-arithmetic declarations
   integer-parse-header-abi  compile the staged x86 C/C++ integer-parsing declarations
   float-parse-header-abi  verify complete x86 numeric.parse-float-locale declarations and linkage
+  crypt-header-abi  verify x86 crypt.h C/C++ declaration, layout, and linkage
   getsubopt-header-abi  verify x86 getsubopt C/C++ feature visibility and linkage
-  l64a-header-abi  verify x86 X/Open/GNU/BSD l64a C/C++ feature visibility and linkage
+  l64a-header-abi  verify x86 X/Open/GNU/BSD a64l/l64a C/C++ feature visibility and linkage
   intmax-arithmetic-header-abi  compile the staged x86 C/C++ inttypes intmax-arithmetic declarations
   credential-observation-header-abi  compile the staged x86 C/C++ unistd credential-observation declarations
   login-name-header-abi  compile the staged x86 C/C++ unistd login-name declarations
   child-reaping-header-abi  compile the staged x86 C/C++ sys/wait child-reaping declarations
+  wait-extensions-header-abi  verify x86 GNU/BSD wait3/wait4 header feature profiles
   immediate-termination-header-abi  compile the staged x86 C/C++ stdlib immediate-termination declaration
   posix-exit-header-abi  compile the staged x86 C/C++ unistd POSIX _exit declaration
   sched-cpucount-header-abi  verify selected x86 GNU sched CPU-count C/C++ ABI profiles
+  sched-cpu-macros-header-abi  verify x86 GNU sched CPU-set construction C/C++ header macros
   sched-getcpu-header-abi  verify selected x86 GNU sched_getcpu C/C++ ABI profiles
   sched-priority-bounds-header-abi  verify selected x86 sched priority-bounds C/C++ ABI profiles
   sched-yield-header-abi  verify selected x86 sched_yield C/C++ ABI profiles
@@ -121,6 +136,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   qsort-header-abi  verify staged x86 C/C++ stdlib qsort declaration and linkage
   callback-algorithms-header-abi  compile the staged x86 C/C++ stdlib callback-algorithm declarations
   ffs-header-abi  compile the staged x86 C/C++ strings.h find-first-set declarations
+  memory-special-header-abi  compile x86 explicit_bzero/swab C/C++ declarations
   memccpy-header-abi  compile the staged x86 C/C++ string.h memccpy declarations
   aio-error-header-abi  verify x86 <aio.h> aio_error C/C++ declaration and layout
   byte-strings-header-abi  compile the staged x86 C/C++ string.h byte-string declarations
@@ -163,13 +179,19 @@ Native Linux/x86-64 staged-foundation evidence commands:
   system-header-abi  compile the staged x86 C/C++ system header layouts
   syscall-header-abi  compare the staged x86 syscall macro surface with musl
   signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
+  psignal-header-abi  verify x86 POSIX-or-later psignal/psiginfo C/C++ declarations
+  signal-legacy-aliases-header-abi  verify GNU bsd_signal C/C++ declaration/linkage
+  signal-sysv-helpers-header-abi  verify historical SysV signal helper C/C++ declaration/linkage
   sched-getscheduler-header-abi  compile x86 sched_getscheduler C/C++ declarations
+  sched-rr-interval-header-abi  compile x86 sched_rr_get_interval C/C++ declarations
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
   grantpt-header-abi  compile the staged x86 C/C++ XSI grantpt declaration
   unlockpt-header-abi  compile the staged x86 C/C++ XSI unlockpt declaration
   gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
-  endhostent-header-abi  compile the staged x86 C/C++ legacy netdb terminator declarations
+  issetugid-header-abi  compile the staged x86 C/C++ GNU/BSD issetugid declaration
+  legacy-misc-header-abi  verify the frozen x86 legacy.misc C/C++ declaration matrix
+  endhostent-header-abi  compile the staged x86 C/C++ stateless legacy netdb declarations
   gettid-header-abi  compile the staged x86 C/C++ GNU gettid declaration
   posix-close-header-abi  compile the staged x86 C/C++ POSIX posix_close declaration
   isatty-header-abi  compile the staged x86 C/C++ isatty declaration
@@ -181,6 +203,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   mkfifoat-header-abi  verify selected x86 mkfifoat C/C++ declarations
   readlinkat-header-abi  verify selected x86 POSIX readlinkat C/C++ declarations
   linkat-header-abi  verify selected x86 POSIX linkat C/C++ declarations
+  renameat2-header-abi  verify selected x86 GNU renameat2 C/C++ declarations
   lchown-header-abi  verify selected x86 POSIX lchown C/C++ declarations
   hasmntopt-header-abi  verify selected x86 mntent hasmntopt C/C++ declarations
   mktemp-header-abi  compile the staged x86 C/C++ mktemp declaration
@@ -189,8 +212,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   memory-locking-header-abi  verify selected x86 per-range mlock C/C++ declarations
   memfd-create-header-abi  verify selected x86 GNU memfd_create C/C++ declarations
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
-  socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
+  socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts plus IPv4/IPv6 and source-filter macros
   nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname/dn_expand/_ns_flagdata/ns_get16/ns_get32/ns_put16 declarations
+  quota-header-abi  verify x86 sys/quota.h conversion macros through C/C++ profiles
   endservent-header-abi  verify staged x86 legacy service-terminator C/C++ declaration
   inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
@@ -209,6 +233,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sigrtmax  run the static x86 crabc-libc realtime-maximum ABI bridge slice
   libc-sigrtmin  run the static x86 crabc-libc realtime-minimum ABI bridge slice
   libc-sched-getscheduler  run the static x86 musl-ENOSYS scheduler observation slice
+  libc-sched-rr-interval  run the opt-in static x86 scheduler-interval observation slice
   libc-alarm  run the static x86 crabc-libc historical SIGALRM timer slice
   usleep-header-abi  run the x86 musl/project usleep C/C++ declaration matrix
   libc-usleep  run the static x86 crabc-libc usleep nanosleep-adapter slice
@@ -325,12 +350,17 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-credentials  run the static x86 crabc-libc credential/errno compatibility slice
   libc-bootstrap-primitives  run the static x86 crabc-libc memory/fenv/setjmp slice
   libc-signal-control  run the static x86 crabc-libc simple signal action/mask slice
+  libc-signal-legacy-aliases  run the opt-in static x86 musl signal.c alias slice
+  libc-signal-sysv-helpers  run the opt-in static x86 SysV signal-helper slice
   libc-signal-execution  run the static x86 crabc-libc process-signal execution slice
   libc-signal-altstack  run the static x86 crabc-libc alternate signal-stack slice
+  libc-psignal  run the opt-in static x86 psignal/psiginfo reporting slice
+  libc-process-signal  run the frozen x86 process.signal aggregate
   libc-static-tls-v1  run the static x86 crabc-libc initial TLS template slice
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
   owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
+  owned-dynamic-sysroot  run the x86 owned dynamic-product gate when materialized
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   crt-dynamic-link-contract  audit the closed x86 Rust CRT dynamic-PIE link boundary
@@ -362,7 +392,10 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-grantpt  run the static x86 crabc-libc grantpt compatibility slice
   libc-unlockpt  run the static x86 crabc-libc PTY lock-release slice
   libc-gethostid  run the static x86 crabc-libc gethostid compatibility slice
+  libc-issetugid  run the static x86 crabc-libc issetugid compatibility slice
+  libc-legacy-misc  run the static x86 crabc-libc frozen legacy.misc aggregate
   libc-endhostent  run the static x86 crabc-libc legacy netdb terminator slice
+  libc-sethostent  run the opt-in static x86 crabc-libc legacy netdb setter slice
   libc-gettid  run the static x86 crabc-libc gettid compatibility slice
   libc-posix-close  run the static x86 crabc-libc posix_close compatibility slice
   libc-isatty  run the static x86 crabc-libc descriptor-observation slice
@@ -374,14 +407,16 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-mkfifoat  run the static x86 crabc-libc mkfifoat leaf
   libc-readlinkat  run the static x86 crabc-libc readlinkat leaf
   libc-linkat  run the static x86 crabc-libc linkat leaf
+  libc-renameat2  run the static x86 crabc-libc GNU renameat2 leaf
   libc-lchown  run the static x86 crabc-libc lchown leaf
   libc-hasmntopt  run the static x86 crabc-libc hasmntopt leaf
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
-  libc-environment  run the static x86 crabc-libc bounded environment slice
+  libc-environment  run the static x86 crabc-libc environment-mutation slice
   libc-secure-environment  run the static x86 crabc-libc GNU secure-environment slice
   libc-login-name  run the static x86 crabc-libc environment-backed login-name slice
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
+  libc-wait-extensions  run the static x86 crabc-libc GNU/BSD wait3/wait4 slice
   libc-immediate-termination  run the static x86 crabc-libc C11 immediate-termination slice
   libc-posix-exit  run the static x86 crabc-libc POSIX _exit forwarding slice
   libc-posix-spawnattr-init  run the static x86 crabc-libc spawn-attribute initialization slice
@@ -415,7 +450,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memory-locking  run the static x86 crabc-libc per-range memory-locking slice
   libc-memfd-create  run the static x86 crabc-libc memfd_create slice
   libc-allocator-runtime  run the opt-in mixed-runtime crabc-libc allocator wrapper slice
+  libc-allocator-basic-runtime-v1  run the private real-runtime x86 allocator-basic composition
   libc-allocator-string-duplication  run the opt-in mixed-runtime crabc-libc strdup/strndup slice
+  libc-scandir  run the opt-in mixed-runtime crabc-libc scandir slice
   libc-allocator-observability  run the complete x86 malloc_usable_size capability slice
   libc-alloca  verify the static x86 musl-compatible alloca builtin boundary
   libc-static-c-abi-differential  run the private static-C ABI musl differential bootstrap
@@ -472,7 +509,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-integer-parse  run the static x86 crabc-libc integer-parsing slice
   libc-float-parse  run the complete static x86 numeric.parse-float-locale slice
   libc-getsubopt  run the static x86 crabc-libc state-free getsubopt slice
+  libc-crypt  run the private static x86 bounded SHA-crypt compatibility slice
   libc-l64a  run the static x86 crabc-libc shared radix-64 result-buffer slice
+  libc-a64l  run the opt-in static x86 crabc-libc radix-64 decoder slice
   libc-stdio-standard  run the static x86 crabc-libc permanent standard-stream slice
   libc-stdio-format-scan  run the static x86 crabc-libc byte-string format/scan slice
   libc-stdio-integer-scan  run the static x86 crabc-libc bounded integer-source scan slice
@@ -497,11 +536,13 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-stdio-float-hex-output  run the static x86 crabc-libc binary64 hexadecimal-output slice
   libc-stdio-errno-output  run the static x86 crabc-libc errno-message format slice
   libc-stdio-path-stream  run the static x86 crabc-libc fixed pathname-stream slice
+  libc-fopen64-alias  run the static x86 crabc-libc source-only fopen64 alias slice
   libc-stdio-tmpfile  run the static x86 crabc-libc bounded tmpfile stream slice
   libc-text-math-locale-stdio-composition  run the static x86 selected text/math/locale/stdio composition
   libc-intmax-arithmetic  run the static x86 crabc-libc intmax-arithmetic slice
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
   libc-ffs  run the static x86 crabc-libc find-first-set slice
+  libc-memory-special  run the opt-in static x86 crabc-libc explicit_bzero/swab slice
   libc-memccpy  run the archive-free static x86 crabc-libc memccpy slice
   libc-aio-error  run the archive-free static x86 crabc-libc aio_error slice
   libc-byte-strings  run the static x86 crabc-libc byte-string slice
@@ -527,6 +568,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-hstrerror  run the static x86 crabc-libc h_errno message-string slice
   libc-endservent  run the archive-free static x86 crabc-libc legacy service-terminator slice
   libc-numeric-netdb  run the static x86 crabc-libc deterministic numeric netdb slice
+  libc-resolver-runtime  run the hermetic static x86 C resolver-runtime slice
   libc-interface-discovery  run the static x86 C interface index/address discovery slice
   libc-random-entropy  run the static x86 crabc-libc random-entropy slice
   libc-memory-search  run the static x86 crabc-libc memory-search slice
@@ -543,6 +585,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-complex-complete  run the complete static x86 math.complex capability
   libc-elementary-sqrt-fenv  run the static x86 sqrt/sqrtf/sqrtl fenv-sensitive slice
   libc-fenv-rounding  run the static x86 rint/nearbyint fenv-sensitive slice
+  libc-math-long-double-completion  run the private x86 binary80 fdiml/exp10l/pow10l closure
+  libc-math-elementary-fenv-sensitive  run the complete private x86 math.elementary-fenv-sensitive aggregate
   libc-math-minmax  run the static x86 fmax/fmin minmax slice
   libc-math-bit-sign  run the static x86 fabs/copysign bit-sign slice
   libc-math-trunc  run the static x86 trunc/truncf scalar slice
@@ -568,7 +612,15 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ldso-image  run the source-only checked x86 ELF image parser tests
   ldso-initial-graph  run the bounded x86 ET_DYN initial-interpreter graph artifact
   ldso-target-root  run the feature-gated x86 crabc-ldso ET_DYN target-root admission
+  ldso-general-initial-graph  run the bounded general non-TLS x86 initial dependency graph artifact
+  ldso-general-initial-target-root  run the feature-gated general x86 crabc-ldso target-root admission
+  ldso-general-initial-tls  run the private general x86 initial-TLS materialization artifact
+  ldso-general-initial-tls-target-root  run the feature-gated general x86 initial-TLS target-root admission
   ldso-initial-tls  run the bounded x86 Variant-II initial-TLS interpreter graph artifact
+  loader-libc-tls-runtime-v1  run the private x86 loader/libc initial-TLS RuntimeV1 handoff foundation
+  loader-libc-tls-runtime-v1-registry  run the private x86 RuntimeV1 initial-module registry foundation
+  loader-libc-general-tls-runtime-v1  run the private general x86 loader/libc initial-TLS RuntimeV1 handoff
+  loader-libc-general-tls-runtime-v1-target-root  run the feature-gated general x86 RuntimeV1 target-root admission
   ldso-initial-exec-tls  run the fixed x86 DF_STATIC_TLS/TPOFF64 sibling artifact
   ldso-owned-crt-handoff  run the bounded x86 ldso-to-Rust-Scrt1 handoff artifact
   ldso-fixed-graph-introspection  run copied introspection over the fixed x86 loader graph
@@ -1159,11 +1211,12 @@ a general C terminal/runtime claim. `resource-header-abi` is likewise
 header-only and does not select process-resource behavior or a C runtime.
 `socket-header-abi` compile-checks only staged C/C++ base transport
 declarations, `socklen_t` and generic/IPv4/IPv6 socket-address layouts, and
-creation, shutdown, and basic send/receive constants, then executes the
-installed IPv6 address-classification macros through project and pinned-musl
-headers. It does not select socket options, vectored or ancillary-message
-APIs, address-conversion or socket behavior, a C runtime, or a general socket
-capability.
+creation, shutdown, and basic send/receive constants, then executes installed
+IPv4/IPv6 address-equality/classification macros and checks GNU/BSD multicast
+source-filter layouts/size macros through project and pinned-musl headers. It
+does not select socket membership, packet I/O, socket options, vectored or
+ancillary-message APIs, address-conversion or socket behavior, a C runtime,
+or a general socket capability.
 `socket-messages-header-abi` separately compares project-first and pinned-musl
 C/C++ profiles for the bounded `<sys/socket.h>` message/options declarations,
 their LP64 `msghdr`/`cmsghdr`/GNU `mmsghdr` layouts and visibility, CMSG macro
@@ -1558,18 +1611,22 @@ It does not provide C fork/exec, generic process control, or pthread
 coordination; child reaping is a separately bounded archive artifact. It also
 does not provide dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public
 x86 support.
-`libc-environment` links that archive into a separate freestanding
-project-header C fixture after an equivalent pinned-musl run. It selects only
-the bounded `getenv`/`setenv`/`putenv`/`unsetenv`/`clearenv` and one-object
-`__environ`/`environ`/underscore alias boundary. The clean-entry differential
-and candidate bootstrap-to-`__libc_start_main` route prove initial `envp`,
-ordinary lookup, copy versus caller-owned replacement, unset duplicate
-removal, clear/direct-global assignment, and the documented 1,048,576-read,
-128-entry mutation-table, and non-reclaiming 16-KiB `ENOMEM` limits. Its lock
-does not cover returned-pointer use, direct writers, caller-owned `putenv`
-storage, signals, or fork recovery. It does not provide secure execution,
-exec/spawn inheritance, a general environment lifecycle, dynamic libc, CRT
-objects, loader, sysroot, or public x86 support.
+`libc-environment` is the private selected `static-c-environment` slice for
+exactly `process.environment-mutation`: `clearenv`, `setenv`, and `unsetenv`.
+`getenv`, `putenv`, and the one-object `__environ`/`environ`/underscore aliases
+are supporting ABI only and do not select `process.globals`. After the pinned-
+musl comparison, the real crabc `crt1`/`crti`/`crtn` candidate publishes entry-
+stack `envp` before an ordinary `.init_array` constructor; the constructor's
+`setenv` mutation is visible in `main`. It proves ordinary lookup, copied versus
+caller-owned replacement, duplicate removal, direct-vector mutation, growth,
+and reclamation. Fixture-only `--wrap=malloc`/`--wrap=realloc` cases prove
+pre-publication `ENOMEM` rollback for copied-string replacement, direct-vector
+append, and owned-vector append; post-publication ownership-registry allocation
+failure remains outside the claim. Returned-pointer use, direct writers,
+caller-owned `putenv` storage, signals, and fork/exec transitions remain
+caller-coordinated. It does not provide secure execution, a general environment
+lifecycle, dynamic libc, CRT completion, loader, sysroot, family completion,
+promotion, or public x86 support.
 `libc-secure-environment` separately selects GNU `secure_getenv` only.
 Static startup composes the already-qualified raw auxv observation with a
 private musl-shaped secure cache: the final `AT_SECURE`/UID/EUID/GID/EGID
@@ -1591,6 +1648,15 @@ project-header C fixture after an equivalent pinned-musl run. It selects only
 states without selecting C fork/exec or a general process supervisor. It
 deliberately omits musl pthread-cancellation and atfork machinery, dynamic
 libc, CRT/TLS lifecycle, loader, sysroot, and public x86 support.
+`libc-wait-extensions` is separate private GNU/BSD evidence after an
+equivalent pinned-musl run. It selects only historical `wait3` and `wait4`,
+their direct Linux wait4 syscall path, optional status/resource outputs, and
+the `WNOHANG`, exact reap, and post-reap `ECHILD` states. Its raw
+fork/pipe/setpgid fixture control exists only to make those waits observable;
+it does not select `process.control`, C fork/exec, general process
+supervision, child-reaping capability ownership, pthread cancellation or
+atfork machinery, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public
+x86 support.
 `libc-immediate-termination` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 C11 `_Exit`: fixture-local raw clone/wait observes its exact child status,
@@ -2218,6 +2284,7 @@ general facade admission, or C ABI support claim.
   posix-spawnattr-setpgroup-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setpgroup declaration
   posix-spawnattr-setschedpolicy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setschedpolicy declaration
   res-init-header-abi  compile the staged x86 C/C++ legacy resolver-initializer declaration
+  resolver-runtime-header-abi  verify x86 C/C++ resolver-state and legacy resolver ABI
   c32rtomb-header-abi  verify x86 C11 UTF-32 encoder C/C++ declarations and linkage
   chown-header-abi  verify selected x86 POSIX chown C/C++ declarations
   libc-c32rtomb  run the static x86 crabc-libc C11 UTF-32 encoder adapter
@@ -2246,6 +2313,7 @@ general facade admission, or C ABI support claim.
   libc-inet-network  run the static x86 crabc-libc inet_network parser-composition slice
   libc-ns-put32  run the archive-free static x86 crabc-libc DNS 32-bit wire-write slice
   libc-ns-skiprr  run the static x86 crabc-libc DNS resource-record span slice
+  libc-io-permissions  run the opt-in static x86 iopl/ioperm negative-path slice
   libc-personality  run the static x86 process-personality slice
   libc-sched-getaffinity  run the static x86 GNU scheduler-affinity observation slice
   libc-sched-getparam  run the static x86 musl-ENOSYS scheduler-record observation slice
@@ -2443,6 +2511,10 @@ run_installed_header_tree_closure() {
     run_in_container bash /workspace/compat/x86_64/run_installed_header_tree_closure.sh
 }
 
+run_header_callable_linkage_audit() {
+    run_in_container bash /workspace/compat/x86_64/run_header_callable_linkage_audit.sh
+}
+
 run_uapi_wrapper_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_uapi_wrapper_matrix.sh
 }
@@ -2455,6 +2527,10 @@ run_event_descriptors_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_event_descriptors_header_abi.sh
 }
 
+run_fanotify_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_fanotify_header_abi.sh
+}
+
 run_dirent_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_dirent_header_abi.sh
 }
@@ -2465,6 +2541,10 @@ run_pathname_lifecycle_header_abi() {
 
 run_ioctl_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ioctl_header_abi.sh
+}
+
+run_sys_io_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sys_io_header_abi.sh
 }
 
 run_timeval_transitive_header_abi() {
@@ -2555,6 +2635,10 @@ run_stdio_standard_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_stdio_standard_header_abi.sh
 }
 
+run_fopen64_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_fopen64_header_abi.sh
+}
+
 run_ctype_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ctype_header_abi.sh
 }
@@ -2615,6 +2699,10 @@ run_child_reaping_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_child_reaping_header_abi.sh
 }
 
+run_wait_extensions_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_wait_extensions_header_abi.sh
+}
+
 run_immediate_termination_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_immediate_termination_header_abi.sh
 }
@@ -2663,6 +2751,10 @@ run_sched_cpucount_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sched_cpucount_header_abi.sh
 }
 
+run_sched_cpu_macros_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sched_cpu_macros_header_abi.sh
+}
+
 run_sched_getcpu_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sched_getcpu_header_abi.sh
 }
@@ -2681,6 +2773,10 @@ run_libc_credential_observation() {
 
 run_libc_child_reaping() {
     run_in_container bash /workspace/compat/x86_64/run_libc_child_reaping.sh
+}
+
+run_libc_wait_extensions() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_wait_extensions.sh
 }
 
 run_libc_immediate_termination() {
@@ -2815,6 +2911,10 @@ run_libc_legacy_memory() {
     run_in_container bash /workspace/compat/x86_64/run_libc_legacy_memory.sh
 }
 
+run_libc_memory_special_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_memory_special.sh
+}
+
 run_libc_memccpy() {
     run_in_container bash /workspace/compat/x86_64/run_libc_memccpy.sh
 }
@@ -2839,8 +2939,16 @@ run_libc_allocator_runtime() {
     run_in_container bash /workspace/compat/x86_64/run_libc_allocator_runtime.sh
 }
 
+run_libc_allocator_basic_runtime_v1() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_allocator_basic_runtime_v1.sh
+}
+
 run_libc_allocator_string_duplication() {
     run_in_container bash /workspace/compat/x86_64/run_libc_allocator_string_duplication.sh
+}
+
+run_libc_scandir() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_scandir.sh
 }
 
 run_libc_allocator_observability() {
@@ -2947,6 +3055,10 @@ run_libc_sched_getscheduler_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_getscheduler.sh
 }
 
+run_libc_sched_rr_interval_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sched_rr_interval.sh
+}
+
 run_libc_sched_getparam_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_getparam.sh
 }
@@ -2969,6 +3081,10 @@ run_libc_setfsgid_probe() {
 
 run_libc_personality_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_personality.sh
+}
+
+run_libc_io_permissions_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_io_permissions.sh
 }
 
 run_libc_alarm_probe() {
@@ -3017,6 +3133,10 @@ run_ffs_header_abi() {
 
 run_memccpy_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_memccpy_header_abi.sh
+}
+
+run_memory_special_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_memory_special_header_abi.sh
 }
 
 run_aio_error_header_abi() {
@@ -3175,8 +3295,24 @@ run_signal_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_signal_header_abi.sh
 }
 
+run_psignal_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_psignal_header_abi.sh
+}
+
+run_signal_legacy_aliases_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_signal_legacy_aliases_header_abi.sh
+}
+
+run_signal_sysv_helpers_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_signal_sysv_helpers_header_abi.sh
+}
+
 run_sched_getscheduler_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sched_getscheduler_header_abi.sh
+}
+
+run_sched_rr_interval_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sched_rr_interval_header_abi.sh
 }
 
 run_sched_getparam_header_abi() {
@@ -3221,6 +3357,14 @@ run_unlockpt_header_abi() {
 
 run_gethostid_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_gethostid_header_abi.sh
+}
+
+run_issetugid_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_issetugid_header_abi.sh
+}
+
+run_legacy_misc_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_legacy_misc_header_abi.sh
 }
 
 run_endhostent_header_abi() {
@@ -3273,6 +3417,9 @@ run_readlinkat_header_abi() {
 run_linkat_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_linkat_header_abi.sh
 }
+run_renameat2_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_renameat2_header_abi.sh
+}
 run_lchown_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_lchown_header_abi.sh
 }
@@ -3314,6 +3461,10 @@ run_socket_header_abi() {
 
 run_nameser_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_nameser_header_abi.sh
+}
+
+run_quota_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_quota_header_abi.sh
 }
 
 run_endservent_header_abi() {
@@ -4029,12 +4180,28 @@ run_libc_signal_control_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_signal_control.sh
 }
 
+run_libc_signal_legacy_aliases_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_signal_legacy_aliases.sh
+}
+
+run_libc_signal_sysv_helpers_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_signal_sysv_helpers.sh
+}
+
 run_libc_signal_execution_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_signal_execution.sh
 }
 
 run_libc_signal_altstack_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_signal_altstack.sh
+}
+
+run_libc_psignal_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_psignal.sh
+}
+
+run_libc_process_signal_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_process_signal.sh
 }
 
 run_libc_pthread_create_join_tls_probe() {
@@ -4181,6 +4348,10 @@ run_owned_static_sysroot_probe() {
     run_in_container bash /workspace/compat/x86_64/run_owned_static_sysroot.sh
 }
 
+run_owned_dynamic_sysroot_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
+}
+
 run_crt_object_bundle_probe() {
     run_in_container bash /workspace/compat/x86_64/run_crt_object_bundle.sh
 }
@@ -4225,8 +4396,20 @@ run_libc_gethostid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_gethostid.sh
 }
 
+run_libc_issetugid_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_issetugid.sh
+}
+
+run_libc_legacy_misc_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_legacy_misc.sh
+}
+
 run_libc_endhostent_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_endhostent.sh
+}
+
+run_libc_sethostent_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sethostent.sh
 }
 
 run_libc_gettid_probe() {
@@ -4271,6 +4454,10 @@ run_libc_mkfifoat_probe() {
 
 run_libc_linkat_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_linkat.sh
+}
+
+run_libc_renameat2_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_renameat2.sh
 }
 
 run_libc_lchown_probe() {
@@ -4553,12 +4740,58 @@ run_ldso_initial_graph_tests() {
     run_in_container bash /workspace/compat/x86_64/run_ldso_initial_graph.sh
 }
 
+run_ldso_general_initial_graph_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_ldso_general_initial_graph.sh
+}
+
+run_ldso_general_initial_graph_target_root_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_ldso_general_initial_graph_target_root.sh
+}
+
+run_ldso_general_initial_tls_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_ldso_general_initial_tls.sh
+}
+
+run_ldso_general_initial_tls_target_root_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_ldso_general_initial_tls_target_root.sh
+}
+
 run_ldso_target_root_tests() {
     run_in_container bash /workspace/compat/x86_64/run_ldso_target_root.sh
 }
 
 run_ldso_initial_tls_tests() {
     run_in_container bash /workspace/compat/x86_64/run_ldso_initial_tls.sh
+}
+
+run_libc_math_long_double_completion_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_long_double_completion.sh
+}
+
+run_libc_math_elementary_fenv_sensitive_tests() {
+    run_in_container bash -ceu '
+        bash /workspace/compat/x86_64/run_libc_fenv_rounding.sh
+        bash /workspace/compat/x86_64/run_libc_fdim.sh
+        bash /workspace/compat/x86_64/run_libc_math_exp10.sh
+        bash /workspace/compat/x86_64/run_libc_math_exp10f.sh
+        bash /workspace/compat/x86_64/run_libc_math_long_double_completion.sh
+    '
+}
+
+run_loader_libc_tls_runtime_v1_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_loader_libc_tls_runtime_v1.sh
+}
+
+run_loader_libc_tls_runtime_v1_registry_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_loader_libc_tls_runtime_v1_registry.sh
+}
+
+run_loader_libc_general_tls_runtime_v1_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh
+}
+
+run_loader_libc_general_tls_runtime_v1_target_root_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh
 }
 
 run_ldso_initial_exec_tls_tests() {
@@ -4602,17 +4835,49 @@ command="$1"
 shift
 
 case "$command" in
+    campaign-status)
+        [ "$#" -eq 0 ] || fail "campaign-status takes no arguments"
+        python3 "$ROOT_DIR/compat/x86_64/campaign_report.py"
+        ;;
+    campaign-family)
+        [ "$#" -eq 1 ] || fail "campaign-family requires exactly one family id"
+        python3 "$ROOT_DIR/compat/x86_64/campaign_report.py" --family "$1"
+        ;;
+    campaign-static)
+        [ "$#" -eq 0 ] || fail "campaign-static takes no arguments"
+        python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" static
+        ;;
+    campaign-dynamic)
+        [ "$#" -eq 0 ] || fail "campaign-dynamic takes no arguments"
+        python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" dynamic
+        ;;
+    campaign-qualification)
+        [ "$#" -eq 0 ] || fail "campaign-qualification takes no arguments"
+        python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" qualification
+        ;;
+    campaign-promotion-check)
+        [ "$#" -eq 0 ] || fail "campaign-promotion-check takes no arguments"
+        python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" promotion-check
+        ;;
+    campaign-all)
+        [ "$#" -eq 0 ] || fail "campaign-all takes no arguments"
+        python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" all
+        ;;
     getloadavg-header-abi) ;;
     libc-getloadavg) ;;
     sleep-header-abi) ;;
     libc-sleep) ;;
     mq-setattr-header-abi|libc-mq-setattr) ;;
     timerfd-header-abi|signalfd-header-abi) ;;
-    usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality) ;;
+    signal-legacy-aliases-header-abi|libc-signal-legacy-aliases|signal-sysv-helpers-header-abi|libc-signal-sysv-helpers) ;;
+    psignal-header-abi|libc-psignal|libc-process-signal) ;;
+    resolver-runtime-header-abi|libc-resolver-runtime) ;;
+    legacy-misc-header-abi|libc-legacy-misc) ;;
+    usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
-    sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
-    ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
-    readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
+    sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
+    ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
     tee-header-abi|splice-header-abi) ;;
     sync-file-range-header-abi|copy-file-range-header-abi) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi|stdio-fixed-format-whitespace-scan-header-abi|stdio-fixed-literal-scan-header-abi|stdio-fixed-empty-format-scan-header-abi|stdio-fixed-suppressed-character-scan-header-abi|stdio-fixed-suppressed-string-scan-header-abi|stdio-fixed-suppressed-scanset-scan-header-abi|stdio-fixed-suppressed-count-scan-header-abi) ;;
@@ -4629,21 +4894,28 @@ case "$command" in
     stdio-permanent-fileno-header-abi) ;;
     stdio-permanent-fileno-unlocked-header-abi) ;;
     stdio-permanent-feof-unlocked-header-abi) ;;
+    stdio-permanent-ferror-unlocked-header-abi) ;;
     clock-adjtime-header-abi) ;;
     clock-settime-header-abi) ;;
     timer-getoverrun-header-abi) ;;
     timer-delete-header-abi) ;;
     timer-gettime-header-abi) ;;
     timer-settime-header-abi) ;;
+    fopen64-header-abi) ;;
     pthread-spin-destroy-header-abi) ;;
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail|pthread-spin-init-header-abi) ;;
+    sys-io-header-abi) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-general-initial-graph|ldso-general-initial-target-root|ldso-general-initial-tls|ldso-general-initial-tls-target-root|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail|pthread-spin-init-header-abi) ;;
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
     ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
     ldso-bounded-dlopen) ;;
+    loader-libc-tls-runtime-v1) ;;
+    loader-libc-tls-runtime-v1-registry) ;;
+    loader-libc-general-tls-runtime-v1) ;;
+    loader-libc-general-tls-runtime-v1-target-root) ;;
     math-special-header-abi|libc-math-special) ;;
     math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
-    inet-address-header-abi|nameser-header-abi|endservent-header-abi) ;;
+    inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi) ;;
     libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
@@ -4664,14 +4936,17 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-static-sysroot) ;;
+    owned-dynamic-sysroot) ;;
     crt-object-bundle) ;;
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     installed-header-tree-closure) ;;
+    header-callable-linkage-audit) ;;
     uapi-wrapper-matrix) ;;
     epoll-header-abi) ;;
     event-descriptors-header-abi) ;;
+    fanotify-header-abi) ;;
     dirent-header-abi) ;;
     pathname-lifecycle-header-abi) ;;
     timeval-transitive-header-abi) ;;
@@ -4682,9 +4957,10 @@ case "$command" in
     basename-header-abi|siginterrupt-header-abi|mlockall-header-abi|munlockall-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-basename|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-ftime|libc-clock-getcpuclockid) ;;
     umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi) ;;
-    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
+    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|crypt-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|wait-extensions-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
     posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi|posix-spawnattr-getschedpolicy-header-abi) ;;
     ffs-header-abi) ;;
+    memory-special-header-abi) ;;
     memccpy-header-abi) ;;
     aio-error-header-abi) ;;
     byte-strings-header-abi) ;;
@@ -4704,7 +4980,8 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
     libc-lchmod-unsupported) ;;
-    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
+    libc-fopen64-alias) ;;
+    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-affinity) ;;
     libc-pthread-cpuclock) ;;
@@ -4717,12 +4994,15 @@ case "$command" in
     libc-memory-locking) ;;
     libc-memfd-create) ;;
     libc-legacy-memory) ;;
+    libc-memory-special) ;;
     libc-memccpy) ;;
     libc-mempcpy) ;;
     libc-strsep) ;;
     libc-strtok) ;;
     libc-allocator-runtime) ;;
+    libc-allocator-basic-runtime-v1) ;;
     libc-allocator-string-duplication) ;;
+    libc-scandir) ;;
     libc-allocator-observability) ;;
     libc-alloca) ;;
     libc-static-c-abi-differential) ;;
@@ -4737,7 +5017,7 @@ case "$command" in
     libc-timer-settime) ;;
     libc-tee|libc-splice) ;;
     libc-sync-file-range|libc-copy-file-range) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-l64a|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -4802,6 +5082,11 @@ case "$command" in
         ensure_image
         run_installed_header_tree_closure
         ;;
+    header-callable-linkage-audit)
+        [ "$#" -eq 0 ] || fail "header-callable-linkage-audit takes no arguments"
+        ensure_image
+        run_header_callable_linkage_audit
+        ;;
     uapi-wrapper-matrix)
         [ "$#" -eq 0 ] || fail "uapi-wrapper-matrix takes no arguments"
         ensure_image
@@ -4817,6 +5102,11 @@ case "$command" in
         ensure_image
         run_event_descriptors_header_abi
         ;;
+    fanotify-header-abi)
+        [ "$#" -eq 0 ] || fail "fanotify-header-abi takes no arguments"
+        ensure_image
+        run_fanotify_header_abi
+        ;;
     dirent-header-abi)
         [ "$#" -eq 0 ] || fail "dirent-header-abi takes no arguments"
         ensure_image
@@ -4831,6 +5121,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ioctl-header-abi takes no arguments"
         ensure_image
         run_ioctl_header_abi
+        ;;
+    sys-io-header-abi)
+        [ "$#" -eq 0 ] || fail "sys-io-header-abi takes no arguments"
+        ensure_image
+        run_sys_io_header_abi
         ;;
     timeval-transitive-header-abi)
         [ "$#" -eq 0 ] || fail "timeval-transitive-header-abi takes no arguments"
@@ -4947,6 +5242,11 @@ case "$command" in
         ensure_image
         run_stdio_standard_header_abi
         ;;
+    fopen64-header-abi)
+        [ "$#" -eq 0 ] || fail "fopen64-header-abi takes no arguments"
+        ensure_image
+        run_fopen64_header_abi
+        ;;
     stdio-permanent-line-io-header-abi)
         [ "$#" -eq 0 ] || fail "stdio-permanent-line-io-header-abi takes no arguments"
         ensure_image
@@ -5057,6 +5357,11 @@ case "$command" in
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_feof_unlocked_header_abi.sh
         ;;
+    stdio-permanent-ferror-unlocked-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-permanent-ferror-unlocked-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_ferror_unlocked_header_abi.sh
+        ;;
     ctype-header-abi)
         [ "$#" -eq 0 ] || fail "ctype-header-abi takes no arguments"
         ensure_image
@@ -5107,6 +5412,11 @@ case "$command" in
         ensure_image
         run_float_parse_header_abi
         ;;
+    crypt-header-abi)
+        [ "$#" -eq 0 ] || fail "crypt-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_crypt_header_abi.sh
+        ;;
     getsubopt-header-abi)
         [ "$#" -eq 0 ] || fail "getsubopt-header-abi takes no arguments"
         ensure_image
@@ -5141,6 +5451,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "child-reaping-header-abi takes no arguments"
         ensure_image
         run_child_reaping_header_abi
+        ;;
+    wait-extensions-header-abi)
+        [ "$#" -eq 0 ] || fail "wait-extensions-header-abi takes no arguments"
+        ensure_image
+        run_wait_extensions_header_abi
         ;;
     immediate-termination-header-abi)
         [ "$#" -eq 0 ] || fail "immediate-termination-header-abi takes no arguments"
@@ -5202,6 +5517,11 @@ case "$command" in
         ensure_image
         run_sched_cpucount_header_abi
         ;;
+    sched-cpu-macros-header-abi)
+        [ "$#" -eq 0 ] || fail "sched-cpu-macros-header-abi takes no arguments"
+        ensure_image
+        run_sched_cpu_macros_header_abi
+        ;;
     sched-getcpu-header-abi)
         [ "$#" -eq 0 ] || fail "sched-getcpu-header-abi takes no arguments"
         ensure_image
@@ -5231,6 +5551,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ffs-header-abi takes no arguments"
         ensure_image
         run_ffs_header_abi
+        ;;
+    memory-special-header-abi)
+        [ "$#" -eq 0 ] || fail "memory-special-header-abi takes no arguments"
+        ensure_image
+        run_memory_special_header_abi
         ;;
     memccpy-header-abi)
         [ "$#" -eq 0 ] || fail "memccpy-header-abi takes no arguments"
@@ -5422,10 +5747,30 @@ case "$command" in
         ensure_image
         run_signal_header_abi
         ;;
+    psignal-header-abi)
+        [ "$#" -eq 0 ] || fail "psignal-header-abi takes no arguments"
+        ensure_image
+        run_psignal_header_abi
+        ;;
+    signal-legacy-aliases-header-abi)
+        [ "$#" -eq 0 ] || fail "signal-legacy-aliases-header-abi takes no arguments"
+        ensure_image
+        run_signal_legacy_aliases_header_abi
+        ;;
+    signal-sysv-helpers-header-abi)
+        [ "$#" -eq 0 ] || fail "signal-sysv-helpers-header-abi takes no arguments"
+        ensure_image
+        run_signal_sysv_helpers_header_abi
+        ;;
     sched-getscheduler-header-abi)
         [ "$#" -eq 0 ] || fail "sched-getscheduler-header-abi takes no arguments"
         ensure_image
         run_sched_getscheduler_header_abi
+        ;;
+    sched-rr-interval-header-abi)
+        [ "$#" -eq 0 ] || fail "sched-rr-interval-header-abi takes no arguments"
+        ensure_image
+        run_sched_rr_interval_header_abi
         ;;
     termios-header-abi)
         [ "$#" -eq 0 ] || fail "termios-header-abi takes no arguments"
@@ -5451,6 +5796,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "gethostid-header-abi takes no arguments"
         ensure_image
         run_gethostid_header_abi
+        ;;
+    issetugid-header-abi)
+        [ "$#" -eq 0 ] || fail "issetugid-header-abi takes no arguments"
+        ensure_image
+        run_issetugid_header_abi
+        ;;
+    legacy-misc-header-abi)
+        [ "$#" -eq 0 ] || fail "legacy-misc-header-abi takes no arguments"
+        ensure_image
+        run_legacy_misc_header_abi
         ;;
     endhostent-header-abi)
         [ "$#" -eq 0 ] || fail "endhostent-header-abi takes no arguments"
@@ -5512,6 +5867,11 @@ case "$command" in
         ensure_image
         run_linkat_header_abi
         ;;
+    renameat2-header-abi)
+        [ "$#" -eq 0 ] || fail "renameat2-header-abi takes no arguments"
+        ensure_image
+        run_renameat2_header_abi
+        ;;
     lchown-header-abi)
         [ "$#" -eq 0 ] || fail "lchown-header-abi takes no arguments"
         ensure_image
@@ -5571,6 +5931,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "nameser-header-abi takes no arguments"
         ensure_image
         run_nameser_header_abi
+        ;;
+    quota-header-abi)
+        [ "$#" -eq 0 ] || fail "quota-header-abi takes no arguments"
+        ensure_image
+        run_quota_header_abi
         ;;
     endservent-header-abi)
         [ "$#" -eq 0 ] || fail "endservent-header-abi takes no arguments"
@@ -6096,6 +6461,16 @@ case "$command" in
         ensure_image
         run_libc_signal_control_probe
         ;;
+    libc-signal-legacy-aliases)
+        [ "$#" -eq 0 ] || fail "libc-signal-legacy-aliases takes no arguments"
+        ensure_image
+        run_libc_signal_legacy_aliases_probe
+        ;;
+    libc-signal-sysv-helpers)
+        [ "$#" -eq 0 ] || fail "libc-signal-sysv-helpers takes no arguments"
+        ensure_image
+        run_libc_signal_sysv_helpers_probe
+        ;;
     libc-signal-execution)
         [ "$#" -eq 0 ] || fail "libc-signal-execution takes no arguments"
         ensure_image
@@ -6105,6 +6480,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-signal-altstack takes no arguments"
         ensure_image
         run_libc_signal_altstack_probe
+        ;;
+    libc-psignal)
+        [ "$#" -eq 0 ] || fail "libc-psignal takes no arguments"
+        ensure_image
+        run_libc_psignal_probe
+        ;;
+    libc-process-signal)
+        [ "$#" -eq 0 ] || fail "libc-process-signal takes no arguments"
+        ensure_image
+        run_libc_process_signal_probe
         ;;
     libc-pthread-create-join-tls)
         [ "$#" -eq 0 ] || fail "libc-pthread-create-join-tls takes no arguments"
@@ -6281,6 +6666,11 @@ case "$command" in
         ensure_image
         run_owned_static_sysroot_probe
         ;;
+    owned-dynamic-sysroot)
+        [ "$#" -eq 0 ] || fail "owned-dynamic-sysroot takes no arguments"
+        ensure_image
+        run_owned_dynamic_sysroot_probe
+        ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"
         ensure_image
@@ -6331,10 +6721,25 @@ case "$command" in
         ensure_image
         run_libc_gethostid_probe
         ;;
+    libc-issetugid)
+        [ "$#" -eq 0 ] || fail "libc-issetugid takes no arguments"
+        ensure_image
+        run_libc_issetugid_probe
+        ;;
+    libc-legacy-misc)
+        [ "$#" -eq 0 ] || fail "libc-legacy-misc takes no arguments"
+        ensure_image
+        run_libc_legacy_misc_probe
+        ;;
     libc-endhostent)
         [ "$#" -eq 0 ] || fail "libc-endhostent takes no arguments"
         ensure_image
         run_libc_endhostent_probe
+        ;;
+    libc-sethostent)
+        [ "$#" -eq 0 ] || fail "libc-sethostent takes no arguments"
+        ensure_image
+        run_libc_sethostent_probe
         ;;
     libc-gettid)
         [ "$#" -eq 0 ] || fail "libc-gettid takes no arguments"
@@ -6390,6 +6795,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-linkat takes no arguments"
         ensure_image
         run_libc_linkat_probe
+        ;;
+    libc-renameat2)
+        [ "$#" -eq 0 ] || fail "libc-renameat2 takes no arguments"
+        ensure_image
+        run_libc_renameat2_probe
         ;;
     libc-lchown)
         [ "$#" -eq 0 ] || fail "libc-lchown takes no arguments"
@@ -6671,10 +7081,20 @@ case "$command" in
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_getsubopt.sh
         ;;
+    libc-crypt)
+        [ "$#" -eq 0 ] || fail "libc-crypt takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_crypt.sh
+        ;;
     libc-l64a)
         [ "$#" -eq 0 ] || fail "libc-l64a takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_l64a.sh
+        ;;
+    libc-a64l)
+        [ "$#" -eq 0 ] || fail "libc-a64l takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_a64l.sh
         ;;
     libc-stdio-standard)
         [ "$#" -eq 0 ] || fail "libc-stdio-standard takes no arguments"
@@ -6820,10 +7240,20 @@ case "$command" in
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_stdio_permanent_feof_unlocked.sh
         ;;
+    libc-stdio-permanent-ferror-unlocked)
+        [ "$#" -eq 0 ] || fail "libc-stdio-permanent-ferror-unlocked takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_permanent_ferror_unlocked.sh
+        ;;
     libc-stdio-path-stream)
         [ "$#" -eq 0 ] || fail "libc-stdio-path-stream takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_stdio_path_stream.sh
+        ;;
+    libc-fopen64-alias)
+        [ "$#" -eq 0 ] || fail "libc-fopen64-alias takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_fopen64_alias.sh
         ;;
     libc-stdio-tmpfile)
         [ "$#" -eq 0 ] || fail "libc-stdio-tmpfile takes no arguments"
@@ -6844,6 +7274,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-child-reaping takes no arguments"
         ensure_image
         run_libc_child_reaping
+        ;;
+    libc-wait-extensions)
+        [ "$#" -eq 0 ] || fail "libc-wait-extensions takes no arguments"
+        ensure_image
+        run_libc_wait_extensions
         ;;
     libc-immediate-termination)
         [ "$#" -eq 0 ] || fail "libc-immediate-termination takes no arguments"
@@ -7010,10 +7445,20 @@ case "$command" in
         ensure_image
         run_libc_allocator_runtime
         ;;
+    libc-allocator-basic-runtime-v1)
+        [ "$#" -eq 0 ] || fail "libc-allocator-basic-runtime-v1 takes no arguments"
+        ensure_image
+        run_libc_allocator_basic_runtime_v1
+        ;;
     libc-allocator-string-duplication)
         [ "$#" -eq 0 ] || fail "libc-allocator-string-duplication takes no arguments"
         ensure_image
         run_libc_allocator_string_duplication
+        ;;
+    libc-scandir)
+        [ "$#" -eq 0 ] || fail "libc-scandir takes no arguments"
+        ensure_image
+        run_libc_scandir
         ;;
     libc-allocator-observability)
         [ "$#" -eq 0 ] || fail "libc-allocator-observability takes no arguments"
@@ -7145,6 +7590,11 @@ case "$command" in
         ensure_image
         run_libc_sched_getscheduler_probe
         ;;
+    libc-sched-rr-interval)
+        [ "$#" -eq 0 ] || fail "libc-sched-rr-interval takes no arguments"
+        ensure_image
+        run_libc_sched_rr_interval_probe
+        ;;
     libc-alarm)
         [ "$#" -eq 0 ] || fail "libc-alarm takes no arguments"
         ensure_image
@@ -7249,6 +7699,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-ffs takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_ffs.sh
+        ;;
+    libc-memory-special)
+        [ "$#" -eq 0 ] || fail "libc-memory-special takes no arguments"
+        ensure_image
+        run_libc_memory_special_probe
         ;;
     libc-memccpy)
         [ "$#" -eq 0 ] || fail "libc-memccpy takes no arguments"
@@ -7379,6 +7834,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-numeric-netdb takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_numeric_netdb.sh
+        ;;
+    libc-resolver-runtime)
+        [ "$#" -eq 0 ] || fail "libc-resolver-runtime takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_resolver_runtime.sh
         ;;
     libc-interface-discovery)
         [ "$#" -eq 0 ] || fail "libc-interface-discovery takes no arguments"
@@ -7570,6 +8030,26 @@ case "$command" in
         ensure_image
         run_ldso_initial_graph_tests
         ;;
+    ldso-general-initial-graph)
+        [ "$#" -eq 0 ] || fail "ldso-general-initial-graph takes no arguments"
+        ensure_image
+        run_ldso_general_initial_graph_tests
+        ;;
+    ldso-general-initial-target-root)
+        [ "$#" -eq 0 ] || fail "ldso-general-initial-target-root takes no arguments"
+        ensure_image
+        run_ldso_general_initial_graph_target_root_tests
+        ;;
+    ldso-general-initial-tls)
+        [ "$#" -eq 0 ] || fail "ldso-general-initial-tls takes no arguments"
+        ensure_image
+        run_ldso_general_initial_tls_tests
+        ;;
+    ldso-general-initial-tls-target-root)
+        [ "$#" -eq 0 ] || fail "ldso-general-initial-tls-target-root takes no arguments"
+        ensure_image
+        run_ldso_general_initial_tls_target_root_tests
+        ;;
     ldso-target-root)
         [ "$#" -eq 0 ] || fail "ldso-target-root takes no arguments"
         ensure_image
@@ -7579,6 +8059,36 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ldso-initial-tls takes no arguments"
         ensure_image
         run_ldso_initial_tls_tests
+        ;;
+    libc-math-long-double-completion)
+        [ "$#" -eq 0 ] || fail "libc-math-long-double-completion takes no arguments"
+        ensure_image
+        run_libc_math_long_double_completion_tests
+        ;;
+    libc-math-elementary-fenv-sensitive)
+        [ "$#" -eq 0 ] || fail "libc-math-elementary-fenv-sensitive takes no arguments"
+        ensure_image
+        run_libc_math_elementary_fenv_sensitive_tests
+        ;;
+    loader-libc-tls-runtime-v1)
+        [ "$#" -eq 0 ] || fail "loader-libc-tls-runtime-v1 takes no arguments"
+        ensure_image
+        run_loader_libc_tls_runtime_v1_tests
+        ;;
+    loader-libc-tls-runtime-v1-registry)
+        [ "$#" -eq 0 ] || fail "loader-libc-tls-runtime-v1-registry takes no arguments"
+        ensure_image
+        run_loader_libc_tls_runtime_v1_registry_tests
+        ;;
+    loader-libc-general-tls-runtime-v1)
+        [ "$#" -eq 0 ] || fail "loader-libc-general-tls-runtime-v1 takes no arguments"
+        ensure_image
+        run_loader_libc_general_tls_runtime_v1_tests
+        ;;
+    loader-libc-general-tls-runtime-v1-target-root)
+        [ "$#" -eq 0 ] || fail "loader-libc-general-tls-runtime-v1-target-root takes no arguments"
+        ensure_image
+        run_loader_libc_general_tls_runtime_v1_target_root_tests
         ;;
     ldso-initial-exec-tls)
         [ "$#" -eq 0 ] || fail "ldso-initial-exec-tls takes no arguments"
@@ -7780,6 +8290,11 @@ case "$command" in
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_res_init_header_abi.sh
         ;;
+    resolver-runtime-header-abi)
+        [ "$#" -eq 0 ] || fail "resolver-runtime-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_resolver_runtime_header_abi.sh
+        ;;
     c32rtomb-header-abi)
         [ "$#" -eq 0 ] || fail "c32rtomb-header-abi takes no arguments"
         ensure_image
@@ -7979,6 +8494,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-ns-skiprr takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_ns_skiprr.sh
+        ;;
+    libc-io-permissions)
+        [ "$#" -eq 0 ] || fail "libc-io-permissions takes no arguments"
+        ensure_image
+        run_libc_io_permissions_probe
         ;;
     libc-personality)
         [ "$#" -eq 0 ] || fail "libc-personality takes no arguments"

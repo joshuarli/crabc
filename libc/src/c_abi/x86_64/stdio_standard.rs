@@ -5,8 +5,8 @@
 //! fixed pathname/tmpfile stream slot. The permanent streams expose their selected
 //! byte/block operations: `fgetc`/`getc`/`getchar`, `ungetc`, `fread`,
 //! `fputc`/`putc`/`putchar`, `fwrite`, `fflush`, `feof`, `ferror`,
-//! `clearerr`, `fileno`, and GNU/BSD-only `fileno_unlocked` plus
-//! `feof_unlocked`. A separate
+//! `clearerr`, `fileno`, and GNU/BSD-only `fileno_unlocked`, `feof_unlocked`,
+//! and `ferror_unlocked`. A separate
 //! permanent-only line-I/O leaf adds
 //! `fgets`, `fputs`, and `puts`; it deliberately does not admit the fixed
 //! pathname/tmpfile slot. The only valid non-null `FILE *` arguments for that
@@ -18,9 +18,10 @@
 //! its `fgetc` calls create EOF and descriptor-error markers solely as setup
 //! for `feof`/`ferror`/`clearerr` zero-versus-nonzero transitions, without
 //! selecting byte I/O, pathname state, musl locks, or a general `FILE` model.
-//! Its GNU/BSD `feof_unlocked` sibling preserves musl's weak, same-address
-//! alias of `feof` for permanent `stdin` observation only. The alias is not a
-//! lock-free claim and does not select other status aliases or `FILE` state.
+//! Its GNU/BSD `feof_unlocked` and `ferror_unlocked` siblings preserve musl's
+//! weak, same-address aliases of `feof` and `ferror` for permanent `stdin`
+//! observation only. The aliases are not a lock-free claim and do not select
+//! the remaining status aliases or `FILE` state.
 //! The focused permanent-fileno evidence leaf reads only the three permanent
 //! descriptor adapters and their fixed `0`/`1`/`2` numbers; it neither opens,
 //! mutates, nor claims a pathname stream or arbitrary `FILE` behavior.
@@ -59,8 +60,8 @@
 //! `fseek`/`fseeko`/`ftell`/`ftello`/`rewind`/`fgetpos`/`fsetpos` routes. It is
 //! a deliberately lock-free, externally-serialized state machine: it does
 //! not select concurrent stream access, `flockfile`, unlocked entry points
-//! other than the separately selected GNU/BSD `fileno_unlocked` and
-//! `feof_unlocked` aliases,
+//! other than the separately selected GNU/BSD `fileno_unlocked`,
+//! `feof_unlocked`, and `ferror_unlocked` aliases,
 //! `fdopen`, `freopen`, append modes, dynamic stream allocation, a general
 //! stream registry, formatters/scanners, line or unbuffered configuration,
 //! wide streams, callbacks, memory/tmp/popen streams other than this single
@@ -84,7 +85,7 @@
 //! | `src/stdio/{fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c` | selected permanent-byte entries; focused evidence calls only the three permanent objects |
 //! | `src/stdio/{fread,fwrite}.c` | selected public block entries |
 //! | `src/stdio/{fgets,fputs,puts}.c` | selected permanent-standard-stream line I/O |
-//! | `src/stdio/{feof,ferror,clearerr}.c` | selected permanent-status predicates and marker reset; focused evidence observes only stdin; `feof_unlocked` is musl's weak same-address alias of `feof` |
+//! | `src/stdio/{feof,ferror,clearerr}.c` | selected permanent-status predicates and marker reset; focused evidence observes only stdin; `feof_unlocked` and `ferror_unlocked` are musl's weak same-address aliases of `feof` and `ferror` |
 //! | `src/stdio/fileno.c` | selected descriptor adapter plus musl-shaped weak `fileno_unlocked` alias; focused evidence observes only permanent stdin/stdout/stderr |
 //! | `src/stdio/ext.c` | private `__freading(stdin)` direction, `__fsetlocking(stdin, request)` no-op, `__freadable(stdin)` access, `__fwritable(stderr)` access, `__fbufsize(stderr)` fixed-capacity, and `__flbf(stderr)` fixed-line-buffer observations; no general FILE, lock, input, output, or buffering contract |
 //! | `src/stdio/fflush.c` | selected explicit-flush entry |
@@ -1478,6 +1479,19 @@ pub unsafe extern "C" fn ferror(stream: *mut StandardStream) -> c_int {
     unsafe { ((*stream).flags & F_ERR) as c_int }
 }
 
+// Pinned musl `src/stdio/ferror.c` uses `weak_alias(ferror, ferror_unlocked)`
+// and separately aliases `_IO_ferror_unlocked`. Preserve only the selected
+// GNU/BSD public spelling as an assembler alias so it remains weak and has the
+// exact same ELF address as the existing strong `ferror`; a Rust forwarding
+// wrapper would create a second address. The permanent-stream observation is
+// externally serialized, so this conventional unlocked spelling does not make
+// a lock-free or arbitrary-`FILE` boundary. `_IO_ferror_unlocked` remains
+// deliberately unselected.
+core::arch::global_asm!(
+    ".weak ferror_unlocked",
+    ".set ferror_unlocked, ferror",
+);
+
 /// Clear EOF and error markers on one selected stream.
 ///
 /// # Safety
@@ -1510,6 +1524,9 @@ pub unsafe extern "C" fn clearerr(stream: *mut StandardStream) {
 /// `O_RDONLY|O_LARGEFILE`. The one static slot is intentionally not a stream
 /// allocator: a second live path stream fails with `EMFILE`. Pathname lifetime,
 /// resolution races, umask, and special-file behavior remain Linux-owned.
+/// Linux LP64 `<stdio.h>` resolves `fopen64` to this spelling only when
+/// `_LARGEFILE64_SOURCE` is requested; the x86 archive intentionally emits no
+/// separate `fopen64` ELF entry.
 ///
 /// # Safety
 ///

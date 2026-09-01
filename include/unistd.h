@@ -376,6 +376,7 @@ int vhangup(void);
 #endif
 char *getcwd(char *, size_t);
 int gethostname(char *, size_t);
+char *ctermid(char *);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int getpagesize(void);
 #endif
@@ -424,8 +425,8 @@ int setpgid(pid_t, pid_t);
 pid_t getpgid(pid_t);
 pid_t getsid(pid_t);
 pid_t getpgrp(void);
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
-int setpgrp(void);
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+pid_t setpgrp(void);
 #endif
 int mkdir(const char *, unsigned int);
 

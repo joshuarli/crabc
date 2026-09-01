@@ -139,13 +139,14 @@ done
 "$ORACLE_CC" -std=c11 -DCRABC_LINKAT_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections \
     compat/x86_64/libc_linkat_probe.c compat/x86_64/libc_linkat_start.S \
     "$archive" -o "$candidate"
 assert_static_closure "$candidate"
 
 if grep -Eq '[[:space:]](link|symlink|symlinkat|readlink|readlinkat|unlink|unlinkat|rename|renameat|renameat2|mkdir|mkdirat)$' \
     "$work_dir/candidate-symbols"; then
-    fail "linkat candidate exports an unselected pathname entry"
+    fail "linkat candidate unexpectedly pulls independently selected pathname entry"
 fi
 objdump -d --disassemble=linkat "$candidate" >"$linkat_disassembly"
 grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$linkat_disassembly" ||
@@ -158,7 +159,7 @@ grep -Eq '%r8' "$linkat_disassembly" ||
     fail "linkat lacks the Linux fifth-word r8 transfer"
 if grep -Eq 'call.*(link|symlink|symlinkat|readlink|readlinkat|unlink|unlinkat|rename|renameat|renameat2|mkdir|mkdirat)' \
     "$linkat_disassembly"; then
-    fail "linkat delegates to an unselected C entry"
+    fail "linkat delegates to an unrelated C entry"
 fi
 
 (cd "$candidate_work" && "$candidate") ||

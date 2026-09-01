@@ -45,6 +45,53 @@ _Static_assert(sizeof(struct sockaddr_in6) == 28 &&
 _Static_assert(sizeof(struct in6_addr) == 16 && _Alignof(struct in6_addr) == 4 &&
     offsetof(struct in6_addr, s6_addr) == 0,
     "x86 in6_addr layout");
+#ifndef IP_MSFILTER_SIZE
+#error "GNU/BSD ip_msfilter size macro is missing"
+#endif
+#ifndef GROUP_FILTER_SIZE
+#error "GNU/BSD group_filter size macro is missing"
+#endif
+_Static_assert(sizeof(struct ip_msfilter) == 20 &&
+    _Alignof(struct ip_msfilter) == 4 &&
+    offsetof(struct ip_msfilter, imsf_multiaddr) == 0 &&
+    offsetof(struct ip_msfilter, imsf_interface) == 4 &&
+    offsetof(struct ip_msfilter, imsf_fmode) == 8 &&
+    offsetof(struct ip_msfilter, imsf_numsrc) == 12 &&
+    offsetof(struct ip_msfilter, imsf_slist) == 16,
+    "x86 ip_msfilter layout");
+_Static_assert(sizeof(struct group_filter) == 272 &&
+    _Alignof(struct group_filter) == 8 &&
+    offsetof(struct group_filter, gf_interface) == 0 &&
+    offsetof(struct group_filter, gf_group) == 8 &&
+    offsetof(struct group_filter, gf_fmode) == 136 &&
+    offsetof(struct group_filter, gf_numsrc) == 140 &&
+    offsetof(struct group_filter, gf_slist) == 144,
+    "x86 group_filter layout");
+_Static_assert(IP_MSFILTER_SIZE(0) == 16 && IP_MSFILTER_SIZE(1) == 20 &&
+    IP_MSFILTER_SIZE(2) == 24,
+    "ip_msfilter size formula");
+_Static_assert(GROUP_FILTER_SIZE(0) == 144 && GROUP_FILTER_SIZE(1) == 272 &&
+    GROUP_FILTER_SIZE(2) == 400,
+    "group_filter size formula");
+_Static_assert(__builtin_types_compatible_p(__typeof__(IP_MSFILTER_SIZE(0)),
+    size_t), "ip_msfilter size result type");
+_Static_assert(__builtin_types_compatible_p(__typeof__(GROUP_FILTER_SIZE(0)),
+    size_t), "group_filter size result type");
+_Static_assert(__builtin_types_compatible_p(__typeof__(
+    __ARE_4_EQUAL((const uint32_t *)0, (const uint32_t *)0)), int),
+    "four-word equality result type");
+_Static_assert(__builtin_types_compatible_p(__typeof__(
+    IN6_ARE_ADDR_EQUAL((const struct in6_addr *)0,
+        (const struct in6_addr *)0)), int),
+    "IPv6 equality result type");
+_Static_assert(IN_CLASSA(0x7fffffffU) && !IN_CLASSA(0x80000000U) &&
+    IN_CLASSB(0x80000000U) && !IN_CLASSB(0xc0000000U) &&
+    IN_CLASSC(0xc0000000U) && !IN_CLASSC(0xe0000000U) &&
+    IN_CLASSD(0xe0000000U) && !IN_CLASSD(0xf0000000U) &&
+    IN_MULTICAST(0xe0000000U) == IN_CLASSD(0xe0000000U) &&
+    IN_EXPERIMENTAL(0xe0000000U) && IN_EXPERIMENTAL(0xf0000000U) &&
+    IN_BADCLASS(0xf0000000U) && !IN_BADCLASS(0xe0000000U),
+    "IPv4 class macro boundaries");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&in6addr_any),
     const struct in6_addr *), "in6addr_any declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&in6addr_loopback),

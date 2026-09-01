@@ -1,0 +1,160 @@
+# This is the planned campaign-level owned-dynamic product contract. It is a
+# fail-closed integration seed, not evidence that `sysroot.owned-artifact`,
+# any prerequisite family, or Linux/x86-64 public support has completed.
+schema = "crabc.x86_64-owned-dynamic-product/v1"
+owner_family = "sysroot.owned-artifact"
+status = "planned"
+dynamic_family_ids = ["ldso.dynamic-runtime", "crt.dynamic-startup", "sysroot.owned-artifact"]
+prerequisite_families = ["ldso.dynamic-runtime", "crt.dynamic-startup", "sysroot.static-tls"]
+
+[product]
+target = "x86_64-unknown-linux-musl"
+source = "materialized installed crabc x86-64 sysroot"
+link_interface = "deterministic owned dynamic link interface"
+required_target_inputs = [
+  "installed crabc headers",
+  "crt1.o",
+  "Scrt1.o",
+  "crti.o",
+  "crtn.o",
+  "libc.so",
+  "installed crabc interpreter",
+  "compatibility interpreter alias",
+  "libcrabc-builtins.a",
+  "accepted allocator backend",
+  "explicitly admitted application and DSO objects",
+]
+rejected_ambient_target_inputs = [
+  "headers",
+  "CRT",
+  "libc",
+  "libgcc",
+  "compiler-rt",
+  "loader",
+  "undeclared DSO search paths",
+]
+
+[layout]
+driver = "bin/crabc-cc-dynamic"
+installed_manifest = "share/crabc/manifest.json"
+dynamic_product_state = "share/crabc/dynamic-product-state.json"
+canonical_interpreter = "/lib/ld-crabc-x86_64.so.1"
+canonical_interpreter_file = "lib/ld-crabc-x86_64.so.1"
+compatibility_interpreter_alias = "lib/ld-musl-x86_64.so.1"
+compatibility_alias_target = "ld-crabc-x86_64.so.1"
+shared_libc = "usr/lib/libc.so"
+
+[[mode]]
+id = "dynamic-pie"
+link_kind = "executable"
+elf_type = "ET_DYN"
+crt_object = "Scrt1.o"
+compiler_flag = "-fPIE"
+interpreter = "/lib/ld-crabc-x86_64.so.1"
+
+[[mode]]
+id = "dynamic-non-pie"
+link_kind = "executable"
+elf_type = "ET_EXEC"
+crt_object = "crt1.o"
+compiler_flag = "-fno-pie"
+interpreter = "/lib/ld-crabc-x86_64.so.1"
+
+[[mode]]
+id = "dynamic-shared-object"
+link_kind = "shared-object"
+elf_type = "ET_DYN"
+crt_object = "none"
+compiler_flag = "-fPIC"
+interpreter = "absent"
+
+[link_plan]
+linker = "ld.lld"
+executable_required = [
+  "canonical PT_INTERP",
+  "selected installed executable CRT",
+  "installed crti.o and crtn.o",
+  "exact installed libc.so",
+  "exact installed libcrabc-builtins.a",
+  "explicitly declared application DSOs only",
+  "relro now and non-executable stack",
+  "no ambient target search path or linker override",
+]
+shared_object_required = [
+  "installed crti.o and crtn.o",
+  "exact installed libc.so when the DSO declares it",
+  "exact installed libcrabc-builtins.a when required",
+  "no PT_INTERP",
+  "relro now and non-executable stack",
+  "no ambient target search path or linker override",
+]
+
+[purity]
+source_translator = "pinned development environment only"
+target_headers_crt_libraries_loader_and_link_decisions = "installed crabc artifact only"
+ambient_target_runtime_fallback = "forbidden"
+oracle_execution = "separate pinned-musl process only"
+
+[inspections]
+required = [
+  "link trace",
+  "link map",
+  "ELF headers",
+  "program headers",
+  "dynamic section",
+  "relocations",
+  "symbol ownership",
+  "TLS segments",
+  "stack flags",
+  "RELRO",
+  "interpreter and compatibility alias",
+  "DT_NEEDED and declared DSO search paths",
+]
+before_execution = "reject ambient libc loader CRT libgcc compiler-rt target headers and undeclared DSO search paths before executing the fixture"
+
+[reproducibility]
+clean_installed_builds = 2
+artifact_set = "declared regular-file installed dynamic artifact set"
+comparison = "byte-for-byte identical"
+suite = "same declared dynamic smoke suite"
+
+[extracted_smoke]
+source = "one extracted packaged installed sysroot"
+suite = "same declared dynamic smoke suite"
+
+[oracle]
+reference = "pinned musl 1.2.6"
+execution = "separate process"
+candidate_fallback = "forbidden"
+
+[coverage]
+required = [
+  "installed main program initially loaded dependency graph and runtime-loaded plugin",
+  "installed interpreter path and compatibility alias",
+  "shared-libc loading and loader-to-libc RuntimeV1 handoff",
+  "dependency search repeated dependencies symbol scope weak global protected behavior and selected relocations",
+  "main dependency and plugin constructors destructors process finalization dlclose finalization and unmapping",
+  "dlopen dlsym dlclose dlerror dladdr dlinfo and dl_iterate_phdr behavior",
+  "initial-exec and general-dynamic TLS in initially loaded and runtime-loaded DSOs",
+  "DTV growth before and after worker creation",
+  "allocator errno stdio pthread/TSD signal and exit interaction across DSO boundaries",
+  "concurrent open lookup close callback execution and admitted loader reentrancy",
+  "fork child repair where selected",
+  "clean failure for malformed unsupported missing stale and cyclic selected-profile inputs",
+]
+
+[non_promotion]
+status = "planned-owned-dynamic-product-seed-not-family-completion-not-public-support"
+driver_execution = "plan-only"
+family_completion = false
+promotion_ready = false
+public_support = false
+not_proven = [
+  "installed dynamic sysroot materialization",
+  "general loader behavior",
+  "dynamic CRT handoff and lifecycle",
+  "declared dynamic smoke suite",
+  "two-clean-build and extracted-install dynamic reproducibility",
+  "sysroot.owned-artifact family completion",
+  "x86-64 promotion or public support",
+]

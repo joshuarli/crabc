@@ -151,9 +151,9 @@ for symbol in __errno_location open openat creat; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in openat2 open_by_handle_at preadv2 pwritev2 splice vmsplice \
-    tee copy_file_range close_range \
-    _Fork vfork clone execve gettid syscall \
+for unselected in openat2 open_by_handle_at preadv2 pwritev2 vmsplice \
+    close_range \
+    _Fork vfork clone execve syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -170,7 +170,7 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_DESCRIPTOR_ENTRY_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_descriptor_entry_probe.c \
+    -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_descriptor_entry_probe.c \
     compat/x86_64/libc_descriptor_entry_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -181,6 +181,11 @@ objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location open openat creat; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
+done
+for unselected in splice tee copy_file_range; do
+    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
+        fail "candidate unexpectedly pulls independently selected transfer ${unselected}"
+    fi
 done
 if grep -Eq '[[:space:]]fcntl$' "$candidate_symbols"; then
     fail "candidate does not define public fcntl"

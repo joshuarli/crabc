@@ -8,6 +8,8 @@
 
 #include <stddef.h>
 #include <string.h>
+/* Match the consumer-provided builtin spelling needed by the C macro use. */
+#include <alloca.h>
 
 using copy_signature = char *(*)(char *, const char *);
 using bounded_copy_signature = char *(*)(char *, const char *, size_t);
@@ -29,6 +31,29 @@ static_assert(__is_same(decltype(&strlcpy), sized_copy_signature),
               "strlcpy declaration");
 static_assert(__is_same(decltype(&strlcat), sized_copy_signature),
               "strlcat declaration");
+
+#if defined(CRABC_EXPECT_STRDUPA)
+#ifndef strdupa
+#error "GNU/compiler-native C++ <string.h> must expose strdupa"
+#endif
+#endif
+
+#if defined(CRABC_REQUIRE_STRDUPA_HIDDEN)
+#ifdef strdupa
+#error "non-GNU C <string.h> must hide strdupa"
+#endif
+#endif
+
+/*
+ * Exact musl syntax stays visible to C++ but cannot expand: alloca returns
+ * void *, while C++ strcpy requires char *. The runner requires this failure.
+ */
+#if defined(CRABC_REQUIRE_STRDUPA_CPP_EXPANSION_REJECTED)
+static char *strdupa_cpp_expansion_must_be_rejected()
+{
+    return strdupa("stack copy");
+}
+#endif
 
 int crabc_x86_64_string_copy_header_abi_probe_cpp()
 {

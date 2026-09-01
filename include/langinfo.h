@@ -7,11 +7,8 @@ extern "C" {
 
 #include <features.h>
 
-#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
- || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define __NEED_locale_t
 #include <bits/alltypes.h>
-#endif
 
 typedef int nl_item;
 
@@ -91,10 +88,7 @@ typedef int nl_item;
 #endif
 
 char *nl_langinfo(int);
-#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
- || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 char *nl_langinfo_l(nl_item, locale_t);
-#endif
 
 #ifdef __cplusplus
 }

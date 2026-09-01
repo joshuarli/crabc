@@ -10,6 +10,22 @@
 #include <string.h>
 #include <strings.h>
 
+#if defined(CRABC_REQUIRE_STRICT_STRING_LOCALE)
+typedef int (*strict_compare_l_signature)(const char *, const char *, locale_t);
+typedef int (*strict_ncompare_l_signature)(const char *, const char *, size_t, locale_t);
+
+_Static_assert(sizeof(locale_t) == sizeof(void *) &&
+    _Alignof(locale_t) == _Alignof(void *), "strict locale_t pointer ABI");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&strcasecmp_l),
+    strict_compare_l_signature), "strict strcasecmp_l declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&strncasecmp_l),
+    strict_ncompare_l_signature), "strict strncasecmp_l declaration");
+
+int crabc_x86_64_locale_narrow_header_abi_probe(void)
+{
+    return 0;
+}
+#else
 typedef int (*ctype_l_signature)(int, locale_t);
 typedef int (*compare_signature)(const char *, const char *);
 typedef int (*compare_l_signature)(const char *, const char *, locale_t);
@@ -56,3 +72,4 @@ int crabc_x86_64_locale_narrow_header_abi_probe(void)
 {
     return 0;
 }
+#endif

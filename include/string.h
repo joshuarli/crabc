@@ -80,6 +80,7 @@ void explicit_bzero(void *, size_t);
 #endif
 
 #ifdef _GNU_SOURCE
+#define	strdupa(x)	strcpy(alloca(strlen(x)+1),x)
 char *strcasestr(const char *, const char *);
 void *memrchr(const void *, int, size_t);
 void *mempcpy(void *__restrict, const void *, size_t);

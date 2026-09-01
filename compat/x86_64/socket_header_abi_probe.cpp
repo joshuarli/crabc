@@ -39,6 +39,49 @@ static_assert(sizeof(sockaddr_in6) == 28 && alignof(sockaddr_in6) == 4 &&
 static_assert(sizeof(in6_addr) == 16 && alignof(in6_addr) == 4 &&
     offsetof(in6_addr, s6_addr) == 0,
     "x86 in6_addr C++ layout");
+#ifndef IP_MSFILTER_SIZE
+#error "GNU/BSD ip_msfilter size macro is missing"
+#endif
+#ifndef GROUP_FILTER_SIZE
+#error "GNU/BSD group_filter size macro is missing"
+#endif
+static_assert(sizeof(ip_msfilter) == 20 && alignof(ip_msfilter) == 4 &&
+    offsetof(ip_msfilter, imsf_multiaddr) == 0 &&
+    offsetof(ip_msfilter, imsf_interface) == 4 &&
+    offsetof(ip_msfilter, imsf_fmode) == 8 &&
+    offsetof(ip_msfilter, imsf_numsrc) == 12 &&
+    offsetof(ip_msfilter, imsf_slist) == 16,
+    "x86 ip_msfilter C++ layout");
+static_assert(sizeof(group_filter) == 272 && alignof(group_filter) == 8 &&
+    offsetof(group_filter, gf_interface) == 0 &&
+    offsetof(group_filter, gf_group) == 8 &&
+    offsetof(group_filter, gf_fmode) == 136 &&
+    offsetof(group_filter, gf_numsrc) == 140 &&
+    offsetof(group_filter, gf_slist) == 144,
+    "x86 group_filter C++ layout");
+static_assert(IP_MSFILTER_SIZE(0) == 16 && IP_MSFILTER_SIZE(1) == 20 &&
+    IP_MSFILTER_SIZE(2) == 24 && GROUP_FILTER_SIZE(0) == 144 &&
+    GROUP_FILTER_SIZE(1) == 272 && GROUP_FILTER_SIZE(2) == 400,
+    "multicast filter size formulas");
+static_assert(__is_same(decltype(IP_MSFILTER_SIZE(0)), size_t),
+    "ip_msfilter size result type");
+static_assert(__is_same(decltype(GROUP_FILTER_SIZE(0)), size_t),
+    "group_filter size result type");
+static_assert(__is_same(decltype(
+    __ARE_4_EQUAL((const uint32_t *)0, (const uint32_t *)0)), bool),
+    "four-word equality C++ result type");
+static_assert(__is_same(decltype(IN6_ARE_ADDR_EQUAL(
+    static_cast<const in6_addr *>(nullptr),
+    static_cast<const in6_addr *>(nullptr))), bool),
+    "IPv6 equality C++ result type");
+static_assert(IN_CLASSA(0x7fffffffU) && !IN_CLASSA(0x80000000U) &&
+    IN_CLASSB(0x80000000U) && !IN_CLASSB(0xc0000000U) &&
+    IN_CLASSC(0xc0000000U) && !IN_CLASSC(0xe0000000U) &&
+    IN_CLASSD(0xe0000000U) && !IN_CLASSD(0xf0000000U) &&
+    IN_MULTICAST(0xe0000000U) == IN_CLASSD(0xe0000000U) &&
+    IN_EXPERIMENTAL(0xe0000000U) && IN_EXPERIMENTAL(0xf0000000U) &&
+    IN_BADCLASS(0xf0000000U) && !IN_BADCLASS(0xe0000000U),
+    "IPv4 class macro boundaries");
 static_assert(AF_UNSPEC == 0 && AF_UNIX == 1 && AF_INET == 2 && AF_INET6 == 10 &&
     SOCK_STREAM == 1 && SOCK_DGRAM == 2 && SOCK_SEQPACKET == 5 &&
     SOCK_CLOEXEC == 02000000 && SOCK_NONBLOCK == 04000,

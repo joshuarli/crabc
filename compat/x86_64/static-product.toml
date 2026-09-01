@@ -1,0 +1,90 @@
+# This is the planned campaign-level owned-static product contract.  It is not
+# evidence that the private owned-static-sysroot artifact completes a family.
+schema = "crabc.x86_64-owned-static-product/v1"
+owner_family = "sysroot.static-tls"
+status = "planned"
+static_family_ids = ["crt.static-pie", "sysroot.static-tls"]
+prerequisite_families = [
+  "oracle.musl-toolchain",
+  "libc.headers-layouts",
+  "libc.posix-runtime",
+  "libc.pthread-tls",
+  "libc.text-math-locale-stdio",
+  "libc.resolver",
+  "libc.c-abi-compat",
+  "crt.static-pie",
+]
+
+[product]
+target = "x86_64-unknown-linux-musl"
+source = "materialized installed crabc x86-64 sysroot"
+link_interface = "deterministic owned static link interface"
+
+required_target_inputs = [
+  "installed crabc headers",
+  "crt1.o",
+  "rcrt1.o",
+  "crti.o",
+  "crtn.o",
+  "libc.a",
+  "libcrabc-builtins.a",
+  "accepted allocator backend",
+  "explicitly admitted application objects",
+]
+rejected_ambient_target_inputs = [
+  "headers",
+  "CRT",
+  "libc",
+  "libgcc",
+  "compiler-rt",
+  "loader",
+]
+
+[[mode]]
+id = "static-et-exec"
+elf_type = "ET_EXEC"
+crt_object = "crt1.o"
+interpreter = "absent"
+
+[[mode]]
+id = "static-pie"
+elf_type = "ET_DYN"
+crt_object = "rcrt1.o"
+interpreter = "absent"
+
+[inspections]
+required = [
+  "link trace",
+  "link map",
+  "ELF headers",
+  "dynamic section",
+  "relocations",
+  "symbol ownership",
+  "TLS segments",
+  "stack flags",
+  "interpreter absence",
+]
+before_execution = "reject undeclared target inputs before executing the fixture"
+
+[reproducibility]
+clean_installed_builds = 2
+artifact_set = "declared regular-file artifact set"
+comparison = "byte-for-byte identical"
+suite = "same declared static smoke suite"
+
+[extracted_smoke]
+source = "one extracted packaged installed sysroot"
+suite = "same declared static smoke suite"
+
+[coverage]
+required = [
+  "argument environment auxiliary-vector and program-name publication",
+  "Initial TLS errno and high-alignment initialized and zero-filled TLS",
+  "allocator allocation alignment reallocation failure and remote-thread ownership",
+  "pthread/C11 creation join/detach synchronization once TSD cancellation atfork/fork and exit behavior",
+  "stdio creation buffering byte/block/formatted operations positions errors and exit flushing",
+  "pathname descriptor directory metadata process signal and time paths",
+  "local socket transport and bounded resolver behavior",
+  "constructors destructors atexit-class behavior and ordinary/immediate termination",
+  "owned compiler helper whose link fails without libcrabc-builtins.a",
+]

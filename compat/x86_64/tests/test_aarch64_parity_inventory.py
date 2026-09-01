@@ -6,7 +6,9 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -43,34 +45,178 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         with patch.object(inventory, "load_toml", side_effect=load_toml):
             return inventory.build_inventory()
 
+    def test_frozen_baseline_record_captures_the_settlement_identity(self) -> None:
+        frozen = inventory.validate_frozen_baseline()
+        self.assertEqual(
+            frozen["schema"], "crabc.x86_64-frozen-aarch64-baseline/v1"
+        )
+        self.assertEqual(
+            frozen["source_commit"], "3e100d45c5a0798c2d3862d5e2eef584c610ccf9"
+        )
+        self.assertEqual(frozen["platform"], "Linux/AArch64 little-endian")
+        self.assertEqual(frozen["capability_count"], 223)
+        self.assertEqual(frozen["required_family_count"], 26)
+        self.assertEqual(
+            frozen["aarch64_inputs"]["capability_ledger"]["sha256"],
+            "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
+        )
+
+    def test_frozen_baseline_rejects_changed_live_aarch64_input(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            changed_ledger = Path(directory) / "coverage.toml"
+            changed_ledger.write_bytes(
+                inventory.BASELINE_CAPABILITIES_PATH.read_bytes() + b"\n# drift\n"
+            )
+            original_sha256 = inventory.sha256
+
+            def sha256(path: Path) -> str:
+                if path == inventory.BASELINE_CAPABILITIES_PATH:
+                    return original_sha256(changed_ledger)
+                return original_sha256(path)
+
+            with patch.object(inventory, "sha256", side_effect=sha256):
+                with self.assertRaisesRegex(
+                    inventory.InventoryError,
+                    "frozen AArch64 input capability_ledger digest drifted",
+                ):
+                    inventory.validate_frozen_baseline()
+
+    def test_inventory_has_no_baseline_refresh_mode(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--write"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unrecognized arguments: --write", result.stderr)
+
+    def test_inventory_rejects_frozen_required_family_count_drift(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            changed_record = Path(directory) / "frozen-baseline.json"
+            record = json.loads(inventory.FROZEN_BASELINE_PATH.read_text(encoding="utf-8"))
+            record["required_family_count"] = 25
+            changed_record.write_text(json.dumps(record), encoding="utf-8")
+            with patch.object(inventory, "FROZEN_BASELINE_PATH", changed_record):
+                with self.assertRaisesRegex(
+                    inventory.InventoryError, "frozen required family count"
+                ):
+                    inventory.build_inventory()
+
+    def test_inventory_rejects_dependencies_outside_frozen_roster_order(self) -> None:
+        data = inventory.load_toml(inventory.X86_LEDGER_PATH)
+        self.family(data, "oracle.musl-toolchain")["depends_on"] = [
+            "performance.release"
+        ]
+
+        with self.assertRaisesRegex(
+            inventory.InventoryError, "is not earlier in the frozen roster"
+        ):
+            self.build_with_x86_ledger(data)
+
     def test_checked_snapshot_is_source_derived_and_non_promoting(self) -> None:
         report = inventory.validate_inventory()
         self.assertEqual(report["schema"], "crabc.x86_64-aarch64-parity-inventory/v1")
         self.assertEqual(report["baseline"]["capability_count"], 223)
+        self.assertEqual(report["frozen_baseline"]["capability_count"], 223)
         self.assertEqual(report["baseline"]["aarch64_public_header_count"], 183)
         self.assertEqual(report["x86_boundary"]["promotion_family_count"], 26)
         self.assertFalse(report["x86_boundary"]["promotion_ready"])
         self.assertFalse(report["x86_boundary"]["public_support"])
         self.assertEqual(sum(report["capability_state_counts"].values()), 223)
+        self.assertEqual(
+            report["capability_state_counts"],
+            {
+                "implemented-foundation": 180,
+                "missing": 23,
+                "selected-private": 20,
+            },
+        )
         self.assertEqual(len(report["families"]), 26)
         self.assertEqual(len(report["capabilities"]), 223)
+        for identifier in ("crypto.crypt", "crypto.crypt-helpers"):
+            crypt_capability = next(
+                row for row in report["capabilities"] if row["id"] == identifier
+            )
+            self.assertEqual(crypt_capability["x86_family"], "libc.c-abi-compat")
+            self.assertEqual(crypt_capability["contract_state"], "selected-private")
+        allocator_basic = next(
+            row
+            for row in report["capabilities"]
+            if row["id"] == "memory.allocator-basic"
+        )
+        self.assertEqual(allocator_basic["x86_family"], "libc.c-abi-compat")
+        self.assertEqual(allocator_basic["contract_state"], "selected-private")
         locale_core = next(
             row for row in report["capabilities"] if row["id"] == "locale.core"
         )
         self.assertEqual(locale_core["x86_family"], "libc.text-math-locale-stdio")
         self.assertEqual(locale_core["contract_state"], "selected-private")
+        elementary_fenv_sensitive = next(
+            row
+            for row in report["capabilities"]
+            if row["id"] == "math.elementary-fenv-sensitive"
+        )
+        self.assertEqual(
+            elementary_fenv_sensitive["x86_family"],
+            "libc.text-math-locale-stdio",
+        )
+        self.assertEqual(
+            elementary_fenv_sensitive["contract_state"], "selected-private"
+        )
+        environment_mutation = next(
+            row
+            for row in report["capabilities"]
+            if row["id"] == "process.environment-mutation"
+        )
+        self.assertEqual(environment_mutation["x86_family"], "libc.posix-runtime")
+        self.assertEqual(
+            environment_mutation["contract_state"], "selected-private"
+        )
+        process_globals = next(
+            row for row in report["capabilities"] if row["id"] == "process.globals"
+        )
+        self.assertEqual(process_globals["x86_family"], "libc.c-abi-compat")
+        self.assertEqual(process_globals["contract_state"], "missing")
         text_math = next(
             row for row in report["families"]
             if row["id"] == "libc.text-math-locale-stdio"
         )
-        self.assertEqual(text_math["verified_slice_count"], 5)
+        self.assertEqual(text_math["verified_slice_count"], 6)
         self.assertEqual(text_math["verified_artifact_count"], 74)
+        c_abi_compat = next(
+            row for row in report["families"] if row["id"] == "libc.c-abi-compat"
+        )
+        self.assertEqual(c_abi_compat["verified_slice_count"], 8)
+        self.assertEqual(c_abi_compat["verified_artifact_count"], 24)
+        self.assertIn(
+            {"family": "libc.c-abi-compat", "id": "static-c-issetugid"},
+            report["selected_private_artifacts"],
+        )
         posix_runtime = next(
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
-        self.assertEqual(posix_runtime["verified_artifact_count"], 139)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 153)
+        self.assertEqual(posix_runtime["verified_slice_count"], 4)
+        self.assertNotIn(
+            {"family": "libc.posix-runtime", "id": "static-c-environment"},
+            report["selected_private_artifacts"],
+        )
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-usleep"},
+            report["selected_private_artifacts"],
+        )
+        self.assertIn(
+            {"family": "libc.posix-runtime", "id": "static-c-signal-legacy-aliases"},
+            report["selected_private_artifacts"],
+        )
+        self.assertIn(
+            {"family": "libc.posix-runtime", "id": "static-c-sysv-signal-helpers"},
+            report["selected_private_artifacts"],
+        )
+        self.assertIn(
+            {"family": "libc.posix-runtime", "id": "static-c-wait-extensions"},
             report["selected_private_artifacts"],
         )
         self.assertEqual(
@@ -91,7 +237,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
         self.assertEqual(posix_runtime["contract_state"], "selected-private")
-        self.assertEqual(posix_runtime["verified_artifact_count"], 139)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 153)
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-sleep"},
             report["selected_private_artifacts"],

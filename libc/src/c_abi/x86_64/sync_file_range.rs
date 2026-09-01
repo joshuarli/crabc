@@ -12,7 +12,7 @@
 //! fallback are deliberately not selected.
 //!
 //! The leaf does not open, seek, read, write, allocate, retry, validate flags
-//! or ranges, select cancellation, infer writeback completion timing, or make
+//! or ranges, select cancellation-point machinery, infer writeback completion timing, or make
 //! storage-cache/power-loss durability claims. It is not `sync`, `syncfs`,
 //! `fsync`, `fdatasync`, `copy_file_range`, a descriptor or pathname family,
 //! a filesystem policy, libc.so, CRT, loader, sysroot, Rust facade, promotion,

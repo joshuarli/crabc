@@ -5,7 +5,7 @@
 //! `src/network/ent.c` makes `endhostent` an exact no-op, then uses
 //! `weak_alias(endhostent, endnetent)`. The source's separate null-returning
 //! host/network enumeration entries and its no-op sethostent/setnetent
-//! spellings remain unselected: this leaf neither opens nor closes a legacy
+//! spellings remain outside this default leaf: it neither opens nor closes a legacy
 //! database, owns no enumeration cursor, and makes no resolver, NSS,
 //! `/etc/hosts`, `/etc/networks`, filesystem, process, or network-policy
 //! claim.

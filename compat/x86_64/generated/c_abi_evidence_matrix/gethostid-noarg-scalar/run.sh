@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Generated from c_abi_evidence_matrix.toml; do not edit.
+# The focused runner owns the pinned-musl oracle/candidate build-and-run and
+# static export check; this wrapper keeps routine family membership explicit.
+set -euo pipefail
+
+readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+bash "$ROOT_DIR/compat/x86_64/run_gethostid_header_abi.sh"
+bash "$ROOT_DIR/compat/x86_64/run_libc_gethostid.sh"

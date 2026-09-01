@@ -135,9 +135,9 @@ for symbol in __errno_location close read write pread pwrite lseek ftruncate \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in preadv2 pwritev2 splice vmsplice tee copy_file_range \
+for unselected in preadv2 pwritev2 vmsplice \
     close_range _Fork \
-    vfork clone execve gettid syscall \
+    vfork clone execve syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -154,7 +154,7 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_DESCRIPTOR_IO_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_descriptor_io_probe.c \
+    -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_descriptor_io_probe.c \
     compat/x86_64/libc_descriptor_io_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -166,6 +166,11 @@ for symbol in __errno_location close read write pread pwrite lseek ftruncate \
     fsync fdatasync dup dup2 dup3 pipe pipe2; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
+done
+for unselected in splice tee copy_file_range; do
+    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
+        fail "candidate unexpectedly pulls independently selected transfer ${unselected}"
+    fi
 done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then

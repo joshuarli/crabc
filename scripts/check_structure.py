@@ -160,6 +160,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/setfsgid.rs"),
     Path("libc/src/c_abi/x86_64/setfsuid.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
+    Path("libc/src/c_abi/x86_64/wait_extensions.rs"),
     Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
     Path("libc/src/c_abi/x86_64/clock_adjtime.rs"),
     Path("libc/src/c_abi/x86_64/clock_settime.rs"),
@@ -204,6 +205,17 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/integer_parse.rs"),
     Path("libc/src/c_abi/x86_64/intmax_arithmetic.rs"),
     Path("libc/src/c_abi/x86_64/l64a.rs"),
+    # The decoder half of musl's shared a64l.c source is independently
+    # feature-gated and evidenced; admitting this exact file does not widen
+    # the frozen default l64a source split or create a directory exception.
+    Path("libc/src/c_abi/x86_64/a64l.rs"),
+    # The stateless legacy netdb setter pair is independently feature-gated.
+    # This exact source admission preserves the default resolver-free archive.
+    Path("libc/src/c_abi/x86_64/sethostent.rs"),
+    # The frozen legacy.misc capability is separately feature-gated and
+    # independently evidenced.  This exact admission is not a default-root
+    # or directory-wide legacy-runtime exception.
+    Path("libc/src/c_abi/x86_64/legacy_misc.rs"),
     Path("libc/src/c_abi/x86_64/math_complex.rs"),
     Path("libc/src/c_abi/x86_64/complex_projection.rs"),
     Path("libc/src/c_abi/x86_64/math_complex_complete.rs"),
@@ -238,7 +250,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/legacy_memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
+    Path("libc/src/c_abi/x86_64/environment_runtime.rs"),
     Path("libc/src/c_abi/x86_64/startup_security.rs"),
+    Path("libc/src/c_abi/x86_64/issetugid.rs"),
     Path("libc/src/c_abi/x86_64/secure_environment.rs"),
     Path("libc/src/c_abi/x86_64/login_name.rs"),
     Path("libc/src/c_abi/x86_64/auxv_observation.rs"),
@@ -248,8 +262,6 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/sched_getcpu.rs"),
     Path("libc/src/c_abi/x86_64/sched_priority_bounds.rs"),
     Path("libc/src/c_abi/x86_64/sched_yield.rs"),
-    Path("libc/src/c_abi/x86_64/sched_get_priority_max.rs"),
-    Path("libc/src/c_abi/x86_64/sched_get_priority_min.rs"),
     Path("libc/src/c_abi/x86_64/posix_semaphore.rs"),
     Path("libc/src/c_abi/x86_64/mq_setattr.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
@@ -264,6 +276,11 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
+    # The frozen process.signal reporting pair is a separate opt-in closure
+    # over existing permanent stderr/errno/strsignal owners, not a default
+    # static-archive or general diagnostics admission.
+    Path("libc/src/c_abi/x86_64/signal_reporting.rs"),
+    Path("libc/src/c_abi/x86_64/signal_sysv_helpers.rs"),
     Path("libc/src/c_abi/x86_64/signal_realtime_max.rs"),
     Path("libc/src/c_abi/x86_64/signal_realtime_min.rs"),
     Path("libc/src/c_abi/x86_64/sched_getscheduler.rs"),
@@ -300,6 +317,70 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
     Path("libc/src/c_abi/x86_64/uts_identity.rs"),
     Path("libc/src/c_abi/x86_64/getloadavg.rs"),
+    # Each later leaf below is separately admitted by a named static C ABI
+    # boundary and native runner. Keep the exact paths explicit: this is not
+    # a directory-wide exemption or a family-completion claim.
+    Path("libc/src/c_abi/x86_64/basename.rs"),
+    Path("libc/src/c_abi/x86_64/c32rtomb.rs"),
+    Path("libc/src/c_abi/x86_64/fdim.rs"),
+    Path("libc/src/c_abi/x86_64/float_parse.rs"),
+    Path("libc/src/c_abi/x86_64/iconv.rs"),
+    Path("libc/src/c_abi/x86_64/math_acosh.rs"),
+    Path("libc/src/c_abi/x86_64/math_asinh.rs"),
+    Path("libc/src/c_abi/x86_64/math_atanh.rs"),
+    Path("libc/src/c_abi/x86_64/math_cos.rs"),
+    Path("libc/src/c_abi/x86_64/math_cosh.rs"),
+    Path("libc/src/c_abi/x86_64/math_elementary_long_double.rs"),
+    Path("libc/src/c_abi/x86_64/math_exp.rs"),
+    Path("libc/src/c_abi/x86_64/math_exp10.rs"),
+    Path("libc/src/c_abi/x86_64/math_exp10f.rs"),
+    # This fixed musl binary80 closure is feature-gated and evidenced as one
+    # private capability slice; admitting its exact source does not widen the
+    # default static C ABI root or the surrounding math family.
+    Path("libc/src/c_abi/x86_64/math_long_double_completion.rs"),
+    Path("libc/src/c_abi/x86_64/math_log.rs"),
+    Path("libc/src/c_abi/x86_64/math_pow.rs"),
+    Path("libc/src/c_abi/x86_64/math_sin.rs"),
+    Path("libc/src/c_abi/x86_64/math_sincos.rs"),
+    Path("libc/src/c_abi/x86_64/math_sinh.rs"),
+    Path("libc/src/c_abi/x86_64/math_tan.rs"),
+    Path("libc/src/c_abi/x86_64/math_tanh.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_affinity.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_atfork.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_barrierattr_pshared.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_cancel.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_condattr_clock.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_condattr_pshared.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_cpuclock.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_getconcurrency.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_mutex_prioceiling_query.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_mutexattr_protocol_query.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_mutexattr_pshared_query.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_mutexattr_robust_query.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_mutexattr_type_query.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_name.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_setconcurrency.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_spin_init.rs"),
+    Path("libc/src/c_abi/x86_64/rand_r.rs"),
+    Path("libc/src/c_abi/x86_64/stack_chk_fail.rs"),
+    Path("libc/src/c_abi/x86_64/stdio_format_scan.rs"),
+    Path("libc/src/c_abi/x86_64/stdio_standard.rs"),
+    Path("libc/src/c_abi/x86_64/strtok.rs"),
+    Path("libc/src/c_abi/x86_64/wide_character.rs"),
+}
+# These private loader/libc TLS foundations are compiled only through their
+# isolated freestanding consumer root plus fixed and bounded-general
+# initial-TLS producers. They are deliberately not admitted by
+# `static_c_abi.rs`, whose no-PT_INTERP Initial TLS v1 contract has no loader
+# record or dynamic registry to consume. Keeping this separate from the
+# selected static C ABI allowlist prevents the structural ratchet from implying
+# static-artifact admission or an x86 dynamic-runtime promotion.
+X86_RUNTIME_FOUNDATION_LOADER_LIBC_SOURCES = {
+    Path("ldso/src/x86_64_initial_tls_registry.rs"),
+    Path("ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"),
+    Path("libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs"),
+    Path("libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs"),
 }
 # The fixed-mimalloc evidence lane remains a separate, private program. Its
 # historical feature is retained for compatibility but no longer governs the
@@ -453,6 +534,8 @@ def is_authorized_x86_branch(relative: Path, line: str) -> bool:
     if relative in X86_RUNTIME_FOUNDATION_LDSO_SOURCES:
         return True
     if relative in X86_RUNTIME_FOUNDATION_LIBC_SOURCES:
+        return True
+    if relative in X86_RUNTIME_FOUNDATION_LOADER_LIBC_SOURCES:
         return True
     if relative in X86_ALLOCATOR_EVIDENCE_CORE_SOURCES:
         return 'feature = "allocator-x86-evidence"' in line
@@ -3880,6 +3963,268 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
 
     static_root_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     static_root_text = static_root_source.read_text(errors="replace")
+    environment_runtime_wiring = (
+        '#[cfg(not(feature = "x86-environment-runtime"))]\n'
+        '#[path = "environment.rs"]\n'
+        'mod environment;\n'
+        '#[cfg(feature = "x86-environment-runtime")]\n'
+        '#[path = "environment_runtime.rs"]\n'
+        "mod environment;"
+    )
+    if environment_runtime_wiring not in static_root_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_c_abi.rs: the allocator-backed "
+            "environment owner must remain an explicit opt-in replacement for the "
+            "legacy dependency-free environment owner"
+        )
+    libc_manifest_text = (ROOT / "libc" / "Cargo.toml").read_text(errors="replace")
+    if 'x86-legacy-misc = []' not in libc_manifest_text:
+        errors.append(
+            "libc/Cargo.toml: opt-in legacy.misc feature must remain dependency-free"
+        )
+    legacy_misc_wiring = (
+        '#[cfg(feature = "x86-legacy-misc")]\n'
+        '#[path = "legacy_misc.rs"]\n'
+        "mod legacy_misc;"
+    )
+    if legacy_misc_wiring not in static_root_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_c_abi.rs: frozen legacy.misc additions "
+            "must stay behind their dedicated opt-in feature gate"
+        )
+    legacy_misc_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_misc.rs"
+    legacy_misc_text = legacy_misc_source.read_text(errors="replace")
+    for required in (
+        "src/legacy/fmtmsg.c::fmtmsg",
+        "src/legacy/encrypt.c::setkey",
+        "src/legacy/encrypt.c::encrypt",
+        "MSGVERB",
+        "MM_PRINT",
+        "MM_CONSOLE",
+        "retry-on-short-write",
+        "inert-DES",
+        "intentional divergence",
+        "no-hand-rolled-cryptography",
+    ):
+        if required not in legacy_misc_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/legacy_misc.rs: frozen legacy.misc "
+                f"boundary is missing {required!r}"
+            )
+    legacy_misc_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            legacy_misc_text,
+        )
+    )
+    if legacy_misc_exports != {"fmtmsg", "setkey", "encrypt"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/legacy_misc.rs: opt-in frozen legacy.misc "
+            "owner must export only fmtmsg, setkey, and encrypt"
+        )
+    for forbidden in ("strfmon", "sha_crypt", "crabc_core", "crabc_mimalloc"):
+        if forbidden in legacy_misc_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/legacy_misc.rs: frozen legacy.misc "
+                f"owner must not select {forbidden!r}"
+            )
+    if 'x86-signal-reporting = []' not in libc_manifest_text:
+        errors.append(
+            "libc/Cargo.toml: opt-in psignal/psiginfo reporting feature must "
+            "remain dependency-free"
+        )
+    signal_reporting_wiring = (
+        '#[cfg(feature = "x86-signal-reporting")]\n'
+        '#[path = "signal_reporting.rs"]\n'
+        "mod signal_reporting;"
+    )
+    if signal_reporting_wiring not in static_root_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_c_abi.rs: psignal/psiginfo must stay "
+            "behind their dedicated opt-in reporting feature gate"
+        )
+    signal_reporting_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_reporting.rs"
+    )
+    if not signal_reporting_source.is_file():
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_reporting.rs: missing opt-in "
+            "psignal/psiginfo reporting owner"
+        )
+    else:
+        signal_reporting_text = signal_reporting_source.read_text(errors="replace")
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "src/signal/psignal.c",
+            "src/signal/psiginfo.c",
+            "strsignal",
+            "permanent stderr",
+            "success-only",
+            "externally serialize",
+            "not async-signal-safe",
+        ):
+            if required not in signal_reporting_text:
+                errors.append(
+                    "libc/src/c_abi/x86_64/signal_reporting.rs: opt-in reporting "
+                    f"boundary is missing {required!r}"
+                )
+        signal_reporting_exports = set(
+            re.findall(
+                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                signal_reporting_text,
+            )
+        )
+        if signal_reporting_exports != {"psignal", "psiginfo"}:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_reporting.rs: opt-in reporting "
+                "owner must export only psignal and psiginfo"
+            )
+        for forbidden in ("crabc_core", "crabc_mimalloc", "alloc::", "fn kill("):
+            if forbidden in signal_reporting_text:
+                errors.append(
+                    "libc/src/c_abi/x86_64/signal_reporting.rs: opt-in reporting "
+                    f"owner must not select {forbidden!r}"
+                )
+
+    signal_header_source = ROOT / "include" / "signal.h"
+    signal_header_text = signal_header_source.read_text(errors="replace")
+    for required in (
+        "defined(_POSIX_C_SOURCE)",
+        "void psiginfo(const siginfo_t *, const char *);",
+        "void psignal(int, const char *);",
+    ):
+        if required not in signal_header_text:
+            errors.append(
+                "include/signal.h: psignal/psiginfo must retain their pinned-musl "
+                f"POSIX-or-later declaration contract ({required!r})"
+            )
+
+    psignal_header_probe = ROOT / "compat" / "x86_64" / "psignal_header_abi_probe.c"
+    psignal_header_cxx_probe = (
+        ROOT / "compat" / "x86_64" / "psignal_header_abi_probe.cpp"
+    )
+    psignal_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_psignal_header_abi.sh"
+    )
+    psignal_artifact_runner = ROOT / "compat" / "x86_64" / "run_libc_psignal.sh"
+    process_signal_aggregate_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_process_signal.sh"
+    )
+    reporting_inputs = (
+        psignal_header_probe,
+        psignal_header_cxx_probe,
+        psignal_header_runner,
+        psignal_artifact_runner,
+        process_signal_aggregate_runner,
+    )
+    missing_reporting_inputs = [
+        path.relative_to(ROOT) for path in reporting_inputs if not path.is_file()
+    ]
+    if missing_reporting_inputs:
+        errors.append(
+            "compat/x86_64: psignal/process.signal evidence is missing "
+            + ", ".join(str(path) for path in missing_reporting_inputs)
+        )
+    else:
+        psignal_c_probe_text = psignal_header_probe.read_text(errors="replace")
+        psignal_cxx_probe_text = psignal_header_cxx_probe.read_text(errors="replace")
+        psignal_header_runner_text = psignal_header_runner.read_text(errors="replace")
+        psignal_artifact_runner_text = psignal_artifact_runner.read_text(
+            errors="replace"
+        )
+        process_signal_aggregate_text = process_signal_aggregate_runner.read_text(
+            errors="replace"
+        )
+        for probe_text, language in (
+            (psignal_c_probe_text, "C"),
+            (psignal_cxx_probe_text, "C++"),
+        ):
+            for required in (
+                "CRABC_EXPECT_PSIGNAL",
+                "CRABC_REQUIRE_PSIGNAL_HIDDEN",
+                "psignal",
+                "psiginfo",
+            ):
+                if required not in probe_text:
+                    errors.append(
+                        f"compat/x86_64/psignal_header_abi_probe: {language} "
+                        f"profile probe is missing {required!r}"
+                    )
+        for required in (
+            "_POSIX_C_SOURCE=200809L",
+            "_XOPEN_SOURCE=700",
+            "_GNU_SOURCE",
+            "_BSD_SOURCE",
+            "CRABC_REQUIRE_PSIGNAL_HIDDEN",
+            "retained a mangled",
+            "C probe did not use project <$header>",
+        ):
+            if required not in psignal_header_runner_text:
+                errors.append(
+                    "compat/x86_64/run_psignal_header_abi.sh: declaration "
+                    f"matrix is missing {required!r}"
+                )
+        for required in (
+            "--features x86-signal-reporting",
+            "assert_reporting_feature_delta",
+            "psiginfo\\npsignal",
+            "run_psignal_header_abi.sh",
+            "selected static C ABI export surface drifted",
+            "candidate selects a dynamic runtime",
+            "candidate retains a dynamic TLS model",
+            "candidate selects general diagnostics or an unowned runtime",
+        ):
+            if required not in psignal_artifact_runner_text:
+                errors.append(
+                    "compat/x86_64/run_libc_psignal.sh: featured reporting "
+                    f"differential is missing {required!r}"
+                )
+        for forbidden in ("--whole-archive",):
+            if forbidden in psignal_artifact_runner_text:
+                errors.append(
+                    "compat/x86_64/run_libc_psignal.sh: reporting differential "
+                    f"must not select {forbidden!r}"
+                )
+        for required in (
+            'FEATURES="x86-signal-legacy-aliases x86-signal-sysv-helpers x86-signal-reporting"',
+            "EXPECTED_ADDITIONS=(",
+            "combined signal features remove a default C ABI export",
+            "combined signal features change more than the frozen eight-symbol closure",
+            "run_libc_psignal.sh",
+        ):
+            if required not in process_signal_aggregate_text:
+                errors.append(
+                    "compat/x86_64/run_libc_process_signal.sh: process.signal "
+                    f"aggregate is missing {required!r}"
+                )
+        for component_runner in (
+            "run_libc_sigrtmax.sh",
+            "run_libc_sigrtmin.sh",
+            "run_libc_signal_legacy_aliases.sh",
+            "run_libc_signal_execution.sh",
+            "run_libc_signal_control.sh",
+            "run_libc_sigaddset_sigdelset_sigfillset.sh",
+            "run_libc_signal_altstack.sh",
+            "run_libc_sigandset_sigorset.sh",
+            "run_libc_signal_sysv_helpers.sh",
+            "run_libc_siginterrupt.sh",
+            "run_libc_sigisemptyset.sh",
+            "run_libc_sigpause.sh",
+            "run_libc_sigpending.sh",
+            "run_libc_signalfd.sh",
+            "run_libc_readiness_waits.sh",
+            "run_libc_psignal.sh",
+        ):
+            if component_runner not in process_signal_aggregate_text:
+                errors.append(
+                    "compat/x86_64/run_libc_process_signal.sh: process.signal "
+                    f"aggregate omits {component_runner}"
+                )
+    if 'x86-environment-runtime = ["x86-allocator-runtime"]' not in libc_manifest_text:
+        errors.append(
+            "libc/Cargo.toml: x86-environment-runtime must explicitly compose the "
+            "existing x86 allocator boundary"
+        )
     for required in (
         '#[path = "errno.rs"]',
         '#[path = "atomic.rs"]',
@@ -3888,6 +4233,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "static_startup.rs"]',
         '#[path = "auxv_observation.rs"]',
         '#[path = "startup_security.rs"]',
+        '#[path = "issetugid.rs"]',
         '#[path = "secure_environment.rs"]',
         '#[path = "process_globals.rs"]',
         '#[path = "stat_compat.rs"]',
@@ -3907,6 +4253,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "setjmp.rs"]',
         '#[path = "signal_foundation.rs"]',
         '#[path = "signal_control.rs"]',
+        '#[path = "signal_reporting.rs"]',
+        '#[path = "signal_sysv_helpers.rs"]',
         '#[path = "signal_realtime_max.rs"]',
         '#[path = "signal_realtime_min.rs"]',
         '#[path = "sched_getscheduler.rs"]',
@@ -3946,6 +4294,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "process_context.rs"]',
         '#[path = "login_name.rs"]',
         '#[path = "child_reaping.rs"]',
+        '#[path = "wait_extensions.rs"]',
         '#[path = "immediate_termination.rs"]',
         '#[path = "posix_exit.rs"]',
         '#[path = "posix_spawnattr_init.rs"]',
@@ -3972,8 +4321,6 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "sched_getcpu.rs"]',
         '#[path = "sched_priority_bounds.rs"]',
         '#[path = "sched_yield.rs"]',
-        '#[path = "sched_get_priority_max.rs"]',
-        '#[path = "sched_get_priority_min.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
         '#[path = "usleep.rs"]',
@@ -4016,6 +4363,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "string_copy.rs"]',
         '#[path = "error_strings.rs"]',
         '#[path = "l64a.rs"]',
+        '#[path = "a64l.rs"]',
+        '#[path = "sethostent.rs"]',
         '#[path = "strsignal.rs"]',
         '#[path = "ctype.rs"]',
         '#[path = "locale_ctype.rs"]',
@@ -4179,6 +4528,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     for required in (
         "Static Initial TLS v1",
         "const ATEXIT_CAPACITY: usize = 32;",
+        'pub unsafe extern "C" fn __init_ssp(',
+        'pub unsafe extern "C" fn __stdio_exit()',
         "pub unsafe extern \"C\" fn __cxa_atexit(",
         "pub unsafe extern \"C\" fn atexit(",
         "pub unsafe extern \"C\" fn __funcs_on_exit()",
@@ -4205,6 +4556,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         )
     )
     expected_static_startup_exports = {
+        "__init_ssp",
+        "__stdio_exit",
         "__cxa_atexit",
         "atexit",
         "__funcs_on_exit",
@@ -4855,6 +5208,49 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "evidence must not force-link the archive"
         )
 
+    strtok_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strtok.rs"
+    strtok_text = strtok_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/strtok.c",
+        "static mut CONTINUATION",
+        "process-global continuation pointer",
+        "shared\n//! non-TLS cursor",
+        'pub unsafe extern "C" fn strtok',
+        "concurrent\n//! unsynchronized calls",
+    ):
+        if required not in strtok_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/strtok.rs: selected static strtok "
+                f"boundary is missing {required!r}"
+            )
+    strtok_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            strtok_text,
+        )
+    )
+    if strtok_exports != {"strtok"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/strtok.rs: selected static strtok "
+            "artifact must export only strtok"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "malloc",
+        "strtok_r",
+        "use super::",
+    ):
+        if forbidden in strtok_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/strtok.rs: selected static strtok "
+                f"leaf must not select {forbidden!r}"
+            )
+
     wcswcs_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "wcswcs.rs"
     wcswcs_text = wcswcs_source.read_text(errors="replace")
     for required in (
@@ -5101,6 +5497,66 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/signal_control.rs: selected static signal "
             "artifact must export only simple action/set/mask symbols"
+        )
+
+    signal_sysv_helpers_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_sysv_helpers.rs"
+    )
+    signal_sysv_helpers_text = signal_sysv_helpers_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6",
+        "src/signal/sighold.c",
+        "src/signal/sigignore.c",
+        "src/signal/sigrelse.c",
+        "src/signal/sigset.c",
+        "raw_syscall::SYS_RT_SIGACTION",
+        "raw_syscall::SYS_RT_SIGPROCMASK",
+        "signal_foundation::pack_public_action",
+        "does not select `process.signal`",
+    ):
+        if required not in signal_sysv_helpers_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_sysv_helpers.rs: opt-in SysV "
+                f"signal-helper boundary is missing {required!r}"
+            )
+    signal_sysv_helper_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            signal_sysv_helpers_text,
+        )
+    )
+    if signal_sysv_helper_exports != {"sighold", "sigignore", "sigrelse", "sigset"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_sysv_helpers.rs: opt-in SysV "
+            "signal-helper artifact must export only sighold, sigignore, sigrelse, and sigset"
+        )
+    for forbidden in (
+        "fn sigaction(",
+        "fn signal(",
+        "fn sigprocmask(",
+        "fn pthread_sigmask(",
+        "fn sigsuspend(",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in signal_sysv_helpers_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_sysv_helpers.rs: opt-in SysV "
+                f"signal-helper boundary must not select {forbidden!r}"
+            )
+    libc_manifest_text = (ROOT / "libc" / "Cargo.toml").read_text(errors="replace")
+    if 'x86-signal-sysv-helpers = []' not in libc_manifest_text:
+        errors.append(
+            "libc/Cargo.toml: opt-in SysV signal-helper feature must remain dependency-free"
+        )
+    if (
+        '#[cfg(feature = "x86-signal-sysv-helpers")]\n'
+        '#[path = "signal_sysv_helpers.rs"]\n'
+        "mod signal_sysv_helpers;"
+    ) not in static_root_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_c_abi.rs: opt-in SysV signal helpers "
+            "must stay behind their dedicated feature gate"
         )
 
     signal_realtime_max_source = (
@@ -5475,6 +5931,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_exit",
         "pthread_join",
         "pthread_detach",
+        "weak_alias(dummy_0, __membarrier_init)",
+        'pub unsafe extern "C" fn __membarrier_init()',
         "tls_block.thread_pointer().cast()",
         "ENOTSUP",
         "tsd: pthread_tsd::SelectedTsdValues",
@@ -5508,6 +5966,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         )
     )
     if pthread_create_join_exports != {
+        "__membarrier_init",
         "pthread_create",
         "pthread_exit",
         "pthread_join",
@@ -5515,7 +5974,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     }:
         errors.append(
             "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
-            "pthread worker must export only pthread_create, pthread_exit, pthread_join, and pthread_detach"
+            "pthread worker must export its four selected lifecycle entries and the musl-shaped weak membarrier fallback"
         )
     public_pthread_create_marker = 'pub unsafe extern "C" fn pthread_create'
     public_pthread_create_end = (
@@ -6888,6 +7347,49 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"gethostid boundary must not select {forbidden!r}"
             )
 
+    issetugid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "issetugid.rs"
+    issetugid_text = issetugid_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/issetugid.c::issetugid",
+        "libc.secure",
+        "AT_SECURE/UID/EUID/GID/EGID",
+        "System V AMD64 ABI",
+        'pub extern "C" fn issetugid() -> c_int',
+        "startup_security::is_secure()",
+    ):
+        if required not in issetugid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/issetugid.rs: selected static GNU/BSD "
+                f"issetugid boundary is missing {required!r}"
+            )
+    issetugid_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            issetugid_text,
+        )
+    )
+    if issetugid_exports != {"issetugid"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/issetugid.rs: selected static GNU/BSD "
+            "artifact must export only issetugid"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "secure_environment::",
+        "environment::",
+        "auxv_observation::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in issetugid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/issetugid.rs: selected static GNU/BSD "
+                f"issetugid boundary must not select {forbidden!r}"
+            )
+
     gettid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gettid.rs"
     gettid_text = gettid_source.read_text(errors="replace")
     for required in (
@@ -7015,6 +7517,50 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/endhostent.rs: selected static legacy "
                 f"netdb terminator boundary must not select {forbidden!r}"
+            )
+
+    sethostent_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sethostent.rs"
+    )
+    sethostent_text = sethostent_source.read_text(errors="replace")
+    for required in (
+        "Pinned musl 1.2.6 provenance is fixed to release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ent.c::sethostent",
+        "weak_alias(sethostent, setnetent)",
+        "System V AMD64 ABI",
+        ".weak setnetent",
+        ".set setnetent, sethostent",
+        'pub extern "C" fn sethostent(_stayopen: c_int)',
+    ):
+        if required not in sethostent_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sethostent.rs: opt-in static legacy "
+                f"netdb setter boundary is missing {required!r}"
+            )
+    sethostent_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            sethostent_text,
+        )
+    )
+    if sethostent_exports != {"sethostent"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sethostent.rs: opt-in static legacy "
+            "netdb setter artifact must export only the strong sethostent body"
+        )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in sethostent_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sethostent.rs: opt-in static legacy "
+                f"netdb setter boundary must not select {forbidden!r}"
             )
 
     isatty_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
@@ -8371,6 +8917,53 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only wait, waitpid, and waitid"
         )
 
+    wait_extensions_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "wait_extensions.rs"
+    )
+    wait_extensions_text = wait_extensions_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/wait3.c",
+        "src/linux/wait4.c",
+        "SYS_WAIT4",
+        "syscall4(",
+        "r10",
+        "cancellation",
+        "c_status",
+        "Rusage",
+        "WAIT_ANY",
+    ):
+        if required not in wait_extensions_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/wait_extensions.rs: selected static "
+                f"wait-extension boundary is missing {required!r}"
+            )
+    wait_extensions_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            wait_extensions_text,
+        )
+    )
+    if wait_extensions_exports != {"wait3", "wait4"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/wait_extensions.rs: selected static "
+            "artifact must export only wait3 and wait4"
+        )
+    for forbidden in (
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn fork(",
+        "fn execve(",
+        "SYS_WAITID",
+        "syscall5(",
+    ):
+        if forbidden in wait_extensions_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/wait_extensions.rs: selected static "
+                f"wait-extension boundary must not select {forbidden!r}"
+            )
+
     immediate_termination_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "immediate_termination.rs"
     )
@@ -8755,13 +9348,13 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     )
     intrusive_queue_text = intrusive_queue_source.read_text(errors="replace")
     for required in (
-        "Selected static Linux/x86-64 C intrusive-queue ABI boundary",
+        "Selected static Linux/x86-64 intrusive queue C ABI boundary",
         "pinned musl 1.2.6 release commit",
         "9fa28ece75d8a2191de7c5bb53bed224c5947417",
         "src/search/insque.c::{insque,remque}",
         "without clearing the removed node's own links",
-        "read_unaligned",
-        "write_unaligned",
+        "ptr::read",
+        "ptr::write",
         'pub unsafe extern "C" fn insque',
         'pub unsafe extern "C" fn remque',
     ):
@@ -13172,6 +13765,52 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"radix-64 result boundary widens into {forbidden!r}"
             )
 
+    a64l_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "a64l.rs"
+    a64l_text = a64l_source.read_text(errors="replace")
+    for required in (
+        "Pinned musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/a64l.c::a64l",
+        "a64l.lo",
+        "equivalent bounded scan",
+        "DIGITS",
+        "while index < 64",
+        "for shift in (0..36).step_by(6)",
+        'pub unsafe extern "C" fn a64l',
+        "# Safety",
+    ):
+        if required not in a64l_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/a64l.rs: selected static radix-64 "
+                f"decoder boundary is missing {required!r}"
+            )
+    a64l_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            a64l_text,
+        )
+    )
+    if a64l_exports != {"a64l"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/a64l.rs: selected static artifact must "
+            "export only a64l"
+        )
+    for forbidden in (
+        "static mut",
+        'unsafe extern "C" {',
+        "raw_syscall",
+        "errno::",
+        "thread_local",
+        "crabc_core",
+        "crabc_mimalloc",
+        "alloc::",
+    ):
+        if forbidden in a64l_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/a64l.rs: selected static radix-64 "
+                f"decoder boundary widens into {forbidden!r}"
+            )
+
     ctype_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ctype.rs"
     ctype_text = ctype_source.read_text(errors="replace")
     for required in (
@@ -13768,6 +14407,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         fenv_text,
         signal_control_text,
         signal_realtime_max_text,
+        signal_realtime_min_text,
         sched_getscheduler_text,
         signal_alarm_text,
         signal_pending_text,
@@ -13794,6 +14434,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         tee_text,
         sync_file_range_text,
         gethostid_text,
+        issetugid_text,
         gettid_text,
         posix_close_text,
         endhostent_text,
@@ -13804,6 +14445,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         process_context_text,
         login_name_text,
         child_reaping_text,
+        wait_extensions_text,
         immediate_termination_text,
         posix_exit_text,
         posix_spawnattr_init_text,
@@ -13831,8 +14473,6 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         sched_getcpu_text,
         sched_priority_bounds_text,
         sched_yield_text,
-        sched_get_priority_max_text,
-        sched_get_priority_min_text,
         clock_nanosleep_text,
         memory_mapping_text,
         memory_sync_text,
@@ -13867,6 +14507,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         byte_strings_text,
         memccpy_text,
         strsep_text,
+        strtok_text,
         wcswcs_text,
         random_entropy_text,
         memory_search_text,
@@ -13932,6 +14573,17 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/auxv_observation.rs: selected static "
             "artifact must retain getauxval as the musl same-address assembler alias"
         )
+    dn_expand_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*__dn_expand",\s*$',
+            dn_expand_text,
+        )
+    )
+    if dn_expand_aliases != {"dn_expand"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/dn_expand.rs: selected static "
+            "artifact must retain dn_expand as the musl same-address assembler alias"
+        )
     endhostent_aliases = set(
         re.findall(
             r'(?m)^\s*"\.set\s+(\w+)\s*,\s*endhostent",\s*$',
@@ -13942,6 +14594,17 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/endhostent.rs: selected static legacy "
             "netdb terminator artifact must retain endnetent as the musl same-address assembler alias"
+        )
+    sethostent_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*sethostent",\s*$',
+            sethostent_text,
+        )
+    )
+    if sethostent_aliases != {"setnetent"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sethostent.rs: opt-in static legacy "
+            "netdb setter artifact must retain setnetent as the musl same-address assembler alias"
         )
     pthread_rwlock_public_aliases = {public for public, _hidden in pthread_rwlock_aliases}
     process_global_data_exports = set(
@@ -13978,6 +14641,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | locale_error_string_aliases
         | timestamp_aliases
         | auxv_observation_aliases
+        | dn_expand_aliases
         | endhostent_aliases
         | pthread_rwlock_public_aliases
         | pthread_identity_exports
@@ -13988,6 +14652,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     )
     expected_exports = {
         "__errno_location",
+        "___errno_location",
         "__crabc_x86_static_tls_bootstrap",
         "__getauxval",
         "getauxval",
@@ -14081,6 +14746,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_detach",
         "pthread_exit",
         "pthread_join",
+        "__membarrier_init",
         "pthread_key_create",
         "pthread_key_delete",
         "pthread_getspecific",
@@ -14161,6 +14827,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "tee",
         "sync_file_range",
         "gethostid",
+        "issetugid",
         "gettid",
         "posix_close",
         "endhostent",
@@ -14184,6 +14851,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "getpgrp",
         "setpgrp",
         "wait",
+        "wait3",
+        "wait4",
         "waitpid",
         "waitid",
         "clock_gettime",
@@ -14201,8 +14870,6 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sched_get_priority_max",
         "sched_get_priority_min",
         "sched_yield",
-        "sched_get_priority_max",
-        "sched_get_priority_min",
         "clock_nanosleep",
         "mmap",
         "munmap",
@@ -14376,6 +15043,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "getlogin",
         "getlogin_r",
         "_Exit",
+        "__init_ssp",
         "__cxa_atexit",
         "atexit",
         "__funcs_on_exit",
@@ -14386,6 +15054,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "posix_spawnattr_getschedpolicy",
         "exit",
         "__libc_start_main",
+        "__stdio_exit",
         "__optpos",
         "__optreset",
         "__posix_getopt",
@@ -14442,7 +15111,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "selected private C ABI leaves, including nanosleep, usleep, sleep, and clock_nanosleep, selected "
             "caller-buffered GNU CPU-mask bit-count helper, "
             "paired read-only scheduler-priority bounds leaf, "
-            "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
+            "POSIX _exit forwarding, historical GNU/BSD wait extensions, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, immutable nameserver flag-accessor data, and legacy classful IPv4 arithmetic, one caller-owned mntent option lookup, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "one direct legacy wide-substring alias, fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
@@ -14477,6 +15146,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),
         ("signal_control.rs", signal_control_text),
+        ("signal_sysv_helpers.rs", signal_sysv_helpers_text),
         ("signal_realtime_max.rs", signal_realtime_max_text),
         ("signal_realtime_min.rs", signal_realtime_min_text),
         ("sched_getscheduler.rs", sched_getscheduler_text),
@@ -14506,6 +15176,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("tee.rs", tee_text),
         ("sync_file_range.rs", sync_file_range_text),
         ("gettid.rs", gettid_text),
+        ("issetugid.rs", issetugid_text),
         ("posix_close.rs", posix_close_text),
         ("endhostent.rs", endhostent_text),
         ("isatty.rs", isatty_text),
@@ -14515,6 +15186,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("mktemp.rs", mktemp_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),
+        ("wait_extensions.rs", wait_extensions_text),
         ("immediate_termination.rs", immediate_termination_text),
         ("posix_exit.rs", posix_exit_text),
         ("posix_spawnattr_init.rs", posix_spawnattr_init_text),
@@ -14533,8 +15205,6 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("sched_getcpu.rs", sched_getcpu_text),
         ("sched_priority_bounds.rs", sched_priority_bounds_text),
         ("sched_yield.rs", sched_yield_text),
-        ("sched_get_priority_max.rs", sched_get_priority_max_text),
-        ("sched_get_priority_min.rs", sched_get_priority_min_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("memory_mapping.rs", memory_mapping_text),
         ("memory_sync.rs", memory_sync_text),
@@ -14574,6 +15244,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("error_strings.rs", error_strings_text),
         ("locale_error_strings.rs", locale_error_strings_text),
         ("l64a.rs", l64a_text),
+        ("a64l.rs", a64l_text),
         ("strsignal.rs", strsignal_text),
         ("ctype.rs", ctype_text),
         ("locale_ctype.rs", locale_ctype_text),

@@ -3,8 +3,10 @@
 #
 # Pinned musl 1.2.6 is the declaration oracle. All twelve selected declarations
 # are unconditional under musl's default, strict, POSIX, XOPEN, BSD, and GNU
-# profiles. The C++ object check ratchets unmangled C linkage for both header
-# families, including the catalog declarations in <nl_types.h>.
+# profiles. The transient `__fa` format-argument annotation on the libintl
+# declarations is checked for exact C/C++ diagnostic propagation and cleanup.
+# The C++ object check ratchets unmangled C linkage for both header families,
+# including the catalog declarations in <nl_types.h>.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -48,6 +50,33 @@ compile_profile -D_POSIX_C_SOURCE=200809L
 compile_profile -D_XOPEN_SOURCE=700
 compile_profile -D_BSD_SOURCE
 compile_profile -D_GNU_SOURCE
+
+check_format_argument_annotation() {
+    local variant language
+    for variant in oracle project; do
+        local -a include_args=()
+        if [ "$variant" = project ]; then
+            include_args=(-I "$ROOT_DIR/include")
+        fi
+        for language in c cxx; do
+            local -a compiler_args=(-std=c11 -U_GNU_SOURCE)
+            local probe="$c_probe"
+            if [ "$language" = cxx ]; then
+                compiler_args=(-std=c++17 -x c++ -U_GNU_SOURCE)
+                probe="$cxx_probe"
+            fi
+            "$ORACLE_CC" "${compiler_args[@]}" -Werror=format \
+                "${include_args[@]}" -fsyntax-only "$probe"
+            if "$ORACLE_CC" "${compiler_args[@]}" -Werror=format \
+                -DCRABC_REQUIRE_GETTEXT_FORMAT_ARGUMENT "${include_args[@]}" \
+                -fsyntax-only "$probe" >/dev/null 2>&1; then
+                fail "$variant $language headers lost the transient __fa format-argument annotation"
+            fi
+        done
+    done
+}
+
+check_format_argument_annotation
 
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -I "$ROOT_DIR/include" \
     -H -fsyntax-only "$c_probe" >/dev/null 2>"$header_trace"

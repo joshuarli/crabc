@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 legacy netdb endhostent/endnetent C/C++ declaration gate.
+# Native Linux/x86-64 stateless legacy netdb C/C++ declaration gate.
 #
 # Pinned musl 1.2.6 is the declaration and C-linkage oracle. The candidate
 # uses raw GCC with project headers plus only compiler builtin headers, so an
-# ambient libc cannot mask a declaration or C++ linkage mismatch. Both
-# declarations are unconditional in musl's netdb.h; this checks strict,
-# POSIX, X/Open, and GNU C/C++ profiles without selecting host/network
-# enumeration or resolver behavior.
+# ambient libc cannot mask a declaration or C++ linkage mismatch. The paired
+# terminator and setter declarations are unconditional in musl's netdb.h;
+# this checks strict, POSIX, X/Open, and GNU C/C++ profiles without selecting
+# host/network enumeration or resolver behavior.
 set -euo pipefail
 export LC_ALL=C
 
@@ -132,7 +132,7 @@ check_cxx_linkage() {
     local undefined
 
     undefined="$(nm --undefined-only "$object")"
-    for symbol in endhostent endnetent; do
+    for symbol in endhostent endnetent sethostent setnetent; do
         printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
             fail "$profile $tree C++ probe does not retain C linkage for $symbol"
         if printf '%s\n' "$undefined" | grep -Eq "_Z[0-9].*${symbol}"; then
@@ -169,7 +169,7 @@ for profile in "${PROFILES[@]}"; do
         trace="$work_dir/$profile.$tree.trace"
         object="$work_dir/$profile.$tree.o"
         compile_profile "$tree" "$profile" "$trace" "$object" ||
-            fail "$profile $tree unconditional endhostent/endnetent declaration failed"
+            fail "$profile $tree unconditional endhostent/endnetent/sethostent/setnetent declaration failed"
         check_trace "$tree" "$profile" "$trace"
         case "$profile" in
             cxx17-*) check_cxx_linkage "$tree" "$profile" "$object" ;;
@@ -177,5 +177,5 @@ for profile in "${PROFILES[@]}"; do
     done
 done
 
-printf 'x86 pinned-musl/project C/C++ <netdb.h> endhostent/endnetent ABI: PASS (%s unconditional profiles)\n' \
+printf 'x86 pinned-musl/project C/C++ <netdb.h> endhostent/endnetent/sethostent/setnetent ABI: PASS (%s unconditional profiles)\n' \
     "${#PROFILES[@]}"

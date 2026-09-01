@@ -141,13 +141,14 @@ done
 "$ORACLE_CC" -std=c11 -DCRABC_READLINKAT_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections \
     compat/x86_64/libc_readlinkat_probe.c \
     compat/x86_64/libc_readlinkat_start.S "$archive" -o "$candidate"
 assert_static_closure "$candidate"
 
 if grep -Eq '[[:space:]](readlink|fchdir|linkat|symlinkat|unlinkat|renameat|renameat2|open_by_handle_at)$' \
     "$work_dir/candidate-symbols"; then
-    fail "readlinkat candidate exports an unselected pathname entry"
+    fail "readlinkat candidate unexpectedly pulls independently selected pathname entry"
 fi
 objdump -d --disassemble=readlinkat "$candidate" >"$readlinkat_disassembly"
 grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$readlinkat_disassembly" ||
@@ -158,7 +159,7 @@ grep -Eq '%r10' "$readlinkat_disassembly" ||
     fail "readlinkat lacks the Linux fourth-word r10 transfer"
 if grep -Eq 'call.*(readlink|fchdir|linkat|symlinkat|unlinkat|renameat|renameat2|open_by_handle_at)' \
     "$readlinkat_disassembly"; then
-    fail "readlinkat delegates to an unselected C entry"
+    fail "readlinkat delegates to an unrelated C entry"
 fi
 
 (cd "$candidate_work" && "$candidate") ||

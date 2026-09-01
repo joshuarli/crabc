@@ -20,6 +20,7 @@ from typing import Any, Mapping
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
+STATIC_PRODUCT_CONTRACT_PATH = ROOT / "compat" / "x86_64" / "static-product.toml"
 UPSTREAMS_PATH = ROOT / "compat" / "upstreams.toml"
 HEADER_LAYOUT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
 HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH = (
@@ -38,6 +39,7 @@ UAPI_WRAPPER_MATRIX_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_uapi_wrapper_matrix.sh"
 )
 IOCTL_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_ioctl_header_abi.sh"
+SYS_IO_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_sys_io_header_abi.sh"
 EPOLL_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_epoll_header_abi.sh"
 EVENT_DESCRIPTORS_HEADER_ABI_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_event_descriptors_header_abi.sh"
@@ -60,6 +62,7 @@ AARCH64_PARITY_INVENTORY_VALIDATOR_PATH = (
     ROOT / "compat" / "x86_64" / "aarch64_parity_inventory.py"
 )
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
+EXPECTED_STATIC_PRODUCT_SCHEMA = "crabc.x86_64-owned-static-product/v1"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
@@ -80,6 +83,19 @@ EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ID = "x86-ioctl-header-profile-matrix"
 EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh ioctl-header-abi"
 EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/ioctl.h"
 EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
+EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_ID = "x86-sys-io-header-profile-matrix"
+EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh sys-io-header-abi"
+EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS = ("sys/io.h", "bits/io.h")
+EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_PROFILES = (
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-strict",
+    "c11-posix-2008",
+    "c11-xopen-700",
+    "c11-bsd",
+    "cxx17-strict",
+)
+EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ID = "x86-epoll-header-profile-matrix"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh epoll-header-abi"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/epoll.h"
@@ -328,6 +344,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "candidate-tree-presence",
         "c11-gnu-consumability",
         "ioctl-header-profile-matrix",
+        "sys-io-header-profile-matrix",
         "epoll-header-profile-matrix",
         "event-descriptors-header-profile-matrix",
         "dirent-header-profile-matrix",
@@ -543,6 +560,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "libc.headers-layouts",
         (EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ID,),
     ),
+    "sys-io-header-profile-matrix": (
+        "partial-verified",
+        "sys/io.h/bits/io.h x86 port-I/O inline declaration compiler-constraint and C++ C-linkage subset",
+        "libc.headers-layouts",
+        (EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_ID,),
+    ),
     "epoll-header-profile-matrix": (
         "partial-verified",
         "sys/epoll.h plus selected sys/ioctl.h macro encoding subset",
@@ -706,6 +729,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "select": "./scripts/dev-x86_64.sh select-header-abi",
     "fcntl": "./scripts/dev-x86_64.sh fcntl-header-abi",
     "ioctl": "./scripts/dev-x86_64.sh ioctl-header-abi",
+    "sys-io": "./scripts/dev-x86_64.sh sys-io-header-abi",
     "unistd": "./scripts/dev-x86_64.sh unistd-header-abi",
     "system": "./scripts/dev-x86_64.sh system-header-abi",
     "syscall": "./scripts/dev-x86_64.sh syscall-header-abi",
@@ -715,6 +739,9 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "resource": "./scripts/dev-x86_64.sh resource-header-abi",
     "socket": "./scripts/dev-x86_64.sh socket-header-abi",
     "nameser": "./scripts/dev-x86_64.sh nameser-header-abi",
+    "quota": "./scripts/dev-x86_64.sh quota-header-abi",
+    "sched-cpu-macros": "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi",
+    "fanotify": "./scripts/dev-x86_64.sh fanotify-header-abi",
     "inet-address": "./scripts/dev-x86_64.sh inet-address-header-abi",
     "epoll": "./scripts/dev-x86_64.sh epoll-header-abi",
     "timeval-transitive": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
@@ -880,6 +907,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/ioctl_header_abi_probe.cpp",
         "compat/x86_64/run_ioctl_header_abi.sh",
     ),
+    "sys-io": (
+        "compat/x86_64/sys_io_header_abi_probe.c",
+        "compat/x86_64/sys_io_header_abi_probe.cpp",
+        "compat/x86_64/run_sys_io_header_abi.sh",
+    ),
     "unistd": (
         "compat/x86_64/unistd_header_abi_probe.c",
         "compat/x86_64/unistd_header_abi_probe.cpp",
@@ -924,6 +956,21 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/nameser_header_abi_probe.c",
         "compat/x86_64/nameser_header_abi_probe.cpp",
         "compat/x86_64/run_nameser_header_abi.sh",
+    ),
+    "quota": (
+        "compat/x86_64/quota_header_abi_probe.c",
+        "compat/x86_64/quota_header_abi_probe.cpp",
+        "compat/x86_64/run_quota_header_abi.sh",
+    ),
+    "sched-cpu-macros": (
+        "compat/x86_64/sched_cpu_macros_header_abi_probe.c",
+        "compat/x86_64/sched_cpu_macros_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_cpu_macros_header_abi.sh",
+    ),
+    "fanotify": (
+        "compat/x86_64/fanotify_header_abi_probe.c",
+        "compat/x86_64/fanotify_header_abi_probe.cpp",
+        "compat/x86_64/run_fanotify_header_abi.sh",
     ),
     "inet-address": (
         "compat/x86_64/inet_address_header_abi_probe.c",
@@ -1193,6 +1240,8 @@ STDIO_STANDARD_STREAM_SYMBOLS = (
     *STDIO_STANDARD_STREAM_FUNCTION_SYMBOLS,
 )
 
+STDIO_FOPEN64_ALIAS_SYMBOLS = ("fopen64",)
+
 CREDENTIAL_OBSERVATION_SYMBOLS = ("getgroups", "getresuid", "getresgid")
 
 LOGIN_NAME_SYMBOLS = ("getlogin", "getlogin_r")
@@ -1200,6 +1249,85 @@ LOGIN_NAME_SYMBOLS = ("getlogin", "getlogin_r")
 SECURE_ENVIRONMENT_SYMBOLS = ("secure_getenv",)
 
 CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
+
+WAIT_EXTENSION_SYMBOLS = ("wait3", "wait4")
+
+LEGACY_SIGNAL_ALIAS_SYMBOLS = ("bsd_signal", "__sysv_signal")
+
+SYSV_SIGNAL_HELPER_SYMBOLS = ("sighold", "sigignore", "sigrelse", "sigset")
+
+PROCESS_SIGNAL_SYMBOLS = (
+    "__libc_current_sigrtmax",
+    "__libc_current_sigrtmin",
+    "__sysv_signal",
+    "bsd_signal",
+    "kill",
+    "killpg",
+    "psiginfo",
+    "psignal",
+    "raise",
+    "sigaction",
+    "sigaddset",
+    "sigaltstack",
+    "sigandset",
+    "sigdelset",
+    "sigemptyset",
+    "sigfillset",
+    "sighold",
+    "sigignore",
+    "siginterrupt",
+    "sigisemptyset",
+    "sigismember",
+    "sigorset",
+    "sigpause",
+    "sigpending",
+    "sigprocmask",
+    "sigqueue",
+    "sigrelse",
+    "sigset",
+    "signal",
+    "signalfd",
+    "sigsuspend",
+    "sigtimedwait",
+    "sigwait",
+    "sigwaitinfo",
+)
+
+PROCESS_SIGNAL_FEATURES = (
+    "x86-signal-legacy-aliases",
+    "x86-signal-sysv-helpers",
+    "x86-signal-reporting",
+)
+
+PROCESS_SIGNAL_OPT_IN_SYMBOLS = (
+    "__sysv_signal",
+    "bsd_signal",
+    "psiginfo",
+    "psignal",
+    "sighold",
+    "sigignore",
+    "sigrelse",
+    "sigset",
+)
+
+PROCESS_SIGNAL_COMPONENT_RUNNERS = (
+    "run_libc_sigrtmax.sh",
+    "run_libc_sigrtmin.sh",
+    "run_libc_signal_legacy_aliases.sh",
+    "run_libc_signal_execution.sh",
+    "run_libc_signal_control.sh",
+    "run_libc_sigaddset_sigdelset_sigfillset.sh",
+    "run_libc_signal_altstack.sh",
+    "run_libc_sigandset_sigorset.sh",
+    "run_libc_signal_sysv_helpers.sh",
+    "run_libc_siginterrupt.sh",
+    "run_libc_sigisemptyset.sh",
+    "run_libc_sigpause.sh",
+    "run_libc_sigpending.sh",
+    "run_libc_signalfd.sh",
+    "run_libc_readiness_waits.sh",
+    "run_libc_psignal.sh",
+)
 
 IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
 POSIX_EXIT_SYMBOLS = ("_exit",)
@@ -1390,7 +1518,6 @@ PATHNAME_LIFECYCLE_UNSELECTED_SYMBOLS = (
     "mkdirat",
     "realpath",
     "renameat",
-    "renameat2",
     "scandir",
     "symlinkat",
 )
@@ -1497,11 +1624,24 @@ NS_SKIPRR_SYMBOLS = ("ns_skiprr",)
 INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
 GETHOSTID_SYMBOLS = ("gethostid",)
+ISSETUGID_SYMBOLS = ("issetugid",)
+LEGACY_MISC_SYMBOLS = (
+    "encrypt",
+    "fmtmsg",
+    "get_avphys_pages",
+    "get_nprocs",
+    "get_nprocs_conf",
+    "get_phys_pages",
+    "issetugid",
+    "setkey",
+)
+LEGACY_MISC_OPT_IN_SYMBOLS = ("encrypt", "fmtmsg", "setkey")
 GETTID_SYMBOLS = ("gettid",)
 GETLOADAVG_SYMBOLS = ("getloadavg",)
 SLEEP_SYMBOLS = ("sleep",)
 POSIX_CLOSE_SYMBOLS = ("posix_close",)
 ENDHOSTENT_SYMBOLS = ("endhostent", "endnetent")
+SETHOSTENT_SYMBOLS = ("sethostent", "setnetent")
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
@@ -1607,6 +1747,24 @@ FENV_SENSITIVE_ROUNDING_SYMBOLS = (
     "nearbyint",
     "nearbyintf",
     "nearbyintl",
+    "rint",
+    "rintf",
+    "rintl",
+)
+
+MATH_ELEMENTARY_FENV_SENSITIVE_SYMBOLS = (
+    "exp10",
+    "exp10f",
+    "exp10l",
+    "fdim",
+    "fdimf",
+    "fdiml",
+    "nearbyint",
+    "nearbyintf",
+    "nearbyintl",
+    "pow10",
+    "pow10f",
+    "pow10l",
     "rint",
     "rintf",
     "rintl",
@@ -1874,8 +2032,29 @@ def require_aarch64_parity_inventory() -> None:
     except Exception as error:  # Recast a nested evidence failure at this boundary.
         raise LedgerError(f"AArch64 parity inventory failed: {error}") from error
     require(isinstance(report, Mapping), "AArch64 parity inventory report is invalid")
+    frozen_baseline = report.get("frozen_baseline")
+    require(
+        isinstance(frozen_baseline, Mapping),
+        "AArch64 parity inventory frozen baseline is invalid",
+    )
+    require(
+        frozen_baseline.get("schema")
+        == "crabc.x86_64-frozen-aarch64-baseline/v1",
+        "AArch64 parity inventory frozen baseline schema is invalid",
+    )
     boundary = report.get("x86_boundary")
     require(isinstance(boundary, Mapping), "AArch64 parity inventory x86 boundary is invalid")
+    baseline = report.get("baseline")
+    require(isinstance(baseline, Mapping), "AArch64 parity inventory baseline is invalid")
+    require(
+        frozen_baseline.get("capability_count") == baseline.get("capability_count"),
+        "AArch64 parity inventory frozen capability count is invalid",
+    )
+    require(
+        frozen_baseline.get("required_family_count")
+        == boundary.get("promotion_family_count"),
+        "AArch64 parity inventory frozen family count is invalid",
+    )
     require(boundary.get("promotion_ready") is False, "AArch64 parity inventory must retain promotion_ready=false")
     require(boundary.get("public_support") is False, "AArch64 parity inventory must retain public_support=false")
 
@@ -2127,8 +2306,9 @@ def validate_header_layout_foundation_manifest(
 
     The v8 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
-    Linux-UAPI input, resolves selected UAPI-wrapper, ioctl-header, epoll-header,
-    timeval-transitive, direct sys/time, and access-header ABI matrices, and
+    Linux-UAPI input, resolves selected UAPI-wrapper, ioctl-header, x86 sys/io
+    inline-port-I/O, epoll-header, timeval-transitive, direct sys/time, and
+    access-header ABI matrices, and
     verifies a seven-profile empty-TU closure diagnostic with two explicit
     pinned-musl aio.h strict-profile applicability results, while keeping
     feature visibility, declaration/layout comparisons, and declared-callable
@@ -2152,6 +2332,7 @@ def validate_header_layout_foundation_manifest(
         "uapi_input",
         "uapi_wrapper_matrix",
         "ioctl_header_profile_matrix",
+        "sys_io_header_profile_matrix",
         "epoll_header_profile_matrix",
         "event_descriptors_header_profile_matrix",
         "dirent_header_profile_matrix",
@@ -2221,6 +2402,7 @@ def validate_header_layout_foundation_manifest(
             "legacy_direct_inputs_accounted": True,
             "uapi_wrapper_profile_matrix_slice": True,
             "ioctl_header_profile_matrix_slice": True,
+            "sys_io_header_profile_matrix_slice": True,
             "epoll_header_profile_matrix_slice": True,
             "event_descriptors_header_profile_matrix_slice": True,
             "dirent_header_profile_matrix_slice": True,
@@ -2302,6 +2484,12 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/run_ioctl_header_abi.sh",
         "compat/x86_64/ioctl_header_abi_probe.c",
         "compat/x86_64/ioctl_header_abi_probe.cpp",
+        "compat/x86_64/run_sys_io_header_abi.sh",
+        "compat/x86_64/sys_io_header_abi_probe.c",
+        "compat/x86_64/sys_io_header_abi_probe.cpp",
+        "compat/x86_64/tests/test_sys_io_header_abi.py",
+        "include/sys/io.h",
+        "include/bits/io.h",
         "compat/x86_64/run_epoll_header_abi.sh",
         "compat/x86_64/epoll_header_abi_probe.c",
         "compat/x86_64/epoll_header_abi_probe.cpp",
@@ -3622,6 +3810,163 @@ def validate_header_layout_foundation_manifest(
         "libc.headers-layouts ioctl header matrix evidence must retain its non-completion boundary",
     )
 
+    sys_io_header_profile_matrix = manifest["sys_io_header_profile_matrix"]
+    require(
+        isinstance(sys_io_header_profile_matrix, Mapping),
+        "header-foundation sys/io header matrix must be a table",
+    )
+    require(
+        set(sys_io_header_profile_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "subject_headers",
+            "profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation sys/io header matrix keys drifted",
+    )
+    require(
+        sys_io_header_profile_matrix["id"] == EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_ID,
+        "header-foundation sys/io header matrix id drifted",
+    )
+    require(
+        sys_io_header_profile_matrix["state"] == "partial-verified"
+        and sys_io_header_profile_matrix["required_result"] == "pass",
+        "header-foundation sys/io header matrix must remain partial verified evidence",
+    )
+    require(
+        sys_io_header_profile_matrix["command"]
+        == EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation sys/io header matrix command drifted",
+    )
+    require(
+        sys_io_header_profile_matrix["header_class"] == "pinned-non-uapi",
+        "header-foundation sys/io header matrix must remain scoped to fixed pinned non-UAPI headers",
+    )
+    sys_io_headers = string_list(
+        sys_io_header_profile_matrix["subject_headers"],
+        "header-foundation sys/io header matrix subject headers",
+    )
+    require(
+        tuple(sys_io_headers) == EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS,
+        "header-foundation sys/io header matrix subject headers drifted",
+    )
+    sys_io_profiles = string_list(
+        sys_io_header_profile_matrix["profiles"],
+        "header-foundation sys/io header matrix profiles",
+    )
+    require(
+        tuple(sys_io_profiles) == EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_PROFILES,
+        "header-foundation sys/io header matrix profiles drifted",
+    )
+    require(
+        sys_io_header_profile_matrix["row_count"]
+        == EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_ROW_COUNT
+        and sys_io_header_profile_matrix["row_count"] == len(sys_io_profiles),
+        "header-foundation sys/io header matrix row count drifted",
+    )
+    sys_io_scope = sys_io_header_profile_matrix["scope"]
+    require(
+        isinstance(sys_io_scope, str)
+        and all(
+            phrase in sys_io_scope
+            for phrase in (
+                "iopl/ioperm declarations",
+                "twelve header-local",
+                "musl operand",
+                "direction-flag",
+                "C++ C linkage",
+                "no external inline-helper reference",
+                "object-code instructions",
+                "does not execute port I/O",
+                "iopl/ioperm artifact linkage",
+                "system.kernel-admin capability",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation sys/io header matrix scope must retain its non-completion boundary",
+    )
+    sys_io_rows = sys_io_header_profile_matrix["row"]
+    require(
+        isinstance(sys_io_rows, list)
+        and len(sys_io_rows) == EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_ROW_COUNT,
+        "header-foundation sys/io header matrix row roster drifted",
+    )
+    observed_sys_io_rows: list[str] = []
+    for index, row in enumerate(sys_io_rows):
+        location = f"header-foundation sys_io_header_profile_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row) == {"profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        profile = row["profile"]
+        require(isinstance(profile, str), f"{location} profile is invalid")
+        require(
+            profile in EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_PROFILES,
+            f"{location} profile is not a declared sys/io header profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_sys_io_rows.append(profile)
+    require(
+        tuple(observed_sys_io_rows) == EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_PROFILES,
+        "header-foundation sys/io header matrix row order or cross-product drifted",
+    )
+    require(
+        SYS_IO_HEADER_ABI_RUNNER_PATH.is_file(),
+        "header-foundation sys/io header matrix runner is missing",
+    )
+    require(
+        "sys-io-header-abi)" in dispatch_source,
+        "sys-io-header-abi is absent from the native dispatcher",
+    )
+    sys_io_matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_SYS_IO_HEADER_PROFILE_MATRIX_COMMAND
+    ]
+    require(
+        len(sys_io_matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one sys/io header matrix evidence command",
+    )
+    require(
+        sys_io_matrix_evidence[0].get("state") == "required"
+        and isinstance(sys_io_matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in sys_io_matrix_evidence[0]["scope"]
+            for phrase in (
+                "iopl/ioperm declarations",
+                "twelve header-local",
+                "operand/DF",
+                "C++ C linkage",
+                "object code only",
+                "never executes port I/O",
+                "iopl/ioperm artifact linkage",
+                "kernel-admin capability",
+                "all-header closure",
+                "runtime completion",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts sys/io header matrix evidence must retain its non-completion boundary",
+    )
+
     timeval_transitive_header_profile_matrix = manifest[
         "timeval_transitive_header_profile_matrix"
     ]
@@ -4576,6 +4921,7 @@ def validate_header_layout_foundation_manifest(
         "uapi_path_count": len(observed_uapi_paths),
         "uapi_wrapper_matrix_row_count": len(observed_matrix_rows),
         "ioctl_header_profile_matrix_row_count": len(observed_ioctl_rows),
+        "sys_io_header_profile_matrix_row_count": len(observed_sys_io_rows),
         "epoll_header_profile_matrix_row_count": len(observed_epoll_rows),
         "event_descriptors_header_profile_matrix_row_count": len(
             observed_event_descriptor_rows
@@ -5499,6 +5845,182 @@ def require_uio_cxx_archive_linkage_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_ctype_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep ctype declarations and fast/legacy macros below runtime selection."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matches = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == "./scripts/dev-x86_64.sh ctype-header-abi"
+    ]
+    require(
+        len(matches) == 1,
+        "libc.headers-layouts must retain exactly one ctype-header-abi evidence command",
+    )
+    record = matches[0]
+    scope = record.get("scope")
+    require(
+        record.get("state") == "required"
+        and isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "project-first/pinned-musl C/C++",
+                "fourteen ordinary ctype declarations",
+                "C-only `__isspace` inline",
+                "exact `isalpha`/`isdigit`/`islower`/`isupper`/`isprint`/`isgraph`/`isspace`",
+                "all C feature profiles",
+                "C++-hidden",
+                "`isascii`/`toascii`",
+                "exact bitwise `_tolower`/`_toupper`",
+                "POSIX/XOPEN/GNU/BSD C-visible",
+                "strict-C-hidden",
+                "compiler-native C++17",
+                "archive linkage",
+                "C-locale runtime behavior",
+                "header-family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts ctype-header-abi evidence must retain its narrow header-only boundary",
+    )
+    owners = set(
+        nonempty_strings(
+            family["source_owners"], "family[libc.headers-layouts].source_owners"
+        )
+    )
+    for owner in (
+        "include/ctype.h",
+        "compat/x86_64/ctype_header_abi_probe.c",
+        "compat/x86_64/ctype_header_abi_probe.cpp",
+        "compat/x86_64/run_ctype_header_abi.sh",
+    ):
+        require(
+            owner in owners,
+            f"libc.headers-layouts ctype-header-abi source owners omit {owner}",
+        )
+
+
+def require_socket_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep netinet macro evidence separate from socket runtime selection."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matches = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == "./scripts/dev-x86_64.sh socket-header-abi"
+    ]
+    require(
+        len(matches) == 1,
+        "libc.headers-layouts must retain exactly one socket-header-abi evidence command",
+    )
+    record = matches[0]
+    scope = record.get("scope")
+    require(
+        record.get("state") == "required"
+        and isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "project-first/pinned-musl C/C++",
+                "IPv4/IPv6 address-equality/classification",
+                "`__ARE_4_EQUAL`/`IN6_ARE_ADDR_EQUAL`",
+                "`IN_CLASSA`/`IN_CLASSB`/`IN_CLASSC`/`IN_CLASSD`/`IN_MULTICAST`/`IN_EXPERIMENTAL`/`IN_BADCLASS`",
+                "GNU/BSD `IP_MSFILTER_SIZE`/`GROUP_FILTER_SIZE`",
+                "socket membership",
+                "packet I/O",
+                "socket options",
+                "vectored/ancillary messages",
+                "address conversion",
+                "resolver/netdb",
+                "C networking runtime behavior",
+            )
+        ),
+        "libc.headers-layouts socket-header-abi evidence must retain its narrow header-only boundary",
+    )
+    owners = set(
+        nonempty_strings(
+            family["source_owners"], "family[libc.headers-layouts].source_owners"
+        )
+    )
+    for owner in (
+        "include/netinet/in.h",
+        "compat/x86_64/socket_header_abi_probe.c",
+        "compat/x86_64/socket_header_abi_probe.cpp",
+        "compat/x86_64/socket_header_ipv6_macro_probe.c",
+        "compat/x86_64/run_socket_header_abi.sh",
+    ):
+        require(
+            owner in owners,
+            f"libc.headers-layouts socket-header-abi source owners omit {owner}",
+        )
+
+
+def require_socket_messages_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep ancillary traversal macros inside the bounded message header gate."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matches = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command")
+        == "./scripts/dev-x86_64.sh socket-messages-header-abi"
+    ]
+    require(
+        len(matches) == 1,
+        "libc.headers-layouts must retain exactly one socket-messages-header-abi evidence command",
+    )
+    record = matches[0]
+    scope = record.get("scope")
+    require(
+        record.get("state") == "required"
+        and isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "project-first/pinned-musl POSIX/GNU/BSD C/C++",
+                "exact unconditional `__CMSG_LEN`/`__CMSG_NEXT`/`__MHDR_END`",
+                "ancillary traversal helpers",
+                "archive linkage",
+                "socket runtime behavior",
+                "installed-header completion",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts socket-messages-header-abi evidence must retain its narrow header-only boundary",
+    )
+    owners = set(
+        nonempty_strings(
+            family["source_owners"], "family[libc.headers-layouts].source_owners"
+        )
+    )
+    for owner in (
+        "include/sys/socket.h",
+        "compat/x86_64/socket_messages_header_abi_probe.c",
+        "compat/x86_64/socket_messages_header_abi_probe.cpp",
+        "compat/x86_64/socket_messages_header_visibility_probe.c",
+        "compat/x86_64/run_socket_messages_header_abi.sh",
+    ):
+        require(
+            owner in owners,
+            f"libc.headers-layouts socket-messages-header-abi source owners omit {owner}",
+        )
+
+
 def require_inet_address_header_evidence(family: Mapping[str, Any]) -> None:
     """Keep the selected numeric-address declarations below header promotion."""
     evidence = family.get("native_evidence")
@@ -5590,6 +6112,9 @@ def require_nameser_header_evidence(family: Mapping[str, Any]) -> None:
                 "`ns_get32(const unsigned char *)`",
                 "`ns_put16(unsigned, unsigned char *)`",
                 "NS_CMPRSFLGS/NS_MAXLABEL/NS_MAXCDNAME/NS_MAXDNAME",
+                "exact unconditional `ns_t_qt_p`/`ns_t_mrr_p`/`ns_t_rr_p`/`ns_t_udp_p`/`ns_t_xfr_p`",
+                "`NS_NXT_BIT_SET`/`NS_NXT_BIT_CLEAR`/`NS_NXT_BIT_ISSET`",
+                "record-classification macros",
                 "caller-owned DNS wire-name span",
                 "caller-owned 16-bit wire-read",
                 "caller-owned 32-bit wire-read",
@@ -5628,6 +6153,192 @@ def require_nameser_header_evidence(family: Mapping[str, Any]) -> None:
         require(
             owner in owners,
             f"libc.headers-layouts nameser-header-abi source owners omit {owner}",
+        )
+
+
+def require_quota_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep unit-conversion macros below quota syscall and policy selection."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matches = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == "./scripts/dev-x86_64.sh quota-header-abi"
+    ]
+    require(
+        len(matches) == 1,
+        "libc.headers-layouts must retain exactly one quota-header-abi evidence command",
+    )
+    record = matches[0]
+    scope = record.get("scope")
+    require(
+        record.get("state") == "required"
+        and isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "project-first/pinned-musl C/C++",
+                "<sys/quota.h>",
+                "exact unconditional `dbtob`/`btodb`/`fs_to_dq_blocks`/`dqoff`",
+                "LP64 `unsigned long long` `dqoff` result",
+                "compile-only",
+                "quota conversion macros",
+                "quotactl archive/runtime behavior",
+                "quota policy/accounting",
+                "filesystem/kernel state",
+                "system.kernel-admin",
+                "installed-header completion",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts quota-header-abi evidence must retain its narrow header-only boundary",
+    )
+    owners = set(
+        nonempty_strings(
+            family["source_owners"], "family[libc.headers-layouts].source_owners"
+        )
+    )
+    for owner in (
+        "include/sys/quota.h",
+        "compat/x86_64/quota_header_abi_probe.c",
+        "compat/x86_64/quota_header_abi_probe.cpp",
+        "compat/x86_64/run_quota_header_abi.sh",
+    ):
+        require(
+            owner in owners,
+            f"libc.headers-layouts quota-header-abi source owners omit {owner}",
+        )
+
+
+def require_sched_cpu_macros_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep GNU CPU-set syntax below allocator and scheduler runtime selection."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matches = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command")
+        == "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi"
+    ]
+    require(
+        len(matches) == 1,
+        "libc.headers-layouts must retain exactly one sched-cpu-macros-header-abi evidence command",
+    )
+    record = matches[0]
+    scope = record.get("scope")
+    require(
+        record.get("state") == "required"
+        and isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "project-first/pinned-musl C/C++",
+                "<sched.h>",
+                "exact GNU `__CPU_op_S`/`CPU_SET_S`/`CPU_CLR_S`/`CPU_ISSET_S`",
+                "`CPU_ALLOC_SIZE`/`CPU_ALLOC`/`CPU_FREE`",
+                "generated `__CPU_AND_S`/`__CPU_OR_S`/`__CPU_XOR_S`",
+                "`CPU_SETSIZE`",
+                "canonical C++ strict visibility",
+                "forced-macro-hidden negative selection",
+                "archive linkage",
+                "allocator runtime behavior",
+                "byte-string runtime behavior",
+                "scheduler policy/affinity",
+                "installed-header completion",
+                "family completion",
+                "public x86 support",
+            )
+        ),
+        "libc.headers-layouts sched-cpu-macros-header-abi evidence must retain its narrow header-only boundary",
+    )
+    owners = set(
+        nonempty_strings(
+            family["source_owners"], "family[libc.headers-layouts].source_owners"
+        )
+    )
+    for owner in (
+        "include/sched.h",
+        "compat/x86_64/sched_cpu_macros_header_abi_probe.c",
+        "compat/x86_64/sched_cpu_macros_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_cpu_macros_header_abi.sh",
+    ):
+        require(
+            owner in owners,
+            f"libc.headers-layouts sched-cpu-macros-header-abi source owners omit {owner}",
+        )
+
+
+def require_fanotify_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep fanotify caller-buffer macros below descriptor and watcher selection."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matches = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == "./scripts/dev-x86_64.sh fanotify-header-abi"
+    ]
+    require(
+        len(matches) == 1,
+        "libc.headers-layouts must retain exactly one fanotify-header-abi evidence command",
+    )
+    record = matches[0]
+    scope = record.get("scope")
+    require(
+        record.get("state") == "required"
+        and isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "project-first/pinned-musl",
+                "seven-profile C/C++",
+                "<sys/fanotify.h>",
+                "Linux 5.10",
+                "`fanotify_event_metadata` LP64 layout",
+                "`FAN_EVENT_METADATA_LEN`",
+                "exact unconditional `FAN_EVENT_NEXT`/`FAN_EVENT_OK`",
+                "C/C++ result types",
+                "canonical strict C++ visibility",
+                "record traversal macros",
+                "archive linkage",
+                "fanotify_init/fanotify_mark archive/runtime behavior",
+                "descriptor creation",
+                "kernel watcher state",
+                "watcher policy",
+                "installed-header completion",
+                "family completion",
+                "public x86 support",
+            )
+        ),
+        "libc.headers-layouts fanotify-header-abi evidence must retain its narrow header-only boundary",
+    )
+    owners = set(
+        nonempty_strings(
+            family["source_owners"], "family[libc.headers-layouts].source_owners"
+        )
+    )
+    for owner in (
+        "include/stddef.h",
+        "include/sys/fanotify.h",
+        "compat/x86_64/fanotify_header_abi_probe.c",
+        "compat/x86_64/fanotify_header_abi_probe.cpp",
+        "compat/x86_64/run_fanotify_header_abi.sh",
+    ):
+        require(
+            owner in owners,
+            f"libc.headers-layouts fanotify-header-abi source owners omit {owner}",
         )
 
 
@@ -8700,6 +9411,538 @@ def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_ldso_general_initial_graph_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet bounded dependency constructors without promoting the loader."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "ldso-general-initial-graph"]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-general-initial-graph artifact",
+    )
+    artifact = matching[0]
+    require(
+        family.get("status") == "planned",
+        "ldso-general-initial-graph must not promote ldso.dynamic-runtime",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "arbitrary bounded non-TLS initial `DT_NEEDED`",
+        "absolute RUNPATH components",
+        "`(st_dev, st_ino)`",
+        "diamond and cycle",
+        "R_X86_64_RELATIVE",
+        "R_X86_64_GLOB_DAT",
+        "R_X86_64_JUMP_SLOT",
+        "dependency-first postorder",
+        "declared `DT_NEEDED` order",
+        "before the first callback",
+        "then dispatches it once",
+        "`DT_INIT_ARRAY`/`DT_INIT_ARRAYSZ`",
+        "DT_INIT, DT_FINI, DT_PREINIT_ARRAY, DT_FINI_ARRAY",
+        "TLS/DTV/__tls_get_addr",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"ldso-general-initial-graph description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/Cargo.toml",
+        "ldso/build.rs",
+        "ldso/src/lib.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "ldso/src/x86_64_initial_graph_state.rs",
+        "ldso/src/x86_64_general_initial_graph.rs",
+        "ldso/src/x86_64_general_initial_graph_source_root.rs",
+        "compat/x86_64/ldso_initial_graph_start.S",
+        "compat/x86_64/ldso_general_initial_graph_main.c",
+        "compat/x86_64/ldso_general_initial_graph_left.c",
+        "compat/x86_64/ldso_general_initial_graph_right.c",
+        "compat/x86_64/ldso_general_initial_graph_shared.c",
+        "compat/x86_64/ldso_general_initial_graph_cycle_marker.h",
+        "compat/x86_64/run_ldso_general_initial_graph.sh",
+        "compat/x86_64/run_ldso_general_initial_graph_target_root.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"], "ldso-general-initial-graph source owners"
+            )
+        )
+        == expected_sources,
+        "ldso-general-initial-graph source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {
+            "./scripts/dev-x86_64.sh ldso-general-initial-graph",
+            "./scripts/dev-x86_64.sh ldso-general-initial-target-root",
+        },
+        "ldso-general-initial-graph must use dedicated native commands",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_ldso_general_initial_graph.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "CRABC_LDSO_GENERAL_INITIAL_GRAPH_ROOT",
+        "x86_64-general-initial-interpreter",
+        "left_dir",
+        "right_dir",
+        "shared_dir",
+        "CRABC_GENERAL_INIT_ARRAY_ZERO",
+        "CRABC_GENERAL_INIT_ARRAY_NONEXECUTABLE",
+        "DT_INIT_ARRAY",
+        "(INIT_ARRAYSZ)",
+        "once-only dependency DT_INIT_ARRAY lifecycle",
+        "ctorplan",
+        "legacy DT_INIT",
+        "legacy DT_FINI",
+        "DT_FINI_ARRAY",
+        "main-image DT_INIT_ARRAY",
+        "main-image DT_PREINIT_ARRAY",
+        "cycle-constructor-ran",
+        "general graph did not fail closed",
+    ):
+        require(
+            phrase in runner,
+            f"ldso-general-initial-graph runner omits {phrase}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" / "run_ldso_general_initial_graph_target_root.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_LDSO_GENERAL_INITIAL_GRAPH_ROOT=crabc-target" in wrapper,
+        "ldso-general-initial-graph target-root wrapper must select the Cargo root",
+    )
+    cargo = (ROOT / "ldso" / "Cargo.toml").read_text(encoding="utf-8")
+    lib = (ROOT / "ldso" / "src" / "lib.rs").read_text(encoding="utf-8")
+    build = (ROOT / "ldso" / "build.rs").read_text(encoding="utf-8")
+    require(
+        "x86_64-general-initial-interpreter" in cargo
+        and "x86_64-general-initial-interpreter" in lib
+        and "CARGO_FEATURE_X86_64_GENERAL_INITIAL_INTERPRETER" in build,
+        "ldso-general-initial-graph Cargo feature binding is missing",
+    )
+    graph = (
+        ROOT / "ldso" / "src" / "x86_64_general_initial_graph.rs"
+    ).read_text(encoding="utf-8")
+    graph_state = (
+        ROOT / "ldso" / "src" / "x86_64_initial_graph_state.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in ("dependency_first_plan", "DependencyCycle"):
+        require(
+            phrase in graph_state,
+            f"ldso-general-initial-graph graph state omits {phrase}",
+        )
+    require(
+        graph.index("apply_relro")
+        < graph.index("preflight_dependency_initializers")
+        < graph.index("unsafe { dispatch_dependency_initializers(&initializers) };"),
+        "ldso-general-initial-graph must preflight dependency callbacks after RELRO and before dispatch",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for phrase in (
+        "run_ldso_general_initial_graph_tests()",
+        "run_ldso_general_initial_graph_target_root_tests()",
+        "run_ldso_general_initial_graph.sh",
+        "run_ldso_general_initial_graph_target_root.sh",
+        "ldso-general-initial-graph)",
+        "ldso-general-initial-target-root)",
+    ):
+        require(
+            phrase in dispatcher,
+            f"ldso-general-initial-graph dispatcher omits {phrase}",
+        )
+
+
+def require_ldso_general_initial_tls_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one initial-only general TLS transaction without promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "ldso-general-initial-tls-materialization"
+    ]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-general-initial-tls-materialization artifact",
+    )
+    artifact = matching[0]
+    require(
+        family.get("status") == "planned",
+        "ldso-general-initial-tls-materialization must not promote ldso.dynamic-runtime",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "general-initial-TLS materialization",
+        "`x86_64-general-initial-tls-interpreter`",
+        "Variant-II",
+        "R_X86_64_DTPMOD64",
+        "R_X86_64_DTPOFF64",
+        "__tls_get_addr",
+        "ARCH_SET_FS",
+        "atomically reserves",
+        "non-fallible retained-state commit",
+        "dependency `DT_INIT_ARRAY` plan failures remain before ARCH_SET_FS",
+        "preflighted before ARCH_SET_FS",
+        "candidate callbacks dispatch only after that commit",
+        "naked pinned-musl reference",
+        "constructor-order differential",
+        "main/CRT lifecycle",
+        "RuntimeV1 descriptors",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"ldso-general-initial-tls-materialization description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/Cargo.toml",
+        "ldso/build.rs",
+        "ldso/src/lib.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "ldso/src/x86_64_initial_graph_state.rs",
+        "ldso/src/x86_64_initial_tls_registry.rs",
+        "ldso/src/x86_64_general_initial_graph.rs",
+        "ldso/src/x86_64_general_initial_tls_state.rs",
+        "ldso/src/x86_64_general_initial_tls_source_root.rs",
+        "compat/x86_64/ldso_initial_graph_start.S",
+        "compat/x86_64/ldso_general_initial_tls_main.c",
+        "compat/x86_64/ldso_general_initial_tls_left.c",
+        "compat/x86_64/ldso_general_initial_tls_right.c",
+        "compat/x86_64/ldso_general_initial_tls_shared.c",
+        "compat/x86_64/ldso_general_initial_tls_capacity.c",
+        "compat/x86_64/ldso_general_initial_tls_trace.c",
+        "compat/x86_64/run_ldso_general_initial_tls.sh",
+        "compat/x86_64/run_ldso_general_initial_tls_target_root.sh",
+        "compat/x86_64/loader-libc-tls-runtime-v1.toml",
+        "compat/x86_64/validate_loader_libc_tls_runtime_v1.py",
+        "compat/x86_64/tests/test_ldso_general_initial_tls_materialization.py",
+        "compat/x86_64/tests/test_loader_libc_tls_runtime_v1.py",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "ldso-general-initial-tls-materialization source owners",
+            )
+        )
+        == expected_sources,
+        "ldso-general-initial-tls-materialization source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {
+            "./scripts/dev-x86_64.sh ldso-general-initial-tls",
+            "./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root",
+        },
+        "ldso-general-initial-tls-materialization must use both dedicated native commands",
+    )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls.sh").read_text(
+        encoding="utf-8"
+    )
+    for phrase in (
+        "crabc_general_initial_tls_materialization_v1",
+        "DTPMOD64",
+        "DTPOFF64",
+        "TLSDESC",
+        "ARCH_SET_FS",
+        "CRABC_GENERAL_INITIAL_TLS_CANDIDATE",
+        "candidate-only dependency DT_INIT_ARRAY constructor",
+        "naked pinned-musl reference intentionally bypasses CRT",
+        "(INIT_ARRAYSZ)",
+        "duplicate-pt-tls",
+        "object-capacity",
+        "tls-overflow",
+        "expect_candidate_rejection_before_fs",
+    ):
+        require(
+            phrase in runner,
+            f"ldso-general-initial-tls runner omits {phrase}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls_target_root.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_LDSO_GENERAL_INITIAL_TLS_ROOT=crabc-target" in wrapper,
+        "ldso-general-initial-tls target-root wrapper must select the Cargo root",
+    )
+    cargo = (ROOT / "ldso" / "Cargo.toml").read_text(encoding="utf-8")
+    lib = (ROOT / "ldso" / "src" / "lib.rs").read_text(encoding="utf-8")
+    build = (ROOT / "ldso" / "build.rs").read_text(encoding="utf-8")
+    state = (
+        ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs"
+    ).read_text(encoding="utf-8")
+    graph = (
+        ROOT / "ldso" / "src" / "x86_64_general_initial_graph.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "x86_64-general-initial-tls-interpreter" in cargo
+        and "x86_64-general-initial-tls-interpreter" in lib
+        and "CARGO_FEATURE_X86_64_GENERAL_INITIAL_TLS_INTERPRETER" in build,
+        "ldso-general-initial-tls Cargo feature binding is missing",
+    )
+    for phrase in (
+        "PublicationReserved",
+        "PublicationUnavailable",
+        "reserve_publication",
+        "GENERAL_INITIAL_TLS_PUBLISHING",
+        "GENERAL_INITIAL_TLS_COMMITTED",
+        "pre_fs_publication_reservation_rolls_back_and_allows_retry",
+    ):
+        require(
+            phrase in state,
+            f"ldso-general-initial-tls state omits {phrase}",
+        )
+    require(
+        graph.index("state.reserve_publication()")
+        < graph.index("state.materialize_initial_tls()"),
+        "ldso-general-initial-tls must reserve publication before ARCH_SET_FS",
+    )
+    require(
+        "unsafe { state.commit(installed) };" in graph
+        and "state.commit(installed) }.map_err" not in graph,
+        "ldso-general-initial-tls commit must remain non-fallible after ARCH_SET_FS",
+    )
+    require(
+        graph.index("state.reserve_publication()")
+        < graph.index("state.materialize_initial_tls()")
+        < graph.index("unsafe { state.commit(installed) };")
+        < graph.rindex("unsafe { dispatch_dependency_initializers(&initializers) };"),
+        "ldso-general-initial-tls must dispatch a preflight dependency callback plan only after commit",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for phrase in (
+        "run_ldso_general_initial_tls_tests()",
+        "run_ldso_general_initial_tls_target_root_tests()",
+        "run_ldso_general_initial_tls.sh",
+        "run_ldso_general_initial_tls_target_root.sh",
+        "ldso-general-initial-tls)",
+        "ldso-general-initial-tls-target-root)",
+    ):
+        require(
+            phrase in dispatcher,
+            f"ldso-general-initial-tls dispatcher omits {phrase}",
+        )
+
+
+def require_loader_libc_general_tls_runtime_v1_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the bounded general RuntimeV1 wire without product promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "loader-libc-general-tls-runtime-v1"
+    ]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one loader-libc-general-tls-runtime-v1 artifact",
+    )
+    artifact = matching[0]
+    require(
+        family.get("status") == "planned",
+        "loader-libc-general-tls-runtime-v1 must not promote ldso.dynamic-runtime",
+    )
+    require(
+        "capabilities" not in artifact,
+        "loader-libc-general-tls-runtime-v1 must not select capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "bounded-general initial-TLS RuntimeV1 descriptor",
+        "`x86_64-general-initial-tls-runtime-v1-interpreter`",
+        "72-byte `__crabc_x86_64_loader_tls_runtime_v1`",
+        "local/hidden writable",
+        "no `.dynsym` entry",
+        "page-rounded `PT_GNU_RELRO`",
+        "`UNPUBLISHED` -> `PUBLISHING` -> `READY`",
+        "Before `ARCH_SET_FS`",
+        "non-fallibly commits retained state",
+        "release-publishes `READY` last",
+        "dependency `DT_INIT_ARRAY` plan only after ready",
+        "`ARCH_GET_FS`, `%fs`, or DTV observation",
+        "strong main-image and weak DSO record forms reject before `ARCH_SET_FS`",
+        "no-`PT_INTERP` static-observer rejection",
+        "Pinned musl 1.2.6",
+        "CRT handoff",
+        "pthread/new-thread TLS",
+        "DTV growth/replacement",
+        "runtime mapping/dlopen",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"loader-libc-general-tls-runtime-v1 description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/Cargo.toml",
+        "ldso/build.rs",
+        "ldso/src/lib.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "ldso/src/x86_64_initial_graph_state.rs",
+        "ldso/src/x86_64_initial_tls_registry.rs",
+        "ldso/src/x86_64_general_initial_graph.rs",
+        "ldso/src/x86_64_general_initial_tls_state.rs",
+        "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs",
+        "libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs",
+        "libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs",
+        "compat/x86_64/ldso_initial_graph_start.S",
+        "compat/x86_64/ldso_general_initial_tls_left.c",
+        "compat/x86_64/ldso_general_initial_tls_right.c",
+        "compat/x86_64/ldso_general_initial_tls_trace.c",
+        "compat/x86_64/loader_libc_general_tls_runtime_v1_main.c",
+        "compat/x86_64/loader_libc_general_tls_runtime_v1_shared.c",
+        "compat/x86_64/loader_libc_general_tls_runtime_v1_strong_main_record.c",
+        "compat/x86_64/loader_libc_general_tls_runtime_v1_weak_dso_record.c",
+        "compat/x86_64/loader_libc_tls_runtime_v1_static_main.c",
+        "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh",
+        "compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh",
+        "compat/x86_64/loader-libc-tls-runtime-v1.toml",
+        "compat/x86_64/validate_loader_libc_tls_runtime_v1.py",
+        "compat/x86_64/tests/test_loader_libc_tls_runtime_v1.py",
+        "compat/x86_64/tests/test_loader_libc_general_tls_runtime_v1.py",
+        "compat/x86_64/README.md",
+        "docs/evidence/x86-loader-libc-tls-runtime-v1.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "loader-libc-general-tls-runtime-v1 source owners",
+            )
+        )
+        == expected_sources,
+        "loader-libc-general-tls-runtime-v1 source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {
+            "./scripts/dev-x86_64.sh loader-libc-general-tls-runtime-v1",
+            "./scripts/dev-x86_64.sh loader-libc-general-tls-runtime-v1-target-root",
+        },
+        "loader-libc-general-tls-runtime-v1 must use both dedicated native commands",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_loader_libc_general_tls_runtime_v1.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "CRABC_LDSO_GENERAL_TLS_RUNTIME_V1_ROOT",
+        "general-runtime-v1-state-tests",
+        "x86_64-general-initial-tls-runtime-v1-interpreter",
+        "for malformed in magic version abi_size mode owner generation",
+        "poisoned-dtv",
+        "SHT_SYMTAB",
+        "SHT_DYNSYM",
+        "page-rounded PT_GNU_RELRO",
+        "strong-main-record.o",
+        "libleft-weak-record.so",
+        "expect_rejection_before_fs",
+        "no-arch-set-fs-trace",
+        "main-static",
+        "run_ldso_general_initial_tls.sh",
+    ):
+        require(
+            phrase in runner,
+            f"loader-libc-general-tls-runtime-v1 runner omits {phrase}",
+        )
+    wrapper = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "run_loader_libc_general_tls_runtime_v1_target_root.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_LDSO_GENERAL_TLS_RUNTIME_V1_ROOT=crabc-target" in wrapper,
+        "loader-libc-general-tls-runtime-v1 target-root wrapper must select the Cargo root",
+    )
+    cargo = (ROOT / "ldso" / "Cargo.toml").read_text(encoding="utf-8")
+    lib = (ROOT / "ldso" / "src" / "lib.rs").read_text(encoding="utf-8")
+    build = (ROOT / "ldso" / "build.rs").read_text(encoding="utf-8")
+    require(
+        "x86_64-general-initial-tls-runtime-v1-interpreter" in cargo
+        and "x86_64-general-initial-tls-runtime-v1-interpreter" in lib
+        and "CARGO_FEATURE_X86_64_GENERAL_INITIAL_TLS_RUNTIME_V1_INTERPRETER" in build,
+        "loader-libc-general-tls-runtime-v1 Cargo feature binding is missing",
+    )
+    graph = (
+        ROOT / "ldso" / "src" / "x86_64_general_initial_graph.rs"
+    ).read_text(encoding="utf-8")
+    state = (
+        ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs"
+    ).read_text(encoding="utf-8")
+    consumer = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "loader_tls_runtime_v1.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        graph.index("state.reserve_publication()")
+        < graph.index("state.reserve_runtime_v1_publication()")
+        < graph.index("state.materialize_initial_tls()")
+        < graph.index("state.commit_runtime_v1(installed)")
+        < graph.rindex("unsafe { dispatch_dependency_initializers(&initializers) };"),
+        "loader-libc-general-tls-runtime-v1 must reserve before FS and dispatch only after READY",
+    )
+    for phrase in (
+        "GeneralLoaderLibcTlsRuntimeV1",
+        "size_of::<GeneralLoaderLibcTlsRuntimeV1>() == 72",
+        "RuntimeV1PublicationReserved",
+        "reserve_loader_tls_runtime_v1_descriptor",
+        "release_loader_tls_runtime_v1_descriptor_reservation",
+        "publish_reserved_loader_tls_runtime_v1",
+        "GENERAL_LOADER_TLS_RUNTIME_V1_STATE_READY",
+    ):
+        require(
+            phrase in state,
+            f"loader-libc-general-tls-runtime-v1 state omits {phrase}",
+        )
+    require(
+        consumer.index("unsafe fn validate_loader_tls_runtime_v1")
+        < consumer.index("unsafe fn current_thread_pointer")
+        < consumer.index("read_volatile"),
+        "loader-libc-general-tls-runtime-v1 consumer must validate before FS/DTV observation",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for phrase in (
+        "run_loader_libc_general_tls_runtime_v1_tests()",
+        "run_loader_libc_general_tls_runtime_v1_target_root_tests()",
+        "run_loader_libc_general_tls_runtime_v1.sh",
+        "run_loader_libc_general_tls_runtime_v1_target_root.sh",
+        "loader-libc-general-tls-runtime-v1)",
+        "loader-libc-general-tls-runtime-v1-target-root)",
+    ):
+        require(
+            phrase in dispatcher,
+            f"loader-libc-general-tls-runtime-v1 dispatcher omits {phrase}",
+        )
+
+
 def require_ldso_target_root_admission_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet the private Cargo-built x86 loader root without promotion."""
     artifacts = require_verified_artifacts(
@@ -10931,22 +12174,30 @@ def require_owned_static_sysroot_artifacts(
             (
                 "still-planned `sysroot.static-tls`",
                 "Two clean builds",
-                "regular-file project header tree",
+                "manifest-bound regular-file tree",
                 "`c.*.rcgu.o`",
+                "sealed `bin/crabc-cc`",
+                "`-static` ET_EXEC",
+                "`-static-pie` ET_DYN",
                 "Rust-only `libcrabc-builtins.a`",
                 "`-nostdinc`",
                 "`PIMBCAF`",
                 "`__udivti3`",
+                "caller-owned application object",
                 "ambient headers, CRT, musl libc, libgcc/compiler runtime, and loader",
-                "no interpreter/dynamic dependency/unresolved symbol",
+                "private deterministic `tar.xz` package",
+                "safely extracts",
                 "status-127",
                 "public x86 support",
             ),
             (
                 "pinned musl",
                 "two clean byte-identical installed trees",
+                "private packages",
+                "manifest-bound full regular-file validation",
+                "sealed `crabc-cc` ET_EXEC/static-PIE plans",
                 "`-nostdinc`",
-                "direct-LLD exact-input linkage",
+                "caller-owned-object receipt/map/trace linkage",
                 "`__udivti3`",
                 "no-builtins link fails",
                 "ambient header/CRT/musl-libc/libgcc/compiler-runtime/loader",
@@ -10964,24 +12215,26 @@ def require_owned_static_sysroot_artifacts(
                 "pinned nightly Cargo/Rust producers",
                 "sealed environment",
                 "atomically installs",
-                "regular-file-only tree",
+                "manifest-bound regular-file-only tree",
                 "byte-identical",
                 "exactly five Rust CRT objects",
-                "no symlink",
-                "no symlink, bin directory/compiler driver, libc.so, loader directory/PT_INTERP",
+                "sealed `bin/crabc-cc`",
+                "hashed identities",
+                "private deterministic `tar.xz` packages",
+                "Safe extraction",
                 "`__udivti3`",
-                "distribution/extracted smoke",
                 "public x86 support",
             ),
             (
                 "two clean installed trees",
                 "pinned Rust producers",
-                "real installed static pthread/TLS/compiler-helper consumer",
+                "hashed producer tool identities",
+                "private deterministic tar.xz package",
+                "installed/extracted tree",
+                "ET_EXEC/static-PIE",
+                "sealed `crabc-cc` receipt/map/trace evidence",
                 "ambient headers, CRT, musl libc, libgcc/compiler runtime, and loader",
-                "no compiler driver",
                 "owned loader/PT_INTERP",
-                "distribution archive",
-                "extracted smoke",
                 "family completion",
                 "public x86 support",
             ),
@@ -10990,6 +12243,9 @@ def require_owned_static_sysroot_artifacts(
     required_owners = (
         "scripts/build_x86_64_owned_sysroot.py",
         "scripts/tests/test_build_x86_64_owned_sysroot.py",
+        "compat/x86_64/crabc_cc_static.py",
+        "compat/x86_64/owned_static_sysroot_package.py",
+        "compat/x86_64/tests/test_owned_static_sysroot_package.py",
         "crt/build_x86_64.py",
         "builtins/build_x86_64.py",
         "builtins/src/lib.rs",
@@ -14573,6 +15829,20 @@ def require_string_copy_artifact(family: Mapping[str, Any]) -> None:
         == {"./scripts/dev-x86_64.sh libc-string-copy"},
         "static-c-string-copy must use the closed libc-string-copy command",
     )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-string-copy.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strdupa" in item
+            and "caller-provided `alloca.h`" in item
+            and "source-faithful C++" in item
+            and "header-only" in item
+            for item in header_prerequisites
+        ),
+        "static-c-string-copy must retain the header-only strdupa boundary",
+    )
 
 
 def require_error_strings_artifact(family: Mapping[str, Any]) -> None:
@@ -15022,6 +16292,302 @@ def require_l64a_artifact(family: Mapping[str, Any]) -> None:
 
     dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
     for snippet in ("l64a-header-abi)", "libc-l64a)"):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_a64l_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the opt-in radix-64 decoder source split and stateless."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-a64l"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-a64l artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-a64l must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-a64l must not alter Rust-facade or legacy.misc capability accounting",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-a64l needs a description")
+    for phrase in (
+        "Private native x86 opt-in `a64l` selected-static-archive artifact",
+        "still-planned `libc.c-abi-compat`",
+        "`x86-a64l` feature adds exactly `a64l`",
+        "true `-nostdlib -static` candidate",
+        "at most six caller bytes",
+        "uint32_t",
+        "int32_t",
+        "shared `src/misc/a64l.c` and `a64l.lo` also define `l64a`",
+        "strchr(digits, *s)",
+        "fixed 64-byte alphabet",
+        "Strict/POSIX C/C++ hides `a64l`",
+        "unmangled `long(const char *)` linkage",
+        "no mutable state, errno, TLS, locale, allocator, syscall, or runtime edge",
+        "does not complete `legacy.misc` or general numeric parsing/conversion",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(phrase in description, f"static-c-a64l description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-a64l.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/a64l.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stdlib.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/l64a_header_abi_probe.c",
+        "compat/x86_64/l64a_header_abi_probe.cpp",
+        "compat/x86_64/run_l64a_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_a64l_probe.c",
+        "compat/x86_64/libc_a64l_start.S",
+        "compat/x86_64/run_libc_a64l.sh",
+        "compat/x86_64/tests/test_a64l.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-a64l source owners omit {owner}")
+    require(
+        "libc/src/c_abi/x86_64/byte_strings.rs" not in owners,
+        "static-c-a64l must not select the broad byte-string archive owner",
+    )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-a64l.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "rdi" in item
+            and "rax" in item
+            and "six non-NUL" in item
+            and "int32_t" in item
+            for item in prerequisites
+        ),
+        "static-c-a64l must record its exact x86 C ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/misc/a64l.c::a64l" in item
+            and "a64l.rs" in item
+            and "a64l.lo" in item
+            and "strchr(digits, *s)" in item
+            and "local bounded scan" in item
+            and "64-byte `DIGITS`" in item
+            for item in prerequisites
+        ),
+        "static-c-a64l must retain its pinned-musl mapping and intentional scan",
+    )
+    require(
+        any(
+            "exactly public `a64l`" in item
+            and "no direct undefined runtime dependency" in item
+            and "no l64a result object" in item
+            and "byte-string helper" in item
+            for item in prerequisites
+        ),
+        "static-c-a64l must retain its one-owner dependency boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-a64l.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "hide both `a64l` and `l64a`" in item
+            and "X/Open 700, GNU, and BSD" in item
+            and "long(const char *)" in item
+            and "-nostdinc" in item
+            for item in headers
+        ),
+        "static-c-a64l must retain the shared installed-header ABI boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "a64l" not in exports,
+        "static-c-a64l must remain absent from the frozen default export contract",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[cfg(feature = "x86-a64l")]\n#[path = "a64l.rs"]\nmod a64l;' in static_root,
+        "x86 static C ABI must compose a64l only through its opt-in feature",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "a64l.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Pinned musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/a64l.c::a64l",
+        "a64l.lo",
+        "equivalent bounded scan",
+        "DIGITS",
+        "while index < 64",
+        "for shift in (0..36).step_by(6)",
+        'pub unsafe extern "C" fn a64l',
+        "# Safety",
+    ):
+        require(snippet in implementation, f"a64l leaf omits {snippet}")
+    a64l_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            implementation,
+        )
+    )
+    require(a64l_exports == {"a64l"}, "a64l leaf must export only a64l")
+    for forbidden in (
+        "static mut",
+        "unsafe extern \"C\" {",
+        "raw_syscall",
+        "errno::",
+        "__errno_location",
+        "thread_local",
+        "crabc_core",
+        "crabc_mimalloc",
+        "alloc::",
+    ):
+        require(forbidden not in implementation, f"a64l leaf widens into {forbidden}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_l64a_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "a64l/l64a",
+        "CANDIDATE_CC=/usr/bin/gcc",
+        "-nostdinc",
+        "-nostdinc++",
+        "CRABC_REQUIRE_L64A_HIDDEN",
+        "CRABC_REQUIRE_A64L_HIDDEN",
+        "CRABC_EXPECT_A64L",
+        "unmangled a64l",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "escaped its declared roots",
+    ):
+        require(snippet in header_runner, f"a64l header runner omits {snippet}")
+    for probe_name in ("l64a_header_abi_probe.c", "l64a_header_abi_probe.cpp"):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(encoding="utf-8")
+        for snippet in ("a64l", "long", "const char *", "CRABC_EXPECT_A64L"):
+            require(snippet in probe, f"a64l header probe {probe_name} omits {snippet}")
+
+    fixture = (ROOT / "compat" / "x86_64" / "libc_a64l_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "CRABC_A64L_FREESTANDING",
+        "check_alphabet",
+        "check_bit_packing",
+        "check_invalid_and_bound",
+        "nul_with_suffix",
+        "check_signed_result",
+        "check_input_is_unchanged",
+        '".....0"',
+        "errno = E2BIG",
+    ):
+        require(snippet in fixture, f"a64l fixture omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_a64l.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "x86-a64l",
+        "a64l.lo",
+        "run_l64a_header_abi.sh",
+        "assert_feature_delta",
+        "a64l\\n",
+        "-nostdlib -static",
+        "--gc-sections",
+        "a64l owner has an unexpected direct dependency",
+        "call|syscall",
+        "l64a|strchr|index|memchr",
+    ):
+        require(snippet in runner, f"a64l runner omits {snippet}")
+    require("--whole-archive" not in runner, "a64l runner must not whole-archive")
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-a64l needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-a64l"},
+        "static-c-a64l must use the closed libc-a64l command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-a64l evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header X/Open C execution",
+        "shared `a64l.lo` provenance",
+        "one-member `-nostdlib -static` candidate",
+        "every alphabet position",
+        "first-invalid and high-byte stopping",
+        "signed `int32_t` result",
+        "exactly a64l",
+        "no-dependency/no-call decoder owner",
+        "does not complete legacy.misc or general numeric parsing/conversion",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-a64l evidence omits {phrase}")
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-a64l needs an oracle")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and "src/misc/a64l.c::a64l" in str(entry.get("role"))
+            and "strchr" in str(entry.get("role"))
+            and "local 64-byte table scan" in str(entry.get("role"))
+            and "no errno" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-a64l must retain its musl behavior oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "rdi" in str(entry.get("role"))
+            and "rax" in str(entry.get("role"))
+            and "one-owner" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-a64l must retain its SysV ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("l64a-header-abi)", "libc-a64l)"):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
@@ -16168,6 +17734,7 @@ def require_ctermid_artifact(family: Mapping[str, Any]) -> None:
             "char *ctermid(char *)" in item
             and "L_ctermid == 20" in item
             and "strict C/C++ hiding" in item
+            and "unistd.h's unconditional" in item
             and "unmangled C++ linkage" in item
             for item in header_prerequisites
         ),
@@ -16278,7 +17845,8 @@ def require_ctermid_artifact(family: Mapping[str, Any]) -> None:
         ROOT / "compat" / "x86_64" / "ctermid_header_abi_probe.cpp"
     ).read_text(encoding="utf-8")
     for snippet in (
-        "ctermid declaration",
+        "stdio.h ctermid declaration",
+        "unistd.h ctermid declaration",
         "ctermid_must_be_hidden",
         "CRABC_REQUIRE_L_CTERMID_HIDDEN",
         "L_ctermid",
@@ -18422,40 +19990,69 @@ def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
-def require_static_environment_artifact(family: Mapping[str, Any]) -> None:
-    """Keep the bounded static C process-environment artifact non-promoting."""
-    artifacts = require_verified_artifacts(
-        family.get("verified_artifact"),
-        "family[libc.posix-runtime].verified_artifact",
+def require_process_environment_mutation_slice(family: Mapping[str, Any]) -> None:
+    """Keep the completed C mutation slice exact and non-promoting."""
+    artifacts = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.posix-runtime].verified_slice",
         family.get("status", ""),
+        family.get("capabilities", []),
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-environment"]
     require(
         len(matching) == 1,
-        "libc.posix-runtime must contain exactly one static-c-environment artifact",
+        "libc.posix-runtime must contain exactly one static-c-environment slice",
     )
     require(
         family.get("status") == "planned",
         "static-c-environment must not promote libc.posix-runtime",
     )
     artifact = matching[0]
+    require(
+        artifact.get("capabilities") == ["process.environment-mutation"],
+        "static-c-environment must select exactly process.environment-mutation",
+    )
+
+    coverage = load_toml(ROOT / "compat" / "crabc-rs" / "coverage.toml")
+    coverage_records = coverage.get("capability")
+    require(isinstance(coverage_records, list), "coverage capability records are missing")
+    coverage_entry = next(
+        (
+            entry
+            for entry in coverage_records
+            if isinstance(entry, Mapping)
+            and entry.get("id") == "process.environment-mutation"
+        ),
+        None,
+    )
+    require(
+        isinstance(coverage_entry, Mapping)
+        and coverage_entry.get("symbols") == ["clearenv", "setenv", "unsetenv"],
+        "process.environment-mutation frozen symbol set drifted",
+    )
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
+        "Private selected `static-c-environment` slice",
+        "exactly `process.environment-mutation`",
+        "`clearenv`, `setenv`, and `unsetenv`",
+        "do not select `process.globals`",
         "`getenv`",
         "`setenv`",
         "`putenv`",
         "`unsetenv`",
         "`clearenv`",
         "`__environ`/`environ`/`_environ`/`___environ`",
-        "128",
-        "16-KiB",
-        "1,048,576-entry lookup ceiling",
-        "never reclaimed",
-        "fork recovery",
-        "`ENOMEM`",
+        "`x86-environment-runtime`",
+        "`oldenv`",
+        "`__env_rm_add`",
+        "eleven-member",
+        "pinned-musl backend-support tail",
+        "async-signal safety",
         "secure_getenv",
         "exec/spawn",
+        "memory.allocator-basic",
+        "post-publication ownership-registry allocation failure",
         "public x86 support",
     ):
         require(
@@ -18468,18 +20065,31 @@ def require_static_environment_artifact(family: Mapping[str, Any]) -> None:
     )
     for owner in (
         "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
         "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
         "libc/src/c_abi/x86_64/static_startup.rs",
         "libc/src/c_abi/x86_64/environment.rs",
+        "libc/src/c_abi/x86_64/environment_runtime.rs",
+        "libc/src/allocator_mimalloc.rs",
+        "crt/src/x86_64_crt1.rs",
+        "crt/src/x86_64_startup.rs",
+        "crt/src/x86_64_array_boundaries.rs",
+        "crt/src/x86_64_crti.rs",
+        "crt/src/x86_64_crtn.rs",
         "include/stdlib.h",
         "include/unistd.h",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/libc_environment_probe.c",
-        "compat/x86_64/libc_environment_start.S",
         "compat/x86_64/run_libc_environment.sh",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/tests/test_runner.py",
         "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"static-c-environment source owners omit {owner}")
@@ -18498,37 +20108,373 @@ def require_static_environment_artifact(family: Mapping[str, Any]) -> None:
     )
     require(
         any(
-            "128" in item and "16-KiB" in item and "ENOMEM" in item
+            "oldenv" in item
+            and "__env_rm_add" in item
+            and "direct-vector" in item
+            and "clearenv directly publishes null" in item
             for item in prerequisites
         ),
-        "static-c-environment must retain its bounded ENOMEM contract",
+        "static-c-environment must retain its musl-shaped ownership contract",
     )
     require(
         any(
-            "1,048,576" in item
-            and "clearenv" in item
-            and "directly publishes null" in item
+            "x86-environment-runtime" in item
+            and "eleven-member" in item
+            and "pinned-musl backend-support tail" in item
+            and "not an owned product link interface" in item
             for item in prerequisites
         ),
-        "static-c-environment must retain its lookup and clearenv bounds",
+        "static-c-environment must retain its bounded mixed-runtime composition",
     )
     require(
         any(
-            "spin lock" in item
-            and "direct environ writes" in item
+            "direct environ writes" in item
             and "signal-handler reentry" in item
-            and "vanished thread" in item
+            and "fork/exec transitions" in item
+            and "caller-coordinated" in item
             for item in prerequisites
         ),
         "static-c-environment must retain its exact concurrency exclusions",
+    )
+    require(
+        any(
+            "crt1" in item
+            and "crti" in item
+            and "crtn" in item
+            and ".init_array" in item
+            and "pre-publication ENOMEM" in item
+            and "post-publication ownership-registry allocation failure" in item
+            for item in prerequisites
+        ),
+        "static-c-environment must retain its real-CRT and bounded ENOMEM contract",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-environment.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "`<stdlib.h>`" in item
+            and "setenv" in item
+            and "unsetenv" in item
+            and "clearenv" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-environment must retain its stdlib profile linkage boundary",
+    )
+    require(
+        any(
+            "GNU C/C++" in item
+            and "`<unistd.h>`" in item
+            and "extern char **environ" in item
+            and "process.globals" in item
+            for item in header_prerequisites
+        ),
+        "static-c-environment must retain its environ object boundary",
     )
 
     evidence = artifact["native_evidence"]
     assert isinstance(evidence, list)
     require(
         {entry["command"] for entry in evidence}
-        == {"./scripts/dev-x86_64.sh libc-environment"},
-        "static-c-environment must use the closed libc-environment command",
+        == {
+            "./scripts/dev-x86_64.sh stdlib-header-abi",
+            "./scripts/dev-x86_64.sh unistd-header-abi",
+            "./scripts/dev-x86_64.sh libc-environment",
+        },
+        "static-c-environment must use the closed native evidence commands",
+    )
+    evidence_by_command = {entry["command"]: entry.get("scope") for entry in evidence}
+    stdlib_scope = evidence_by_command["./scripts/dev-x86_64.sh stdlib-header-abi"]
+    require(
+        isinstance(stdlib_scope, str)
+        and all(
+            phrase in stdlib_scope
+            for phrase in (
+                "C11/C++17",
+                "getenv/setenv/unsetenv/putenv/clearenv",
+                "unmangled C++ linkage",
+                "process.globals",
+            )
+        ),
+        "static-c-environment must retain its stdlib header-evidence contract",
+    )
+    unistd_scope = evidence_by_command["./scripts/dev-x86_64.sh unistd-header-abi"]
+    require(
+        isinstance(unistd_scope, str)
+        and all(
+            phrase in unistd_scope
+            for phrase in (
+                "GNU C/C++",
+                "`environ` object",
+                "x86 LP64",
+                "process.globals",
+            )
+        ),
+        "static-c-environment must retain its unistd header-evidence contract",
+    )
+    scope = evidence_by_command["./scripts/dev-x86_64.sh libc-environment"]
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "same-address environment aliases",
+                "constructor-before-main initial-environment publication",
+                "real crabc crt1/crti/crtn candidate",
+                "caller-owned putenv mutation",
+                "in-place direct-vector replacement/removal",
+                "direct reassignment after an owned oldenv vector",
+                "over-128-entry growth",
+                "repeated unsetenv/clearenv string reclamation",
+                "replacement copied-string malloc",
+                "direct-vector append allocation",
+                "owned-vector append realloc",
+                "post-publication ownership-registry allocation failure",
+                "exact eleven-member candidate-local pinned-musl backend-support tail",
+                "musl environment or allocator implementations",
+                "secure_getenv",
+                "process.globals",
+                "memory.allocator-basic",
+                "public x86 support",
+            )
+        ),
+        "static-c-environment evidence must retain its observable mixed-runtime contract",
+    )
+    exports = set(static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"))
+    require(
+        {"__environ", "environ", "_environ", "___environ", "getenv", "setenv", "putenv", "unsetenv", "clearenv"}
+        <= exports,
+        "static-c-environment must retain its supporting environment export surface",
+    )
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_environment_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "__attribute__((constructor))",
+        "constructor_runs",
+        "if (constructor_runs != 1)",
+        "CRABC_X86_INITIAL=entry",
+        "CRABC_ENVIRONMENT_ALLOCATION_WRAP",
+        "CRABC_FAIL_REPLACEMENT_MALLOC",
+        "CRABC_FAIL_DIRECT_VECTOR_APPEND_MALLOC",
+        "CRABC_FAIL_OWNED_VECTOR_APPEND_REALLOC",
+        "post-publication",
+    ):
+        require(snippet in probe, f"static-c-environment probe omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_environment.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "ALLOCATION_WRAP_FLAGS",
+        "ENVIRONMENT_ALLOCATOR_SYMBOLS",
+        "--wrap=malloc",
+        "--wrap=realloc",
+        "verify_wrapped_allocator_path",
+        "crt1.o",
+        "crti.o",
+        "crtn.o",
+    ):
+        require(snippet in runner, f"static-c-environment runner omits {snippet}")
+
+
+def require_process_signal_slice(family: Mapping[str, Any]) -> None:
+    """Keep the frozen signal aggregate exact, composed, and non-promoting."""
+
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.posix-runtime].verified_slice",
+        str(family.get("status", "")),
+        string_list(
+            family.get("capabilities"),
+            "family[libc.posix-runtime].capabilities",
+            allow_empty=True,
+        ),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "process.signal"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one process.signal slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "process.signal must not promote libc.posix-runtime",
+    )
+    selected = matching[0]
+    require(
+        selected.get("capabilities") == ["process.signal"],
+        "process.signal must select exactly process.signal",
+    )
+
+    coverage = load_toml(ROOT / "compat" / "crabc-rs" / "coverage.toml")
+    coverage_records = coverage.get("capability")
+    require(isinstance(coverage_records, list), "coverage capability records are missing")
+    coverage_entry = next(
+        (
+            entry
+            for entry in coverage_records
+            if isinstance(entry, Mapping) and entry.get("id") == "process.signal"
+        ),
+        None,
+    )
+    require(
+        isinstance(coverage_entry, Mapping)
+        and coverage_entry.get("symbols") == list(PROCESS_SIGNAL_SYMBOLS),
+        "process.signal frozen symbol set drifted",
+    )
+
+    description = selected.get("description")
+    require(isinstance(description, str), "process.signal needs a description")
+    for symbol in PROCESS_SIGNAL_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"process.signal description omits frozen {symbol}",
+        )
+    for phrase in (
+        "Private native x86 selected-private frozen `process.signal` capability",
+        "still-planned `libc.posix-runtime`",
+        "`x86-signal-legacy-aliases`, `x86-signal-sysv-helpers`, and `x86-signal-reporting`",
+        "frozen default selected-static archive",
+        "`static_c_abi_exports.txt`",
+        "adds exactly `__sysv_signal`, `bsd_signal`, `psiginfo`, `psignal`, `sighold`, `sigignore`, `sigrelse`, and `sigset`",
+        "fixed `strsignal`",
+        "permanent `stderr`",
+        "success-only errno restoration",
+        "externally serialize",
+        "not async-signal-safe",
+        "general FILE lock, locale/orientation state, or partial-short-write buffering behavior",
+        "`./scripts/dev-x86_64.sh libc-process-signal`",
+        "general signal-management framework",
+        "default-archive widening",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"process.signal description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(selected.get("source_owners"), "process.signal.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "libc/src/c_abi/x86_64/strsignal.rs",
+        "libc/src/c_abi/x86_64/signal_reporting.rs",
+        "libc/src/c_abi/x86_64/signal_control.rs",
+        "libc/src/c_abi/x86_64/signal_execution.rs",
+        "libc/src/c_abi/x86_64/signal_sysv_helpers.rs",
+        "libc/src/c_abi/x86_64/signal_realtime_max.rs",
+        "libc/src/c_abi/x86_64/signal_realtime_min.rs",
+        "libc/src/c_abi/x86_64/signal_set_mutation.rs",
+        "libc/src/c_abi/x86_64/signal_set_binary.rs",
+        "libc/src/c_abi/x86_64/signal_set_isempty.rs",
+        "libc/src/c_abi/x86_64/signal_pending.rs",
+        "libc/src/c_abi/x86_64/signal_altstack.rs",
+        "libc/src/c_abi/x86_64/signal_fd.rs",
+        "libc/src/c_abi/x86_64/signal_pause.rs",
+        "libc/src/c_abi/x86_64/siginterrupt.rs",
+        "libc/src/c_abi/x86_64/readiness_waits.rs",
+        "include/signal.h",
+        "include/sys/signalfd.h",
+        "compat/x86_64/psignal_header_abi_probe.c",
+        "compat/x86_64/psignal_header_abi_probe.cpp",
+        "compat/x86_64/run_psignal_header_abi.sh",
+        "compat/x86_64/libc_psignal_probe.c",
+        "compat/x86_64/libc_psignal_start.S",
+        "compat/x86_64/run_libc_psignal.sh",
+        "compat/x86_64/run_libc_process_signal.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"process.signal source owners omit {owner}")
+    for runner in PROCESS_SIGNAL_COMPONENT_RUNNERS:
+        require(
+            f"compat/x86_64/{runner}" in owners,
+            f"process.signal source owners omit component {runner}",
+        )
+
+    prerequisites = nonempty_strings(
+        selected.get("x86_abi_prerequisites"), "process.signal.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "System V AMD64 LP64" in item
+            and "sigset_t/sigaction/stack_t/siginfo_t" in item
+            and "monolithic signal-state ABI" in item
+            for item in prerequisites
+        ),
+        "process.signal must preserve its component SysV ABI boundary",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/signal/{signal,psignal,psiginfo,kill,killpg,raise,sigqueue,sigtimedwait,sigwaitinfo,sigwait,siginterrupt,sigaltstack,sigpending,sigaddset,sigdelset,sigfillset,sigrtmin,sigrtmax}.c"
+            in item
+            and "siginfo_t.si_signo" in item
+            and "preserves errno only after complete selected stderr output" in item
+            for item in prerequisites
+        ),
+        "process.signal must retain the musl reporting and component provenance",
+    )
+    require(
+        any(
+            "x86-signal-legacy-aliases x86-signal-sysv-helpers x86-signal-reporting"
+            in item
+            and "removes no frozen default export" in item
+            and all(f"`{symbol}`" in item for symbol in PROCESS_SIGNAL_OPT_IN_SYMBOLS)
+            for item in prerequisites
+        ),
+        "process.signal must retain its exact opt-in closure",
+    )
+    require(
+        any(
+            "externally serialize every selected stderr use" in item
+            and "signal handlers must not call it" in item
+            and "partial-short-write equivalence" in item
+            and "pthread/cancellation policy" in item
+            for item in prerequisites
+        ),
+        "process.signal must retain the reporting concurrency and scope boundary",
+    )
+
+    headers = nonempty_strings(
+        selected.get("x86_header_prerequisites"),
+        "process.signal.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "pinned-musl/project C/C++" in item
+            and "psignal matrix" in item
+            and "POSIX/X/Open/GNU/BSD visibility" in item
+            and "strict C/C++ hiding" in item
+            and "unmangled C++ linkage" in item
+            and "installed-header closure" in item
+            for item in headers
+        ),
+        "process.signal must retain its component header-profile boundary",
+    )
+
+    evidence = selected.get("native_evidence")
+    require(isinstance(evidence, list), "process.signal needs native evidence")
+    expected_command = "./scripts/dev-x86_64.sh libc-process-signal"
+    require(
+        len(evidence) == 1
+        and isinstance(evidence[0], Mapping)
+        and evidence[0].get("command") == expected_command,
+        "process.signal must use the closed libc-process-signal aggregate command",
     )
     scope = evidence[0].get("scope")
     require(
@@ -18536,26 +20482,174 @@ def require_static_environment_artifact(family: Mapping[str, Any]) -> None:
         and all(
             phrase in scope
             for phrase in (
-                "same-address environment aliases",
-                "entry-stack envp through the selected TLS-bootstrap and __libc_start_main order",
-                "caller-owned putenv mutation",
-                "1,048,576-entry read ceiling",
-                "128-entry",
-                "16-KiB",
-                "oversized direct-vector mutation rejection and clearenv exception",
-                "non-reclamation after unsetenv and clearenv",
-                "secure_getenv",
-                "public x86 support",
+                "sixteen closed component gates",
+                "realtime min/max",
+                "legacy aliases",
+                "execution/control",
+                "psignal/psiginfo reporting differential",
+                "x86-signal-legacy-aliases x86-signal-sysv-helpers x86-signal-reporting",
+                "preserves every default selected-static export",
+                "exactly the eight historical/reporting additions",
+                "normal/null-prefix output",
+                "si_signo forwarding",
+                "success-only errno restoration",
+                "EBADF/EAGAIN failure behavior",
+                "partial-short-write equivalence",
+                "default-archive widening",
+                "family completion, promotion, or public x86 support",
             )
         ),
-        "static-c-environment evidence must retain its observable bounded contract",
+        "process.signal evidence must retain the aggregate closure and reporting limit",
     )
-    exports = set(static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"))
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    default_symbols = set(PROCESS_SIGNAL_SYMBOLS) - set(PROCESS_SIGNAL_OPT_IN_SYMBOLS)
     require(
-        {"__environ", "environ", "_environ", "___environ", "getenv", "setenv", "putenv", "unsetenv", "clearenv"}
-        <= exports,
-        "static-c-environment must retain its exact selected export set",
+        default_symbols <= exports,
+        "process.signal must retain every default-root component export",
     )
+    require(
+        not (set(PROCESS_SIGNAL_OPT_IN_SYMBOLS) & exports),
+        "process.signal must not widen the frozen default selected-static exports",
+    )
+
+    manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    for feature in PROCESS_SIGNAL_FEATURES:
+        require(
+            f"{feature} = []" in manifest,
+            f"process.signal feature {feature} must remain dependency-free",
+        )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        '#[cfg(feature = "x86-signal-reporting")]\n#[path = "signal_reporting.rs"]\nmod signal_reporting;',
+        '#[cfg(feature = "x86-signal-sysv-helpers")]\n#[path = "signal_sysv_helpers.rs"]\nmod signal_sysv_helpers;',
+    ):
+        require(snippet in static_root, f"process.signal static root omits {snippet}")
+    signal_control = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_control.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        '#[cfg(feature = "x86-signal-legacy-aliases")]',
+        ".weak bsd_signal",
+        ".set bsd_signal, signal",
+        ".weak __sysv_signal",
+        ".set __sysv_signal, signal",
+    ):
+        require(snippet in signal_control, f"process.signal alias root omits {snippet}")
+    reporting = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_reporting.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/signal/psignal.c",
+        "src/signal/psiginfo.c",
+        "external serialization",
+        "not async-signal-safe",
+        "partial-output equivalence",
+        "pub unsafe extern \"C\" fn psignal",
+        "pub unsafe extern \"C\" fn psiginfo",
+    ):
+        require(snippet in reporting, f"process.signal reporting owner omits {snippet}")
+    reporting_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            reporting,
+        )
+    )
+    require(
+        reporting_exports == {"psignal", "psiginfo"},
+        "process.signal reporting owner must export exactly psignal and psiginfo",
+    )
+
+    aggregate_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_process_signal.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        'readonly FEATURES="x86-signal-legacy-aliases x86-signal-sysv-helpers x86-signal-reporting"'
+        in aggregate_runner,
+        "process.signal aggregate runner must retain its exact feature closure",
+    )
+    runner_lines = aggregate_runner.splitlines()
+    loop_start = next(
+        (index for index, line in enumerate(runner_lines) if line == "for runner in \\"),
+        None,
+    )
+    loop_end = next(
+        (
+            index
+            for index, line in enumerate(runner_lines)
+            if line == "    run_libc_psignal.sh; do"
+        ),
+        None,
+    )
+    require(
+        isinstance(loop_start, int) and isinstance(loop_end, int) and loop_start < loop_end,
+        "process.signal aggregate runner lacks its closed component loop",
+    )
+    assert isinstance(loop_start, int) and isinstance(loop_end, int)
+    listed_runners = tuple(
+        re.findall(
+            r"\b(run_libc_[a-z0-9_]+\.sh)\b",
+            "\n".join(runner_lines[loop_start + 1 : loop_end + 1]),
+        )
+    )
+    require(
+        listed_runners == PROCESS_SIGNAL_COMPONENT_RUNNERS,
+        "process.signal aggregate runner component roster drifted",
+    )
+    for symbol in PROCESS_SIGNAL_OPT_IN_SYMBOLS:
+        require(
+            re.search(rf"(?m)^    {re.escape(symbol)}$", aggregate_runner) is not None,
+            f"process.signal aggregate runner omits feature addition {symbol}",
+        )
+    for snippet in (
+        "default selected-static C ABI surface drifted",
+        "combined signal features remove a default C ABI export",
+        "combined signal features change more than the frozen eight-symbol closure",
+        "Each component retains its own focused musl differential",
+    ):
+        require(snippet in aggregate_runner, f"process.signal aggregate runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "psignal-header-abi)",
+        "run_psignal_header_abi()",
+        "libc-psignal)",
+        "run_libc_psignal_probe()",
+        "libc-process-signal)",
+        "run_libc_process_signal_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        str(family.get("status", "")),
+    )
+    for artifact_id in (
+        "static-c-signal-control",
+        "static-c-signal-legacy-aliases",
+        "static-c-sysv-signal-helpers",
+    ):
+        artifact = next(
+            (entry for entry in artifacts if entry.get("id") == artifact_id), None
+        )
+        require(
+            isinstance(artifact, Mapping),
+            f"process.signal must retain {artifact_id} as a component artifact",
+        )
+        component_description = artifact.get("description")
+        require(
+            isinstance(component_description, str)
+            and "does not select" in component_description
+            and "process.signal" in component_description,
+            f"{artifact_id} must retain its independent non-selection wording",
+        )
 
 
 def require_static_secure_environment_artifact(family: Mapping[str, Any]) -> None:
@@ -19005,6 +21099,982 @@ def require_child_reaping_artifact(family: Mapping[str, Any]) -> None:
         == {"./scripts/dev-x86_64.sh libc-child-reaping"},
         "static-c-child-reaping must use the closed libc-child-reaping command",
     )
+
+
+def require_wait_extensions_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the historical GNU/BSD wait3/wait4 ABI leaf non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-wait-extensions"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-wait-extensions artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-wait-extensions must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-wait-extensions must remain capability-free",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str), "static-c-wait-extensions needs a description"
+    )
+    for phrase in (
+        "GNU/BSD wait-extension",
+        "`wait3`",
+        "`wait4`",
+        "default selected-static archive",
+        "128-byte public tail",
+        "cancellation",
+        "child-reaping candidate still rejects linked `wait3`/`wait4`",
+        "does not select `process.control`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-wait-extensions description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-wait-extensions.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/process_resources.rs",
+        "libc/src/c_abi/x86_64/wait_extensions.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/sys/types.h",
+        "include/sys/time.h",
+        "include/sys/resource.h",
+        "include/sys/wait.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/wait_extensions_header_abi_probe.c",
+        "compat/x86_64/wait_extensions_header_abi_probe.cpp",
+        "compat/x86_64/run_wait_extensions_header_abi.sh",
+        "compat/x86_64/libc_wait_extensions_probe.c",
+        "compat/x86_64/libc_wait_extensions_start.S",
+        "compat/x86_64/run_libc_wait_extensions.sh",
+        "compat/x86_64/run_libc_child_reaping.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-wait-extensions source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-wait-extensions.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "r10" in item
+            and "wait3" in item
+            and "wait4" in item
+            for item in prerequisites
+        ),
+        "static-c-wait-extensions must retain the x86 wait4 register ABI",
+    )
+    require(
+        any(
+            "272-byte" in item
+            and "144-byte" in item
+            and "128-byte" in item
+            and "WNOHANG" in item
+            for item in prerequisites
+        ),
+        "static-c-wait-extensions must retain the public rusage boundary",
+    )
+    require(
+        any(
+            "src/linux/wait3.c::wait3" in item
+            and "src/linux/wait4.c::wait4" in item
+            and "src/process/waitpid.c" in item
+            and "cancellation-point" in item
+            for item in prerequisites
+        ),
+        "static-c-wait-extensions must retain musl source/cancellation provenance",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-wait-extensions.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11 and C++17" in item
+            and "`wait3`/`wait4`" in item
+            and "GNU/BSD" in item
+            and "Strict and POSIX.1-2008" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-wait-extensions must retain its feature-profile header proof",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-wait-extensions needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-wait-extensions"},
+        "static-c-wait-extensions must use the closed wait-extension command",
+    )
+    require(
+        len(evidence) == 1 and isinstance(evidence[0], Mapping),
+        "static-c-wait-extensions must keep one verified evidence record",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "GNU/BSD C/C++ header compilation",
+                "wait4=61",
+                "r10",
+                "128-byte tail preservation",
+                "child-reaping candidate retains explicit wait3/wait4 rejection",
+                "does not select `process.control`",
+                "public x86 support",
+            )
+        ),
+        "static-c-wait-extensions evidence must retain its bounded proof",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-wait-extensions needs an oracle")
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    for phrase in (
+        "src/linux/wait3.c::wait3",
+        "src/linux/wait4.c::wait4",
+        "src/process/waitpid.c",
+        "wait4=61",
+        "r10 rusage",
+        "System V AMD64",
+    ):
+        require(
+            phrase in oracle_text,
+            f"static-c-wait-extensions oracle omits {phrase}",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        set(WAIT_EXTENSION_SYMBOLS) <= set(exports),
+        "static C ABI export contract must retain wait3/wait4",
+    )
+    require(
+        exports.index("wait") < exports.index("wait3") < exports.index("wait4") < exports.index("waitid"),
+        "wait extension exports must remain adjacent to the wait family",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "wait_extensions.rs"]\nmod wait_extensions;' in static_root,
+        "x86 static C ABI must compose the wait-extension leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "wait_extensions.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "musl 1.2.6 release commit",
+        "src/linux/wait3.c",
+        "src/linux/wait4.c",
+        "WAIT_ANY",
+        "SYS_WAIT4",
+        "syscall4(",
+        "Rusage",
+        "128-byte",
+        "cancellation",
+    ):
+        require(
+            snippet in source,
+            f"wait-extension source omits {snippet}",
+        )
+    source_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(
+        source_exports == set(WAIT_EXTENSION_SYMBOLS),
+        "wait extension source must export exactly wait3/wait4",
+    )
+    for forbidden in ("alloc::", "crabc_core", "crabc_mimalloc", "SYS_WAITID"):
+        require(
+            forbidden not in source,
+            f"wait-extension source must not select {forbidden}",
+        )
+
+    wait_header = (ROOT / "include" / "sys" / "wait.h").read_text(encoding="utf-8")
+    require(
+        "#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)\n#include <sys/resource.h>"
+        in wait_header,
+        "sys/wait.h must feature-gate the rusage dependency",
+    )
+    for declaration in (
+        "pid_t wait3(int *, int, struct rusage *);",
+        "pid_t wait4(pid_t, int *, int, struct rusage *);",
+    ):
+        require(
+            declaration in wait_header,
+            f"sys/wait.h omits wait extension declaration {declaration}",
+        )
+
+    for path_text, snippets in (
+        (
+            "compat/x86_64/wait_extensions_header_abi_probe.c",
+            ("wait3_signature", "wait4_signature", "CRABC_WAIT_EXTENSIONS_VISIBLE"),
+        ),
+        (
+            "compat/x86_64/wait_extensions_header_abi_probe.cpp",
+            ("wait3_signature", "wait4_signature", "CRABC_WAIT_EXTENSIONS_VISIBLE"),
+        ),
+        (
+            "compat/x86_64/run_wait_extensions_header_abi.sh",
+            ("strict", "posix", "gnu", "bsd", "nm --undefined-only"),
+        ),
+        (
+            "compat/x86_64/libc_wait_extensions_probe.c",
+            ("raw_fork", "WNOHANG", "ECHILD", "__reserved", "raw_wait4_cleanup"),
+        ),
+        (
+            "compat/x86_64/libc_wait_extensions_start.S",
+            ("ARCH_SET_FS", "mov %rsi, %fs:0"),
+        ),
+        (
+            "compat/x86_64/run_libc_wait_extensions.sh",
+            (
+                "static_c_abi_exports.txt",
+                "run_wait_extensions_header_abi.sh",
+                "wait4 3d",
+                "%r10",
+                "-nostdlib -static",
+                "candidate retains a dynamic TLS model",
+            ),
+        ),
+        (
+            "compat/x86_64/run_libc_child_reaping.sh",
+            ("for unselected in wait3 wait4; do", "candidate unexpectedly pulls unselected"),
+        ),
+    ):
+        text = (ROOT / path_text).read_text(encoding="utf-8")
+        for snippet in snippets:
+            require(
+                snippet in text,
+                f"{path_text} omits wait-extension detail {snippet}",
+            )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "wait-extensions-header-abi)",
+        "run_wait_extensions_header_abi",
+        "libc-wait-extensions)",
+        "run_libc_wait_extensions",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits wait-extension command detail {snippet}",
+        )
+
+
+def require_signal_legacy_aliases_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the opt-in musl signal.c alias graph private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-signal-legacy-aliases"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-signal-legacy-aliases artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-signal-legacy-aliases must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-signal-legacy-aliases must remain capability-free",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-signal-legacy-aliases needs a description",
+    )
+    for phrase in (
+        "x86-signal-legacy-aliases",
+        "same-address ELF `.set` aliases",
+        "`bsd_signal`",
+        "`__sysv_signal`",
+        "frozen default selected-static archive",
+        "ABI-only",
+        "does not select `process.signal`",
+        "system_utils_exports",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-signal-legacy-aliases description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-signal-legacy-aliases.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_control.rs",
+        "libc/src/c_abi/x86_64/signal_foundation.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/signal.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/signal_legacy_aliases_header_abi_probe.c",
+        "compat/x86_64/signal_legacy_aliases_header_abi_probe.cpp",
+        "compat/x86_64/run_signal_legacy_aliases_header_abi.sh",
+        "compat/x86_64/libc_signal_legacy_aliases_probe.c",
+        "compat/x86_64/libc_signal_legacy_aliases_start.S",
+        "compat/x86_64/run_libc_signal_legacy_aliases.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-signal-legacy-aliases source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-signal-legacy-aliases.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "edi" in item
+            and "rsi" in item
+            and "rax" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-signal-legacy-aliases must retain its function-pointer ABI",
+    )
+    require(
+        any(
+            "src/signal/signal.c" in item
+            and "weak_alias(signal, bsd_signal)" in item
+            and "weak_alias(signal, __sysv_signal)" in item
+            and "same object" in item
+            for item in prerequisites
+        ),
+        "static-c-signal-legacy-aliases must retain its exact musl alias mapping",
+    )
+    require(
+        any(
+            "unfeatured" in item
+            and "featured" in item
+            and "static_c_abi_exports.txt" in item
+            and "`-nostdlib -static`" in item
+            for item in prerequisites
+        ),
+        "static-c-signal-legacy-aliases must retain its closed archive comparison",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-signal-legacy-aliases.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11 and C++17" in item
+            and "`bsd_signal`" in item
+            and "`_GNU_SOURCE`" in item
+            and "`__sysv_signal`" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-signal-legacy-aliases must retain its GNU-only header contract",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-signal-legacy-aliases needs native evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-signal-legacy-aliases"},
+        "static-c-signal-legacy-aliases must use the closed alias command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "signal.lo",
+                "GNU C/C++ header matrices",
+                "unfeatured",
+                "same-address relationship to strong `signal`",
+                "system_utils_exports",
+                "alias-only `-nostdlib -static` candidate",
+                "does not select `process.signal`",
+                "public x86 support",
+            )
+        ),
+        "static-c-signal-legacy-aliases evidence must retain its bounded proof",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-signal-legacy-aliases needs an oracle")
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    for phrase in (
+        "src/signal/signal.c",
+        "bsd_signal",
+        "__sysv_signal",
+        "rt_sigaction=13",
+        "same-address .set alias semantics",
+    ):
+        require(
+            phrase in oracle_text,
+            f"static-c-signal-legacy-aliases oracle omits {phrase}",
+        )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        not (set(LEGACY_SIGNAL_ALIAS_SYMBOLS) & exports),
+        "frozen static C ABI export contract must exclude opt-in signal aliases",
+    )
+
+    cargo = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    require(
+        "x86-signal-legacy-aliases = []" in cargo,
+        "libc manifest must retain the opt-in signal-alias feature",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "signal_control.rs"]\nmod signal_control;' in static_root,
+        "x86 static C ABI must compose the signal control owner",
+    )
+    require(
+        "system_utils_exports" not in static_root,
+        "x86 static C ABI must not import generic signal forwarding aliases",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_control.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Pinned musl 1.2.6",
+        "src/signal/signal.c",
+        '#[cfg(feature = "x86-signal-legacy-aliases")]',
+        '".weak bsd_signal"',
+        '".set bsd_signal, signal"',
+        '".weak __sysv_signal"',
+        '".set __sysv_signal, signal"',
+        "same-address",
+    ):
+        require(
+            snippet in source,
+            f"signal control source omits opt-in alias detail {snippet}",
+        )
+    for symbol in LEGACY_SIGNAL_ALIAS_SYMBOLS:
+        require(
+            re.search(
+                rf'pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+{re.escape(symbol)}\s*\(',
+                source,
+            )
+            is None,
+            f"signal aliases must remain ELF aliases rather than Rust wrappers: {symbol}",
+        )
+
+    signal_header = (ROOT / "include" / "signal.h").read_text(encoding="utf-8")
+    require(
+        "#if defined(_GNU_SOURCE)\nvoid (*bsd_signal(int, void (*)(int)))(int);"
+        in signal_header,
+        "signal header must retain GNU-only bsd_signal declaration",
+    )
+    require(
+        re.search(r"(?m)^\s*void\s*\(\s*\*\s*__sysv_signal\s*\)", signal_header)
+        is None,
+        "signal header must not declare ABI-only __sysv_signal",
+    )
+
+    for path_text, snippets in (
+        (
+            "compat/x86_64/signal_legacy_aliases_header_abi_probe.c",
+            ("CRABC_EXPECT_BSD_SIGNAL", "CRABC_REQUIRE_BSD_SIGNAL_HIDDEN"),
+        ),
+        (
+            "compat/x86_64/signal_legacy_aliases_header_abi_probe.cpp",
+            ("CRABC_EXPECT_BSD_SIGNAL", "CRABC_REQUIRE_BSD_SIGNAL_HIDDEN", 'extern "C"'),
+        ),
+        (
+            "compat/x86_64/run_signal_legacy_aliases_header_abi.sh",
+            ("c11-gnu", "cxx17-gnu", "retained a mangled bsd_signal reference"),
+        ),
+        (
+            "compat/x86_64/libc_signal_legacy_aliases_probe.c",
+            ("aliases only", "bsd_signal", "__sysv_signal", "SIGUSR1"),
+        ),
+        (
+            "compat/x86_64/libc_signal_legacy_aliases_start.S",
+            ("ARCH_SET_FS", "mov %rsi, %fs:0"),
+        ),
+        (
+            "compat/x86_64/run_libc_signal_legacy_aliases.sh",
+            (
+                "x86-signal-legacy-aliases",
+                "run_signal_legacy_aliases_header_abi.sh",
+                "signal.lo",
+                "static_c_abi_exports.txt",
+                "system_utils_exports",
+                "--features \"$FEATURE\"",
+                "-nostdlib -static",
+                "same-address",
+            ),
+        ),
+    ):
+        text = (ROOT / path_text).read_text(encoding="utf-8")
+        for snippet in snippets:
+            require(
+                snippet in text,
+                f"{path_text} omits opt-in signal alias detail {snippet}",
+            )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "signal-legacy-aliases-header-abi)",
+        "run_signal_legacy_aliases_header_abi",
+        "libc-signal-legacy-aliases)",
+        "run_libc_signal_legacy_aliases_probe",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits opt-in signal alias command detail {snippet}",
+        )
+
+
+def require_sysv_signal_helpers_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the opt-in historical System V signal helpers capability-free."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-sysv-signal-helpers"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sysv-signal-helpers artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sysv-signal-helpers must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sysv-signal-helpers must remain capability-free",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-sysv-signal-helpers needs a description",
+    )
+    for phrase in (
+        "x86-signal-sysv-helpers",
+        "`sighold`",
+        "`sigignore`",
+        "`sigrelse`",
+        "`sigset`",
+        "frozen default selected-static archive",
+        "X/Open 800 hides them",
+        "musl 1.2.6 still exposes them",
+        "intentional recorded header divergence",
+        "does not select `process.signal`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sysv-signal-helpers description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-sysv-signal-helpers.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_sysv_helpers.rs",
+        "libc/src/c_abi/x86_64/signal_foundation.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/signal.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/types.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/signal_sysv_helpers_header_abi_probe.c",
+        "compat/x86_64/signal_sysv_helpers_header_abi_probe.cpp",
+        "compat/x86_64/run_signal_sysv_helpers_header_abi.sh",
+        "compat/x86_64/libc_signal_sysv_helpers_probe.c",
+        "compat/x86_64/libc_signal_sysv_helpers_start.S",
+        "compat/x86_64/run_libc_signal_sysv_helpers.sh",
+        "compat/x86_64/tests/test_signal_sysv_helpers.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sysv-signal-helpers source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-sysv-signal-helpers.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "edi" in item
+            and "rsi" in item
+            and "eax" in item
+            and "rax" in item
+            and "SIG_ERR" in item
+            and "SIG_HOLD" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-signal-helpers must retain its function-pointer ABI",
+    )
+    require(
+        any(
+            "rt_sigaction=13" in item
+            and "rt_sigprocmask=14" in item
+            and "r10" in item
+            and "syscall-15 restorer" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-signal-helpers must retain its direct kernel boundary",
+    )
+    require(
+        any(
+            "src/signal/sighold.c" in item
+            and "src/signal/sigignore.c" in item
+            and "src/signal/sigrelse.c" in item
+            and "src/signal/sigset.c" in item
+            and "does not roll back" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-signal-helpers must retain musl source sequencing",
+    )
+    require(
+        any(
+            "unfeatured" in item
+            and "x86-signal-sysv-helpers" in item
+            and "static_c_abi_exports.txt" in item
+            and "`-nostdlib -static`" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-signal-helpers must retain its exact opt-in closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-sysv-signal-helpers.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "Strict and POSIX.1-2008" in item
+            and "X/Open=700" in item
+            and "X/Open=800" in item
+            and "pinned musl 1.2.6 exposes" in item
+            and "post-POSIX.1-2024" in item
+            for item in headers
+        ),
+        "static-c-sysv-signal-helpers must retain the intentional X/Open divergence",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-sysv-signal-helpers needs native evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-signal-sysv-helpers"},
+        "static-c-sysv-signal-helpers must use the closed SysV helper command",
+    )
+    require(
+        len(evidence) == 1 and isinstance(evidence[0], Mapping),
+        "static-c-sysv-signal-helpers must keep one verified evidence record",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "x86-signal-sysv-helpers",
+                "exactly sighold/sigignore/sigrelse/sigset",
+                "stale errno",
+                "SIG_IGN",
+                "SIG_HOLD",
+                "rt_sigaction=13",
+                "rt_sigprocmask=14",
+                "hidden syscall-15 restorer",
+                "X/Open=800 project/musl declaration divergence",
+                "does not select `process.signal`",
+                "public x86 support",
+            )
+        ),
+        "static-c-sysv-signal-helpers evidence must retain its bounded proof",
+    )
+
+    oracle = artifact.get("oracle")
+    require(
+        isinstance(oracle, list), "static-c-sysv-signal-helpers needs an oracle"
+    )
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    for phrase in (
+        "src/signal/sighold.c",
+        "sigignore.c",
+        "sigrelse.c",
+        "sigset.c",
+        "X/Open=800",
+        "rt_sigaction=13",
+        "rt_sigprocmask=14",
+        "r10 one-word mask size",
+        "System V AMD64",
+    ):
+        require(
+            phrase in oracle_text,
+            f"static-c-sysv-signal-helpers oracle omits {phrase}",
+        )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        not (set(SYSV_SIGNAL_HELPER_SYMBOLS) & exports),
+        "frozen static C ABI export contract must exclude opt-in SysV signal helpers",
+    )
+
+    cargo = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    require(
+        "x86-signal-sysv-helpers = []" in cargo,
+        "libc manifest must retain the dependency-free SysV helper feature",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[cfg(feature = "x86-signal-sysv-helpers")]\n'
+        '#[path = "signal_sysv_helpers.rs"]\n'
+        "mod signal_sysv_helpers;" in static_root,
+        "x86 static C ABI must keep SysV signal helpers behind their feature",
+    )
+
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_sysv_helpers.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "pinned musl 1.2.6",
+        "src/signal/sighold.c",
+        "src/signal/sigignore.c",
+        "src/signal/sigrelse.c",
+        "src/signal/sigset.c",
+        "SIG_ERR",
+        "SIG_HOLD",
+        "SYS_RT_SIGACTION",
+        "SYS_RT_SIGPROCMASK",
+        "signal_foundation::pack_public_action",
+        "does not select `process.signal`",
+    ):
+        require(
+            snippet in source,
+            f"SysV signal-helper source omits {snippet}",
+        )
+    source_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(
+        source_exports == set(SYSV_SIGNAL_HELPER_SYMBOLS),
+        "SysV signal-helper source must export its exact four-symbol closure",
+    )
+    for forbidden in (
+        "fn sigaction(",
+        "fn signal(",
+        "fn sigprocmask(",
+        "fn pthread_sigmask(",
+        "fn sigsuspend(",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in source,
+            f"SysV signal-helper source must not select {forbidden}",
+        )
+
+    signal_header = (ROOT / "include" / "signal.h").read_text(encoding="utf-8")
+    require(
+        " || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE < 800)" in signal_header,
+        "signal header must retain the project legacy-XSI cutoff",
+    )
+    for declaration in (
+        "int sighold(int);",
+        "int sigignore(int);",
+        "int sigrelse(int);",
+        "sighandler_t sigset(int, sighandler_t);",
+    ):
+        require(
+            declaration in signal_header,
+            f"signal header omits SysV helper declaration {declaration}",
+        )
+
+    for path_text, snippets in (
+        (
+            "compat/x86_64/signal_sysv_helpers_header_abi_probe.c",
+            ("CRABC_EXPECT_SYSV_SIGNAL_HELPERS", "CRABC_REQUIRE_SYSV_SIGNAL_HELPERS_HIDDEN", "sigset"),
+        ),
+        (
+            "compat/x86_64/signal_sysv_helpers_header_abi_probe.cpp",
+            ("CRABC_EXPECT_SYSV_SIGNAL_HELPERS", "CRABC_REQUIRE_SYSV_SIGNAL_HELPERS_HIDDEN", 'extern "C"'),
+        ),
+        (
+            "compat/x86_64/run_signal_sysv_helpers_header_abi.sh",
+            ("XOPEN=700", "XOPEN=800", "post-POSIX.1-2024", "retained a mangled"),
+        ),
+        (
+            "compat/x86_64/libc_signal_sysv_helpers_probe.c",
+            ("direct_sighold", "direct_sigignore", "direct_sigrelse", "direct_sigset", "E2BIG", "SIG_HOLD"),
+        ),
+        (
+            "compat/x86_64/libc_signal_sysv_helpers_start.S",
+            ("__crabc_x86_static_tls_bootstrap", "crabc_x86_64_signal_sysv_helpers_probe"),
+        ),
+        (
+            "compat/x86_64/run_libc_signal_sysv_helpers.sh",
+            (
+                "FEATURE=x86-signal-sysv-helpers",
+                "EXPECTED_ADDITIONS=(sighold sigignore sigrelse sigset)",
+                "run_signal_sysv_helpers_header_abi.sh",
+                "unfeatured selected-static C ABI export surface drifted",
+                '--features "$FEATURE"',
+                "candidate unexpectedly pulls",
+                "does not select process.signal",
+            ),
+        ),
+    ):
+        text = (ROOT / path_text).read_text(encoding="utf-8")
+        for snippet in snippets:
+            require(
+                snippet in text,
+                f"{path_text} omits SysV signal-helper detail {snippet}",
+            )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "signal-sysv-helpers-header-abi)",
+        "run_signal_sysv_helpers_header_abi",
+        "libc-signal-sysv-helpers)",
+        "run_libc_signal_sysv_helpers_probe",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits SysV helper command detail {snippet}",
+        )
 
 
 def require_immediate_termination_artifact(family: Mapping[str, Any]) -> None:
@@ -19481,7 +22551,7 @@ def require_readlinkat_artifact(family: Mapping[str, Any]) -> None:
         "readlinkat=267",
         "%r10",
         "CRABC_READLINKAT_FREESTANDING",
-        "readlinkat candidate exports an unselected pathname entry",
+        "readlinkat candidate unexpectedly pulls independently selected pathname entry",
     ):
         require(snippet in runner, f"readlinkat runner omits {snippet}")
 
@@ -19649,7 +22719,7 @@ def require_linkat_artifact(family: Mapping[str, Any]) -> None:
         static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
     )
     require("linkat" in static_exports, "static-c-linkat must export linkat")
-    for forbidden in ("renameat", "renameat2", "fchmodat"):
+    for forbidden in ("renameat", "fchmodat"):
         require(
             forbidden not in static_exports,
             f"static-c-linkat must not add {forbidden}",
@@ -19773,9 +22843,313 @@ def require_linkat_artifact(family: Mapping[str, Any]) -> None:
         "%r10",
         "%r8",
         "CRABC_LINKAT_FREESTANDING",
-        "linkat candidate exports an unselected pathname entry",
+        "linkat candidate unexpectedly pulls independently selected pathname entry",
     ):
         require(snippet in runner, f"linkat runner omits {snippet}")
+
+
+def require_renameat2_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's GNU zero/nonzero rename syscall route independently bounded."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-renameat2"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-renameat2 artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-renameat2 must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-renameat2 must remain a private artifact rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive GNU `renameat2`",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "renameat=264",
+        "renameat2=316",
+        "RENAME_NOREPLACE",
+        "RENAME_EXCHANGE",
+        "RENAME_WHITEOUT",
+        "EEXIST",
+        "EINVAL",
+        "ENOENT",
+        "EFAULT",
+        "ordinary `rename`",
+        "`renameat`",
+        "another *at entry",
+        "pathname lifecycle family",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-renameat2 description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-renameat2.source_owners")
+    )
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/renameat2.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/stdio.h",
+        "include/sys/stat.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "include/bits/fcntl.h",
+        "include/bits/stat.h",
+        "include/bits/syscall.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/renameat2_header_abi_probe.c",
+        "compat/x86_64/renameat2_header_abi_probe.cpp",
+        "compat/x86_64/run_renameat2_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_renameat2_probe.c",
+        "compat/x86_64/libc_renameat2_start.S",
+        "compat/x86_64/run_libc_renameat2.sh",
+        "compat/x86_64/run_libc_pathname_lifecycle.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_renameat2.py",
+        "compat/x86_64/tests/test_renameat2_collision_boundaries.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-renameat2 source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-renameat2.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "renameat=264" in item
+            and "renameat2=316" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "rdx" in item
+            and "r10" in item
+            and "r8" in item
+            and "unsigned flags" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-renameat2 must record both Linux syscall register branches",
+    )
+    require(
+        any(
+            "src/linux/renameat2.c" in item
+            and "if (!flags) return syscall(SYS_renameat, oldfd, old, newfd, new);" in item
+            and "return syscall(SYS_renameat2, oldfd, old, newfd, new, flags);" in item
+            and "Linux 5.10" in item
+            and "cancellation wrapper" in item
+            for item in prerequisites
+        ),
+        "static-c-renameat2 must retain its pinned-musl zero/nonzero route",
+    )
+    require(
+        any(
+            "RENAME_NOREPLACE" in item
+            and "RENAME_EXCHANGE" in item
+            and "RENAME_WHITEOUT" in item
+            and "EEXIST" in item
+            and "EINVAL" in item
+            and "ENOENT" in item
+            and "EFAULT" in item
+            and "stale errno" in item
+            and "ordinary rename" in item
+            and "another *at entry" in item
+            for item in prerequisites
+        ),
+        "static-c-renameat2 must retain its bounded behavior regression",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-renameat2 must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-renameat2.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "<stdio.h>" in item
+            and "renameat2(int, const char *, int, const char *, unsigned)" in item
+            and "RENAME_NOREPLACE=1" in item
+            and "RENAME_EXCHANGE=2" in item
+            and "RENAME_WHITEOUT=4" in item
+            and "GNU C and C++ are visible" in item
+            and "strict C++ are hidden" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-renameat2 must retain its GNU stdio declaration boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require("renameat2" in static_exports, "static-c-renameat2 must export renameat2")
+    require("renameat" not in static_exports, "static-c-renameat2 must not add renameat")
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "renameat2.rs"]\nmod renameat2;' in static_root,
+        "x86 static C ABI must compose the renameat2 leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "renameat2.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/linux/renameat2.c",
+        "if (!flags) return syscall(SYS_renameat, oldfd, old, newfd, new);",
+        "fn renameat2",
+        "raw_syscall::SYS_RENAMEAT",
+        "raw_syscall::SYS_RENAMEAT2",
+        "raw_syscall::syscall4(",
+        "raw_syscall::syscall5(",
+        "i64::from(old_directory_descriptor)",
+        "i64::from(new_directory_descriptor)",
+        "i64::from(flags)",
+        "c_status(result)",
+        "renameat=264",
+        "renameat2=316",
+    ):
+        require(snippet in implementation, f"renameat2 leaf omits {snippet}")
+    for forbidden in (
+        "const AT_FDCWD",
+        "fn renameat(",
+        "fn rename(",
+        "crabc_core",
+        "mimalloc",
+        "alloc::",
+        "Vec<",
+    ):
+        require(
+            forbidden not in implementation,
+            f"renameat2 leaf unexpectedly contains {forbidden}",
+        )
+    syscall_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    ).read_text(encoding="utf-8")
+    for syscall in (
+        "pub(crate) const SYS_RENAMEAT: i64 = 264;",
+        "pub(crate) const SYS_RENAMEAT2: i64 = 316;",
+    ):
+        require(syscall in syscall_source, f"x86 syscall table must retain {syscall}")
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "include/stdio.h" in entry["role"]
+            and "src/linux/renameat2.c" in entry["role"]
+            and "if (!flags) return syscall(SYS_renameat, oldfd, old, newfd, new);"
+            in entry["role"]
+            and "return syscall(SYS_renameat2, oldfd, old, newfd, new, flags);"
+            in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-renameat2 must retain its pinned-musl GNU source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-renameat2"},
+        "static-c-renameat2 must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static`",
+                "two GNU-visible and six hidden profiles",
+                "renameat=264",
+                "renameat2=316",
+                "rdi/rsi/rdx/r10",
+                "r8 flags",
+                "RENAME_NOREPLACE",
+                "RENAME_EXCHANGE",
+                "EEXIST",
+                "EINVAL",
+                "ENOENT",
+                "EFAULT",
+                "ordinary rename",
+                "renameat",
+                "other *at entries",
+                "public x86 support",
+            )
+        ),
+        "static-c-renameat2 evidence must retain its exact GNU static regression",
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_renameat2_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=8",
+        "EXPECTED_VISIBLE_PROFILE_COUNT=2",
+        "EXPECTED_HIDDEN_PROFILE_COUNT=6",
+        "stdio.h",
+        "renameat2",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"renameat2 header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_renameat2.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_renameat2_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "assert_selected_c_abi_surface",
+        "renameat=264",
+        "renameat2=316",
+        "%r10",
+        "%r8",
+        "CRABC_RENAMEAT2_FREESTANDING",
+        "candidate unexpectedly exports an independently selected pathname entry",
+    ):
+        require(snippet in runner, f"renameat2 runner omits {snippet}")
 
 
 def require_lchown_artifact(family: Mapping[str, Any]) -> None:
@@ -20065,7 +23439,7 @@ def require_lchown_artifact(family: Mapping[str, Any]) -> None:
         "assert_selected_c_abi_surface",
         "lchown=94",
         "CRABC_LCHOWN_FREESTANDING",
-        "lchown candidate exports an unselected ownership or pathname entry",
+        "lchown candidate unexpectedly pulls independently selected ownership or pathname entry",
     ):
         require(snippet in runner, f"lchown runner omits {snippet}")
 
@@ -20964,7 +24338,7 @@ def require_static_sched_cpucount_artifact(family: Mapping[str, Any]) -> None:
         "call-free byte-count closure",
         "no interpreter/DT_NEEDED/unresolved symbol",
         "TLS, errno, Linux syscall",
-        "CPU macro construction/allocation/comparison",
+        "CPU macro construction/allocation/comparison runtime behavior",
         "promotion",
         "public x86 support",
     ):
@@ -31624,6 +34998,8 @@ def require_socket_messages_artifact(family: Mapping[str, Any]) -> None:
         any(
             "POSIX/GNU/BSD" in item
             and "CMSG_ALIGN/CMSG_NXTHDR" in item
+            and "`__CMSG_LEN`/`__CMSG_NEXT`/`__MHDR_END`" in item
+            and "ancillary traversal helpers" in item
             and "POSIX hiding" in item
             and "unmangled C++" in item
             for item in header_prerequisites
@@ -34038,6 +37414,185 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
             )
         ),
         "static-c-directory-streams evidence must retain its exact static directory runtime regression",
+    )
+
+
+def require_scandir_allocation_client_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the opt-in scandir allocation client out of directory promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-scandir-allocation-client"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-scandir-allocation-client artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-scandir-allocation-client must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-scandir-allocation-client must not select a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "opt-in mixed-runtime",
+        "x86-scandir",
+        "default static roots",
+        "static_c_abi_exports.txt",
+        "src/dirent/scandir.c",
+        "1/3/7 pointer-vector growth",
+        "hidden x86 ABI tail-call thunks",
+        "allocator backend internals",
+        "first-vector, first-copied-record, and later-growth",
+        "scandirat",
+        "C++ exceptions and C longjmp",
+        "pinned-musl startup/opendir",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-scandir-allocation-client description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "static-c-scandir-allocation-client.source_owners",
+        )
+    )
+    for owner in (
+        "libc/Cargo.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/directory_streams.rs",
+        "libc/src/c_abi/x86_64/qsort.rs",
+        "libc/src/allocator_mimalloc.rs",
+        "include/dirent.h",
+        "compat/x86_64/run_dirent_header_abi.sh",
+        "compat/x86_64/libc_scandir_probe.c",
+        "compat/x86_64/run_libc_scandir.sh",
+        "compat/x86_64/tests/test_libc_scandir.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-scandir-allocation-client source owners omit {owner}",
+        )
+    manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "directory_streams.rs"
+    ).read_text(encoding="utf-8")
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        'x86-scandir = ["x86-allocator-runtime"]' in manifest,
+        "static-c-scandir-allocation-client must retain its opt-in feature dependency",
+    )
+    require(
+        "x86-scandir" not in static_root
+        and "scandir" not in static_exports
+        and "__crabc_x86_scandir_v1" not in static_exports,
+        "static-c-scandir-allocation-client must not broaden default static roots or exports",
+    )
+    for phrase in (
+        '#[cfg(feature = "x86-scandir")]',
+        'pub unsafe extern "C" fn scandir(',
+        "jmp malloc",
+        "jmp realloc",
+        "jmp free",
+        "C++ exceptions and C `longjmp`",
+    ):
+        require(
+            phrase in implementation,
+            f"static-c-scandir-allocation-client implementation omits {phrase}",
+        )
+    require(
+        "scandirat" not in implementation,
+        "static-c-scandir-allocation-client must not add scandirat",
+    )
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-scandir-allocation-client.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "int scandir" in item
+            and "d_reclen at offset 16" in item
+            and "tail-call malloc/realloc/free" in item
+            for item in prerequisites
+        ),
+        "static-c-scandir-allocation-client must retain its x86 C-ABI boundary",
+    )
+    require(
+        any(
+            "src/dirent/scandir.c" in item
+            and "1/3/7" in item
+            and "optional qsort" in item
+            for item in prerequisites
+        ),
+        "static-c-scandir-allocation-client must retain its musl source mapping",
+    )
+    require(
+        any(
+            "first vector realloc" in item
+            and "first copied-dirent malloc" in item
+            and "third vector realloc" in item
+            and "pinned-musl startup or opendir" in item
+            for item in prerequisites
+        ),
+        "static-c-scandir-allocation-client must retain its bounded rollback proof",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-scandir-allocation-client.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "11-profile dirent.h C11/C++17 matrix" in item
+            and "scandir declaration" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-scandir-allocation-client must retain its dirent declaration gate",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-scandir"},
+        "static-c-scandir-allocation-client must use the closed libc-scandir command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl static project-header C reference",
+                "opt-in x86 mixed-runtime candidate",
+                "every pinned-musl scandir, directory, sort, and allocator fallback object",
+                "first-vector/first-copy/later-growth ENOMEM rollback",
+                "allocation failure inside pinned-musl startup/opendir",
+                "scandirat",
+                "C++ exceptions and C longjmp",
+                "public x86 support",
+            )
+        ),
+        "static-c-scandir-allocation-client evidence must retain its bounded mixed-runtime regression",
     )
 
 
@@ -37150,6 +40705,673 @@ def require_gethostid_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"gethostid dispatcher omits {snippet}")
 
 
+def require_issetugid_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's initial secure Boolean spelling private and non-promoting."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-issetugid"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-issetugid artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-issetugid must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-issetugid must not promote a credential or secure-execution capability",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-issetugid needs a description")
+    for phrase in (
+        "GNU/BSD `issetugid` initial secure-execution compatibility boundary",
+        "still-planned `libc.c-abi-compat`",
+        "`int issetugid(void)`",
+        "`src/misc/issetugid.c`",
+        "`libc.secure`",
+        "final AT_SECURE/UID/EUID/GID/EGID records",
+        "ordinary process",
+        "final-AT_SECURE",
+        "UID/EUID-mismatch",
+        "C errno mutation",
+        "credential mutation or policy",
+        "`secure_getenv`",
+        "raw auxv lookup",
+        "process.globals",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-issetugid description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-issetugid.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/issetugid.rs",
+        "libc/src/c_abi/x86_64/startup_security.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/unistd.h",
+        "compat/x86_64/issetugid_header_abi_probe.c",
+        "compat/x86_64/issetugid_header_abi_probe.cpp",
+        "compat/x86_64/run_issetugid_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_issetugid_probe.c",
+        "compat/x86_64/libc_issetugid_start.S",
+        "compat/x86_64/run_libc_issetugid.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-issetugid source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-issetugid.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "int issetugid(void)" in item
+            and "four-byte" in item
+            and "eax" in item
+            and "no argument" in item
+            for item in prerequisites
+        ),
+        "static-c-issetugid must retain its no-argument int result ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/misc/issetugid.c::issetugid" in item
+            and "libc.secure" in item
+            and "AT_SECURE/UID/EUID/GID/EGID" in item
+            and "ordinary zero" in item
+            and "UID/EUID-mismatch one" in item
+            for item in prerequisites
+        ),
+        "static-c-issetugid must retain musl's cached secure-state source mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "no interpreter" in item
+            and "dynamic TLS model" in item
+            and "issetugid itself has no syscall" in item
+            and "secure_getenv" in item
+            for item in prerequisites
+        ),
+        "static-c-issetugid must retain its bounded static startup closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-issetugid.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "GNU/BSD-only" in item
+            and "int issetugid(void)" in item
+            and "strict/POSIX/X/Open hiding" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-issetugid must retain its focused GNU/BSD C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-issetugid needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-issetugid"},
+        "static-c-issetugid must use the closed libc-issetugid command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project GNU/BSD C/C++ header",
+                "ordinary pinned-musl C execution",
+                "three true x86 crabc-libc `-nostdlib -static` candidates",
+                "direct and function-pointer zero int results",
+                "final-AT_SECURE",
+                "UID/EUID-mismatch",
+                "issetugid.lo/AArch64 ownership",
+                "initial TLS bootstrap before static startup",
+                "no interpreter/DT_NEEDED/unresolved symbol/dynamic-TLS model/allocator",
+                "no syscall or credential/environment/secure_getenv/raw-auxv path",
+                "credential mutation or policy",
+                "process.globals",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-issetugid evidence must retain its bounded source and static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(ISSETUGID_SYMBOLS) <= exports,
+        "static-c-issetugid must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("issetugid")}
+        == set(ISSETUGID_SYMBOLS),
+        "static-c-issetugid must expose only issetugid",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "issetugid.rs"]\nmod issetugid;' in static_root,
+        "x86 static C ABI must compose the issetugid leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "issetugid.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "Selected static Linux/x86-64 GNU/BSD `issetugid` C ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/issetugid.c::issetugid",
+        "libc.secure",
+        "AT_SECURE/UID/EUID/GID/EGID",
+        "System V AMD64 ABI",
+        'pub extern "C" fn issetugid() -> c_int',
+        "startup_security::is_secure()",
+    ):
+        require(snippet in source, f"issetugid implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "secure_environment::",
+        "environment::",
+        "auxv_observation::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"issetugid leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_issetugid.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_issetugid_header_abi.sh",
+        "issetugid.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "-Wl,-e,_start",
+        "-Wl,--no-undefined",
+        "archive does not define issetugid",
+        "CRABC_ISSETUGID_SYNTHETIC_AT_SECURE",
+        "CRABC_ISSETUGID_SYNTHETIC_UID_MISMATCH",
+        "candidate retains a dynamic TLS model",
+        "issetugid selects a credential, environment, auxv, process, or syscall path",
+        "TLS bootstrap does not precede issetugid startup",
+    ):
+        require(snippet in runner, f"issetugid runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_issetugid_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "sizeof(int) == 4",
+        "int (*)(void)",
+        "const issetugid_signature function = issetugid",
+        "errno = E2BIG",
+        "issetugid() != 0",
+        "function() != 0",
+        "issetugid() != 1",
+        "function() != 1",
+        "CRABC_ISSETUGID_SYNTHETIC",
+    ):
+        require(snippet in probe, f"issetugid probe omits {snippet}")
+
+    start = (ROOT / "compat" / "x86_64" / "libc_issetugid_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "CRABC_ISSETUGID_SYNTHETIC",
+        "CRABC_ISSETUGID_SYNTHETIC_AT_SECURE",
+        "CRABC_ISSETUGID_SYNTHETIC_UID_MISMATCH",
+        "AT_UID=11, AT_EUID=12, AT_GID=13, AT_EGID=14, AT_SECURE=23",
+        "__crabc_x86_static_tls_bootstrap",
+        "__libc_start_main",
+    ):
+        require(snippet in start, f"issetugid start fixture omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "issetugid_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "issetugid_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "issetugid declaration",
+        "issetugid_must_be_hidden",
+        "CRABC_REQUIRE_ISSETUGID_HIDDEN",
+    ):
+        require(snippet in header_c, f"issetugid C header probe omits {snippet}")
+        require(snippet in header_cxx, f"issetugid C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_issetugid_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "issetugid_header_abi_probe.c",
+        "issetugid_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "GNU or BSD",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "-D_XOPEN_SOURCE=700",
+        "-D_POSIX_C_SOURCE=200809L",
+        "retained a mangled issetugid reference",
+    ):
+        require(snippet in header_runner, f"issetugid header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "issetugid-header-abi)",
+        "run_issetugid_header_abi",
+        "libc-issetugid)",
+        "run_libc_issetugid_probe",
+    ):
+        require(snippet in dispatcher, f"issetugid dispatcher omits {snippet}")
+
+
+def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
+    """Keep the frozen legacy aggregate exact, inert-DES, and non-promoting."""
+
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        str(family.get("status", "")),
+        string_list(
+            family.get("capabilities"),
+            "family[libc.c-abi-compat].capabilities",
+            allow_empty=True,
+        ),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "legacy.misc"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one legacy.misc slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "legacy.misc must not promote libc.c-abi-compat",
+    )
+    selected = matching[0]
+    require(
+        selected.get("capabilities") == ["legacy.misc"],
+        "legacy.misc must select exactly legacy.misc",
+    )
+
+    coverage = load_toml(ROOT / "compat" / "crabc-rs" / "coverage.toml")
+    coverage_records = coverage.get("capability")
+    require(isinstance(coverage_records, list), "coverage capability records are missing")
+    coverage_entry = next(
+        (
+            entry
+            for entry in coverage_records
+            if isinstance(entry, Mapping) and entry.get("id") == "legacy.misc"
+        ),
+        None,
+    )
+    require(
+        isinstance(coverage_entry, Mapping)
+        and coverage_entry.get("symbols") == list(LEGACY_MISC_SYMBOLS),
+        "legacy.misc frozen symbol set drifted",
+    )
+
+    description = selected.get("description")
+    require(isinstance(description, str), "legacy.misc needs a description")
+    for phrase in (
+        "Private native x86 selected-private frozen `legacy.misc` capability",
+        "still-planned `libc.c-abi-compat`",
+        "`encrypt`, `fmtmsg`, `get_avphys_pages`, `get_nprocs`, `get_nprocs_conf`, `get_phys_pages`, `issetugid`, and `setkey`",
+        "`x86-legacy-misc` feature",
+        "`fmtmsg`, `setkey`, and `encrypt`",
+        "`static_c_abi_exports.txt`",
+        "`MSGVERB`",
+        "`MM_PRINT`",
+        "`MM_CONSOLE`",
+        "retry-on-short-write",
+        "inert link-compatible no-ops",
+        "neither dereference nor mutate caller storage",
+        "no DES, cipher, PRNG, crypto service, or hand-rolled cryptography",
+        "`crypto.crypt` or `crypto.crypt-helpers`",
+        "full legacy runtime",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"legacy.misc description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(selected.get("source_owners"), "legacy.misc.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "compat/crabc-rs/crypt-profile.md",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/legacy_des_exports.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/legacy_misc.rs",
+        "libc/src/c_abi/x86_64/byte_strings.rs",
+        "libc/src/c_abi/x86_64/descriptor_entry.rs",
+        "libc/src/c_abi/x86_64/descriptor_io.rs",
+        "libc/src/c_abi/x86_64/environment.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/system_information.rs",
+        "libc/src/c_abi/x86_64/issetugid.rs",
+        "libc/src/c_abi/x86_64/startup_security.rs",
+        "include/bits/alltypes.h",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/features.h",
+        "include/fmtmsg.h",
+        "include/stdlib.h",
+        "include/sys/sysinfo.h",
+        "include/unistd.h",
+        "tests/legacy_des.rs",
+        "compat/x86_64/legacy_misc_header_abi_probe.c",
+        "compat/x86_64/legacy_misc_header_abi_probe.cpp",
+        "compat/x86_64/run_legacy_misc_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_legacy_misc_probe.c",
+        "compat/x86_64/libc_legacy_misc_start.S",
+        "compat/x86_64/run_libc_legacy_misc.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_legacy_misc.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"legacy.misc source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        selected.get("x86_abi_prerequisites"), "legacy.misc.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "fmtmsg(long, const char *, int, const char *, const char *, const char *)" in item
+            and "rdi/rsi/edx/rcx/r8/r9" in item
+            and "setkey(const char *)" in item
+            and "encrypt(char *, int)" in item
+            for item in prerequisites
+        ),
+        "legacy.misc must retain the full x86 C calling convention boundary",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/legacy/fmtmsg.c::fmtmsg" in item
+            and "src/legacy/encrypt.c::{setkey,encrypt}" in item
+            and "fmtmsg.lo" in item
+            and "encrypt.lo" in item
+            and "intentional inert-DES divergence" in item
+            for item in prerequisites
+        ),
+        "legacy.misc must retain its musl provenance and intentional inert DES divergence",
+    )
+    require(
+        any(
+            "x86-legacy-misc" in item
+            and "exactly one target-local archive member" in item
+            and "only `fmtmsg`, `setkey`, and `encrypt`" in item
+            and "static_c_abi_exports.txt" in item
+            and "static-c-system-information" in item
+            and "static-c-issetugid" in item
+            for item in prerequisites
+        ),
+        "legacy.misc must retain its exact opt-in owner and prerequisite split",
+    )
+    require(
+        any(
+            "`-nostdlib -static` ET_EXEC" in item
+            and "initial-TLS bootstrap" in item
+            and "dynamic TLS model" in item
+            and "no call or syscall" in item
+            and "neither dereference nor mutate caller storage" in item
+            for item in prerequisites
+        ),
+        "legacy.misc must retain its static closure and inert DES boundary",
+    )
+
+    headers = nonempty_strings(
+        selected.get("x86_header_prerequisites"), "legacy.misc.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "`-nostdinc`/`-nostdinc++`" in item
+            and "C11/C++17" in item
+            and "strict/POSIX" in item
+            and "setkey`/`encrypt`" in item
+            and "GNU/BSD-only" in item
+            and "hidden under X/Open" in item
+            and "unmangled C linkage" in item
+            for item in headers
+        ),
+        "legacy.misc must retain its frozen C/C++ header profile partition",
+    )
+
+    evidence = selected.get("native_evidence")
+    require(isinstance(evidence, list), "legacy.misc needs native evidence")
+    evidence_by_command = {
+        entry.get("command"): entry
+        for entry in evidence
+        if isinstance(entry, Mapping) and isinstance(entry.get("command"), str)
+    }
+    expected_commands = {
+        "./scripts/dev-x86_64.sh legacy-misc-header-abi",
+        "./scripts/dev-x86_64.sh libc-legacy-misc",
+    }
+    require(
+        set(evidence_by_command) == expected_commands and len(evidence) == len(expected_commands),
+        "legacy.misc must use its two closed commands",
+    )
+    header_scope = evidence_by_command["./scripts/dev-x86_64.sh legacy-misc-header-abi"].get(
+        "scope"
+    )
+    require(
+        isinstance(header_scope, str)
+        and all(
+            phrase in header_scope
+            for phrase in (
+                "Pinned-musl/project raw `-nostdinc`/`-nostdinc++` C11/C++17",
+                "strict/POSIX base visibility",
+                "X/Open encrypt/setkey visibility",
+                "GNU/BSD issetugid visibility",
+                "unmangled C++ linkage",
+                "legacy runtime",
+                "crypto behavior",
+                "public x86 support",
+            )
+        ),
+        "legacy.misc header evidence must retain its profile and nonpromotion boundary",
+    )
+    runtime_scope = evidence_by_command["./scripts/dev-x86_64.sh libc-legacy-misc"].get(
+        "scope"
+    )
+    require(
+        isinstance(runtime_scope, str)
+        and all(
+            phrase in runtime_scope
+            for phrase in (
+                "Pinned-musl fmtmsg behavior",
+                "feature-gated x86 crabc-libc `-nostdlib -static` aggregate",
+                "exact three-symbol feature delta",
+                "one target-local owner",
+                "MSGVERB/stderr/console/error/short-write fmtmsg behavior",
+                "initial-TLS static closure",
+                "no interpreter/DT_NEEDED/unresolved symbol/PLT/dynamic-TLS/ambient runtime",
+                "inert no-dereference/no-mutation/no-call/no-syscall ABI behavior",
+                "not a musl DES semantic differential",
+                "crypto.crypt",
+                "crypto.crypt-helpers",
+                "full legacy runtime",
+                "public x86 support",
+            )
+        ),
+        "legacy.misc runtime evidence must retain the inert DES and static closure boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(LEGACY_MISC_SYMBOLS) - set(LEGACY_MISC_OPT_IN_SYMBOLS) <= exports,
+        "legacy.misc must retain its five default-root prerequisite exports",
+    )
+    require(
+        not (set(LEGACY_MISC_OPT_IN_SYMBOLS) & exports),
+        "legacy.misc must not widen the frozen default selected-static exports",
+    )
+
+    manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    require(
+        "x86-legacy-misc = []" in manifest,
+        "legacy.misc feature must remain dependency-free",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[cfg(feature = "x86-legacy-misc")]\n#[path = "legacy_misc.rs"]\nmod legacy_misc;'
+        in static_root,
+        "legacy.misc owner must remain behind its dedicated opt-in root gate",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_misc.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "src/legacy/fmtmsg.c::fmtmsg",
+        "src/legacy/encrypt.c::setkey",
+        "src/legacy/encrypt.c::encrypt",
+        "MSGVERB",
+        "MM_NOMSG",
+        "MM_NOCON",
+        "MM_NOTOK",
+        "retry-on-short-write",
+        "inert-DES",
+        "intentional divergence",
+        "no-hand-rolled-cryptography",
+        "byte_strings",
+        "descriptor_entry",
+        "descriptor_io",
+        "environment",
+    ):
+        require(snippet in source, f"legacy.misc implementation omits {snippet}")
+    source_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(
+        source_exports == set(LEGACY_MISC_OPT_IN_SYMBOLS),
+        "legacy.misc owner must export exactly fmtmsg, setkey, and encrypt",
+    )
+    for forbidden in ("sha_crypt", "crabc_core", "crabc_mimalloc", "mimalloc"):
+        require(
+            forbidden not in source,
+            f"legacy.misc owner must not select {forbidden}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_legacy_misc_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "compile_visible_profile strict base",
+        "compile_visible_profile posix base",
+        "compile_visible_profile xopen xopen",
+        "compile_visible_profile gnu gnu-bsd",
+        "compile_visible_profile bsd gnu-bsd",
+        "CRABC_LEGACY_MISC_REQUIRE_XOPEN_HIDDEN",
+        "CRABC_LEGACY_MISC_REQUIRE_ISSETUGID_HIDDEN",
+        "C++ probe lacks C linkage",
+        "retained a mangled",
+        "-nostdinc",
+        "-nostdinc++",
+    ):
+        require(snippet in header_runner, f"legacy.misc header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_legacy_misc.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "FEATURE=x86-legacy-misc",
+        "FEATURE_EXPORTS=(encrypt fmtmsg setkey)",
+        "run_legacy_misc_header_abi.sh",
+        "run_libc_system_information.sh",
+        "run_libc_issetugid.sh",
+        "unfeatured selected-static C ABI export surface drifted",
+        "opt-in legacy.misc changed more than its exact public closure",
+        "legacy.misc owner export surface drifted",
+        "inert DES compatibility functions select a local cipher",
+        "candidate retains an unresolved symbol",
+        "candidate selects a dynamic runtime",
+        "candidate retains a dynamic TLS model",
+        "not a full legacy runtime",
+        "public support claim",
+    ):
+        require(snippet in runner, f"legacy.misc runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "legacy-misc-header-abi)",
+        "run_legacy_misc_header_abi()",
+        "libc-legacy-misc)",
+        "run_libc_legacy_misc_probe()",
+    ):
+        require(snippet in dispatcher, f"legacy.misc dispatcher omits {snippet}")
+
+
 def require_gettid_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct GNU current-task identifier leaf below promotion."""
 
@@ -37252,10 +41474,11 @@ def require_gettid_artifact(family: Mapping[str, Any]) -> None:
     )
     require(
         any(
-            "one-member `-nostdlib -static`" in item
-            and "no PT_TLS" in item
-            and "no errno" in item
-            and "no TCB" in item
+            "canonical-archive `-nostdlib -static -Wl,--gc-sections`" in item
+            and "one archive owner" in item
+            and "final reachable executable" in item
+            and "no interpreter" in item
+            and "PT_TLS, errno, dynamic-TLS resolver, TCB" in item
             and "syscall-186" in item
             for item in prerequisites
         ),
@@ -37291,7 +41514,7 @@ def require_gettid_artifact(family: Mapping[str, Any]) -> None:
             phrase in scope
             for phrase in (
                 "Pinned-musl/project GNU C/C++ header",
-                "true one-member x86 crabc-libc `-nostdlib -static` candidate",
+                "true canonical-archive x86 crabc-libc `-nostdlib -static -Wl,--gc-sections` candidate",
                 "raw Linux gettid=186 observation",
                 "gettid.lo/AArch64 ownership",
                 "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS/TCB/helper-call/allocator",
@@ -37360,10 +41583,13 @@ def require_gettid_artifact(family: Mapping[str, Any]) -> None:
         "run_gettid_header_abi.sh",
         "gettid.lo",
         "static_c_abi_exports.txt",
-        "one-member `-nostdlib -static`",
+        "assert_selected_c_abi_surface",
+        "gettid must have exactly one crate object owner",
+        "final canonical-archive link below",
         "--no-undefined",
+        "--gc-sections",
         "archive does not define gettid",
-        "gettid object retains an unresolved helper",
+        "candidate retains an unresolved symbol",
         "gettid candidate unexpectedly retains TLS or errno",
         "gettid lacks Linux syscall 186",
         "gettid unexpectedly selects a TCB, TLS, or helper-call path",
@@ -37978,6 +42204,326 @@ def require_endhostent_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_endhostent_probe",
     ):
         require(snippet in dispatcher, f"endhostent dispatcher omits {snippet}")
+
+
+def require_sethostent_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the opt-in stateless legacy netdb setter pair non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        artifact for artifact in artifacts if artifact.get("id") == "static-c-sethostent"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs exactly one static-c-sethostent artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sethostent must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sethostent must not claim netdb/resolver capability progress",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-sethostent needs a description")
+    for phrase in (
+        "Private native x86 opt-in `sethostent` selected-static-archive artifact",
+        "still-planned `libc.c-abi-compat`",
+        "`x86-netdb-setent` feature adds exactly `sethostent` and weak same-address `setnetent`",
+        "true `-nostdlib -static` candidate",
+        "`void (int)`",
+        "ignore the signed `stayopen` word",
+        "caller's strong `setnetent` definition supersedes the weak alias",
+        "default `endhostent`/`endnetent` terminator pair",
+        "no mutable state, errno, TLS, allocation, syscall, file",
+        "It does not complete legacy netdb/resolver behavior",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sethostent description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-sethostent.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sethostent.rs",
+        "include/features.h",
+        "include/netdb.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/endhostent_header_abi_probe.c",
+        "compat/x86_64/endhostent_header_abi_probe.cpp",
+        "compat/x86_64/run_endhostent_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sethostent_probe.c",
+        "compat/x86_64/libc_sethostent_start.S",
+        "compat/x86_64/run_libc_sethostent.sh",
+        "compat/x86_64/tests/test_sethostent.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sethostent source owners omit {owner}")
+    for excluded in (
+        "libc/src/c_abi/x86_64/endhostent.rs",
+        "libc/src/c_abi/x86_64/resolver_runtime.rs",
+        "libc/src/c_abi/x86_64/numeric_netdb.rs",
+    ):
+        require(
+            excluded not in owners,
+            f"static-c-sethostent must not select {excluded}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-sethostent.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "edi" in item
+            and "strong sethostent T" in item
+            and "weak setnetent W" in item
+            and "same address" in item
+            and "strong setnetent" in item
+            for item in prerequisites
+        ),
+        "static-c-sethostent must retain its one-int weak-alias ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/ent.c::sethostent" in item
+            and "sethostent.rs" in item
+            and "weak_alias(sethostent, setnetent)" in item
+            and "endhostent/endnetent" in item
+            and "gethostent/getnetent" in item
+            for item in prerequisites
+        ),
+        "static-c-sethostent must retain its pinned-musl ent.c mapping",
+    )
+    require(
+        any(
+            "exactly public sethostent/setnetent" in item
+            and "one-member `-nostdlib -static` candidate" in item
+            and "PT_TLS" in item
+            and "host/network and resolver surfaces" in item
+            for item in prerequisites
+        ),
+        "static-c-sethostent must retain its closed feature/static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-sethostent.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `void sethostent(int)`" in item
+            and "`void setnetent(int)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "one-int function-pointer types" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-sethostent must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-sethostent needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-sethostent"},
+        "static-c-sethostent must use the closed libc-sethostent command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-sethostent evidence needs a scope")
+    for phrase in (
+        "Pinned-musl/project C/C++ header compilation",
+        "equivalent pinned-musl C execution",
+        "selected-member `-nostdlib -static` candidate",
+        "0, 1, INT_MIN, and INT_MAX",
+        "strong sethostent/weak setnetent same-address alias identity",
+        "caller-owned strong setnetent override",
+        "exactly sethostent/setnetent",
+        "ent.lo/AArch64 strong/weak ownership",
+        "host/network enumeration, resolver, database",
+        "does not complete legacy netdb/resolver behavior",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-sethostent evidence omits {phrase}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-sethostent needs an oracle")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and "src/network/ent.c::sethostent" in str(entry.get("role"))
+            and "weak_alias(sethostent, setnetent)" in str(entry.get("role"))
+            and "ignore stayopen" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-sethostent must retain its musl behavior oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "edi" in str(entry.get("role"))
+            and "strong/weak same-address" in str(entry.get("role"))
+            and "caller strong-override" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-sethostent must retain its SysV ABI oracle",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        not exports & set(SETHOSTENT_SYMBOLS),
+        "static-c-sethostent must keep both setter names out of the default archive",
+    )
+
+    manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    require(
+        "x86-netdb-setent = []" in manifest,
+        "libc Cargo manifest must retain the sethostent feature",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[cfg(feature = "x86-netdb-setent")]\n#[path = "sethostent.rs"]\nmod sethostent;'
+        in static_root,
+        "x86 static C ABI must compose sethostent only through its opt-in feature",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sethostent.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Linux/x86-64 opt-in static C `sethostent`/`setnetent` ABI boundary",
+        "Pinned musl 1.2.6 provenance is fixed to release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ent.c::sethostent",
+        "weak_alias(sethostent, setnetent)",
+        "System V AMD64 ABI",
+        ".weak setnetent",
+        ".set setnetent, sethostent",
+        'pub extern "C" fn sethostent(_stayopen: c_int)',
+    ):
+        require(snippet in source, f"sethostent implementation omits {snippet}")
+    for forbidden in (
+        "static mut",
+        "errno::",
+        "static_tls::",
+        "raw_syscall",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"sethostent leaf widens into {forbidden}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_sethostent_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "sethostent_signature",
+        "INT_MIN",
+        "INT_MAX",
+        "check_noop_pair",
+        "host_function != net_function",
+        "CRABC_SETHOSTENT_OVERRIDE",
+        "CRABC_SETHOSTENT_FREESTANDING",
+    ):
+        require(snippet in fixture, f"sethostent fixture omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_sethostent_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("crabc_x86_64_sethostent_probe", "mov $60, %eax"):
+        require(snippet in start, f"sethostent start shim omits {snippet}")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_sethostent.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "x86-netdb-setent",
+        "assert_feature_delta",
+        "sethostent\\nsetnetent\\n",
+        "run_endhostent_header_abi.sh",
+        "ent.lo",
+        "one crate object owner",
+        "-nostdlib -static",
+        "--gc-sections",
+        "candidate setnetent is not the same-address weak sethostent alias",
+        "caller strong setnetent did not override the archive weak binding",
+        "sethostent code section selects a call, TLS, syscall, or an unowned runtime",
+    ):
+        require(snippet in runner, f"sethostent runner omits {snippet}")
+    require("--whole-archive" not in runner, "sethostent runner must not whole-archive")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "endhostent_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "endhostent_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for header, label in ((header_c, "C"), (header_cxx, "C++")):
+        for snippet in (
+            "sethostent_signature",
+            "sethostent_function",
+            "setnetent_function",
+        ):
+            require(
+                snippet in header,
+                f"sethostent {label} header probe omits {snippet}",
+            )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_endhostent_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "sethostent",
+        "setnetent",
+        "unconditional",
+        "c11-strict",
+        "cxx17-gnu",
+        "retained a mangled $symbol reference",
+    ):
+        require(snippet in header_runner, f"sethostent header runner omits {snippet}")
+
+    netdb_header = (ROOT / "include" / "netdb.h").read_text(encoding="utf-8")
+    require(
+        "void sethostent(int); void setnetent(int);" in netdb_header
+        and '#ifdef __cplusplus\nextern "C" {' in netdb_header
+        and '#ifdef __cplusplus\n}\n#endif' in netdb_header,
+        "include/netdb.h must retain the selected setent C/C++ declarations",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("libc-sethostent)", "run_libc_sethostent_probe"):
+        require(snippet in dispatcher, f"sethostent dispatcher omits {snippet}")
+
+
 def require_endservent_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's stateless service terminator out of netdb/resolver state."""
     artifacts = require_verified_artifacts(
@@ -41379,6 +45925,9 @@ def require_catalog_gettext_slice(family: Mapping[str, Any]) -> None:
             "Default, strict, POSIX.1-2008, XOPEN-700, BSD, and GNU" in item
             and "all nine `<libintl.h>` and three `<nl_types.h>` declarations" in item
             and "unmangled C++ linkage" in item
+            and "exact transient `__fa(n)`" in item
+            and "`__format_arg__`" in item
+            and "`#undef __fa`" in item
             for item in headers
         ),
         "catalog.gettext must pin the selected C/C++ header contract",
@@ -41466,7 +46015,15 @@ def require_catalog_gettext_slice(family: Mapping[str, Any]) -> None:
         "CRABC_GETTEXT_CATALOG_FREESTANDING",
     ):
         require(snippet in fixture, f"catalog.gettext fixture omits {snippet}")
-    for snippet in ("-std=c++17", "nm --undefined-only", "libintl.h", "nl_types.h"):
+    for snippet in (
+        "-std=c++17",
+        "nm --undefined-only",
+        "libintl.h",
+        "nl_types.h",
+        "transient `__fa` format-argument annotation",
+        "-Werror=format",
+        "CRABC_REQUIRE_GETTEXT_FORMAT_ARGUMENT",
+    ):
         require(snippet in header_runner, f"catalog.gettext header runner omits {snippet}")
     dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
     require(
@@ -42387,7 +46944,8 @@ def require_allocator_observability_slice(family: Mapping[str, Any]) -> None:
         "strong `malloc_usable_size`",
         "real crabc `crt1.o`/`crti.o`/`crtn.o`",
         "raw single-threaded x86 fork",
-        "exact fourteen-object pinned-musl support tail",
+        "exact eleven-object pinned-musl support tail",
+        "crabc ownership of `fputs`, `sleep`, and `__stack_chk_fail`",
         "candidate-local pinned `libc.lo` copy",
         "`memory.allocator-basic`",
         "promotion",
@@ -42412,7 +46970,8 @@ def require_allocator_observability_slice(family: Mapping[str, Any]) -> None:
             for phrase in (
                 "owned-CRT/static-startup/Initial-TLS crabc candidate",
                 "active AArch64 crabc test",
-                "exact fourteen-member residual pinned-musl backend-support boundary",
+                "exact eleven-member residual pinned-musl backend-support boundary",
+                "final link map proves crabc owns fputs, sleep, and __stack_chk_fail",
                 "candidate-local pinned libc.lo clone",
                 "selects only memory.allocator-observability",
                 "not memory.allocator-basic",
@@ -42421,6 +46980,365 @@ def require_allocator_observability_slice(family: Mapping[str, Any]) -> None:
         ),
         "allocator-observability evidence must retain its exact private runtime boundary",
     )
+
+
+def require_allocator_basic_runtime_slice(family: Mapping[str, Any]) -> None:
+    """Keep allocator-basic selection real-runtime, bounded, and private."""
+    family_capabilities = string_list(
+        family.get("capabilities"),
+        "family[libc.c-abi-compat].capabilities",
+        allow_empty=True,
+    )
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        str(family.get("status", "")),
+        family_capabilities,
+    )
+    matching = [
+        entry for entry in slices if entry.get("id") == "allocator-basic-runtime-v1"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one allocator-basic-runtime-v1 slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "allocator-basic selection must not promote libc.c-abi-compat",
+    )
+    slice_entry = matching[0]
+    require(
+        slice_entry["capabilities"] == ["memory.allocator-basic"],
+        "allocator-basic-runtime-v1 must select exactly memory.allocator-basic",
+    )
+    owners = set(
+        string_list(
+            slice_entry["source_owners"],
+            "allocator-basic-runtime-v1.source_owners",
+        )
+    )
+    for owner in (
+        "libc/src/allocator_mimalloc.rs",
+        "libc/src/allocator_observability_mimalloc.rs",
+        "compat/x86_64/libc_allocator_basic_runtime_v1_probe.c",
+        "compat/x86_64/run_libc_allocator_basic_runtime_v1.sh",
+        "compat/x86_64/tests/test_libc_allocator_basic_runtime_v1.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"allocator-basic-runtime-v1 omits {owner}",
+        )
+    description = slice_entry["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "exactly `malloc`, `calloc`, `realloc`, `reallocarray`, `free`, `aligned_alloc`, `posix_memalign`, `memalign`, and `valloc`",
+        "zero-product `calloc`",
+        "real crabc `crt1.o`/`crti.o`/`crtn.o`",
+        "joined-worker-only `fork`/`pthread_atfork`",
+        "ordinary-exit callback",
+        "independently selected strong `malloc_usable_size` observer",
+        "exactly the bounded eleven-object pinned-musl backend-support tail",
+        "deterministic backend allocation failure",
+        "arbitrary live-thread fork recovery",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"allocator-basic-runtime-v1 description omits {phrase}",
+        )
+    evidence = slice_entry["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-allocator-basic-runtime-v1"},
+        "allocator-basic-runtime-v1 must use the closed libc-allocator-basic-runtime-v1 command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "real crabc CRT/static-startup/Initial-TLS/pthread candidate",
+                "exactly the nine allocator-basic exports",
+                "observer-only malloc_usable_size owner",
+                "public joined-worker-only fork with ordered pthread_atfork hooks",
+                "ordinary atexit/exit",
+                "exactly the eleven-member residual pinned-musl backend-support boundary",
+                "not allocator observability",
+                "full allocator lifecycle",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "allocator-basic-runtime-v1 evidence must retain its exact private runtime boundary",
+    )
+
+
+def require_crypt_profile_slice(family: Mapping[str, Any]) -> None:
+    """Keep the dependency-backed password-hash profile private and bounded."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        str(family.get("status", "")),
+        list(family.get("capabilities", [])),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "crypto.crypt-profile"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs one crypto.crypt-profile slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "crypt profile selection must not promote libc.c-abi-compat",
+    )
+    selected = matching[0]
+    require(
+        selected["capabilities"] == ["crypto.crypt", "crypto.crypt-helpers"],
+        "crypt profile slice must select exactly crypto.crypt and crypto.crypt-helpers",
+    )
+    description = selected["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "Private native x86 opt-in selected-static-archive completion",
+        "bounded AArch64 `crypto.crypt` and `crypto.crypt-helpers` capabilities",
+        "strong default `crypt`, weak default `crypt_r`",
+        "`__crypt_r`, `__crypt_sha256`, `__crypt_sha512`, `__crypt_md5`, and `__crypt_blowfish`",
+        "260-byte `struct crypt_data`",
+        "SHA-256-crypt `$5$` and SHA-512-crypt `$6$`",
+        "one-to-sixteen-byte Base64ShaCrypt salt",
+        "RustCrypto `sha-crypt` and `base64ct` dependencies",
+        "never hand-rolls a cryptographic primitive",
+        "strict/POSIX hiding versus X/Open/GNU/BSD `<unistd.h>` visibility",
+        "pinned-musl `malloc`/`aligned_alloc`/`free` boundary",
+        "rejects composition with `x86-allocator-runtime`",
+        "default static export",
+        "legacy DES/BSDI/MD5/bcrypt support",
+        "separate selected-private `legacy.misc` slice",
+        "inert link-compatible `encrypt`/`setkey` names",
+        "no DES, cipher, PRNG, or crypto semantics",
+        "does not widen default exports",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"crypto.crypt-profile description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(selected["source_owners"], "crypto.crypt-profile.source_owners")
+    )
+    for owner in (
+        "Cargo.lock",
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "compat/crabc-rs/crypt-profile.md",
+        "libc/Cargo.toml",
+        "libc/src/crypt_impl.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/crypt.rs",
+        "include/crypt.h",
+        "include/unistd.h",
+        "compat/x86_64/crypt-profile.md",
+        "compat/x86_64/crypt_header_abi_probe.c",
+        "compat/x86_64/crypt_header_abi_probe.cpp",
+        "compat/x86_64/crypt_unistd_visibility_probe.c",
+        "compat/x86_64/crypt_unistd_visibility_probe.cpp",
+        "compat/x86_64/run_crypt_header_abi.sh",
+        "compat/x86_64/libc_crypt_probe.c",
+        "compat/x86_64/run_libc_crypt.sh",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"crypto.crypt-profile source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        selected["x86_abi_prerequisites"], "crypto.crypt-profile.x86_abi_prerequisites"
+    )
+    for phrase in (
+        "SysV AMD64 LP64",
+        "rdi/rsi",
+        "rdx",
+        "260-byte align-4 C record",
+        "strong/default and `crypt_r` weak/default",
+        "Pinned musl 1.2.6 release commit",
+        "RustCrypto `sha-crypt`",
+        "Base64ShaCrypt",
+        "static_c_abi_exports.txt",
+        "pinned-musl strcmp/strlen/write",
+        "x86-allocator-runtime",
+    ):
+        require(
+            any(phrase in item for item in prerequisites),
+            f"crypto.crypt-profile ABI prerequisites omit {phrase}",
+        )
+    headers = nonempty_strings(
+        selected["x86_header_prerequisites"],
+        "crypto.crypt-profile.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11 and C++17 `<crypt.h>`" in item
+            and "260-byte align-4 `struct crypt_data`" in item
+            and "strict/POSIX" in item
+            and "X/Open 700, GNU, and BSD" in item
+            and "unmangled C++ C linkage" in item
+            for item in headers
+        ),
+        "crypto.crypt-profile must retain its C/C++ header-profile boundary",
+    )
+
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    expected_commands = {
+        "./scripts/dev-x86_64.sh crypt-header-abi",
+        "./scripts/dev-x86_64.sh libc-crypt",
+    }
+    require(
+        {entry["command"] for entry in evidence} == expected_commands,
+        "crypto.crypt-profile must use its closed header and runtime commands",
+    )
+    by_command = {entry["command"]: entry for entry in evidence}
+    header_scope = by_command["./scripts/dev-x86_64.sh crypt-header-abi"].get("scope")
+    require(
+        isinstance(header_scope, str)
+        and all(
+            phrase in header_scope
+            for phrase in (
+                "pinned-musl/project C11 and C++17 `<crypt.h>`",
+                "260-byte crypt_data record",
+                "Strict/POSIX hiding",
+                "X/Open/GNU/BSD visibility",
+                "public x86 support",
+            )
+        ),
+        "crypto.crypt-profile header evidence must retain its bounded visibility contract",
+    )
+    runtime_scope = by_command["./scripts/dev-x86_64.sh libc-crypt"].get("scope")
+    require(
+        isinstance(runtime_scope, str)
+        and all(
+            phrase in runtime_scope
+            for phrase in (
+                "static x86 candidate whose opt-in crabc object is linked before the pinned-musl and full crabc archives",
+                "strong public/private and weak crypt_r ELF bindings",
+                "actual public crypt/crypt_r and every private helper",
+                "crypt_data.__buf overlap",
+                "pinned-musl malloc/aligned_alloc/free",
+                "x86-allocator-runtime composition",
+                "public x86 support",
+            )
+        ),
+        "crypto.crypt-profile runtime evidence must retain its bounded ABI and allocator boundary",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in (
+        "crypt",
+        "crypt_r",
+        "__crypt_r",
+        "__crypt_sha256",
+        "__crypt_sha512",
+        "__crypt_md5",
+        "__crypt_blowfish",
+    ):
+        require(
+            symbol not in exports,
+            f"crypto.crypt-profile must not make {symbol} a default static C export",
+        )
+
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "crypt.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "extern crate alloc;",
+        "#[global_allocator]",
+        "const CRYPT_DATA_BYTES: usize",
+        "assert!(CRYPT_DATA_BYTES == 260)",
+        "Base64ShaCrypt::decode",
+        "ShaCrypt::new",
+        "#[linkage = \"weak\"]",
+        "pub unsafe extern \"C\" fn crypt_r",
+        "pub unsafe extern \"C\" fn __crypt_sha256",
+        "pub unsafe extern \"C\" fn __crypt_sha512",
+        "pub unsafe extern \"C\" fn __crypt_md5",
+        "pub unsafe extern \"C\" fn __crypt_blowfish",
+    ):
+        require(snippet in source, f"crypto.crypt-profile source omits {snippet}")
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        '#[cfg(feature = "x86-crypt")]\n#[path = "crypt.rs"]\nmod crypt;',
+        "x86-crypt cannot compose with x86-allocator-runtime",
+    ):
+        require(snippet in static_root, f"crypto.crypt-profile static root omits {snippet}")
+    cargo_manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    for snippet in (
+        "x86-crypt = [\"dep:base64ct\", \"dep:sha-crypt\"]",
+        "sha-crypt = { version = \"0.6\"",
+        "base64ct = { version = \"1.8\"",
+    ):
+        require(snippet in cargo_manifest, f"crypto.crypt-profile manifest omits {snippet}")
+    crypt_header = (ROOT / "include" / "crypt.h").read_text(encoding="utf-8")
+    require(
+        "struct crypt_data" in crypt_header
+        and "char __buf[256];" in crypt_header
+        and 'extern "C"' in crypt_header,
+        "crypto.crypt-profile crypt.h layout or C++ linkage drifted",
+    )
+    header_runner = (ROOT / "compat" / "x86_64" / "run_crypt_header_abi.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "for profile in strict posix xopen gnu bsd",
+        "crypt_header_abi_probe.c",
+        "crypt_header_abi_probe.cpp",
+        "crypt_unistd_visibility_probe.c",
+        "crypt_unistd_visibility_probe.cpp",
+        "-nostdinc++",
+        "mangled crypt reference",
+    ):
+        require(snippet in header_runner, f"crypto.crypt-profile header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_crypt.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "expected_owner_exports=(__crypt_blowfish __crypt_md5 __crypt_r __crypt_sha256 __crypt_sha512 crypt crypt_r)",
+        "crypt object retains a test-only export",
+        "run_crypt_header_abi.sh",
+        "-static",
+        '"$musl_archive"',
+        "x86-crypt cannot compose with x86-allocator-runtime",
+    ):
+        require(snippet in runner, f"crypto.crypt-profile runner omits {snippet}")
+    fixture = (ROOT / "compat" / "x86_64" / "libc_crypt_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "private_blowfish",
+        "private_md5",
+        "private_r",
+        "private_sha256",
+        "private_sha512",
+        "check_overlapping_inputs",
+        "public_crypt_r",
+        "private_r(\"foobar\", reentrant.data.__buf",
+    ):
+        require(snippet in fixture, f"crypto.crypt-profile fixture omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "crypt-header-abi)",
+        "run_crypt_header_abi.sh",
+        "libc-crypt)",
+        "run_libc_crypt.sh",
+    ):
+        require(snippet in dispatcher, f"crypto.crypt-profile dispatcher omits {snippet}")
 
 
 def require_alloca_builtin_artifact(family: Mapping[str, Any]) -> None:
@@ -53021,6 +57939,369 @@ def require_stdio_tmpfile_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_stdio_fopen64_alias_slice(family: Mapping[str, Any]) -> None:
+    """Keep the x86 fopen64 capability a source-only LP64 macro alias.
+
+    This is a completed capability record, but it deliberately proves no
+    second static C ABI entry: pinned x86 musl exposes ``fopen64`` only after
+    preprocessing ``_LARGEFILE64_SOURCE`` to the already selected ``fopen``.
+    """
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.text-math-locale-stdio].verified_slice",
+        str(family.get("status", "")),
+        string_list(
+            family.get("capabilities"),
+            "family[libc.text-math-locale-stdio].capabilities",
+            allow_empty=True,
+        ),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "stdio.fopen64-alias"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one stdio.fopen64-alias slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "stdio.fopen64-alias must not promote libc.text-math-locale-stdio",
+    )
+    selected = matching[0]
+    require(
+        selected.get("capabilities") == ["stdio.fopen64-alias"],
+        "stdio.fopen64-alias must select exactly stdio.fopen64-alias",
+    )
+
+    coverage = load_toml(ROOT / "compat" / "crabc-rs" / "coverage.toml")
+    coverage_records = coverage.get("capability")
+    require(isinstance(coverage_records, list), "coverage capability records are missing")
+    coverage_entry = next(
+        (
+            entry
+            for entry in coverage_records
+            if isinstance(entry, Mapping) and entry.get("id") == "stdio.fopen64-alias"
+        ),
+        None,
+    )
+    require(
+        isinstance(coverage_entry, Mapping)
+        and coverage_entry.get("symbols") == list(STDIO_FOPEN64_ALIAS_SYMBOLS),
+        "stdio.fopen64-alias frozen symbol set drifted",
+    )
+
+    description = selected.get("description")
+    require(isinstance(description, str), "stdio.fopen64-alias needs a description")
+    for phrase in (
+        "selected-private `stdio.fopen64-alias` capability",
+        "still-planned `libc.text-math-locale-stdio`",
+        "`_LARGEFILE64_SOURCE`",
+        "`#define fopen64 fopen`",
+        "source-only `fopen64` alias",
+        "no distinct x86 ELF `fopen64` symbol",
+        "AArch64 project forwarding entry",
+        "does not complete `stdio.path-stream`",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"stdio.fopen64-alias description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(selected.get("source_owners"), "stdio.fopen64-alias.source_owners")
+    )
+    for owner in (
+        "SCOPE.md",
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "compat/ratchet/aarch64-dynamic.json",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "include/features.h",
+        "include/stdio.h",
+        "compat/x86_64/fopen64_header_abi_probe.c",
+        "compat/x86_64/fopen64_header_abi_probe.cpp",
+        "compat/x86_64/run_fopen64_header_abi.sh",
+        "compat/x86_64/libc_fopen64_alias_probe.c",
+        "compat/x86_64/libc_fopen64_alias_start.S",
+        "compat/x86_64/run_libc_fopen64_alias.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"stdio.fopen64-alias source owners omit {owner}")
+
+    abi_prerequisites = nonempty_strings(
+        selected.get("x86_abi_prerequisites"),
+        "stdio.fopen64-alias.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "LP64" in item
+            and "FILE *(*)(const char *, const char *)" in item
+            and "no second calling convention" in item
+            for item in abi_prerequisites
+        ),
+        "stdio.fopen64-alias must retain its single-function LP64 ABI boundary",
+    )
+    require(
+        any(
+            "Pinned musl 1.2.6" in item
+            and "#define fopen64 fopen" in item
+            and "_GNU_SOURCE" in item
+            and "_FILE_OFFSET_BITS=64" in item
+            and "_LARGEFILE_SOURCE" in item
+            for item in abi_prerequisites
+        ),
+        "stdio.fopen64-alias must retain its pinned-musl feature boundary",
+    )
+    require(
+        any(
+            "stdio_standard.rs::fopen" in item
+            and "no x86 wrapper" in item
+            and "new static export" in item
+            for item in abi_prerequisites
+        ),
+        "stdio.fopen64-alias must retain its existing-owner boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        selected.get("x86_header_prerequisites"),
+        "stdio.fopen64-alias.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "ten-profile matrix" in item
+            and "strict/GNU/_FILE_OFFSET_BITS=64/_LARGEFILE_SOURCE" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "stdio.fopen64-alias must retain its C/C++ header profile boundary",
+    )
+    require(
+        any(
+            "project errno.h, stdio.h, unistd.h" in item
+            and "never declares or references a distinct `fopen64` ELF name" in item
+            for item in header_prerequisites
+        ),
+        "stdio.fopen64-alias must retain its freestanding header boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require("fopen" in exports, "stdio.fopen64-alias requires the selected fopen export")
+    require(
+        not (set(STDIO_FOPEN64_ALIAS_SYMBOLS) & exports),
+        "stdio.fopen64-alias must not widen the static export contract",
+    )
+
+    header = (ROOT / "include" / "stdio.h").read_text(encoding="utf-8")
+    require(
+        "#if defined(_LARGEFILE64_SOURCE)\n#define fopen64 fopen\n#endif" in header,
+        "stdio.h must retain the exact _LARGEFILE64_SOURCE fopen64 macro alias",
+    )
+    manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "x86-stdio-fopen64-alias" not in manifest
+        and "stdio_fopen64_alias" not in static_root,
+        "stdio.fopen64-alias must not add an x86 feature-gated wrapper root",
+    )
+    aarch64_owner = (ROOT / "libc" / "src" / "c_abi.rs").read_text(encoding="utf-8")
+    require(
+        'pub unsafe extern "C" fn fopen64' in aarch64_owner,
+        "stdio.fopen64-alias must record the intentional AArch64 forwarding distinction",
+    )
+
+    c_probe = (
+        ROOT / "compat" / "x86_64" / "fopen64_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_FOPEN64_HEADER_C11_BASE",
+        "CRABC_FOPEN64_HEADER_C11_GNU",
+        "CRABC_FOPEN64_HEADER_C11_FILE_OFFSET_BITS_64",
+        "CRABC_FOPEN64_HEADER_C11_LARGEFILE_SOURCE",
+        "CRABC_FOPEN64_HEADER_C11_LARGEFILE64",
+        "__typeof__(&fopen64)",
+        "crabc_fopen64_macro_reference = &fopen64",
+    ):
+        require(snippet in c_probe, f"stdio.fopen64-alias C header probe omits {snippet}")
+    cxx_probe = (
+        ROOT / "compat" / "x86_64" / "fopen64_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_FOPEN64_HEADER_CXX17_BASE",
+        "CRABC_FOPEN64_HEADER_CXX17_GNU",
+        "CRABC_FOPEN64_HEADER_CXX17_FILE_OFFSET_BITS_64",
+        "CRABC_FOPEN64_HEADER_CXX17_LARGEFILE_SOURCE",
+        "CRABC_FOPEN64_HEADER_CXX17_LARGEFILE64",
+        "decltype(&fopen64)",
+        "crabc_fopen64_macro_reference = &fopen64",
+    ):
+        require(snippet in cxx_probe, f"stdio.fopen64-alias C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_fopen64_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "c11-base",
+        "c11-gnu",
+        "c11-file-offset-bits-64",
+        "c11-largefile-source",
+        "c11-largefile64",
+        "cxx17-base",
+        "cxx17-gnu",
+        "cxx17-file-offset-bits-64",
+        "cxx17-largefile-source",
+        "cxx17-largefile64",
+        "assert_object_references_fopen_only",
+        "run_musl_oracle.sh",
+        "retained an ELF or mangled fopen64 reference",
+    ):
+        require(snippet in header_runner, f"stdio.fopen64-alias header runner omits {snippet}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_fopen64_alias_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fopen_entry != fopen64_macro_entry",
+        "errno != ENOENT",
+        'fopen64_macro_entry(path, "w+")',
+        'fopen64_macro_entry(path, "r")',
+        "fwrite_entry(payload",
+        "fseek_entry(stream, 0, SEEK_SET)",
+        "fread_entry(observed",
+        "CRABC_FOPEN64_ALIAS_FREESTANDING",
+    ):
+        require(snippet in fixture, f"stdio.fopen64-alias fixture omits {snippet}")
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_fopen64_alias.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_fopen64_header_abi.sh",
+        "run_libc_stdio_path_stream.sh",
+        "STATIC_C_ABI_EXPORTS",
+        "assert_no_fopen64_symbol",
+        "pinned-musl archive contradicts its header-only fopen64 alias",
+        "-nostdlib -static",
+        "--gc-sections",
+        "--no-undefined",
+        "__crabc_x86_static_tls_bootstrap",
+        "dynamic TLS model",
+    ):
+        require(snippet in runner, f"stdio.fopen64-alias runner omits {snippet}")
+
+    evidence = selected.get("native_evidence")
+    require(isinstance(evidence, list), "stdio.fopen64-alias needs native evidence")
+    evidence_by_command = {
+        entry.get("command"): entry
+        for entry in evidence
+        if isinstance(entry, Mapping) and isinstance(entry.get("command"), str)
+    }
+    expected_commands = {
+        "./scripts/dev-x86_64.sh fopen64-header-abi",
+        "./scripts/dev-x86_64.sh libc-fopen64-alias",
+    }
+    require(
+        set(evidence_by_command) == expected_commands and len(evidence) == len(expected_commands),
+        "stdio.fopen64-alias must use its two closed evidence commands",
+    )
+    header_scope = evidence_by_command[
+        "./scripts/dev-x86_64.sh fopen64-header-abi"
+    ].get("scope")
+    require(
+        isinstance(header_scope, str)
+        and all(
+            phrase in header_scope
+            for phrase in (
+                "C11/C++17 ten-profile header matrix",
+                "_FILE_OFFSET_BITS=64",
+                "_LARGEFILE_SOURCE",
+                "unmangled C++ `fopen` reference",
+                "fopen64",
+                "source/header evidence only",
+                "public x86 support",
+            )
+        ),
+        "stdio.fopen64-alias header evidence must retain its source-only boundary",
+    )
+    runtime_scope = evidence_by_command[
+        "./scripts/dev-x86_64.sh libc-fopen64-alias"
+    ].get("scope")
+    require(
+        isinstance(runtime_scope, str)
+        and all(
+            phrase in runtime_scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "dependency-free x86 crabc-libc archive",
+                "`-nostdlib -static --gc-sections` candidate",
+                "absence of any archive/final `fopen64` definition or reference",
+                "same-address macro/fopen pointers",
+                "ENOENT",
+                "w+/r write/seek/read/close lifecycle",
+                "direct initial-exec errno TLS",
+                "general stdio/path-stream completion",
+                "public x86 support",
+            )
+        ),
+        "stdio.fopen64-alias runtime evidence must retain its static source-only boundary",
+    )
+
+    oracle = selected.get("oracle")
+    require(isinstance(oracle, list), "stdio.fopen64-alias needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and "#define fopen64 fopen" in str(entry.get("role"))
+            and "sole strong fopen definition" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "stdio.fopen64-alias must retain its pinned-musl source/header oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and "explicit fopen64 forwarding compatibility entry" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "stdio.fopen64-alias must retain its intentional AArch64 distinction",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "ordinary fopen relocation" in str(entry.get("role"))
+            and "absence of a second x86 ELF fopen64 name" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "stdio.fopen64-alias must retain its x86 ELF alias oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "fopen64-header-abi)",
+        "run_fopen64_header_abi",
+        "libc-fopen64-alias)",
+        "run_libc_fopen64_alias.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits fopen64 alias {snippet}")
+
+
 def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     """Keep the x87-only math/complex foundation distinct from math parity.
 
@@ -54708,6 +59989,308 @@ def require_fdim_artifact(family: Mapping[str, Any]) -> None:
         "/workspace/compat/x86_64/run_libc_fdim.sh",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_math_elementary_fenv_sensitive_slice(
+    family: Mapping[str, Any],
+) -> None:
+    """Pin the complete private fenv-sensitive elementary-math composition."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.text-math-locale-stdio].verified_slice",
+        family.get("status", ""),
+        family.get("capabilities", []),
+    )
+    matching = [
+        entry
+        for entry in slices
+        if entry.get("id") == "static-c-math-elementary-fenv-sensitive"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-elementary-fenv-sensitive slice",
+    )
+    artifact = matching[0]
+    require(
+        artifact.get("capabilities") == ["math.elementary-fenv-sensitive"],
+        "static-c-math-elementary-fenv-sensitive must select exactly math.elementary-fenv-sensitive",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MATH_ELEMENTARY_FENV_SENSITIVE_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-math-elementary-fenv-sensitive description omits {symbol}",
+        )
+    for phrase in (
+        "Complete private native x86 `math.elementary-fenv-sensitive` capability",
+        "all-fifteen-symbol surface",
+        "five closed native gates",
+        "x86-math-long-double-completion",
+        "strong `exp10l` and weak same-address `pow10l`",
+        "not a general libm/libc",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            "static-c-math-elementary-fenv-sensitive description omits " + phrase,
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"],
+        "static-c-math-elementary-fenv-sensitive.source_owners",
+    )
+    for owner in (
+        "compat/crabc-rs/coverage.toml",
+        "libc/Cargo.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fenv_rounding.rs",
+        "libc/src/c_abi/x86_64/fdim.rs",
+        "libc/src/c_abi/x86_64/math_exp10.rs",
+        "libc/src/c_abi/x86_64/math_exp10f.rs",
+        "libc/src/c_abi/x86_64/math_long_double_completion.rs",
+        "libc/src/c_abi/x86_64/math_long_double_completion_musl_x86_64.S",
+        "compat/x86_64/generate_libc_math_long_double_completion.py",
+        "compat/x86_64/validate_libc_math_long_double_completion.py",
+        "compat/x86_64/math_long_double_completion_header_abi_probe.cpp",
+        "compat/x86_64/run_math_long_double_completion_header_abi.sh",
+        "compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c",
+        "compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_start.S",
+        "compat/x86_64/run_libc_fenv_rounding.sh",
+        "compat/x86_64/run_libc_fdim.sh",
+        "compat/x86_64/run_libc_math_exp10.sh",
+        "compat/x86_64/run_libc_math_exp10f.sh",
+        "compat/x86_64/run_libc_math_long_double_completion.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-math-elementary-fenv-sensitive omits {owner}",
+        )
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-math-elementary-fenv-sensitive.x86_abi_prerequisites",
+    )
+    for snippets, message in (
+        (("fifteen spellings", "five underlying native commands"), "closed surface"),
+        (("xmm0", "16-byte align-16", "st0", "MXCSR", "x87"), "AMD64 fenv ABI"),
+        (
+            (
+                "src/math/{fdiml,exp10l}.c",
+                "normalized 1.2.6 source-tree digest",
+                "GCC 15.2.0",
+                "SHA-256",
+            ),
+            "binary80 source map",
+        ),
+        (("opt-in", "fdiml, exp10l, and weak same-address pow10l", "binding/type", "all-fifteen"), "feature closure"),
+    ):
+        require(
+            any(all(snippet in item for snippet in snippets) for item in abi_prerequisites),
+            f"static-c-math-elementary-fenv-sensitive must record its {message}",
+        )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-math-elementary-fenv-sensitive.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "project fenv.h" in item
+            and "parenthesized function addresses" in item
+            and "-fno-builtin" in item
+            for item in header_prerequisites
+        ),
+        "static-c-math-elementary-fenv-sensitive must record its project-header C ABI gate",
+    )
+    require(
+        any(
+            "C++17" in item
+            and "default SSE" in item
+            and "-mfpmath=387" in item
+            and "fdiml/exp10l/pow10l" in item
+            and "unmangled-linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-math-elementary-fenv-sensitive must record its bounded header boundary",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-elementary-fenv-sensitive"},
+        "static-c-math-elementary-fenv-sensitive must use the closed aggregate command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "all fifteen capability symbols",
+        "all four MXCSR/x87 rounding modes",
+        "all three strong-to-weak same-address GNU pow10 aliases",
+        "complete binary80 x87/MXCSR control restoration",
+        "full archive surface",
+        "all-fifteen-call candidate exact-ratchets its defined-global closure",
+        "family completion",
+        "public support remain false",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-math-elementary-fenv-sensitive evidence omits {phrase}",
+        )
+
+    static_root = (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '#[cfg(feature = "x86-math-long-double-completion")]\n'
+        '#[path = "math_long_double_completion.rs"]\n'
+        "mod math_long_double_completion;" in static_root,
+        "x86 static C ABI must keep the binary80 completion leaf opt-in",
+    )
+    cargo_manifest = (ROOT / "libc/Cargo.toml").read_text(encoding="utf-8")
+    require(
+        "x86-math-long-double-completion = []" in cargo_manifest,
+        "crabc-libc must expose the binary80 completion as a dependency-free opt-in feature",
+    )
+    rust_leaf = (
+        ROOT / "libc/src/c_abi/x86_64/math_long_double_completion.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Private Linux/x86-64 binary80 `fdiml` and GNU `exp10l`/`pow10l` closure",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+        "src/math/fdiml.c",
+        "src/math/exp10l.c",
+        "same-address `pow10l` alias",
+        "does not create a second provider",
+        "default selected-static export root",
+    ):
+        require(
+            snippet in rust_leaf,
+            f"math-long-double-completion leaf omits {snippet}",
+        )
+    generator = (
+        ROOT / "compat/x86_64/generate_libc_math_long_double_completion.py"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+        '"src/math/fdiml.c"',
+        '"src/math/exp10l.c"',
+        "EXPECTED_COMPILER_VERSION",
+        "EXPECTED_COMPILER_TARGET",
+        "EXPECTED_COMPILER_WRAPPER_DIGEST",
+        "checked_compiler",
+        "transform_assembly",
+    ):
+        require(
+            snippet in generator,
+            f"math-long-double-completion generator omits {snippet}",
+        )
+    assembly = (
+        ROOT / "libc/src/c_abi/x86_64/math_long_double_completion_musl_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        ".globl\tfdiml",
+        ".globl\texp10l",
+        ".weak\tpow10l",
+        ".set\tpow10l,exp10l",
+        "musl's MIT license",
+    ):
+        require(
+            snippet in assembly,
+            f"generated binary80 completion assembly omits {snippet}",
+        )
+
+    exports = [
+        line
+        for line in (ROOT / "compat/x86_64/static_c_abi_exports.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in (
+        "exp10",
+        "exp10f",
+        "fdim",
+        "fdimf",
+        "nearbyint",
+        "nearbyintf",
+        "nearbyintl",
+        "pow10",
+        "pow10f",
+        "rint",
+        "rintf",
+        "rintl",
+    ):
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for symbol in ("exp10l", "fdiml", "pow10l"):
+        require(
+            symbol not in exports,
+            f"default static C ABI export contract must not absorb opt-in {symbol}",
+        )
+
+    runner = (
+        ROOT / "compat/x86_64/run_libc_math_long_double_completion.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "FEATURE=x86-math-long-double-completion",
+        "EXPECTED_ADDITIONS=(exp10l fdiml pow10l)",
+        "EXPECTED_ASSEMBLY_SHA256",
+        "CANDIDATE_FUNCTIONS",
+        "AGGREGATE_CANDIDATE_FUNCTIONS",
+        "same-address exp10l/pow10l alias",
+        "same-address ${strong}/${weak} alias",
+        "candidate retains TLS",
+        "f2xm1 fscale",
+        "run_math_long_double_completion_header_abi.sh",
+        "validate_libc_math_long_double_completion.py",
+    ):
+        require(
+            snippet in runner,
+            f"libc-math-long-double-completion runner omits {snippet}",
+        )
+    fenv_rounding_runner = (
+        ROOT / "compat/x86_64/run_libc_fenv_rounding.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "readonly OPT_IN_BINARY80_MATH_SYMBOLS=(exp10l fdiml pow10l)",
+        'for unselected in "${OPT_IN_BINARY80_MATH_SYMBOLS[@]}"; do',
+        "exp10 exp10f exp10l pow10 pow10f pow10l fdim fdimf fdiml",
+    ):
+        require(
+            snippet in fenv_rounding_runner,
+            "libc-fenv-rounding must keep selected siblings out of its leaf candidate only",
+        )
+    dispatcher = (ROOT / "scripts/dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_libc_math_long_double_completion_tests()",
+        "/workspace/compat/x86_64/run_libc_math_long_double_completion.sh",
+        "libc-math-long-double-completion)",
+        "run_libc_math_elementary_fenv_sensitive_tests()",
+        "run_libc_fenv_rounding.sh",
+        "run_libc_fdim.sh",
+        "run_libc_math_exp10.sh",
+        "run_libc_math_exp10f.sh",
+        "libc-math-elementary-fenv-sensitive)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits {snippet}",
+        )
 
 
 def require_math_minmax_artifact(family: Mapping[str, Any]) -> None:
@@ -63416,7 +68999,253 @@ def require_closed_static_leaf_artifacts(
                 )
                 is not None,
                 f"{artifact_id} source omits exported {symbol}",
-            )
+                )
+
+
+def validate_static_product_contract(
+    contract: Mapping[str, Any], families: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Validate the planned owned-static product without promoting its owner.
+
+    The private owned-static-sysroot artifacts remain evidence for their narrow
+    installed vertical.  This separate contract defines the broader product
+    gate that must close before ``sysroot.static-tls`` can become complete.
+    """
+
+    require(
+        set(contract) == {
+            "schema",
+            "owner_family",
+            "status",
+            "static_family_ids",
+            "prerequisite_families",
+            "product",
+            "mode",
+            "inspections",
+            "reproducibility",
+            "extracted_smoke",
+            "coverage",
+        },
+        "static product contract keys drifted",
+    )
+    require(
+        contract.get("schema") == EXPECTED_STATIC_PRODUCT_SCHEMA,
+        "unexpected static product contract schema",
+    )
+    require(
+        contract.get("owner_family") == "sysroot.static-tls",
+        "static product owner must be sysroot.static-tls",
+    )
+    require(
+        contract.get("status") == "planned",
+        "static product contract must remain planned",
+    )
+
+    static_family_ids = string_list(
+        contract.get("static_family_ids"), "static_product.static_family_ids"
+    )
+    require(
+        tuple(static_family_ids) == ("crt.static-pie", "sysroot.static-tls"),
+        "static product static-family roster drifted",
+    )
+    prerequisite_families = string_list(
+        contract.get("prerequisite_families"),
+        "static_product.prerequisite_families",
+    )
+    expected_prerequisites = (
+        "oracle.musl-toolchain",
+        "libc.headers-layouts",
+        "libc.posix-runtime",
+        "libc.pthread-tls",
+        "libc.text-math-locale-stdio",
+        "libc.resolver",
+        "libc.c-abi-compat",
+        "crt.static-pie",
+    )
+    require(
+        tuple(prerequisite_families) == expected_prerequisites,
+        "static product prerequisite roster drifted",
+    )
+    require(
+        set(static_family_ids).issubset(families),
+        "static product names an unknown static family",
+    )
+    require(
+        set(prerequisite_families).issubset(families),
+        "static product names an unknown prerequisite family",
+    )
+    owner = families["sysroot.static-tls"]
+    require(
+        owner.get("status") == "planned",
+        "static product owner must remain planned",
+    )
+    owner_dependencies = string_list(
+        owner.get("depends_on"), "family[sysroot.static-tls].depends_on"
+    )
+    require(
+        tuple(owner_dependencies) == expected_prerequisites,
+        "sysroot.static-tls must depend on the owned-static product prerequisites",
+    )
+
+    def depends_on_dynamic_startup(identifier: str, seen: set[str]) -> bool:
+        if identifier in seen:
+            return False
+        seen.add(identifier)
+        dependencies = families[identifier].get("depends_on")
+        assert isinstance(dependencies, list)
+        for dependency in dependencies:
+            assert isinstance(dependency, str)
+            if dependency == "crt.dynamic-startup" or depends_on_dynamic_startup(
+                dependency, seen
+            ):
+                return True
+        return False
+
+    for identifier in static_family_ids:
+        require(
+            not depends_on_dynamic_startup(identifier, set()),
+            f"static family {identifier} must not depend on crt.dynamic-startup",
+        )
+
+    product = contract.get("product")
+    require(isinstance(product, Mapping), "static_product.product must be a table")
+    require(
+        set(product)
+        == {
+            "target",
+            "source",
+            "link_interface",
+            "required_target_inputs",
+            "rejected_ambient_target_inputs",
+        },
+        "static_product.product keys drifted",
+    )
+    require(
+        product.get("target") == EXPECTED_TARGET,
+        "static product target drifted",
+    )
+    require(
+        product.get("source") == "materialized installed crabc x86-64 sysroot",
+        "static product must build from the materialized installed sysroot",
+    )
+    require(
+        product.get("link_interface") == "deterministic owned static link interface",
+        "static product requires a deterministic owned static link interface",
+    )
+    require(
+        tuple(string_list(product.get("required_target_inputs"), "static_product.product.required_target_inputs"))
+        == (
+            "installed crabc headers",
+            "crt1.o",
+            "rcrt1.o",
+            "crti.o",
+            "crtn.o",
+            "libc.a",
+            "libcrabc-builtins.a",
+            "accepted allocator backend",
+            "explicitly admitted application objects",
+        ),
+        "static product target-input contract drifted",
+    )
+    require(
+        tuple(string_list(product.get("rejected_ambient_target_inputs"), "static_product.product.rejected_ambient_target_inputs"))
+        == ("headers", "CRT", "libc", "libgcc", "compiler-rt", "loader"),
+        "static product ambient-input rejection contract drifted",
+    )
+
+    modes = contract.get("mode")
+    require(isinstance(modes, list), "static_product.mode must be an array")
+    expected_modes = (
+        ("static-et-exec", "ET_EXEC", "crt1.o", "absent"),
+        ("static-pie", "ET_DYN", "rcrt1.o", "absent"),
+    )
+    actual_modes: list[tuple[str, str, str, str]] = []
+    for index, mode in enumerate(modes):
+        require(isinstance(mode, Mapping), f"static_product.mode[{index}] must be a table")
+        require(
+            set(mode) == {"id", "elf_type", "crt_object", "interpreter"},
+            f"static_product.mode[{index}] keys drifted",
+        )
+        values = tuple(mode.get(key) for key in ("id", "elf_type", "crt_object", "interpreter"))
+        require(
+            all(isinstance(value, str) and value for value in values),
+            f"static_product.mode[{index}] has an invalid value",
+        )
+        actual_modes.append(values)  # type: ignore[arg-type]
+    require(tuple(actual_modes) == expected_modes, "static product mode contract drifted")
+
+    inspections = contract.get("inspections")
+    require(isinstance(inspections, Mapping), "static_product.inspections must be a table")
+    require(
+        set(inspections) == {"required", "before_execution"},
+        "static_product.inspections keys drifted",
+    )
+    require(
+        tuple(string_list(inspections.get("required"), "static_product.inspections.required"))
+        == (
+            "link trace",
+            "link map",
+            "ELF headers",
+            "dynamic section",
+            "relocations",
+            "symbol ownership",
+            "TLS segments",
+            "stack flags",
+            "interpreter absence",
+        ),
+        "static product inspection contract drifted",
+    )
+    require(
+        inspections.get("before_execution")
+        == "reject undeclared target inputs before executing the fixture",
+        "static product must reject undeclared inputs before execution",
+    )
+
+    reproducibility = contract.get("reproducibility")
+    require(isinstance(reproducibility, Mapping), "static_product.reproducibility must be a table")
+    require(
+        dict(reproducibility)
+        == {
+            "clean_installed_builds": 2,
+            "artifact_set": "declared regular-file artifact set",
+            "comparison": "byte-for-byte identical",
+            "suite": "same declared static smoke suite",
+        },
+        "static product reproducibility contract drifted",
+    )
+    extracted_smoke = contract.get("extracted_smoke")
+    require(isinstance(extracted_smoke, Mapping), "static_product.extracted_smoke must be a table")
+    require(
+        dict(extracted_smoke)
+        == {
+            "source": "one extracted packaged installed sysroot",
+            "suite": "same declared static smoke suite",
+        },
+        "static product extracted-smoke contract drifted",
+    )
+    coverage = contract.get("coverage")
+    require(isinstance(coverage, Mapping), "static_product.coverage must be a table")
+    require(set(coverage) == {"required"}, "static_product.coverage keys drifted")
+    require(
+        tuple(string_list(coverage.get("required"), "static_product.coverage.required"))
+        == (
+            "argument environment auxiliary-vector and program-name publication",
+            "Initial TLS errno and high-alignment initialized and zero-filled TLS",
+            "allocator allocation alignment reallocation failure and remote-thread ownership",
+            "pthread/C11 creation join/detach synchronization once TSD cancellation atfork/fork and exit behavior",
+            "stdio creation buffering byte/block/formatted operations positions errors and exit flushing",
+            "pathname descriptor directory metadata process signal and time paths",
+            "local socket transport and bounded resolver behavior",
+            "constructors destructors atexit-class behavior and ordinary/immediate termination",
+            "owned compiler helper whose link fails without libcrabc-builtins.a",
+        ),
+        "static product coverage contract drifted",
+    )
+    return {
+        "owner_family": "sysroot.static-tls",
+        "modes": len(actual_modes),
+        "coverage_obligations": len(coverage["required"]),
+    }
 
 
 def validate_ledger(
@@ -63424,6 +69253,7 @@ def validate_ledger(
     *,
     header_layout_manifest: Mapping[str, Any] | None = None,
     header_layout_foundation_manifest: Mapping[str, Any] | None = None,
+    static_product_contract: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     require(data.get("schema") == EXPECTED_SCHEMA, "unexpected x86 parity ledger schema")
     require(data.get("target") == EXPECTED_TARGET, "unexpected x86 parity target")
@@ -63602,10 +69432,19 @@ def validate_ledger(
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
     require_memfd_create_header_evidence(by_id["libc.headers-layouts"])
+    require_ctype_header_evidence(by_id["libc.headers-layouts"])
+    require_socket_header_evidence(by_id["libc.headers-layouts"])
+    require_socket_messages_header_evidence(by_id["libc.headers-layouts"])
     require_nameser_header_evidence(by_id["libc.headers-layouts"])
+    require_quota_header_evidence(by_id["libc.headers-layouts"])
+    require_sched_cpu_macros_header_evidence(by_id["libc.headers-layouts"])
+    require_fanotify_header_evidence(by_id["libc.headers-layouts"])
     require_inet_address_header_evidence(by_id["libc.headers-layouts"])
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_general_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_general_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
+    require_loader_libc_general_tls_runtime_v1_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_target_root_admission_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_exec_tls_artifact(by_id["ldso.dynamic-runtime"])
@@ -63766,6 +69605,7 @@ def validate_ledger(
     require_string_copy_artifact(by_id["libc.posix-runtime"])
     require_error_strings_artifact(by_id["libc.c-abi-compat"])
     require_l64a_artifact(by_id["libc.c-abi-compat"])
+    require_a64l_artifact(by_id["libc.c-abi-compat"])
     require_error_strsignal_slice(by_id["libc.c-abi-compat"])
     require_ctype_artifact(by_id["libc.posix-runtime"])
     require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])
@@ -63775,7 +69615,8 @@ def validate_ledger(
     require_setfsgid_artifact(by_id["libc.posix-runtime"])
     require_setfsuid_artifact(by_id["libc.posix-runtime"])
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
-    require_static_environment_artifact(by_id["libc.posix-runtime"])
+    require_process_environment_mutation_slice(by_id["libc.posix-runtime"])
+    require_process_signal_slice(by_id["libc.posix-runtime"])
     require_static_secure_environment_artifact(by_id["libc.posix-runtime"])
     require_static_login_name_artifact(by_id["libc.posix-runtime"])
     require_ctermid_artifact(by_id["libc.posix-runtime"])
@@ -63788,6 +69629,9 @@ def validate_ledger(
     require_getpass_artifact(by_id["libc.posix-runtime"])
     require_mktemp_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
+    require_wait_extensions_artifact(by_id["libc.posix-runtime"])
+    require_signal_legacy_aliases_artifact(by_id["libc.posix-runtime"])
+    require_sysv_signal_helpers_artifact(by_id["libc.posix-runtime"])
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_static_posix_exit_artifact(by_id["libc.posix-runtime"])
     require_static_sched_yield_artifact(by_id["libc.posix-runtime"])
@@ -63796,6 +69640,7 @@ def validate_ledger(
     require_static_sched_priority_bounds_artifact(by_id["libc.posix-runtime"])
     require_readlinkat_artifact(by_id["libc.posix-runtime"])
     require_linkat_artifact(by_id["libc.posix-runtime"])
+    require_renameat2_artifact(by_id["libc.posix-runtime"])
     require_lchown_artifact(by_id["libc.posix-runtime"])
     require_hasmntopt_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
@@ -63867,6 +69712,7 @@ def validate_ledger(
     require_fchdir_artifact(by_id["libc.posix-runtime"])
     require_ulimit_artifact(by_id["libc.posix-runtime"])
     require_directory_streams_artifact(by_id["libc.posix-runtime"])
+    require_scandir_allocation_client_artifact(by_id["libc.posix-runtime"])
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])
     require_inet_ntoa_artifact(by_id["libc.resolver"])
@@ -63876,9 +69722,12 @@ def validate_ledger(
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
+    require_issetugid_artifact(by_id["libc.c-abi-compat"])
+    require_legacy_misc_slice(by_id["libc.c-abi-compat"])
     require_gettid_artifact(by_id["libc.c-abi-compat"])
     require_posix_close_artifact(by_id["libc.c-abi-compat"])
     require_endhostent_artifact(by_id["libc.c-abi-compat"])
+    require_sethostent_artifact(by_id["libc.c-abi-compat"])
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])
@@ -63905,6 +69754,8 @@ def validate_ledger(
     require_allocator_wrapper_artifact(by_id["libc.posix-runtime"])
     require_allocator_string_duplication_artifact(by_id["libc.posix-runtime"])
     require_allocator_observability_slice(by_id["libc.c-abi-compat"])
+    require_allocator_basic_runtime_slice(by_id["libc.c-abi-compat"])
+    require_crypt_profile_slice(by_id["libc.c-abi-compat"])
     require_alloca_builtin_artifact(by_id["libc.c-abi-compat"])
     require_getsubopt_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
@@ -63972,10 +69823,14 @@ def validate_ledger(
     )
     require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_tmpfile_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_fopen64_alias_slice(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
     require_elementary_sqrt_fenv_artifact(by_id["libc.text-math-locale-stdio"])
     require_fenv_sensitive_rounding_artifact(by_id["libc.text-math-locale-stdio"])
     require_fdim_artifact(by_id["libc.text-math-locale-stdio"])
+    require_math_elementary_fenv_sensitive_slice(
+        by_id["libc.text-math-locale-stdio"]
+    )
     require_math_minmax_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_bit_sign_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_trunc_artifact(by_id["libc.text-math-locale-stdio"])
@@ -64055,6 +69910,12 @@ def validate_ledger(
             require(dependency in by_id, f"family[{identifier}] depends on unknown family {dependency}")
             require(orders_by_id[dependency] < orders_by_id[identifier], f"family[{identifier}] dependency {dependency} is not earlier")
 
+    if static_product_contract is None:
+        static_product_contract = load_toml(STATIC_PRODUCT_CONTRACT_PATH)
+    static_product_report = validate_static_product_contract(
+        static_product_contract, by_id
+    )
+
     dispatch_source = (ROOT / "scripts" / "dev.sh").read_text(encoding="utf-8")
     used_gates = {gate for family in families for gate in family["aarch64_gates"]}
     missing_dispatch = sorted(gate for gate in used_gates if f"    {gate})" not in dispatch_source and f"    {gate}|" not in dispatch_source)
@@ -64069,6 +69930,7 @@ def validate_ledger(
         "status_counts": status_counts,
         "verified_slice_count": len(verified_slice_ids),
         "verified_artifact_count": len(verified_artifact_ids),
+        "static_product": static_product_report,
         "header_layout_probe_count": header_layout_report["probe_count"],
         "public_header_inventory_count": public_header_inventory_count,
         "header_foundation_header_count": header_layout_foundation_report["header_count"],
@@ -64086,6 +69948,9 @@ def validate_ledger(
         ],
         "header_foundation_ioctl_header_profile_matrix_row_count": header_layout_foundation_report[
             "ioctl_header_profile_matrix_row_count"
+        ],
+        "header_foundation_sys_io_header_profile_matrix_row_count": header_layout_foundation_report[
+            "sys_io_header_profile_matrix_row_count"
         ],
         "header_foundation_epoll_header_profile_matrix_row_count": header_layout_foundation_report[
             "epoll_header_profile_matrix_row_count"

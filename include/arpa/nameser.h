@@ -134,8 +134,17 @@ typedef enum __ns_type {
     ns_t_mailb = 253,
     ns_t_maila = 254,
     ns_t_any = 255,
+    ns_t_zxfr = 256,
     ns_t_max = 65536
 } ns_type;
+
+#define ns_t_qt_p(t) (ns_t_xfr_p(t) || (t) == ns_t_any || \
+    (t) == ns_t_mailb || (t) == ns_t_maila)
+#define ns_t_mrr_p(t) ((t) == ns_t_tsig || (t) == ns_t_opt)
+#define ns_t_rr_p(t) (!ns_t_qt_p(t) && !ns_t_mrr_p(t))
+#define ns_t_udp_p(t) ((t) != ns_t_axfr && (t) != ns_t_zxfr)
+#define ns_t_xfr_p(t) ((t) == ns_t_axfr || (t) == ns_t_ixfr || \
+    (t) == ns_t_zxfr)
 
 typedef enum __ns_class {
     ns_c_invalid = 0,
@@ -224,6 +233,11 @@ int ns_name_uncompress(const unsigned char *, const unsigned char *, const unsig
 #define GETLONG NS_GET32
 #define PUTSHORT NS_PUT16
 #define PUTLONG NS_PUT32
+
+#define NS_NXT_BITS 8
+#define NS_NXT_BIT_SET(  n,p) (p[(n)/NS_NXT_BITS] |=  (0x80>>((n)%NS_NXT_BITS)))
+#define NS_NXT_BIT_CLEAR(n,p) (p[(n)/NS_NXT_BITS] &= ~(0x80>>((n)%NS_NXT_BITS)))
+#define NS_NXT_BIT_ISSET(n,p) (p[(n)/NS_NXT_BITS] &   (0x80>>((n)%NS_NXT_BITS)))
 
 #define NS_OPT_DNSSEC_OK 0x8000U
 #define NS_OPT_NSID 3

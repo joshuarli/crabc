@@ -5,10 +5,10 @@
 //! `seekdir`, `telldir`, C-locale `alphasort`, GNU `versionsort`, GNU/BSD
 //! `getdents`, and `posix_getdents`. It composes the raw Linux syscall-register
 //! boundary, selected initial-TLS C `errno`, the private x86 `stat` layout
-//! owner, and the selected stateless GNU `strverscmp` byte-string leaf. It is
-//! not `scandir`, a C allocator, a general directory-walk policy, a general
-//! locale/collation subsystem, libc.so, CRT, pthread/TLS lifecycle, dynamic
-//! TLS, loader, sysroot, or public x86 support.
+//! owner, and the selected stateless GNU `strverscmp` byte-string leaf. Its
+//! default artifact is not `scandir`, a C allocator, a general directory-walk
+//! policy, a general locale/collation subsystem, libc.so, CRT, pthread/TLS
+//! lifecycle, dynamic TLS, loader, sysroot, or public x86 support.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -22,6 +22,8 @@
 //!   The `versionsort.c` callback delegates to the separately selected
 //!   `src/string/strverscmp.c` byte-string leaf rather than duplicating its
 //!   digit/leading-zero state machine.
+//! - Under the separately opt-in `x86-scandir` feature only,
+//!   `src/dirent/scandir.c` maps to the allocation-owned result boundary below.
 //!
 //! Musl allocates stream state through `calloc` and releases it through
 //! `free`. This deliberately allocation-free static archive does not select a
@@ -31,10 +33,12 @@
 //! selected direct syscall paths omit musl cancellation-point machinery. The
 //! project supports only `C`, `POSIX`, and `C.UTF-8` locale profiles, whose
 //! selected `alphasort` behavior is byte collation; broad locale collation is
-//! intentionally absent. `scandir` would return allocation-owned storage, so
-//! it remains outside this archive. `versionsort` is a pure GNU comparison
-//! callback using the selected stateless `strverscmp` leaf; it adds no
-//! directory-local string state or allocation.
+//! intentionally absent. The default archive excludes `scandir`; the opt-in
+//! `x86-scandir` client reaches the separately audited C
+//! `malloc`/`realloc`/`free` ABI and remains a mixed-runtime artifact rather
+//! than making the private DIR mapping reusable allocation. `versionsort` is a
+//! pure GNU comparison callback using the selected stateless `strverscmp`
+//! leaf; it adds no directory-local string state or allocation.
 //!
 //! Linux 5.10 is the project baseline. The source preserves musl's deleted
 //! directory `ENOENT`-as-end-of-stream behavior and record-length/NUL checks;
@@ -457,6 +461,222 @@ pub unsafe extern "C" fn readdir_r(
         *result = buffer;
     }
     0
+}
+
+// `scandir` is an allocation client, not a second allocator.  The x86 thunks
+// keep calls at the C ABI spelling even though this crate also owns strong
+// realloc/free definitions: a direct Rust extern reference can otherwise be
+// folded into the allocator wrapper's backend implementation before the link
+// boundary.  The opaque assembly tail calls leave the ordinary C symbols for
+// the linker (and the allocation-failure wrapper evidence) to resolve.
+#[cfg(feature = "x86-scandir")]
+core::arch::global_asm!(
+    r#"
+    .text
+    .p2align 4
+    .globl __crabc_x86_scandir_cabi_malloc
+    .hidden __crabc_x86_scandir_cabi_malloc
+    .type __crabc_x86_scandir_cabi_malloc,@function
+__crabc_x86_scandir_cabi_malloc:
+    jmp malloc
+    .size __crabc_x86_scandir_cabi_malloc, .-__crabc_x86_scandir_cabi_malloc
+
+    .p2align 4
+    .globl __crabc_x86_scandir_cabi_realloc
+    .hidden __crabc_x86_scandir_cabi_realloc
+    .type __crabc_x86_scandir_cabi_realloc,@function
+__crabc_x86_scandir_cabi_realloc:
+    jmp realloc
+    .size __crabc_x86_scandir_cabi_realloc, .-__crabc_x86_scandir_cabi_realloc
+
+    .p2align 4
+    .globl __crabc_x86_scandir_cabi_free
+    .hidden __crabc_x86_scandir_cabi_free
+    .type __crabc_x86_scandir_cabi_free,@function
+__crabc_x86_scandir_cabi_free:
+    jmp free
+    .size __crabc_x86_scandir_cabi_free, .-__crabc_x86_scandir_cabi_free
+"#
+);
+
+#[cfg(feature = "x86-scandir")]
+unsafe extern "C" {
+    #[link_name = "__crabc_x86_scandir_cabi_malloc"]
+    fn cabi_scandir_malloc(size: usize) -> *mut c_void;
+    #[link_name = "__crabc_x86_scandir_cabi_realloc"]
+    fn cabi_scandir_realloc(pointer: *mut c_void, size: usize) -> *mut c_void;
+    #[link_name = "__crabc_x86_scandir_cabi_free"]
+    fn cabi_scandir_free(pointer: *mut c_void);
+}
+
+#[cfg(feature = "x86-scandir")]
+type ScandirSelector = unsafe extern "C" fn(*const Dirent) -> c_int;
+#[cfg(feature = "x86-scandir")]
+type ScandirComparator = unsafe extern "C" fn(*const *const Dirent, *const *const Dirent) -> c_int;
+
+/// Release one unpublished scandir result list through the selected C
+/// allocation boundary.
+#[cfg(feature = "x86-scandir")]
+unsafe fn scandir_free_partial(names: *mut *mut Dirent, mut count: usize) {
+    if names.is_null() {
+        return;
+    }
+    while count != 0 {
+        count -= 1;
+        // SAFETY: every slot below count was initialized immediately after a
+        // successful record allocation; the C free ABI accepts each exact
+        // allocation and preserves the active failure errno during cleanup.
+        unsafe { cabi_scandir_free(names.add(count).read().cast()) };
+    }
+    // SAFETY: `names` is the one vector allocation held by this partial list.
+    unsafe { cabi_scandir_free(names.cast()) };
+}
+
+/// Adapt scandir's pointer-to-pointer comparator to the existing musl qsort
+/// worker's context-bearing callback ABI.
+#[cfg(feature = "x86-scandir")]
+unsafe extern "C" fn scandir_qsort_compare(
+    left: *const c_void,
+    right: *const c_void,
+    context: *mut c_void,
+) -> c_int {
+    // SAFETY: scandir passes exactly one non-null C comparator function
+    // pointer as qsort context; both input records are adjacent vector slots.
+    let comparator: ScandirComparator = unsafe { core::mem::transmute(context) };
+    // SAFETY: qsort supplies pointers to `struct dirent *` vector slots, the
+    // exact ABI expected by scandir's comparator type.
+    unsafe { comparator(left.cast(), right.cast()) }
+}
+
+/// Collect selected directory records into caller-owned C allocations.
+///
+/// This is enabled only by the opt-in `x86-scandir` mixed-runtime feature. It
+/// follows musl 1.2.6 `src/dirent/scandir.c`: each accepted transient readdir
+/// record is copied through its exact `d_reclen`, and successful callers free
+/// every returned record followed by the returned pointer vector through the
+/// same C `free` ABI. A zero-result scan stores a null vector and returns zero.
+///
+/// # Safety
+///
+/// `path` must meet `opendir`'s NUL-terminated pathname requirement and
+/// `result` must designate writable storage for one `struct dirent **` on the
+/// successful-result path. If non-null, `selector` receives a transient
+/// readdir record valid only for that callback; if non-null, `comparator`
+/// receives pointers to live returned-record slots while sorting. Both callbacks
+/// must remain valid, obey their C pointer contracts, and return normally:
+/// C++ exceptions and C `longjmp` must not cross this Rust boundary.
+#[cfg(feature = "x86-scandir")]
+#[no_mangle]
+pub unsafe extern "C" fn scandir(
+    path: *const c_char,
+    result: *mut *mut *mut Dirent,
+    selector: Option<ScandirSelector>,
+    comparator: Option<ScandirComparator>,
+) -> c_int {
+    // Preserve musl's initialization order: opendir owns its direct failure
+    // errno, while a successful scan restores the errno observed immediately
+    // after opening.
+    let directory = unsafe { opendir(path) };
+    let saved_errno = unsafe { errno::get_errno() };
+    if directory.is_null() {
+        return -1;
+    }
+
+    let mut names: *mut *mut Dirent = ptr::null_mut();
+    let mut count = 0usize;
+    let mut length = 0usize;
+
+    loop {
+        // Like musl, distinguish ordinary end-of-stream from readdir failure
+        // through the selected calling-thread errno slot on every iteration.
+        unsafe { errno::set_errno(0) };
+        let entry = unsafe { readdir(directory) };
+        if entry.is_null() {
+            break;
+        }
+        if let Some(select) = selector {
+            // SAFETY: the live directory stream supplies this transient,
+            // validated record for the callback's duration only.
+            if unsafe { select(entry.cast_const()) } == 0 {
+                continue;
+            }
+        }
+
+        if count >= length {
+            // Musl's size_t growth sequence is 1, 3, 7, ... . The following
+            // multiplication guard is source-faithful: it exits the loop
+            // before realloc rather than manufacturing another error policy.
+            length = length.wrapping_mul(2).wrapping_add(1);
+            if length > usize::MAX / size_of::<*mut Dirent>() {
+                break;
+            }
+            let replacement = unsafe {
+                cabi_scandir_realloc(
+                    names.cast(),
+                    length * size_of::<*mut Dirent>(),
+                )
+            }
+            .cast::<*mut Dirent>();
+            if replacement.is_null() {
+                break;
+            }
+            names = replacement;
+        }
+
+        // `next_record` has already checked the Linux record framing and NUL
+        // termination. Preserve musl's exact allocated/copy length instead of
+        // copying the complete fixed public 280-byte representation.
+        let record_length = unsafe { (*entry).record_length } as usize;
+        let copy = unsafe { cabi_scandir_malloc(record_length) }.cast::<Dirent>();
+        if copy.is_null() {
+            break;
+        }
+        unsafe {
+            ptr::copy_nonoverlapping(entry.cast::<u8>(), copy.cast::<u8>(), record_length);
+            names.add(count).write(copy);
+        }
+        count = count.wrapping_add(1);
+    }
+
+    // Musl deliberately lets closedir's errno participate in the final error
+    // decision, so do not preserve or replace its return value here.
+    let _ = unsafe { closedir(directory) };
+    if unsafe { errno::get_errno() } != 0 {
+        unsafe { scandir_free_partial(names, count) };
+        return -1;
+    }
+    unsafe { errno::set_errno(saved_errno) };
+
+    if let Some(compare) = comparator {
+        // SAFETY: every initialized vector slot owns one full copied record;
+        // qsort consumes only this contiguous pointer array and the callback
+        // boundary is documented above.
+        unsafe {
+            super::qsort::qsort_with_context(
+                names.cast(),
+                count,
+                size_of::<*mut Dirent>(),
+                scandir_qsort_compare,
+                compare as *mut c_void,
+            )
+        };
+    }
+
+    // Match musl's success publication point. In particular, a failed open or
+    // scan never writes `result`, and no null-result hardening is introduced.
+    unsafe { result.write(names) };
+    count as c_int
+}
+
+/// Link-time witness for the opt-in x86 scandir object.
+///
+/// The mixed-runtime runner calls this only to force the feature-gated object
+/// into its candidate before link-map evidence rejects musl's scandir and
+/// allocation implementations. It is not an installed libc interface.
+#[cfg(feature = "x86-scandir")]
+#[no_mangle]
+pub extern "C" fn __crabc_x86_scandir_v1() -> usize {
+    1
 }
 
 /// Reset a stream to Linux directory offset zero and discard buffered records.

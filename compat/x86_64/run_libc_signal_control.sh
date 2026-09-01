@@ -154,10 +154,13 @@ awk '
 ' "$archive_disassembly" \
     || fail "sigaction implementation does not install the hidden restorer"
 
+# The archive's Rust codegen-member boundaries are not part of this artifact's
+# contract. Discard unreachable sections before asserting that this final
+# signal-control binary does not retain the separately selected signalfd leaf.
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_SIGNAL_CONTROL_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_signal_control_probe.c \
+    -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_signal_control_probe.c \
     compat/x86_64/libc_signal_control_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"

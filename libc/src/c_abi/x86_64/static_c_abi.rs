@@ -74,7 +74,8 @@
 //! Linux interface name/index and address snapshots with private output
 //! storage, isolated from numeric netdb, resolver configuration, DNS, and
 //! conventional network databases, plus one stateless legacy netdb
-//! endhostent/endnetent terminator alias pair and one stateless legacy
+//! endhostent/endnetent terminator alias pair, an opt-in stateless legacy
+//! sethostent/setnetent setter alias pair, and one stateless legacy
 //! service-database terminator,
 //! credential-observation, integer-arithmetic, integer-parsing, selected
 //! C-locale binary32/binary64/x87-binary80 floating parsing plus complete
@@ -109,7 +110,8 @@
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
 //! artifact, one bounded pathname-mutation/lifecycle artifact, one distinct
 //! caller-buffered descriptor-relative readlinkat leaf, one distinct
-//! caller-supplied-directory hard-link linkat leaf, and one bounded
+//! caller-supplied-directory hard-link linkat leaf, one GNU renameat2 leaf
+//! that preserves musl's zero/nonzero syscall routing, and one bounded
 //! no-follow pathname-ownership lchown leaf, one caller-owned mntent
 //! option-string lookup leaf, and one bounded directory-stream/raw-directory
 //! artifact.
@@ -204,12 +206,27 @@ mod credentials;
 mod credential_observation;
 #[path = "personality.rs"]
 mod personality;
+// These direct privileged-I/O permission wrappers remain opt-in. Their
+// negative-path evidence must not widen the frozen default C ABI archive.
+#[cfg(feature = "x86-io-permissions")]
+#[path = "io_permissions.rs"]
+mod io_permissions;
+// The round-robin interval wrapper observes one kernel scheduler record but
+// must remain opt-in until its C ABI output/errno differential is selected.
+#[cfg(feature = "x86-sched-rr-interval")]
+#[path = "sched_rr_get_interval.rs"]
+mod sched_rr_get_interval;
 #[path = "setfsgid.rs"]
 mod setfsgid;
 #[path = "setfsuid.rs"]
 mod setfsuid;
 #[path = "memory.rs"]
 mod memory;
+// This pair is a private C compatibility layer over the existing x86 memory
+// owner. Its opt-in feature must not silently widen the frozen default archive.
+#[cfg(feature = "x86-memory-special")]
+#[path = "memory_special.rs"]
+mod memory_special;
 #[path = "memccpy.rs"]
 mod memccpy;
 #[path = "mempcpy.rs"]
@@ -232,6 +249,12 @@ mod error_strings;
 mod locale_error_strings;
 #[path = "strsignal.rs"]
 mod strsignal;
+// psignal/psiginfo compose the selected permanent stderr and errno substrate.
+// Keep this diagnostic pair opt-in so the frozen default archive does not
+// silently acquire reporting symbols or imply a general stdio runtime.
+#[cfg(feature = "x86-signal-reporting")]
+#[path = "signal_reporting.rs"]
+mod signal_reporting;
 #[path = "ctype.rs"]
 mod ctype;
 #[path = "locale_ctype.rs"]
@@ -266,6 +289,13 @@ mod float_parse_locale;
 mod getsubopt;
 #[path = "l64a.rs"]
 mod l64a;
+// `a64l` is the state-free decoder sibling from musl's same source file. Its
+// target-local owner scans the fixed radix-64 table directly, so it adds no
+// byte-string archive dependency. Keep that exact public addition opt-in so
+// the default archive stays the frozen l64a source split.
+#[cfg(feature = "x86-a64l")]
+#[path = "a64l.rs"]
+mod a64l;
 #[path = "intmax_arithmetic.rs"]
 mod intmax_arithmetic;
 #[path = "ffs.rs"]
@@ -316,12 +346,25 @@ mod math_elementary_long_double;
 mod math_special;
 #[path = "fdim.rs"]
 mod fdim;
+// This binary80 closure is opt-in and becomes a selected component only
+// through the aggregate math.elementary-fenv-sensitive evidence slice. In
+// particular, do not silently widen the frozen dependency-free
+// selected-static archive with fdiml/exp10l/pow10l.
+#[cfg(feature = "x86-math-long-double-completion")]
+#[path = "math_long_double_completion.rs"]
+mod math_long_double_completion;
 #[path = "setjmp.rs"]
 mod setjmp;
 #[path = "signal_foundation.rs"]
 mod signal_foundation;
 #[path = "signal_control.rs"]
 mod signal_control;
+// Keep the historical System V helper closure opt-in: these four spellings
+// must not silently widen the selected-static signal ABI or imply a general
+// signal runtime.
+#[cfg(feature = "x86-signal-sysv-helpers")]
+#[path = "signal_sysv_helpers.rs"]
+mod signal_sysv_helpers;
 #[path = "siginterrupt.rs"]
 mod siginterrupt;
 #[path = "signal_realtime_max.rs"]
@@ -414,7 +457,15 @@ mod tcsetpgrp;
 mod getpass;
 #[path = "process_context.rs"]
 mod process_context;
+// The legacy dependency-free archive keeps its bounded fixed-storage owner so
+// unrelated selected-static artifacts remain self-contained. The dedicated
+// opt-in environment gate instead composes musl-shaped ownership with the
+// already evidenced x86 allocator wrapper.
+#[cfg(not(feature = "x86-environment-runtime"))]
 #[path = "environment.rs"]
+mod environment;
+#[cfg(feature = "x86-environment-runtime")]
+#[path = "environment_runtime.rs"]
 mod environment;
 #[path = "login_name.rs"]
 mod login_name;
@@ -422,10 +473,21 @@ mod login_name;
 mod auxv_observation;
 #[path = "startup_security.rs"]
 mod startup_security;
+#[path = "issetugid.rs"]
+mod issetugid;
+// The frozen legacy.misc aggregate keeps its five observation prerequisites
+// in the selected default archive.  Its historical formatting/inert-DES
+// additions are a separately evidenced opt-in owner so the default export
+// surface cannot silently grow into a legacy runtime or crypto subsystem.
+#[cfg(feature = "x86-legacy-misc")]
+#[path = "legacy_misc.rs"]
+mod legacy_misc;
 #[path = "secure_environment.rs"]
 mod secure_environment;
 #[path = "child_reaping.rs"]
 mod child_reaping;
+#[path = "wait_extensions.rs"]
+mod wait_extensions;
 #[path = "immediate_termination.rs"]
 mod immediate_termination;
 #[path = "posix_exit.rs"]
@@ -584,6 +646,8 @@ mod pathname_lifecycle;
 mod readlinkat;
 #[path = "linkat.rs"]
 mod linkat;
+#[path = "renameat2.rs"]
+mod renameat2;
 #[path = "unlinkat.rs"]
 mod unlinkat;
 #[path = "chown.rs"]
@@ -632,8 +696,18 @@ mod inet_classful;
 mod hstrerror;
 #[path = "endhostent.rs"]
 mod endhostent;
+// Musl's stateless `sethostent`/`setnetent` pair belongs to the same legacy
+// netdb source as the default terminator pair, but stays opt-in so the frozen
+// default archive does not gain legacy setter symbols or imply resolver state.
+#[cfg(feature = "x86-netdb-setent")]
+#[path = "sethostent.rs"]
+mod sethostent;
 #[path = "ether_line.rs"]
 mod ether_line;
+#[cfg(feature = "x86-resolver-runtime")]
+#[path = "resolver_runtime.rs"]
+mod resolver_runtime;
+#[cfg(not(feature = "x86-resolver-runtime"))]
 #[path = "res_init.rs"]
 mod res_init;
 #[path = "posix_spawnattr_destroy.rs"]
@@ -712,8 +786,14 @@ mod allocator {
 #[cfg(feature = "x86-allocator-string-duplication")]
 #[path = "allocator_string_duplication.rs"]
 mod allocator_string_duplication;
-#[path = "complex_projection.rs"]
-mod complex_projection;
+
+// This is a separate dependency-backed password-hash compatibility leaf. Its
+// temporary MCF allocation bridges only to the final link's C allocation
+// symbols; it does not enable the x86 allocator backend, allocator lifecycle,
+// or runtime composition.
+#[cfg(feature = "x86-crypt")]
+#[path = "crypt.rs"]
+mod crypt;
 #[path = "math_exp.rs"]
 mod math_exp;
 #[path = "math_cos.rs"]
@@ -793,6 +873,16 @@ mod allocator_observability {
         1
     }
 }
+
+// The crypt leaf deliberately resolves its temporary RustCrypto allocation
+// through the terminal C link. Combining it with the separate mimalloc-backed
+// allocator-runtime leaf would make allocation/deallocation provider ownership
+// depend on archive order, which this private artifact has not specified or
+// evidenced.
+#[cfg(all(feature = "x86-crypt", feature = "x86-allocator-runtime"))]
+compile_error!(
+    "x86-crypt cannot compose with x86-allocator-runtime until their allocation-provider contract is evidenced"
+);
 
 use core::ffi::{c_int, c_void};
 
