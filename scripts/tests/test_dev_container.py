@@ -79,6 +79,7 @@ exit 64
             ]
             argument_pairs = set(zip(arguments, arguments[1:]))
             self.assertIn(("--env", "CARGO_HOME=/workspace/.work/cargo"), argument_pairs)
+            self.assertIn(("--env", "PYTHONDONTWRITEBYTECODE=1"), argument_pairs)
             self.assertIn(("--env", "TMPDIR=/workspace/.work/tmp"), argument_pairs)
             self.assertIn(
                 ("--volume", f"{ROOT / '.work'}:/workspace/.work"),

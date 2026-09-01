@@ -142,6 +142,8 @@ run_in_container() {
         # Keep the image's Rust toolchain visible at /opt/cargo/bin while
         # directing Cargo's mutable registry and git caches into .work.
         --env CARGO_HOME=/workspace/.work/cargo
+        # Python harnesses must not leave bytecode caches in the source mount.
+        --env PYTHONDONTWRITEBYTECODE=1
         --env LIBC_TEST_DIR=/opt/libc-test
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib
         --env CRABC_WORK_DIR=/workspace/.work
@@ -177,6 +179,7 @@ run_in_resolver_container() {
         --dns 127.0.0.1 \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/cargo \
+        --env PYTHONDONTWRITEBYTECODE=1 \
         --env LIBC_TEST_DIR=/opt/libc-test \
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
         --env CRABC_WORK_DIR=/workspace/.work \
