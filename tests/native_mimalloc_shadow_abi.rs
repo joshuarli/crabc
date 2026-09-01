@@ -127,6 +127,14 @@ fn native_mimalloc_shadow_matches_pinned_musl_for_one_live_foreign_reallocation(
 }
 
 #[test]
+fn native_mimalloc_shadow_matches_pinned_musl_at_source_derived_size_class_boundaries() {
+    assert_musl_differential(
+        "native_mimalloc_shadow_size_class_boundaries_test.c",
+        b"native mimalloc shadow size class boundaries ok\n",
+    );
+}
+
+#[test]
 fn native_mimalloc_shadow_symbols_preserve_static_and_dynamic_linkage_contracts() {
     let root = Path::new(test_support::REPOSITORY_ROOT);
     let dynamic = readelf_symbols(&root.join("target/debug/libc.so"), true);
