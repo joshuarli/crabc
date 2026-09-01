@@ -422240,7 +422240,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "static_c_abi_exports_sha256": "b258bf022a93742d194b05c1b8a9480c2ab3e4e6904a4482a5cc8cba07c5a152"
+    "static_c_abi_exports_sha256": "a712758eb8908c8a1f5da63a93ba18a6da0f355b01ffd2f82e2733ef18f21240"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -440903,7 +440903,6 @@
       "posix_spawnattr_getsigdefault",
       "posix_spawnattr_getsigmask",
       "posix_spawnattr_setflags",
-      "posix_spawnattr_setschedparam",
       "posix_spawnattr_setsigdefault",
       "posix_spawnattr_setsigmask",
       "posix_spawnp",
@@ -441123,7 +441122,7 @@
       "ok": 2617,
       "oracle-not-applicable": 1
     },
-    "static_export_complement_count": 466
+    "static_export_complement_count": 465
   },
   "target": "x86_64-unknown-linux-musl"
 }

@@ -51,7 +51,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 343)
+        self.assertEqual(report["verified_artifact_count"], 344)
         self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -29279,6 +29279,50 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-sched-get-priority-min must retain its closed native command",
         ):
             ledger.validate_ledger(changed)
+
+    def test_posix_spawnattr_setschedparam_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-posix-spawnattr-setschedparam"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "POSIX spawn-attribute scheduler-parameter compatibility C ABI artifact",
+            "`int posix_spawnattr_setschedparam(posix_spawnattr_t *, const struct sched_param *)`",
+            "`src/process/posix_spawnattr_sched.c::posix_spawnattr_setschedparam`",
+            "exactly `return ENOSYS;`",
+            "null scheduler parameter",
+            "byte-filled caller-owned attribute and scheduler-parameter storage unchanged",
+            "stale errno preservation",
+            "does not read, write, validate, retain, or require either pointer",
+            "generic AArch64 export and behavior remain exactly unchanged",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-posix-spawnattr-setschedparam",
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        prerequisites[1] = prerequisites[1].replace(
+            "return ENOSYS;", "set the scheduler parameter"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-posix-spawnattr-setschedparam must retain its pinned-musl source mapping",
+        ):
+            ledger.validate_ledger(data)
 
     def test_rejects_an_unknown_aarch64_gate(self) -> None:
         data = self.data()

@@ -1709,7 +1709,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
             "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
-            "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
             "tee-header-abi|splice-header-abi",
             "sync-file-range-header-abi|copy-file-range-header-abi",
@@ -35764,6 +35764,153 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("run_libc_personality_probe()", dispatcher)
         self.assertIn("personality-header-abi)", dispatcher)
         self.assertIn("libc-personality)", dispatcher)
+
+    def test_libc_static_c_abi_posix_spawnattr_setschedparam_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "posix_spawnattr_setschedparam.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_posix_spawnattr_setschedparam_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_posix_spawnattr_setschedparam_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_libc_posix_spawnattr_setschedparam.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_posix_spawnattr_setschedparam_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_setschedparam_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_setschedparam_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn(
+            '#[path = "posix_spawnattr_setschedparam.rs"]\nmod posix_spawnattr_setschedparam;',
+            static_root,
+        )
+        for required in (
+            "Selected static Linux/x86-64 POSIX spawn-attribute scheduler-parameter C ABI",
+            "src/process/posix_spawnattr_sched.c::posix_spawnattr_setschedparam",
+            "return ENOSYS;",
+            "const ENOSYS: c_int = 38;",
+            'pub extern "C" fn posix_spawnattr_setschedparam(',
+            "including null",
+            "generic AArch64\n//! export and behavior remain exactly unchanged",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fork(",
+            "execve",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for required in (
+            "posix_spawnattr_setschedparam_signature",
+            "bytes_match",
+            "function((posix_spawnattr_t *)0, &parameter)",
+            "function(&attributes, (const struct sched_param *)0)",
+            "function((posix_spawnattr_t *)0, (const struct sched_param *)0)",
+            "errno = E2BIG",
+            "CRABC_POSIX_SPAWNATTR_SETSCHEDPARAM_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_posix_spawnattr_setschedparam_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for header in (header_c, header_cxx):
+            for required in (
+                "posix_spawnattr_setschedparam_signature",
+                "posix_spawnattr_setschedparam_function",
+                "sched_param",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "sched.h",
+            "spawn.h",
+            "retained a mangled posix_spawnattr_setschedparam reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_posix_spawnattr_setschedparam_header_abi.sh",
+            "posix_spawnattr_sched.lo",
+            "static_c_abi_exports.txt",
+            "archive_member_for_symbol",
+            "assert_ignored_pointer_enosys_boundary",
+            "-nostdlib -static",
+            "--no-undefined",
+            "for unselected in posix_spawn",
+            "fork vfork clone execve wait4",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("posix_spawnattr_setschedparam", static_exports)
+        self.assertNotIn("posix_spawn", static_exports)
+        self.assertNotIn("posix_spawnp", static_exports)
+        self.assertIn(
+            'id = "static-c-posix-spawnattr-setschedparam"', parity_ledger
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-setschedparam"',
+            parity_ledger,
+        )
+        self.assertIn("posix-spawnattr-setschedparam-header-abi)", runner)
+        self.assertIn("libc-posix-spawnattr-setschedparam)", runner)
 
     def test_campaign_dispatch_surface_is_explicit_and_host_safe(self) -> None:
         """Phase 0 reporting must not need a Docker image just to explain blockers."""

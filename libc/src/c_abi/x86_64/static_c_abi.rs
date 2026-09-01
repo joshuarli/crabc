@@ -719,6 +719,8 @@ mod posix_spawnattr_destroy;
 mod posix_spawnattr_getflags;
 #[path = "posix_spawnattr_setpgroup.rs"]
 mod posix_spawnattr_setpgroup;
+#[path = "posix_spawnattr_setschedparam.rs"]
+mod posix_spawnattr_setschedparam;
 #[path = "posix_spawnattr_setschedpolicy.rs"]
 mod posix_spawnattr_setschedpolicy;
 #[path = "posix_spawn_file_actions_init.rs"]
