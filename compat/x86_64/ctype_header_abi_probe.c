@@ -65,12 +65,22 @@ static int ctype_fast_path_expression_formation(void)
 #if defined(CRABC_EXPECT_EXTENDED_CTYPE)
 static ctype_signature isascii_signature = &isascii;
 static ctype_signature toascii_signature = &toascii;
+#ifndef isascii
+#error "isascii must be a C-only macro in the selected ctype profile"
+#endif
 #ifndef _tolower
 #error "_tolower must be visible in the selected ctype profile"
 #endif
 #ifndef _toupper
 #error "_toupper must be visible in the selected ctype profile"
 #endif
+_Static_assert(isascii(0), "isascii accepts zero");
+_Static_assert(isascii(127), "isascii accepts the seven-bit maximum");
+_Static_assert(!isascii(128), "isascii rejects bit eight");
+_Static_assert(!isascii(-1), "isascii rejects negative input");
+_Static_assert(
+    _Generic(isascii(0), int: 1, default: 0), "isascii has int result"
+);
 _Static_assert(_tolower('A') == 'a', "_tolower ASCII case bit");
 _Static_assert(_toupper('a') == 'A', "_toupper ASCII case bit");
 _Static_assert(_tolower(0x80) == 0xa0, "_tolower has musl bitwise behavior");
@@ -87,8 +97,8 @@ _Static_assert(
 
 /* Strict C succeeds only when the legacy case macros are absent. */
 #if defined(CRABC_ASSERT_LEGACY_CASE_MACROS_HIDDEN)
-#if defined(_tolower) || defined(_toupper)
-#error "strict C must hide _tolower and _toupper"
+#if defined(isascii) || defined(_tolower) || defined(_toupper)
+#error "strict C must hide isascii, _tolower, and _toupper"
 #endif
 #endif
 

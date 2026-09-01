@@ -29083,7 +29083,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 67,
+      "line": 70,
       "macro_form": "function-like",
       "name": "_tolower",
       "profile": "c11-bsd",
@@ -29097,7 +29097,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 68,
+      "line": 71,
       "macro_form": "function-like",
       "name": "_toupper",
       "profile": "c11-bsd",
@@ -30458,6 +30458,20 @@
       "name": "isalpha",
       "profile": "c11-bsd",
       "replacement_sha256": "6ae3ade55442b1ca28cccb2da3056f6358e763626878b6d9da72d48ef5e7cc6c",
+      "tree": "candidate",
+      "visible_from_headers": [
+        "ctype.h"
+      ]
+    },
+    {
+      "classification": "macro",
+      "declaration_kind": "macro",
+      "declaring_header": "ctype.h",
+      "line": 68,
+      "macro_form": "function-like",
+      "name": "isascii",
+      "profile": "c11-bsd",
+      "replacement_sha256": "4e2b9c008ed6e359cf27797c935159394249358153d1c4dd50dd9debdc2321ce",
       "tree": "candidate",
       "visible_from_headers": [
         "ctype.h"
@@ -62993,7 +63007,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 67,
+      "line": 70,
       "macro_form": "function-like",
       "name": "_tolower",
       "profile": "c11-gnu",
@@ -63007,7 +63021,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 68,
+      "line": 71,
       "macro_form": "function-like",
       "name": "_toupper",
       "profile": "c11-gnu",
@@ -64368,6 +64382,20 @@
       "name": "isalpha",
       "profile": "c11-gnu",
       "replacement_sha256": "6ae3ade55442b1ca28cccb2da3056f6358e763626878b6d9da72d48ef5e7cc6c",
+      "tree": "candidate",
+      "visible_from_headers": [
+        "ctype.h"
+      ]
+    },
+    {
+      "classification": "macro",
+      "declaration_kind": "macro",
+      "declaring_header": "ctype.h",
+      "line": 68,
+      "macro_form": "function-like",
+      "name": "isascii",
+      "profile": "c11-gnu",
+      "replacement_sha256": "4e2b9c008ed6e359cf27797c935159394249358153d1c4dd50dd9debdc2321ce",
       "tree": "candidate",
       "visible_from_headers": [
         "ctype.h"
@@ -91533,7 +91561,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 67,
+      "line": 70,
       "macro_form": "function-like",
       "name": "_tolower",
       "profile": "c11-posix-2008",
@@ -91547,7 +91575,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 68,
+      "line": 71,
       "macro_form": "function-like",
       "name": "_toupper",
       "profile": "c11-posix-2008",
@@ -92850,6 +92878,20 @@
       "name": "isalpha",
       "profile": "c11-posix-2008",
       "replacement_sha256": "6ae3ade55442b1ca28cccb2da3056f6358e763626878b6d9da72d48ef5e7cc6c",
+      "tree": "candidate",
+      "visible_from_headers": [
+        "ctype.h"
+      ]
+    },
+    {
+      "classification": "macro",
+      "declaration_kind": "macro",
+      "declaring_header": "ctype.h",
+      "line": 68,
+      "macro_form": "function-like",
+      "name": "isascii",
+      "profile": "c11-posix-2008",
+      "replacement_sha256": "4e2b9c008ed6e359cf27797c935159394249358153d1c4dd50dd9debdc2321ce",
       "tree": "candidate",
       "visible_from_headers": [
         "ctype.h"
@@ -147078,7 +147120,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 67,
+      "line": 70,
       "macro_form": "function-like",
       "name": "_tolower",
       "profile": "c11-xopen-700",
@@ -147092,7 +147134,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 68,
+      "line": 71,
       "macro_form": "function-like",
       "name": "_toupper",
       "profile": "c11-xopen-700",
@@ -148395,6 +148437,20 @@
       "name": "isalpha",
       "profile": "c11-xopen-700",
       "replacement_sha256": "6ae3ade55442b1ca28cccb2da3056f6358e763626878b6d9da72d48ef5e7cc6c",
+      "tree": "candidate",
+      "visible_from_headers": [
+        "ctype.h"
+      ]
+    },
+    {
+      "classification": "macro",
+      "declaration_kind": "macro",
+      "declaring_header": "ctype.h",
+      "line": 68,
+      "macro_form": "function-like",
+      "name": "isascii",
+      "profile": "c11-xopen-700",
+      "replacement_sha256": "4e2b9c008ed6e359cf27797c935159394249358153d1c4dd50dd9debdc2321ce",
       "tree": "candidate",
       "visible_from_headers": [
         "ctype.h"
@@ -180568,7 +180624,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 67,
+      "line": 70,
       "macro_form": "function-like",
       "name": "_tolower",
       "profile": "cxx17-gnu",
@@ -180582,7 +180638,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 68,
+      "line": 71,
       "macro_form": "function-like",
       "name": "_toupper",
       "profile": "cxx17-gnu",
@@ -213667,7 +213723,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 67,
+      "line": 70,
       "macro_form": "function-like",
       "name": "_tolower",
       "profile": "cxx17-strict",
@@ -213681,7 +213737,7 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "ctype.h",
-      "line": 68,
+      "line": 71,
       "macro_form": "function-like",
       "name": "_toupper",
       "profile": "cxx17-strict",
@@ -441052,7 +441108,7 @@
     "callable_classification_counts": {
       "external": 19355,
       "inline": 518,
-      "macro": 5197,
+      "macro": 5201,
       "missing": 60
     },
     "candidate_external_callable_count": 1511,

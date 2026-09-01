@@ -26,6 +26,9 @@ static_assert(__is_same(decltype(&tolower), ctype_signature), "tolower declarati
 static_assert(__is_same(decltype(&toupper), ctype_signature), "toupper declaration");
 static_assert(__is_same(decltype(&isascii), ctype_signature), "isascii declaration");
 static_assert(__is_same(decltype(&toascii), ctype_signature), "toascii declaration");
+#ifdef isascii
+#error "C++ must hide C-only isascii macro"
+#endif
 #ifndef _tolower
 #error "_tolower must be visible in the native C++17 profile"
 #endif

@@ -1730,10 +1730,11 @@ provide filesystem behavior or select `crabc-libc`.
 
 `ctype-header-abi` compiles project-first and pinned-musl C/C++ `<ctype.h>`
 declarations for the fixed-C-locale boundary. The fourteen ordinary
-classification/case-conversion declarations are unconditional; `isascii` and
-`toascii` require POSIX/XOPEN/GNU/BSD feature selection. Strict C verifies
-those two extension declarations stay hidden, while the C++ companion is
-checked positively because its driver implicitly enables GNU declarations.
+classification/case-conversion declarations are unconditional; the exact
+C-only `isascii` macro and `toascii` declaration require POSIX/XOPEN/GNU/BSD
+feature selection. Strict C verifies those extension names stay hidden, while
+the C++ companion verifies the `isascii` macro stays hidden and checks the
+GNU-visible declarations directly.
 This is compile-only header evidence; it does not select locale behavior,
 `crabc-libc`, or a general C text ABI.
 

@@ -17526,11 +17526,21 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             ROOT / "compat" / "x86_64" / "run_ctype_header_abi.sh"
         ).read_text(encoding="utf-8")
 
+        self.assertIn(
+            "#define isascii(a) (0 ? isascii(a) : (unsigned)(a) < 128)",
+            header,
+        )
         self.assertIn("#define _tolower(a) ((a)|0x20)", header)
         self.assertIn("#define _toupper(a) ((a)&0x5f)", header)
         for required in (
+            "#ifndef isascii",
             "#ifndef _tolower",
             "#ifndef _toupper",
+            "_Static_assert(isascii(0)",
+            "_Static_assert(isascii(127)",
+            "_Static_assert(!isascii(128)",
+            "_Static_assert(!isascii(-1)",
+            "_Generic(isascii(0), int: 1, default: 0)",
             "_Static_assert(_tolower('A') == 'a'",
             "_Static_assert(_toupper('a') == 'A'",
             "_Static_assert(_tolower(0x80) == 0xa0",
@@ -17538,13 +17548,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "_Static_assert(_tolower(-1) == -1",
             "_Static_assert(_toupper(-1) == 0x5f",
             "CRABC_ASSERT_LEGACY_CASE_MACROS_HIDDEN",
-            "strict C must hide _tolower and _toupper",
+            "strict C must hide isascii, _tolower, and _toupper",
             "CRABC_REQUIRE_EXTENDED_CTYPE_HIDDEN",
             "required_tolower",
             "required_toupper",
         ):
             self.assertIn(required, c_probe)
         for required in (
+            "#ifdef isascii",
+            "C++ must hide C-only isascii macro",
             "#ifndef _tolower",
             "#ifndef _toupper",
             "static_assert(_tolower('A') == 'a'",
@@ -17563,7 +17575,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "strict_definitions posix_definitions xopen_definitions gnu_definitions bsd_definitions",
             "cxx_strict_definitions cxx_gnu_definitions",
             'declare -n definitions="$definitions_name"',
-            "isascii/toascii/_tolower/_toupper",
+            "C-only isascii macro, toascii, and the",
         ):
             self.assertIn(required, runner)
         self.assertIn(

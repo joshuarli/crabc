@@ -4,10 +4,10 @@
 # Pinned musl 1.2.6 is the declaration oracle. Project headers are placed
 # first for the candidate pass; neither pass links or selects crabc-libc.
 # The ordinary byte ctype functions and C-only ctype fast-path macros are
-# unconditional in C, while isascii/toascii and the exact bitwise
-# _tolower/_toupper macros use musl's POSIX/XOPEN/GNU/BSD C feature selection.
-# The compiler-native C++17 profile is checked directly because its driver
-# supplies the corresponding GNU view; C++ must hide __isspace.
+# unconditional in C, while the exact C-only isascii macro, toascii, and the
+# exact bitwise _tolower/_toupper macros use musl's POSIX/XOPEN/GNU/BSD C
+# feature selection. The compiler-native C++17 profile is checked directly
+# because its driver supplies the corresponding GNU view; C++ must hide __isspace and isascii macros.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

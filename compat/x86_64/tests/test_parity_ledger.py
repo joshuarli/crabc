@@ -2999,7 +2999,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "exact `isalpha`/`isdigit`/`islower`/`isupper`/`isprint`/`isgraph`/`isspace`",
             "all C feature profiles",
             "C++-hidden",
-            "`isascii`/`toascii`",
+            "C-only exact `isascii` macro",
+            "`toascii` declaration",
             "exact bitwise `_tolower`/`_toupper`",
             "POSIX/XOPEN/GNU/BSD C-visible",
             "strict-C-hidden",
@@ -3015,7 +3016,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(family_header_prerequisites, list)
         family_header_contract = "\n".join(family_header_prerequisites)
         for phrase in (
-            "POSIX/XOPEN/GNU/BSD C-visible and strict-C-hidden isascii/toascii",
+            "POSIX/XOPEN/GNU/BSD C-visible and strict-C-hidden `toascii` declaration",
+            "C-only exact `isascii` macro",
             "exact bitwise _tolower/_toupper macro replacements",
             "compiler-native C++17 profile",
             "macros select no archive linkage",

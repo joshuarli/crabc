@@ -317,6 +317,54 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 f"{name} replacement differs from pinned musl in {profile}",
             )
 
+    def test_ctype_isascii_macro_has_its_exact_c_only_feature_split(self) -> None:
+        """Keep musl's C-only seven-bit predicate syntax out of runtime work."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        name = "isascii"
+        visible_profiles = {
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-xopen-700",
+        }
+        expected = {(profile, name) for profile in visible_profiles}
+        callables = report["callables"]
+        assert isinstance(callables, list)
+        candidate = {
+            (record["profile"], record["name"])
+            for record in callables
+            if record.get("tree") == "candidate"
+            and record.get("classification") == "macro"
+            and record.get("declaring_header") == "ctype.h"
+            and record.get("name") == name
+        }
+        missing = {
+            (record["profile"], record["name"])
+            for record in callables
+            if record.get("classification") == "missing"
+            and record.get("declaring_header") == "ctype.h"
+            and record.get("name") == name
+        }
+
+        self.assertEqual(candidate, expected)
+        self.assertEqual(missing, set())
+        replacement_hashes = {
+            (record["tree"], record["profile"]): record["replacement_sha256"]
+            for record in callables
+            if record.get("tree") in {"candidate", "reference"}
+            and record.get("classification") == "macro"
+            and record.get("declaring_header") == "ctype.h"
+            and record.get("name") == name
+        }
+        for profile in visible_profiles:
+            self.assertEqual(
+                replacement_hashes[("candidate", profile)],
+                replacement_hashes[("reference", profile)],
+                f"isascii replacement differs from pinned musl in {profile}",
+            )
+
     def test_socket_ancillary_helper_macro_batch_is_unconditional(self) -> None:
         """Account for helpers without selecting ancillary socket runtime work."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:

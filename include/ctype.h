@@ -64,6 +64,9 @@ int toupper_l(int, locale_t);
 
 int isascii(int);
 int toascii(int);
+#ifndef __cplusplus
+#define isascii(a) (0 ? isascii(a) : (unsigned)(a) < 128)
+#endif
 #define _tolower(a) ((a)|0x20)
 #define _toupper(a) ((a)&0x5f)
 
