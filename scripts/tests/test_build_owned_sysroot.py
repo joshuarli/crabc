@@ -22,6 +22,14 @@ SPEC.loader.exec_module(BUILD)
 
 
 class StaticRuntimeArchiveTests(unittest.TestCase):
+    def test_default_reports_stay_under_the_repository_work_directory(self) -> None:
+        self.assertEqual(BUILD.WORK_DIR, ROOT / ".work")
+        self.assertEqual(BUILD.REPORT, ROOT / ".work/reports/sysroot/latest.json")
+        self.assertEqual(
+            BUILD.STATIC_PTHREAD_REPORT,
+            ROOT / ".work/reports/static-pthread-tls/latest.json",
+        )
+
     def test_selects_only_runtime_and_documented_allocator_members(self) -> None:
         members = [
             "c.c.0123456789abcdef-cgu.0.rcgu.o",

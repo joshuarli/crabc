@@ -2,15 +2,20 @@
 # Native Alpine/AArch64 development entry point.
 #
 # The image contains a pinned musl reference and Rust toolchain. The source
-# tree and target directory remain outside the image so normal edit/build loops
-# do not rebuild it.
+# tree and repository-local mutable work directory remain outside the image so
+# normal edit/build loops do not rebuild it.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+work_dir="${CRABC_WORK_DIR:-$ROOT_DIR/.work}"
+if [[ "$work_dir" != /* ]]; then
+    work_dir="$ROOT_DIR/$work_dir"
+fi
+readonly WORK_DIR="$work_dir"
 readonly PLATFORM="linux/arm64"
 readonly IMAGE="${CRABC_DEV_IMAGE:-crabc-dev:aarch64}"
-readonly TARGET_VOLUME="${CRABC_TARGET_VOLUME:-crabc-target-aarch64}"
-readonly CARGO_VOLUME="${CRABC_CARGO_VOLUME:-crabc-cargo-aarch64}"
+readonly TARGET_VOLUME="${CRABC_TARGET_VOLUME:-$WORK_DIR/target}"
+readonly CARGO_VOLUME="${CRABC_CARGO_VOLUME:-$WORK_DIR/cargo}"
 
 usage() {
     cat <<'EOF'
@@ -60,9 +65,12 @@ Commands:
   environment         write reproducibility metadata for compatibility reports
   shell               open a shell in the development image
 
-The image and containers are always requested as linux/arm64. `target/` and
-the Cargo download cache use Docker volumes so the macOS host does not need a
-Rust installation.
+The image and containers are always requested as linux/arm64. Mutable build
+state uses the repository-local `.work/` boundary by default: targets live in
+`.work/target`, Cargo's download cache lives in `.work/cargo`, and reports and
+scratch state live below `.work/`. Set `CRABC_WORK_DIR` to select another host
+directory. `CRABC_TARGET_VOLUME` and `CRABC_CARGO_VOLUME` continue to override
+their individual mounts.
 EOF
 }
 
@@ -88,7 +96,17 @@ ensure_image() {
     fi
 }
 
+prepare_work_dir() {
+    mkdir -p \
+        "$WORK_DIR/target" \
+        "$WORK_DIR/cargo" \
+        "$WORK_DIR/reports" \
+        "$WORK_DIR/allocator-cache" \
+        "$WORK_DIR/tmp"
+}
+
 run_in_container() {
+    prepare_work_dir
     local rustix_source_host="${CRABC_RUSTIX_SOURCE_HOST:-$ROOT_DIR/../rustix}"
     local rustybench_source_host="${CRABC_RUSTYBENCH_SOURCE_HOST:-$ROOT_DIR/../rustybench}"
     local -a rustix_mount=()
@@ -121,15 +139,20 @@ run_in_container() {
         docker run --rm --init
         --platform "$PLATFORM"
         --workdir /workspace
-        --env CARGO_HOME=/opt/cargo
+        # Keep the image's Rust toolchain visible at /opt/cargo/bin while
+        # directing Cargo's mutable registry and git caches into .work.
+        --env CARGO_HOME=/workspace/.work/cargo
         --env LIBC_TEST_DIR=/opt/libc-test
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib
+        --env CRABC_WORK_DIR=/workspace/.work
+        --env TMPDIR=/workspace/.work/tmp
         --env GIT_CONFIG_COUNT=1
         --env GIT_CONFIG_KEY_0=safe.directory
         --env GIT_CONFIG_VALUE_0=/workspace
         --volume "$ROOT_DIR:/workspace"
+        --volume "$WORK_DIR:/workspace/.work"
         --volume "$TARGET_VOLUME:/workspace/target"
-        --volume "$CARGO_VOLUME:/opt/cargo"
+        --volume "$CARGO_VOLUME:/workspace/.work/cargo"
     )
     if [ -d "$rustix_source_host" ]; then
         docker_args+=("${rustix_mount[@]}")
@@ -147,18 +170,22 @@ run_in_container() {
 # verifies that boundary before temporarily installing its three loopback
 # nameservers and restores the file before it exits.
 run_in_resolver_container() {
+    prepare_work_dir
     docker run --rm --init \
         --platform "$PLATFORM" \
         --network none \
         --dns 127.0.0.1 \
         --workdir /workspace \
-        --env CARGO_HOME=/opt/cargo \
+        --env CARGO_HOME=/workspace/.work/cargo \
         --env LIBC_TEST_DIR=/opt/libc-test \
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
+        --env CRABC_WORK_DIR=/workspace/.work \
+        --env TMPDIR=/workspace/.work/tmp \
         --env CRABC_RESOLVER_NETWORK_ISOLATED=1 \
         --volume "$ROOT_DIR:/workspace" \
+        --volume "$WORK_DIR:/workspace/.work" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/opt/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/cargo" \
         "$IMAGE" "$@"
 }
 
@@ -478,7 +505,7 @@ case "$command" in
         run_in_container cargo build --workspace
         run_in_container cargo build --workspace --release
         run_in_container python3 scripts/build_owned_sysroot.py
-        selected_libc_build_record="target/compat/allocator/upstream-stress/selected-libc-build.json"
+        selected_libc_build_record=".work/target/compat/allocator/upstream-stress/selected-libc-build.json"
         run_in_container python3 compat/allocator/upstream-stress/run.py \
             --capture-selected-libc-build "$selected_libc_build_record"
         run_in_container python3 scripts/run_owned_test_suite.py \

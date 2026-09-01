@@ -325,15 +325,15 @@ The audited reproducer used the owned driver and loader in this form:
 ```sh
 mkdir -p "$PWD/.work/tmp"
 expdir=$(mktemp -d "$PWD/.work/tmp/crabc-upstream-stress.XXXXXX")
-tar -xzf compat/allocator/.cache/mimalloc-3.5.0.tar.gz -C "$expdir"
+tar -xzf .work/allocator-cache/mimalloc-3.5.0.tar.gz -C "$expdir"
 src="$expdir/mimalloc-3.5.0"
 bin="$expdir/upstream-test-stress-stdmalloc"
 
-target/crabc-sysroot/bin/crabc-cc   -std=c11 -O2 -DNDEBUG -fPIE -pie -ftls-model=initial-exec -pthread   -DUSE_STD_MALLOC -I "$src/include" -L "$PWD/target/debug"   "$src/test/test-stress.c" -Wl,--allow-shlib-undefined -lc -o "$bin"
+./.work/target/crabc-sysroot/bin/crabc-cc   -std=c11 -O2 -DNDEBUG -fPIE -pie -ftls-model=initial-exec -pthread   -DUSE_STD_MALLOC -I "$src/include" -L "$PWD/.work/target/debug"   "$src/test/test-stress.c" -Wl,--allow-shlib-undefined -lc -o "$bin"
 
 unset LD_AUDIT LD_PRELOAD LD_LIBRARY_PATH
-export LD_LIBRARY_PATH="$PWD/target/debug"
-timeout 30 python3 scripts/run_owned_test_suite.py   --sysroot target/crabc-sysroot --loader target/debug/libldso.so   -- "$bin" 1 1 1
+export LD_LIBRARY_PATH="$PWD/.work/target/debug"
+timeout 30 python3 scripts/run_owned_test_suite.py   --sysroot .work/target/crabc-sysroot --loader .work/target/debug/libldso.so   -- "$bin" 1 1 1
 ```
 
 If repository paths have changed, preserve the semantic build and execution

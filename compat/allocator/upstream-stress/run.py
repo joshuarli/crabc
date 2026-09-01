@@ -37,18 +37,31 @@ from typing import Any, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def default_work_root() -> Path:
+    """Return the checkout-local boundary for harness-owned mutable artifacts."""
+
+    configured = os.environ.get("CRABC_WORK_DIR")
+    if not configured:
+        return ROOT / ".work"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+WORK_ROOT = default_work_root()
 ALLOCATOR_ROOT = ROOT / "compat/allocator"
 CONTRACT_PATH = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 UPSTREAMS_PATH = ROOT / "compat/upstreams.toml"
-CACHE = ALLOCATOR_ROOT / ".cache"
+CACHE = WORK_ROOT / "allocator-cache"
 DEFAULT_TARGET_DIR = ROOT / "target/debug"
-DEFAULT_OUTPUT_DIR = ROOT / "target/compat/allocator/upstream-stress"
-DEFAULT_REPORT = ROOT / "compat/reports/allocator/upstream-stress/latest.json"
+DEFAULT_OUTPUT_DIR = WORK_ROOT / "target/compat/allocator/upstream-stress"
+DEFAULT_REPORT = WORK_ROOT / "reports/allocator/upstream-stress/latest.json"
 DEFAULT_DIAGNOSTIC_REPORT = (
-    ROOT / "compat/reports/allocator/upstream-stress/current-head.json"
+    WORK_ROOT / "reports/allocator/upstream-stress/current-head.json"
 )
 DEFAULT_POST_OWNER_EXIT_CONCURRENT_FREE_REPORT = (
-    ROOT / "compat/reports/allocator/upstream-stress/post-owner-exit-concurrent-free.json"
+    WORK_ROOT / "reports/allocator/upstream-stress/post-owner-exit-concurrent-free.json"
 )
 DEFAULT_LIBC_BUILD_RECORD = DEFAULT_OUTPUT_DIR / "selected-libc-build.json"
 CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
@@ -165,7 +178,7 @@ def source_state_excludes(path: Path) -> bool:
     return (
         bool(parts)
         and (
-            parts[0] in {".git", "target"}
+            parts[0] in {".git", ".work", "target"}
             or parts[:2] == ("compat", "reports")
             or parts[:3] == ("compat", "allocator", ".cache")
         )
@@ -474,7 +487,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
         "revision": pin["revision"],
         "repository": pin["repository"],
         "archive_source": pin["source"],
-        "archive_path": "compat/allocator/.cache/mimalloc-3.5.0.tar.gz",
+        "archive_path": ".work/allocator-cache/mimalloc-3.5.0.tar.gz",
         "archive_root": pin["archive_root"],
         "archive_sha256": pin["sha256"],
     }
@@ -628,7 +641,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
         "report": {
             "format": 4,
             "schema": "crabc-mimalloc-canonical-upstream-stress-report",
-            "path": "compat/reports/allocator/upstream-stress/latest.json",
+            "path": ".work/reports/allocator/upstream-stress/latest.json",
             "atomic_publish": True,
             "file_artifact_record_fields": ["path", "bytes", "sha256"],
             "byte_stream_record_fields": ["bytes", "sha256", "hex"],
@@ -674,8 +687,8 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
             "owned_test_launcher": "scripts/run_owned_test_suite.py",
             "selected_runtime_directory": "target/debug",
-            "selected_libc_build_record": "target/compat/allocator/upstream-stress/selected-libc-build.json",
-            "isolated_output_directory": "target/compat/allocator/upstream-stress",
+            "selected_libc_build_record": ".work/target/compat/allocator/upstream-stress/selected-libc-build.json",
+            "isolated_output_directory": ".work/target/compat/allocator/upstream-stress",
             "sysroot_purity": {
                 "required_crt_sysroot_pure_rust": True,
                 "allowed_full_runtime_purity": [
@@ -744,7 +757,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--output-dir",
         type=Path,
         default=Path(os.environ.get("CRABC_UPSTREAM_STRESS_OUTPUT_DIR", DEFAULT_OUTPUT_DIR)),
-        help="isolated fixture output directory (default: CRABC_UPSTREAM_STRESS_OUTPUT_DIR or target/compat/allocator/upstream-stress)",
+        help="isolated fixture output directory (default: CRABC_UPSTREAM_STRESS_OUTPUT_DIR or .work/target/compat/allocator/upstream-stress)",
     )
     parser.add_argument(
         "--report",
@@ -752,7 +765,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=None,
         help=(
             "JSON report path (defaults to CRABC_UPSTREAM_STRESS_REPORT or "
-            "compat/reports/allocator/upstream-stress/latest.json; --diagnose uses "
+            ".work/reports/allocator/upstream-stress/latest.json; --diagnose uses "
             "CRABC_UPSTREAM_STRESS_DIAGNOSTIC_REPORT or current-head.json; "
             "--post-owner-exit-concurrent-free uses "
             "CRABC_UPSTREAM_STRESS_POST_OWNER_EXIT_CONCURRENT_FREE_REPORT or "
@@ -765,7 +778,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=Path(
             os.environ.get("CRABC_UPSTREAM_STRESS_LIBC_BUILD_RECORD", DEFAULT_LIBC_BUILD_RECORD)
         ),
-        help="exact Cargo compiler-artifact build record for the selected dev libc",
+        help="exact Cargo compiler-artifact build record for the selected dev libc (default under .work/target)",
     )
     parser.add_argument(
         "--capture-selected-libc-build",

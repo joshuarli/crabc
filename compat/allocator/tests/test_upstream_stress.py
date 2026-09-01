@@ -95,6 +95,10 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
 
     def test_contract_records_upstream_seed_watchdog_and_artifact_schemas(self) -> None:
         contract, _ = RUNNER.load_contract()
+        self.assertEqual(
+            contract["upstream"]["archive_path"],
+            ".work/allocator-cache/mimalloc-3.5.0.tar.gz",
+        )
         execution = contract["execution"]
         self.assertEqual(
             execution["source_randomness"],
@@ -118,6 +122,10 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         report = contract["report"]
         self.assertEqual(report["schema"], "crabc-mimalloc-canonical-upstream-stress-report")
         self.assertEqual(report["format"], 4)
+        self.assertEqual(
+            report["path"],
+            ".work/reports/allocator/upstream-stress/latest.json",
+        )
         self.assertEqual(report["file_artifact_record_fields"], ["path", "bytes", "sha256"])
         self.assertEqual(report["byte_stream_record_fields"], ["bytes", "sha256", "hex"])
         self.assertEqual(
@@ -139,6 +147,82 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             contract["compile_requirements"]["expected_interpreter"],
             "/lib/ld-crabc-aarch64.so.1",
         )
+        self.assertEqual(
+            contract["compile_requirements"]["selected_runtime_directory"],
+            "target/debug",
+        )
+        self.assertEqual(
+            contract["compile_requirements"]["selected_libc_build_record"],
+            ".work/target/compat/allocator/upstream-stress/selected-libc-build.json",
+        )
+        self.assertEqual(
+            contract["compile_requirements"]["isolated_output_directory"],
+            ".work/target/compat/allocator/upstream-stress",
+        )
+
+    def test_default_work_root_routes_runner_owned_mutable_artifacts(self) -> None:
+        work_root = RUNNER.WORK_ROOT
+        self.assertEqual(RUNNER.CACHE, work_root / "allocator-cache")
+        self.assertEqual(
+            RUNNER.DEFAULT_OUTPUT_DIR,
+            work_root / "target/compat/allocator/upstream-stress",
+        )
+        self.assertEqual(
+            RUNNER.DEFAULT_LIBC_BUILD_RECORD,
+            work_root / "target/compat/allocator/upstream-stress/selected-libc-build.json",
+        )
+        self.assertEqual(
+            RUNNER.DEFAULT_REPORT,
+            work_root / "reports/allocator/upstream-stress/latest.json",
+        )
+        self.assertEqual(
+            RUNNER.DEFAULT_DIAGNOSTIC_REPORT,
+            work_root / "reports/allocator/upstream-stress/current-head.json",
+        )
+        self.assertEqual(
+            RUNNER.DEFAULT_POST_OWNER_EXIT_CONCURRENT_FREE_REPORT,
+            work_root
+            / "reports/allocator/upstream-stress/post-owner-exit-concurrent-free.json",
+        )
+        self.assertEqual(RUNNER.DEFAULT_TARGET_DIR, RUNNER.ROOT / "target/debug")
+        self.assertEqual(
+            RUNNER.archive_path(RUNNER.FIXED_PIN),
+            work_root / "allocator-cache/mimalloc-3.5.0.tar.gz",
+        )
+
+        args = RUNNER.parse_arguments([])
+        self.assertEqual(args.output_dir, RUNNER.DEFAULT_OUTPUT_DIR)
+        self.assertEqual(args.report, RUNNER.DEFAULT_REPORT)
+        self.assertEqual(args.libc_build_record, RUNNER.DEFAULT_LIBC_BUILD_RECORD)
+        self.assertEqual(
+            args.current_head_build_record,
+            work_root
+            / "target/compat/allocator/upstream-stress/selected-libc-build-current-head.json",
+        )
+        self.assertEqual(
+            RUNNER.parse_arguments(["--diagnose"]).report,
+            RUNNER.DEFAULT_DIAGNOSTIC_REPORT,
+        )
+        self.assertEqual(
+            RUNNER.parse_arguments(["--post-owner-exit-concurrent-free"]).report,
+            RUNNER.DEFAULT_POST_OWNER_EXIT_CONCURRENT_FREE_REPORT,
+        )
+
+    def test_default_work_root_honors_crabc_work_dir(self) -> None:
+        with mock.patch.dict(RUNNER.os.environ, {}, clear=True):
+            self.assertEqual(RUNNER.default_work_root(), RUNNER.ROOT / ".work")
+        with mock.patch.dict(
+            RUNNER.os.environ, {"CRABC_WORK_DIR": "isolated-work"}, clear=True
+        ):
+            self.assertEqual(
+                RUNNER.default_work_root(),
+                RUNNER.ROOT / "isolated-work",
+            )
+        custom = RUNNER.ROOT / ".work/custom-root"
+        with mock.patch.dict(
+            RUNNER.os.environ, {"CRABC_WORK_DIR": str(custom)}, clear=True
+        ):
+            self.assertEqual(RUNNER.default_work_root(), custom)
 
     def test_capability_policy_is_fail_closed_until_every_native_case_passes(self) -> None:
         contract, _ = RUNNER.load_contract()
@@ -643,9 +727,13 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             report = root / "compat/reports/allocator/latest.json"
             report.parent.mkdir(parents=True)
             report.write_bytes(b"generated report")
+            work_artifact = root / ".work/target/libc.so"
+            work_artifact.parent.mkdir(parents=True)
+            work_artifact.write_bytes(b"repository-local generated artifact")
             with mock.patch.object(RUNNER, "ROOT", root):
                 first = RUNNER.workspace_tree_source_state()
                 generated.write_bytes(b"second generated artifact")
+                work_artifact.write_bytes(b"changed repository-local generated artifact")
                 ignored_changed = RUNNER.workspace_tree_source_state()
                 source.write_bytes(b"changed selected source")
                 source_changed = RUNNER.workspace_tree_source_state()

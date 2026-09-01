@@ -28,13 +28,39 @@ from typing import Any, Iterator, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def default_work_dir() -> Path:
+    """Return the checkout-local boundary for generated sysroot evidence."""
+
+    configured = os.environ.get("CRABC_WORK_DIR")
+    if not configured:
+        return ROOT / ".work"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+WORK_DIR = default_work_dir()
+
+
+def default_static_pthread_report() -> Path:
+    """Return the explicit report path shared with the static-link runner."""
+
+    configured = os.environ.get("CRABC_STATIC_PTHREAD_TLS_REPORT")
+    if not configured:
+        return WORK_DIR / "reports/static-pthread-tls/latest.json"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
 TARGET = ROOT / "target"
 PRIMARY_BUILD_ROOT = TARGET / "crabc-sysroot-build-primary"
 COMPARISON_BUILD_ROOT = TARGET / "crabc-sysroot-build-comparison"
 PRIMARY_SYSROOT = TARGET / "crabc-sysroot"
 COMPARISON_SYSROOT = TARGET / "crabc-sysroot-repro"
 OWNED_SYSROOT_BUILD_LOCK = TARGET / ".crabc-owned-sysroot-build.lock"
-REPORT = ROOT / "compat/reports/sysroot/latest.json"
+REPORT = WORK_DIR / "reports/sysroot/latest.json"
+STATIC_PTHREAD_REPORT = default_static_pthread_report()
 TARGET_TRIPLE = "aarch64-unknown-linux-musl"
 CANONICAL_INTERPRETER = "/lib/ld-crabc-aarch64.so.1"
 RUNTIME_RUSTFLAGS = (
@@ -759,6 +785,7 @@ def bind_report_evidence(
     second: dict[str, object],
     focused_tests: Sequence[dict[str, object]],
     static_pthread_record: dict[str, object],
+    static_report: Path,
 ) -> None:
     """Attach production and supplemental proof without weakening report status."""
 
@@ -778,7 +805,6 @@ def bind_report_evidence(
             }
         )
 
-    static_report = ROOT / "compat/reports/static-pthread-tls/latest.json"
     if not static_report.is_file():
         raise BuildError("static pthread/TLS runner did not write its report")
     try:
@@ -847,6 +873,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 "compat/static-pthread-tls/run.py",
                 "--sysroot",
                 str(PRIMARY_SYSROOT),
+                "--report",
+                str(STATIC_PTHREAD_REPORT),
                 "--timeout",
                 str(args.timeout),
             ]
@@ -854,7 +882,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
             report["purity"] = json.loads(
                 (PRIMARY_SYSROOT / "share/crabc/purity.json").read_text(encoding="utf-8")
             )
-            bind_report_evidence(report, first, second, focused_tests, evidence_records[-1])
+            bind_report_evidence(
+                report,
+                first,
+                second,
+                focused_tests,
+                evidence_records[-1],
+                STATIC_PTHREAD_REPORT,
+            )
             # The harness writes atomically; retain that property after binding
             # the producer and static-link evidence it intentionally does not own.
             report_path = REPORT

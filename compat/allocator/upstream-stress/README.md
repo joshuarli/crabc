@@ -24,6 +24,13 @@ selected shadow libc last, stages the owned loader, and runs the matrix:
 ./scripts/dev.sh allocator-upstream
 ```
 
+Runner-owned mutable state defaults below `CRABC_WORK_DIR`, or the checkout's
+`.work/` directory when that variable is unset: the pinned archive and tag
+attestation use `.work/allocator-cache/`, fixture output and selected-libc
+build records use `.work/target/`, and reports use `.work/reports/`. The
+selected runtime remains the logical `target/debug` ABI location; the canonical
+dispatcher maps the repository-local work target there for the container.
+
 ## Current-head first-case diagnostic
 
 For a reproducible, narrowly scoped observation of the current checkout, run:
@@ -46,9 +53,9 @@ it starts a stress process.
 `--diagnose` compiles the same byte-for-byte archived source with the same
 `USE_STD_MALLOC` selection, verifies the same ELF and selected-free route
 boundaries, and executes only the first closed case: `1 1 1`. Its fixture is
-isolated under `target/compat/allocator/upstream-stress/current-head/` and its
-default report is
-`compat/reports/allocator/upstream-stress/current-head.json` (override with
+isolated under `.work/target/compat/allocator/upstream-stress/current-head/`
+and its default report is
+`.work/reports/allocator/upstream-stress/current-head.json` (override with
 `CRABC_UPSTREAM_STRESS_DIAGNOSTIC_REPORT` or `--report`). The report records
 the current-head companion, Cargo artifact hashes, runtime `LD_LIBRARY_PATH`
 selection, `DT_NEEDED` proof, and the complete process observation.
@@ -76,16 +83,16 @@ Cargo outputs against the passed build record and rejects an exported `free`
 route to the C `mi_free` backend. It also requires the staged
 `/lib/ld-crabc-aarch64.so.1` bytes to match the selected loader, then attests
 that the compiled fixture is little-endian AArch64 ELF64 with that exact
-`PT_INTERP` and only the expected `libc.so` `DT_NEEDED` entry. The runner writes its
-binary only under `target/compat/allocator/upstream-stress/` and atomically
-publishes the report at
-`compat/reports/allocator/upstream-stress/latest.json`. Override those ignored
-outputs with `CRABC_UPSTREAM_STRESS_OUTPUT_DIR`,
+`PT_INTERP` and only the expected `libc.so` `DT_NEEDED` entry. By default, the
+runner writes its binary and selected-libc build record under
+`.work/target/compat/allocator/upstream-stress/` and atomically publishes the
+report at `.work/reports/allocator/upstream-stress/latest.json`. Override
+those ignored outputs with `CRABC_UPSTREAM_STRESS_OUTPUT_DIR`,
 `CRABC_UPSTREAM_STRESS_LIBC_BUILD_RECORD`, and
 `CRABC_UPSTREAM_STRESS_REPORT`. Pass runner options through the canonical
 dispatch, for example `./scripts/dev.sh allocator-upstream --offline`.
 `--offline` requires both the verified source archive and annotated-tag
-attestation already present in `compat/allocator/.cache/`; direct host
+attestation already present in `.work/allocator-cache/`; direct host
 `python3 compat/allocator/upstream-stress/run.py --check` validates only the
 closed contract and reports capability `not-run`, without compiling or
 executing it.
