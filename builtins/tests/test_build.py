@@ -59,7 +59,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(completed.stdout.strip(), "Cargo.lock")
 
     def test_source_build_feature_parser_rejects_feature_drift(self) -> None:
-        target = pathlib.Path("/tmp/crabc-source-build-target")
+        target = ROOT.parent / ".work/tmp/crabc-source-build-target"
         good = (
             f"rustc --crate-name core --out-dir {target}\n"
             f"rustc --crate-name compiler_builtins --extern core={target}/core.rmeta "
@@ -75,9 +75,11 @@ class BuildContractTests(unittest.TestCase):
 
     def test_source_build_environment_seals_native_and_codegen_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            environment = BUILD.source_build_environment(pathlib.Path(temporary), ("-C", "panic=abort"))
+            stage = pathlib.Path(temporary)
+            environment = BUILD.source_build_environment(stage, ("-C", "panic=abort"))
         self.assertEqual(environment["CARGO_INCREMENTAL"], "0")
         self.assertEqual(environment["CARGO_ENCODED_RUSTFLAGS"], "-C\x1fpanic=abort")
+        self.assertEqual(environment["TMPDIR"], str(stage / "source-build-tmp"))
         for key in BUILD.SEALED_SOURCE_BUILD_ENVIRONMENT_KEYS - {"CARGO_ENCODED_RUSTFLAGS"}:
             self.assertNotIn(key, environment)
 
