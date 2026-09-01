@@ -2364,6 +2364,21 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
         unsafe { self.engine.reallocate(block, new_size) }
     }
 
+    /// Reallocates one current native C-ABI client while preserving ordinary
+    /// source reallocation semantics and its naturally aligned replacement.
+    ///
+    /// # Safety
+    ///
+    /// The caller obligations are identical to [`Self::reallocate`].
+    #[inline]
+    pub(crate) unsafe fn reallocate_c_abi(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.engine.reallocate_c_abi(block, new_size) }
+    }
+
     /// # Safety
     ///
     /// `block` must remain a current allocation of this exact owner, without

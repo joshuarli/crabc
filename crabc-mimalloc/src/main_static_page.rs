@@ -1536,6 +1536,40 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
+    /// Reallocates one current native C-ABI client through the initial
+    /// persistent engine. The core retains ordinary realloc's source
+    /// decision/copy/free order while selecting a naturally aligned
+    /// replacement for the public Linux/AArch64 C boundary.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be current in this exact active owner with no aliased
+    /// access, remote producer, or prior free.
+    #[inline]
+    pub(crate) unsafe fn reallocate_current_initial_thread_local_c_abi(
+        &mut self,
+        block: NonNull<u8>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
+                // SAFETY: the persistent initial owner keeps this exact
+                // engine current and exclusively borrowed for the call.
+                let replacement = unsafe { active.engine.reallocate_c_abi(Some(block), new_size) };
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+                replacement
+            }
+            other => {
+                self.state = other;
+                None
+            }
+        }
+    }
+
     /// Returns the usable size of one current ticket-zero allocation.
     ///
     /// # Safety

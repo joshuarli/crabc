@@ -165,10 +165,9 @@
       ],
       "expected": {
         "ordinary-c-mimalloc": "distinct-aligned-preserves-errno",
-        "native-rust-mimalloc-shadow": "distinct-misaligned-preserves-errno"
+        "native-rust-mimalloc-shadow": "distinct-aligned-preserves-errno"
       },
-      "comparison": "known-red",
-      "reason": "The ordinary C-backed artifact returns a distinct freeable 16-byte-aligned zero-size replacement, while the selected native shadow returns a distinct freeable but non-16-byte-aligned replacement. Both preserve the fixture's incoming errno. This is a recorded public-C ABI red, not an accepted musl-equivalence result."
+      "comparison": "match"
     },
     {
       "id": "realloc-failure-preserves-source-and-sets-enomem",

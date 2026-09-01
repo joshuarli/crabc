@@ -5132,6 +5132,27 @@ impl NativeInitialPersistentThreadOwner {
         }
     }
 
+    /// Reallocates one exact current initial-thread C-ABI client. The lower
+    /// engine keeps the ordinary source realloc decision while ensuring any
+    /// replacement observes the public Linux/AArch64 natural alignment.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain a live local allocation of this exact persistent
+    /// owner and must not have been remotely published or freed.
+    #[inline]
+    unsafe fn reallocate_c_abi(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+        new_size: usize,
+    ) -> Option<core::ptr::NonNull<u8>> {
+        // SAFETY: forwarded unchanged from this owner-local boundary.
+        unsafe {
+            self.allocator
+                .reallocate_current_initial_thread_local_c_abi(block, new_size)
+        }
+    }
+
     /// Frees one exact current initial-thread client without a scheduler
     /// claim, park, or resume.
     ///
@@ -6419,7 +6440,7 @@ unsafe fn native_initial_thread_reallocate_pointer_first_associated(
     let result = with_pointer_associated_initial_persistent_owner(|owner| {
         // SAFETY: `native_reallocate` forwarded its exact-current
         // PageMap-derived initial-source-owner contract.
-        let replacement = unsafe { owner.reallocate(block, new_size) };
+        let replacement = unsafe { owner.reallocate_c_abi(block, new_size) };
         (replacement, owner.is_retained())
     });
     match result {
@@ -6618,7 +6639,7 @@ fn native_reallocate_pointer_first_local(
     let result = with_current_thread_native_persistent_allocator(false, |allocator| {
         // SAFETY: the caller's PageMap observation associated this exact live
         // client with the current worker owner for this source operation.
-        unsafe { allocator.reallocate(Some(block), new_size) }
+        unsafe { allocator.reallocate_c_abi(Some(block), new_size) }
     });
     drop(allocation);
     match result {

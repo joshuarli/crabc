@@ -351,8 +351,8 @@ def load_contract() -> dict[str, Any]:
             "realloc-zero-result",
             ["realloc"],
             "distinct-aligned-preserves-errno",
-            "distinct-misaligned-preserves-errno",
-            "known-red",
+            "distinct-aligned-preserves-errno",
+            "match",
         ),
         (
             "realloc-failure-preserves-source-and-sets-enomem",

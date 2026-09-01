@@ -72,6 +72,11 @@ fn native_pointer_reallocate_replaces_live_foreign_sources_through_current_owner
         "non-null zero-size realloc allocates before it frees the old client"
     );
     assert_eq!(
+        initial.as_ptr().addr() & 15,
+        0,
+        "non-null zero-size realloc retains the natural C allocation alignment"
+    );
+    assert_eq!(
         unsafe { initial.as_ptr().read() },
         0,
         "the zero-size replacement clears its first source byte"
@@ -170,6 +175,38 @@ fn native_pointer_reallocate_replaces_live_foreign_sources_through_current_owner
             0xa8,
             "the worker's in-place reallocation preserves its source extent"
         );
+        let local_before_zero = local;
+        let local = match unsafe { native_reallocate(Some(local), 0) } {
+            NativePageAllocationResult::Allocated(block) => block,
+            NativePageAllocationResult::Unavailable
+            | NativePageAllocationResult::AllocationFailed
+            | NativePageAllocationResult::Retained => {
+                panic!("the worker's zero-size realloc returns its C-shaped replacement")
+            }
+        };
+        assert_ne!(
+            local, local_before_zero,
+            "the worker's non-null zero-size realloc allocates before it frees its old client"
+        );
+        assert_eq!(
+            local.as_ptr().addr() & 15,
+            0,
+            "the worker's zero-size replacement retains natural C allocation alignment"
+        );
+        assert_eq!(
+            unsafe { local.as_ptr().read() },
+            0,
+            "the worker's zero-size replacement clears its first source byte"
+        );
+        let usable = unsafe { native_usable_size(local) }
+            .expect("the worker reads its zero-size replacement's PageMap extent");
+        assert!(usable > 0);
+        // SAFETY: this replacement remains the worker's exact current client
+        // until the initial thread consumes it through its nonlocal path.
+        unsafe {
+            local.as_ptr().write(0xa7);
+            local.as_ptr().add(usable - 1).write(0xa8);
+        }
         // SAFETY: the initial owner retains this exact live client until the
         // worker completes its one nonlocal source operation below.
         let initial_foreign = unsafe {

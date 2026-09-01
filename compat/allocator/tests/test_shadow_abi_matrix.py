@@ -300,7 +300,7 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
             all(case["activation"] == "required" for case in report["musl_differential_required_cases"])
         )
 
-    def test_known_reds_are_recorded_as_differences_not_matching_passes(self) -> None:
+    def test_known_reds_are_recorded_as_differences_and_resolved_rows_match(self) -> None:
         contract = RUNNER.load_contract()
         rows = [case for case in contract["semantic_cases"] if case["comparison"] == "known-red"]
         self.assertEqual(
@@ -313,16 +313,21 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
                         "native-rust-mimalloc-shadow": "freeable-aligned-preserves-errno",
                     },
                 ),
-                (
-                    "realloc-zero-result",
-                    {
-                        "ordinary-c-mimalloc": "distinct-aligned-preserves-errno",
-                        "native-rust-mimalloc-shadow": "distinct-misaligned-preserves-errno",
-                    },
-                ),
             ],
         )
         self.assertTrue(all("not an accepted" in row["reason"] for row in rows))
+        resolved = next(
+            case for case in contract["semantic_cases"] if case["id"] == "realloc-zero-result"
+        )
+        self.assertEqual(resolved["comparison"], "match")
+        self.assertEqual(
+            resolved["expected"],
+            {
+                "ordinary-c-mimalloc": "distinct-aligned-preserves-errno",
+                "native-rust-mimalloc-shadow": "distinct-aligned-preserves-errno",
+            },
+        )
+        self.assertNotIn("reason", resolved)
 
     def test_selected_libc_link_plan_rejects_the_sealed_default_libc_shape(self) -> None:
         contract = RUNNER.load_contract()

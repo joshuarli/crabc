@@ -8,7 +8,7 @@ The source pin is defined in
 ## Current status
 
 No successful ordinary pinned-mimalloc engine allocation-trace difference is
-recorded. Two public-C ABI backend known reds and one test-only native x86-64
+recorded. One public-C ABI backend known red and one test-only native x86-64
 on-demand failed-direct-commit divergence are recorded below. The former are
 not pinned-engine parity claims; they are deliberately visible in the paired
 ordinary/native libc artifact report. The latter is deliberately excluded from
@@ -67,39 +67,6 @@ result may refine it only when it can prove retained ownership.
   known red was observed exactly; it does not mark the two artifacts equivalent
   or promote either backend. Remove or change the row only with an explicit
   C-ABI decision and a focused default-backend implementation change plus musl
-  evidence. This harness work does not alter runtime lifecycle production code.
-
-### `CRABC-LIBC-SHADOW-ABI-REALLOC-ZERO-ALIGNMENT` — observed public-C ABI known red
-
-- **Backends:** `libc/src/allocator_mimalloc.rs:realloc` through the ordinary
-  `libmimalloc-sys` 0.1.49 C-backed artifact, compared with
-  `libc/src/allocator_native_mimalloc.rs:realloc` under the nondefault
-  `native-mimalloc-shadow` feature. This is not a Rust-port versus pinned
-  mimalloc v3.5.0 engine differential.
-- **Category:** Linux/AArch64 local public-C allocation ABI comparison only.
-  It does not select a runtime backend, grant lifecycle/routing authority, or
-  change the production allocator.
-- **Difference:** after a local 33-byte allocation, the captured ordinary
-  `libc.so` returns a distinct freeable 16-byte-aligned `realloc(p, 0)`
-  replacement, while the selected native-shadow artifact returns a distinct
-  freeable replacement that is not 16-byte aligned. Both preserve the
-  fixture's incoming errno. This is a known red, not an accepted
-  musl-equivalence outcome.
-- **Evidence:**
-  `compat/allocator/shadow-abi-matrix-v1.json`,
-  `compat/allocator/shadow-abi-matrix/run.py`, and
-  `tests/fixtures/native_mimalloc_shadow_backend_matrix_test.c` snapshot and
-  attest both artifacts, then publish the exact normalized row in
-  `compat/reports/allocator/shadow-abi-matrix/latest.json`. The harness accepts
-  only the recorded `ordinary-c-mimalloc =
-  distinct-aligned-preserves-errno` and
-  `native-rust-mimalloc-shadow =
-  distinct-misaligned-preserves-errno` outcomes; any other result is a harness
-  failure rather than a silently normalized pass.
-- **Decision/removal:** pending. A successful matrix run proves that this
-  known red was observed exactly; it does not mark the two artifacts equivalent
-  or promote either backend. Remove or change the row only with an explicit
-  C-ABI decision and a focused native-shadow implementation change plus musl
   evidence. This harness work does not alter runtime lifecycle production code.
 
 ### `CRABC-MI-SCOPED-REGULAR-AND-FULL-REMOTE-PRODUCER` — accepted bounded routing boundary

@@ -162,7 +162,8 @@ use crate::main_theap::{
 };
 use crate::config::{
     ARENA_BIN_COUNT, ARENA_SLICE_SIZE, BIN_COUNT, BIN_FULL, BIN_HUGE, LARGE_MAX_OBJ_SIZE,
-    MEDIUM_MAX_OBJ_SIZE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
+    MAX_ALIGN_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX,
+    WORD_SIZE,
 };
 use crate::free_list::{FreeListError, LocalFreeList};
 use crate::invariants;
@@ -35334,7 +35335,30 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         block: Option<NonNull<u8>>,
         new_size: usize,
     ) -> Option<NonNull<u8>> {
-        unsafe { self.reallocate_inner(block, new_size, false) }
+        unsafe { self.reallocate_inner(block, new_size, false, None) }
+    }
+
+    /// Reallocates one C-ABI client while retaining the ordinary source
+    /// reallocation decision and release order.
+    ///
+    /// The bounded native libc shadow enters allocation through its explicit
+    /// Linux/AArch64 16-byte C alignment boundary. Its replacement must do
+    /// the same: the internal zero-size ordinary class is word-sized, but a
+    /// public `realloc` result remains naturally C aligned. This is not an
+    /// aligned-realloc policy: reuse, copy extent, zero-size initialization,
+    /// and old-block release still follow `reallocate_inner`'s ordinary
+    /// `mi_theap_realloc_zero_ex` translation.
+    ///
+    /// # Safety
+    ///
+    /// The caller obligations are identical to [`Self::reallocate`].
+    #[inline]
+    pub(crate) unsafe fn reallocate_c_abi(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.reallocate_inner(block, new_size, false, Some(MAX_ALIGN_SIZE)) }
     }
 
     /// Expands or shrinks one current allocation in place when the requested
@@ -35379,7 +35403,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         block: Option<NonNull<u8>>,
         new_size: usize,
     ) -> Option<NonNull<u8>> {
-        unsafe { self.reallocate_inner(block, new_size, true) }
+        unsafe { self.reallocate_inner(block, new_size, true, None) }
     }
 
     /// Performs checked counted zeroed reallocation.
@@ -35410,6 +35434,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         block: Option<NonNull<u8>>,
         new_size: usize,
         zero: bool,
+        replacement_alignment: Option<usize>,
     ) -> Option<NonNull<u8>> {
         if self.is_collection_poisoned() {
             return None;
@@ -35426,7 +35451,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             return Some(block);
         }
 
-        let replacement = self.allocate(new_size, false)?;
+        let replacement = match replacement_alignment {
+            Some(alignment) => self.allocate_aligned(new_size, alignment)?,
+            None => self.allocate(new_size, false)?,
+        };
         // SAFETY: successful local allocation returns one current block.
         let Some(new_usable) = (unsafe { self.usable_size(replacement) }) else {
             // SAFETY: preserve the old allocation and balance the just-made
@@ -35546,7 +35574,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         }
         if alignment <= core::mem::size_of::<usize>() && offset == 0 {
             // SAFETY: this is the source delegation for ordinary alignment.
-            return unsafe { self.reallocate_inner(block, new_size, zero) };
+            return unsafe { self.reallocate_inner(block, new_size, zero, None) };
         }
         let Some(block) = block else {
             return self.allocate_aligned_at_inner(new_size, alignment, offset, zero);
