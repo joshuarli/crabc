@@ -410,7 +410,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "legacy.misc",
       "x86_family": "libc.c-abi-compat"
     },
@@ -938,7 +938,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "process.signal",
       "x86_family": "libc.posix-runtime"
     },
@@ -1004,7 +1004,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "stdio.fopen64-alias",
       "x86_family": "libc.text-math-locale-stdio"
     },
@@ -1347,8 +1347,8 @@
   ],
   "capability_state_counts": {
     "implemented-foundation": 180,
-    "missing": 23,
-    "selected-private": 20
+    "missing": 20,
+    "selected-private": 23
   },
   "families": [
     {
@@ -1435,8 +1435,8 @@
       "capability_count": 9,
       "contract_state": "selected-private",
       "id": "libc.posix-runtime",
-      "verified_artifact_count": 153,
-      "verified_slice_count": 4
+      "verified_artifact_count": 157,
+      "verified_slice_count": 5
     },
     {
       "aarch64_gates": [
@@ -1460,8 +1460,8 @@
       "capability_count": 16,
       "contract_state": "selected-private",
       "id": "libc.text-math-locale-stdio",
-      "verified_artifact_count": 74,
-      "verified_slice_count": 6
+      "verified_artifact_count": 75,
+      "verified_slice_count": 7
     },
     {
       "aarch64_gates": [
@@ -1483,8 +1483,8 @@
       "capability_count": 11,
       "contract_state": "selected-private",
       "id": "libc.c-abi-compat",
-      "verified_artifact_count": 24,
-      "verified_slice_count": 8
+      "verified_artifact_count": 26,
+      "verified_slice_count": 9
     },
     {
       "aarch64_gates": [
@@ -1506,7 +1506,7 @@
       "capability_count": 4,
       "contract_state": "selected-private",
       "id": "ldso.dynamic-runtime",
-      "verified_artifact_count": 14,
+      "verified_artifact_count": 16,
       "verified_slice_count": 0
     },
     {
@@ -1713,6 +1713,10 @@
     },
     {
       "family": "ldso.dynamic-runtime",
+      "id": "dynamic-main-thread-runtime-v1"
+    },
+    {
+      "family": "ldso.dynamic-runtime",
       "id": "ldso-bounded-runtime-dlopen"
     },
     {
@@ -1766,6 +1770,14 @@
     {
       "family": "ldso.dynamic-runtime",
       "id": "ldso-target-root-admission"
+    },
+    {
+      "family": "ldso.dynamic-runtime",
+      "id": "loader-libc-general-tls-runtime-v1"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-a64l"
     },
     {
       "family": "libc.c-abi-compat",
@@ -1858,6 +1870,10 @@
     {
       "family": "libc.c-abi-compat",
       "id": "static-c-res-init"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-sethostent"
     },
     {
       "family": "libc.c-abi-compat",
@@ -2001,6 +2017,10 @@
     },
     {
       "family": "libc.posix-runtime",
+      "id": "static-c-explicit-bzero-swab"
+    },
+    {
+      "family": "libc.posix-runtime",
       "id": "static-c-extended-attributes"
     },
     {
@@ -2098,6 +2118,10 @@
     {
       "family": "libc.posix-runtime",
       "id": "static-c-intmax-arithmetic"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-iopl-ioperm"
     },
     {
       "family": "libc.posix-runtime",
@@ -2249,6 +2273,10 @@
     },
     {
       "family": "libc.posix-runtime",
+      "id": "static-c-renameat2"
+    },
+    {
+      "family": "libc.posix-runtime",
       "id": "static-c-scandir-allocation-client"
     },
     {
@@ -2282,6 +2310,10 @@
     {
       "family": "libc.posix-runtime",
       "id": "static-c-sched-priority-bounds"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-sched-rr-interval"
     },
     {
       "family": "libc.posix-runtime",
@@ -2945,6 +2977,10 @@
     },
     {
       "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-permanent-ferror-unlocked"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
       "id": "static-c-stdio-permanent-fileno"
     },
     {
@@ -3016,9 +3052,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "367f3c09362e52a0ce780ddf319cba7fbadb2c53dad472481353a6f934eb9453",
+    "x86_parity_ledger": "073433ef168d19a3eb8ed7c1dda83ee73bff338ab4b186a6d40ae18760a4403e",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "507e5e874b7d4083b24c9851304b16ce20c4be19ad196341d2b3cc8eedcc342b"
+    "x86_static_c_exports": "b258bf022a93742d194b05c1b8a9480c2ab3e4e6904a4482a5cc8cba07c5a152"
   },
   "unsupported_contracts": [
     {
@@ -3030,7 +3066,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 1113,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1092
+    "selected_static_export_count": 1115,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1094
   }
 }
