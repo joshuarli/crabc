@@ -53,6 +53,47 @@ pub struct Stat {
     unused: [i64; 3],
 }
 
+/// Private path metadata view for selected sibling C ABI leaves.
+///
+/// This retains the sole x86 `struct stat` layout owner while admitting only
+/// the mode/device/inode observations needed by a bounded path operation.
+/// The public C record remains owned by this module and is borrowed only for
+/// the duration of a sibling callback.
+#[cfg(feature = "x86-filesystem-traversal")]
+pub(super) struct PathMetadata {
+    record: Stat,
+}
+
+#[cfg(feature = "x86-filesystem-traversal")]
+impl PathMetadata {
+    #[inline]
+    pub(super) fn zeroed() -> Self {
+        Self {
+            record: unsafe { core::mem::zeroed() },
+        }
+    }
+
+    #[inline]
+    pub(super) fn mode(&self) -> u32 {
+        self.record.mode
+    }
+
+    #[inline]
+    pub(super) fn device(&self) -> u64 {
+        self.record.device
+    }
+
+    #[inline]
+    pub(super) fn inode(&self) -> u64 {
+        self.record.inode
+    }
+
+    #[inline]
+    pub(super) fn as_stat_ptr(&self) -> *const Stat {
+        &self.record
+    }
+}
+
 /// Return the two metadata words consumed by musl's `ftok` formula.
 ///
 /// This keeps the x86 `struct stat` layout in its sole owner while allowing
@@ -105,12 +146,12 @@ const _: () = {
 /// lifetime, and accessibility requirements. `directory_fd` and `flags` are
 /// passed directly to the kernel.
 #[inline]
-unsafe fn newfstatat(
+unsafe fn raw_newfstatat(
     directory_fd: c_int,
     path: *const c_char,
     buffer: *mut Stat,
     flags: c_int,
-) -> c_int {
+) -> i64 {
     // SAFETY: the caller upholds the exact raw `newfstatat` contract. The
     // x86 syscall wrapper places `flags` in r10 rather than C ABI rcx.
     let result = unsafe {
@@ -122,7 +163,67 @@ unsafe fn newfstatat(
             i64::from(flags),
         )
     };
-    c_status(result)
+    result
+}
+
+/// Issue `newfstatat` and publish its raw result through the C ABI errno
+/// boundary.
+///
+/// # Safety
+///
+/// `path` and `buffer` must satisfy Linux `newfstatat(2)`'s complete pointer,
+/// lifetime, and accessibility requirements. `directory_fd` and `flags` are
+/// passed directly to the kernel.
+#[inline]
+unsafe fn newfstatat(
+    directory_fd: c_int,
+    path: *const c_char,
+    buffer: *mut Stat,
+    flags: c_int,
+) -> c_int {
+    // SAFETY: the caller upholds the exact raw newfstatat pointer contract.
+    c_status(unsafe { raw_newfstatat(directory_fd, path, buffer, flags) })
+}
+
+/// Read the private stat record needed by an internal pathname client without
+/// publishing an intermediate errno.
+///
+/// A sibling owns the resulting C error boundary, which lets it distinguish
+/// dangling links and unreadable directories without exposing a second copy of
+/// the x86 record layout.
+///
+/// # Safety
+///
+/// `path` must meet Linux `newfstatat(2)`'s pathname-pointer contract for the
+/// syscall duration. The boolean selects ordinary following `stat` versus a
+/// final-symlink-preserving `lstat` lookup.
+#[inline(always)]
+#[cfg(feature = "x86-filesystem-traversal")]
+pub(super) unsafe fn path_metadata(
+    path: *const c_char,
+    follow_final_symlink: bool,
+) -> Result<PathMetadata, c_int> {
+    let mut record: Stat = unsafe { core::mem::zeroed() };
+    let flags = if follow_final_symlink {
+        0
+    } else {
+        AT_SYMLINK_NOFOLLOW
+    };
+    // SAFETY: the caller supplies the complete pathname contract and this
+    // local owns a full private x86 output record.
+    let result = unsafe {
+        raw_newfstatat(
+            AT_FDCWD,
+            path,
+            &mut record as *mut Stat,
+            flags,
+        )
+    };
+    if result < 0 && result >= -4_095 {
+        Err(result.wrapping_neg() as c_int)
+    } else {
+        Ok(PathMetadata { record })
+    }
 }
 
 /// Fill the x86 `struct stat` record for a pathname relative to the current

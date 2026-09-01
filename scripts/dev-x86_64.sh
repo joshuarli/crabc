@@ -61,6 +61,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   event-descriptors-header-abi  verify selected x86 eventfd/inotify C/C++ ABI profiles
   fanotify-header-abi  verify selected x86 fanotify record-traversal C/C++ ABI profiles
   dirent-header-abi  verify selected x86 dirent C/C++ ABI and feature profiles
+  ftw-header-abi  verify selected x86 ftw C/C++ ABI and feature profiles
   pathname-lifecycle-header-abi  verify selected x86 pathname-lifecycle C/C++ ABI profiles
   ioctl-header-abi  verify selected direct sys/ioctl.h C/C++ ABI profile matrix
   sys-io-header-abi  verify x86 sys/io.h inline port-I/O C/C++ ABI and object code
@@ -253,6 +254,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
+  libc-filesystem-traversal  run the opt-in static x86 crabc-libc ftw/nftw slice
+  libc-filesystem-directory  run the selected-private x86 directory capability aggregate
   libc-lchmod-unsupported  run the static x86 crabc-libc lchmod unsupported slice
   libc-fchdir  run the static x86 crabc-libc fchdir O_PATH fallback slice
   libc-ulimit  run the static x86 crabc-libc historical RLIMIT_FSIZE slice
@@ -2537,6 +2540,10 @@ run_dirent_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_dirent_header_abi.sh
 }
 
+run_ftw_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_ftw_header_abi.sh
+}
+
 run_pathname_lifecycle_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_pathname_lifecycle_header_abi.sh
 }
@@ -3115,6 +3122,14 @@ run_libc_pathname_lifecycle() {
 
 run_libc_directory_streams() {
     run_in_container bash /workspace/compat/x86_64/run_libc_directory_streams.sh
+}
+
+run_libc_filesystem_traversal() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_filesystem_traversal.sh
+}
+
+run_libc_filesystem_directory() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_filesystem_directory.sh
 }
 
 run_libc_lchmod_unsupported() {
@@ -4960,6 +4975,7 @@ case "$command" in
     event-descriptors-header-abi) ;;
     fanotify-header-abi) ;;
     dirent-header-abi) ;;
+    ftw-header-abi) ;;
     pathname-lifecycle-header-abi) ;;
     timeval-transitive-header-abi) ;;
     sys-time-direct-header-abi) ;;
@@ -4991,6 +5007,8 @@ case "$command" in
     libc-extended-attributes) ;;
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
+    libc-filesystem-traversal) ;;
+    libc-filesystem-directory) ;;
     libc-lchmod-unsupported) ;;
     libc-fopen64-alias) ;;
     libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
@@ -5123,6 +5141,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "dirent-header-abi takes no arguments"
         ensure_image
         run_dirent_header_abi
+        ;;
+    ftw-header-abi)
+        [ "$#" -eq 0 ] || fail "ftw-header-abi takes no arguments"
+        ensure_image
+        run_ftw_header_abi
         ;;
     pathname-lifecycle-header-abi)
         [ "$#" -eq 0 ] || fail "pathname-lifecycle-header-abi takes no arguments"
@@ -7701,6 +7724,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-directory-streams takes no arguments"
         ensure_image
         run_libc_directory_streams
+        ;;
+    libc-filesystem-traversal)
+        [ "$#" -eq 0 ] || fail "libc-filesystem-traversal takes no arguments"
+        ensure_image
+        run_libc_filesystem_traversal
+        ;;
+    libc-filesystem-directory)
+        [ "$#" -eq 0 ] || fail "libc-filesystem-directory takes no arguments"
+        ensure_image
+        run_libc_filesystem_directory
         ;;
     libc-lchmod-unsupported)
         [ "$#" -eq 0 ] || fail "libc-lchmod-unsupported takes no arguments"

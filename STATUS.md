@@ -2974,20 +2974,53 @@ header-requested unmangled C names. This compile-only header slice excludes
 actual archive linkage, directory-stream runtime behavior, header-family
 completion or promotion, and public x86 support; full x86-64 parity remains
 the stated promotion goal.
+The separate private `ftw-header-abi` matrix
+(`./scripts/dev-x86_64.sh ftw-header-abi`) compares project-header-first and
+pinned-musl 1.2.6 `<ftw.h>` declarations across seven base C11/C++17 profiles
+plus GNU C11/C++17 `_LARGEFILE64_SOURCE` alias profiles. Pinned musl exposes
+`ftw` in every profile, while the frozen project header
+keeps its legacy GNU/BSD/XOPEN-below-800 gate; that inherited divergence is
+recorded explicitly. `nftw` remains visible in every profile, and both LFS
+profiles prove `ftw64`/`nftw64` macro aliases plus unmangled C++ C-linkage
+spelling. The matrix is declaration evidence only,
+not archive-linkage, traversal-runtime, promotion, or public-support evidence.
 The separate private `libc-directory-streams` command
 (`./scripts/dev-x86_64.sh libc-directory-streams`) adds one actual static C
 runtime leaf after that header matrix: the same project-header C body runs
 through pinned musl and then a `-nostdlib -static` `crabc-libc` candidate. It
 checks only `opendir`/`fdopendir`/`closedir`/`dirfd`,
-`readdir`/`readdir_r`/cursor operations, C-locale `alphasort`, and
-`getdents`/`posix_getdents`, including 255-byte names, close-on-exec transfer,
+`readdir`/`readdir_r`/cursor operations, C-locale `alphasort`, GNU
+`versionsort`, and `getdents`/`posix_getdents`, including 255-byte names,
+close-on-exec transfer,
 raw record framing, and the x86 `openat=257`, `fstat=5`, `fcntl=72`, `mmap=9`,
 `munmap=11`, `close=3`, `getdents64=217`, and `lseek=8` paths. The private
 `DIR` state uses one anonymous mapping rather than selecting a C allocator;
-`scandir`, `versionsort`, walking policy, broad collation, cancellation, and
-the rest of C directory/POSIX runtime parity remain out of this leaf. It does
-not complete either the header or POSIX-runtime family, change promotion
-status, or establish public x86 support.
+`scandir`, walking policy, broad collation, cancellation, and the rest of C
+directory/POSIX runtime parity remain out of this leaf. It does not complete
+either the header or POSIX-runtime family, change promotion status, or
+establish public x86 support.
+The separately opt-in `libc-filesystem-traversal` command
+(`./scripts/dev-x86_64.sh libc-filesystem-traversal`) adds the allocation-free
+`x86-filesystem-traversal` static C artifact for exactly `ftw` and `nftw`; the
+default archive remains unchanged. Its project-header fixture first executes
+ordinary traversal through pinned musl, then proves physical/depth/mount,
+descriptor-limit, callback-return, and symlink behavior through the selected
+archive. The frozen `FTW_CHDIR` behavior is candidate-only evidence because
+musl 1.2.6 ignores that flag; the candidate also repairs callback CWD mutation
+and restores CWD on normal and abort exits. It selects neither `scandir` nor a
+C allocator, and callbacks must return normally because C++ exceptions and C
+`longjmp` cannot cross the Rust boundary. Cancellation policy, general
+filesystem policy, libc.so, CRT, loader, sysroot, family promotion, and public
+x86 support remain outside this artifact.
+The private `libc-filesystem-directory` aggregate
+(`./scripts/dev-x86_64.sh libc-filesystem-directory`) reruns the directory
+stream, `scandir`, and traversal artifacts and then verifies that the combined
+`x86-scandir,x86-filesystem-traversal` archive owns `alphasort`, `ftw`, `nftw`,
+`readdir_r`, `scandir`, `telldir`, and `versionsort`. It therefore selects the
+frozen `filesystem.directory` capability as `selected-private` while
+preserving the default static archive. `libc.posix-runtime` remains planned
+and nonpublic: this aggregate does not claim family completion, promotion, or
+general x86 runtime support.
 Its separate
 35-row `timeval-transitive-header-abi` matrix
 checks five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`, and

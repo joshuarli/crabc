@@ -3194,6 +3194,72 @@ oracle = [
 ]
 capabilities = ["process.signal"]
 
+[[family.verified_slice]]
+id = "static-c-filesystem-directory-selection"
+description = "Private native x86 selected-private frozen `filesystem.directory` capability inside still-planned `libc.posix-runtime`. Its exact seven-spelling AArch64 ABI-only roster is `alphasort`, `ftw`, `nftw`, `readdir_r`, `scandir`, `telldir`, and `versionsort`. The aggregate composes existing default directory-stream ownership for `alphasort`/`readdir_r`/`telldir`/`versionsort`, the separately opt-in allocator-backed `x86-scandir` client for `scandir`, and the dependency-free `x86-filesystem-traversal` feature for `ftw`/`nftw`. The frozen default selected-static archive and `static_c_abi_exports.txt` stay unchanged; only the combined `x86-scandir,x86-filesystem-traversal` archive adds the exact `ftw`/`nftw` feature closure. `./scripts/dev-x86_64.sh libc-filesystem-directory` reruns every component's header and pinned-musl/frozen-profile candidate gate before proving that combined archive roster. This selection includes the candidate-only frozen FTW_CHDIR behavior but does not claim general CWD/cancellation/allocator policy, a general filesystem runtime, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+capabilities = ["filesystem.directory"]
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/directory_streams.rs",
+  "libc/src/c_abi/x86_64/filesystem_traversal.rs",
+  "libc/src/c_abi/x86_64/stat_compat.rs",
+  "libc/src/c_abi/x86_64/fchdir.rs",
+  "libc/src/c_abi/x86_64/pathname_lifecycle.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/dirent.h",
+  "include/ftw.h",
+  "include/sys/stat.h",
+  "include/unistd.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/dirent_header_abi_probe.c",
+  "compat/x86_64/dirent_header_abi_probe.cpp",
+  "compat/x86_64/run_dirent_header_abi.sh",
+  "compat/x86_64/ftw_header_abi_probe.c",
+  "compat/x86_64/ftw_header_abi_probe.cpp",
+  "compat/x86_64/run_ftw_header_abi.sh",
+  "compat/x86_64/libc_directory_streams_probe.c",
+  "compat/x86_64/libc_directory_streams_start.S",
+  "compat/x86_64/run_libc_directory_streams.sh",
+  "compat/x86_64/libc_scandir_probe.c",
+  "compat/x86_64/run_libc_scandir.sh",
+  "compat/x86_64/libc_filesystem_traversal_probe.c",
+  "compat/x86_64/libc_filesystem_traversal_start.S",
+  "compat/x86_64/run_libc_filesystem_traversal.sh",
+  "compat/x86_64/run_libc_filesystem_directory.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_ftw_header_abi.py",
+  "compat/x86_64/tests/test_libc_filesystem_traversal.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The frozen capability roster in compat/crabc-rs/coverage.toml and compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv is exactly alphasort, ftw, nftw, readdir_r, scandir, telldir, and versionsort. The slice uses that immutable frozen roster for selection only; it changes neither frozen AArch64 inputs nor the x86 default selected-static export list.",
+  "The combined x86 feature closure is exactly x86-scandir,x86-filesystem-traversal. The unfeatured archive retains every static_c_abi_exports.txt spelling; relative to x86-scandir, enabling x86-filesystem-traversal adds only ftw and nftw. The aggregate makes no claim that the allocator-backed scandir client or the allocation-free traversal owner forms a general allocator or directory subsystem.",
+  "Each component retains its independent direct proof: the eleven-profile dirent C/C++ matrix and directory-stream differential; the scandir allocation-client differential; and the nine-profile ftw C/C++ matrix plus ordinary pinned-musl traversal and candidate-only frozen FTW_CHDIR differential. Callback C++ exceptions/C longjmp and caller-unserialized CWD changes remain outside the composed contract.",
+]
+x86_header_prerequisites = ["The slice composes the retained dirent.h and dedicated ftw.h project-first/pinned-musl C/C++ declaration matrices. They establish only the selected names, layouts, feature visibility, large-file aliases, and unmangled C++ spellings needed by the three component gates; no installed-header or general C ABI completion follows."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-filesystem-directory", scope = "Private selected-directory aggregate. It reruns libc-directory-streams, libc-scandir, and libc-filesystem-traversal, retaining each component's project-header, pinned-musl, static/mixed-runtime, allocation, ordinary traversal, and candidate-only frozen FTW_CHDIR evidence. It then requires the unchanged default selected-static surface and checks that x86-scandir,x86-filesystem-traversal owns exactly alphasort, ftw, nftw, readdir_r, scandir, telldir, and versionsort. It selects only frozen filesystem.directory privately; allocator/cancellation/CWD policy, general filesystem behavior, family completion, promotion, and public x86 support remain out of scope." }]
+oracle = [
+  { kind = "aarch64-contract", source = "compat/crabc-rs/coverage.toml and compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv", role = "Frozen exact seven-symbol filesystem.directory ABI-only roster. The private x86 aggregate accounts for that one capability without changing frozen AArch64 inputs or claiming a Rust facade/public-support transition." },
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Each component retains its pinned-musl directory, scandir, ftw, and nftw source/declaration/ordinary behavior oracle; the frozen FTW_CHDIR extension is separately recorded candidate evidence." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "Feature-archive C/C++ linkage, exact public feature-surface comparison, and static/mixed-runtime component closure contract." },
+]
+
 [[family.verified_artifact]]
 id = "static-c-secure-environment"
 description = "Private native x86 selected-static-archive GNU secure-environment observation block. One dependency-free crabc-libc archive resolves only GNU `secure_getenv` after equivalent pinned-musl execution; strong `__getauxval` and weak same-address `getauxval` remain the separately qualified static-c-auxv-observation sibling. The selected static startup first validates and publishes the immutable initial auxv through that raw-observation boundary, then caches musl's secure fact before init or application callbacks from the last matching AT_SECURE, AT_UID, AT_EUID, AT_GID, and AT_EGID values: nonzero final AT_SECURE or final UID/EUID or GID/EGID mismatch is secure. In secure mode secure_getenv returns null without inspecting its name or the environment; otherwise it returns the selected getenv borrowed value while preserving errno. This leaf observes startup security only: it does not alter direct raw auxv lookup, perform descriptor sanitation, credential mutation, or environment mutation, create processes or exec/spawn, install signal behavior, own a loader, allocate, complete a CRT, family promotion, or claim public x86 support."
@@ -8306,6 +8372,68 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, dirent.h declaration, and native behavior oracle for src/dirent/scandir.c: transient readdir selection, 1/3/7 realloc growth, exact d_reclen record copies, partial free rollback, stale errno restoration, qsort comparator ABI, output publication only on success, and caller free ownership. Musl 1.2.6 has no scandirat source/header/ABI entry." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 scandir/dirent pointer and callback calling convention, signed int result, hidden feature-only thunk linkage, static selected-archive extraction, and no dynamic-TLS/interpreter/DT_NEEDED final-artifact contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-filesystem-traversal"
+description = "Private native x86 opt-in allocation-free static C filesystem-traversal artifact inside still-planned `libc.posix-runtime`. The dependency-free `x86-filesystem-traversal = []` feature composes exactly `ftw` and `nftw` beside the established private DIR, stat-layout, CWD, raw-close, errno, and initial-TLS owners; it adds exactly those two public C spellings to the feature archive without changing default roots or `static_c_abi_exports.txt`. Pinned musl 1.2.6 `src/legacy/ftw.c` and `src/misc/nftw.c` supply the ordinary physical/following traversal, FTW type, descriptor-limit, history, errno, and fixed-PATH_MAX oracle. The x86 owner deliberately keeps the two callback ABIs separate rather than inheriting musl's undefined extra-argument callback cast; it does not select `scandir`, malloc, a C allocator, cancellation, generic filesystem policy, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. Pinned musl ignores `FTW_CHDIR`, while the frozen AArch64 profile selects callback-visible CWD, re-entry after callback CWD mutation, and restoration after normal/error/callback-abort exits. The candidate therefore proves that selected frozen addition separately; callers must externally serialize CWD-sensitive work. Callbacks must return normally: C++ exceptions and C `longjmp` cannot cross the Rust frame."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/filesystem_traversal.rs",
+  "libc/src/c_abi/x86_64/directory_streams.rs",
+  "include/dirent.h",
+  "libc/src/c_abi/x86_64/stat_compat.rs",
+  "libc/src/c_abi/x86_64/fchdir.rs",
+  "libc/src/c_abi/x86_64/pathname_lifecycle.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/fcntl.h",
+  "include/ftw.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/stat.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/stat.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/ftw_header_abi_probe.c",
+  "compat/x86_64/ftw_header_abi_probe.cpp",
+  "compat/x86_64/run_ftw_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_filesystem_traversal_probe.c",
+  "compat/x86_64/libc_filesystem_traversal_start.S",
+  "compat/x86_64/run_libc_filesystem_traversal.sh",
+  "compat/x86_64/run_musl_oracle.sh",
+  "compat/x86_64/tests/test_ftw_header_abi.py",
+  "compat/x86_64/tests/test_libc_filesystem_traversal.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The public System V AMD64 boundary is int ftw(const char *, int (*)(const char *, const struct stat *, int), int) and int nftw(const char *, int (*)(const char *, const struct stat *, int, struct FTW *), int, int): pathname/callback pointers occupy ordinary LP64 words, int limit/flags/results use signed four-byte integer words, and struct FTW is an 8-byte align-4 record with base/level at 0/4. The x86 owner calls each ABI directly rather than relying on musl's undefined three-to-four argument callback cast.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/legacy/ftw.c and src/misc/nftw.c: ftw is physical traversal; nftw retains FTW_PHYS/FTW_MOUNT/FTW_DEPTH classification, dangling-link FTW_SLN, EACCES FTW_NS and FTW_DNR callback behavior, root base/level history, cycle suppression, callback return propagation, fd_limit<=0 success, and PATH_MAX fixed-buffer ENAMETOOLONG behavior. Its pthread_setcancelstate guard is deliberately omitted because this x86 static boundary does not own general pthread cancellation state.",
+  "The selected walker uses existing openat=257/fstat=5/fcntl=72/mmap=9/munmap=11/close=3/getdents64=217/lseek=8 directory-stream machinery, newfstatat=262 metadata, chdir=80/getcwd=79/fchdir=81 CWD leaves, and raw -4095..-1 errno translation. It has no scandir or allocator path; each retained DIR is the existing private anonymous mapping rather than a reusable allocator.",
+  "Pinned musl ignores FTW_CHDIR. The frozen profile addition saves each directory-entry CWD as an O_DIRECTORY descriptor, uses an absolute I/O spelling for relative roots, re-enters after callbacks that change CWD, and restores on normal, error, and callback-abort exits. This moves process-global CWD, so callers externally serialize every CWD-sensitive operation; C++ exceptions and C longjmp must not cross the Rust callback frame.",
+  "The final static candidate retains only the selected PT_TLS errno datum with direct initial-exec TPOFF access and rejects TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF and __tls_get_addr; its freestanding fixture delegates first-thread setup to the existing archive Static Initial TLS v1 bootstrap without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl nine-profile C11/C++17 ftw.h matrix proves the x86 struct FTW layout, FTW constants, exact ftw/nftw callback signatures, frozen project ftw GNU/BSD/XOPEN<800 visibility versus pinned-musl's broader declaration, every-profile nftw visibility, GNU C/C++ _LARGEFILE64_SOURCE ftw64/nftw64 macro aliases, project-header provenance, and unmangled C++ C spellings. It is declaration evidence only, not installed-header closure or archive linkage."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-filesystem-traversal", scope = "Pinned-musl 1.2.6 ordinary traversal reference plus a true dependency-free x86 crabc-libc `--features x86-filesystem-traversal` `-nostdlib -static` candidate. The gate runs the dedicated ftw C/C++ header matrix; ratchets unchanged default selected-static exports and the exact feature delta `ftw`/`nftw`; rejects pinned-musl ftw/nftw/scandir/directory/allocator/cancellation fallback objects, interpreter, DT_NEEDED, unresolved symbols, dynamic TLS, allocator, and scandir; proves direct initial-TLS errno; and executes physical/depth/mount traversal, fd-limit, callback result, dangling-link, unreadable-directory FTW_DNR, and missing-path behavior. Candidate-only frozen FTW_CHDIR proof covers callback-visible CWD, callback CWD mutation repair, and normal/abort restoration. It does not select generic walking policy, cancellation, C allocation, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, ftw.h declaration, and ordinary traversal behavior oracle for src/legacy/ftw.c and src/misc/nftw.c: physical/following stat choice, FTW type/error classification, history, callback, path, descriptor-limit, and cancellation-guard comparison. The separate frozen FTW_CHDIR extension and separate direct callback ABIs are intentional x86 differences." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "openat/fstat/fcntl/mmap/munmap/close/getdents64/lseek/newfstatat/chdir/getcwd/fchdir syscall and raw errno behavior; process-global CWD and descriptor semantics; x86 static initial-TLS fixture facts." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 ftw/nftw callback pointers, signed int result, struct FTW layout, unmangled C++ linkage, and true-static selected-archive closure contract." },
 ]
 
 [[family.verified_artifact]]

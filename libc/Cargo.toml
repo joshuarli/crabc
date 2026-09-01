@@ -29,6 +29,10 @@ x86-allocator-string-duplication = ["x86-allocator-runtime"]
 # allocator boundaries. Keeping it opt-in leaves the dependency-free directory
 # stream artifact and the default x86 static export root unchanged.
 x86-scandir = ["x86-allocator-runtime"]
+# The historical ftw/nftw tree walker is an allocation-free directory client.
+# Keep it opt-in so the frozen selected-static archive does not silently add
+# callback-driven traversal or process-CWD mutation entry points.
+x86-filesystem-traversal = []
 # The environment owner needs the same C allocation provider as musl's
 # setenv/putenv vector and string bookkeeping. Keep it opt-in so existing
 # dependency-free selected-static artifacts do not silently acquire it.

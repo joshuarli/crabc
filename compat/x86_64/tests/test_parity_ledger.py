@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 42)
-        self.assertEqual(report["verified_artifact_count"], 305)
+        self.assertEqual(report["verified_slice_count"], 49)
+        self.assertEqual(report["verified_artifact_count"], 343)
         self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -26796,6 +26796,179 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError, "exact static directory runtime regression"
         ):
             ledger.validate_ledger(data)
+
+    def test_filesystem_traversal_artifact_stays_opt_in_and_nonselecting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-traversal"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/filesystem_traversal.rs",
+            "libc/src/c_abi/x86_64/directory_streams.rs",
+            "libc/src/c_abi/x86_64/stat_compat.rs",
+            "compat/x86_64/ftw_header_abi_probe.c",
+            "compat/x86_64/ftw_header_abi_probe.cpp",
+            "compat/x86_64/run_ftw_header_abi.sh",
+            "compat/x86_64/libc_filesystem_traversal_probe.c",
+            "compat/x86_64/libc_filesystem_traversal_start.S",
+            "compat/x86_64/run_libc_filesystem_traversal.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-filesystem-traversal"},
+        )
+        for phrase in (
+            "`x86-filesystem-traversal = []`",
+            "exactly `ftw` and `nftw`",
+            "src/legacy/ftw.c",
+            "src/misc/nftw.c",
+            "Pinned musl ignores `FTW_CHDIR`",
+            "C++ exceptions and C `longjmp`",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertFalse(exports & {"ftw", "nftw"})
+
+        changed_scope = self.data()
+        changed_artifacts = self.family(
+            changed_scope, "libc.posix-runtime"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-traversal"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        scope = evidence[0]["scope"]
+        assert isinstance(scope, str)
+        evidence[0]["scope"] = scope.replace("FTW_DNR", "unreadable directory")
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "filesystem traversal evidence must retain its direct scope boundary",
+        ):
+            ledger.require_filesystem_traversal_artifact(
+                self.family(changed_scope, "libc.posix-runtime")
+            )
+
+    def test_filesystem_directory_slice_selects_the_frozen_private_roster(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-directory-selection"
+        )
+        self.assertEqual(selected["capabilities"], ["filesystem.directory"])
+        self.assertEqual(
+            ledger.FILESYSTEM_DIRECTORY_SYMBOLS,
+            (
+                "alphasort",
+                "ftw",
+                "nftw",
+                "readdir_r",
+                "scandir",
+                "telldir",
+                "versionsort",
+            ),
+        )
+        for symbol in ledger.FILESYSTEM_DIRECTORY_SYMBOLS:
+            self.assertIn(f"`{symbol}`", selected["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/directory_streams.rs",
+            "libc/src/c_abi/x86_64/filesystem_traversal.rs",
+            "compat/x86_64/run_libc_directory_streams.sh",
+            "compat/x86_64/run_libc_scandir.sh",
+            "compat/x86_64/run_libc_filesystem_traversal.sh",
+            "compat/x86_64/run_libc_filesystem_directory.sh",
+        ):
+            self.assertIn(owner, selected["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in selected["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-filesystem-directory"},
+        )
+        for phrase in (
+            "`x86-scandir`",
+            "`x86-filesystem-traversal`",
+            "candidate-only frozen FTW_CHDIR",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertTrue(
+            {"alphasort", "readdir_r", "telldir", "versionsort"} <= exports
+        )
+        self.assertFalse(exports & {"ftw", "nftw", "scandir"})
+
+        changed_capability = self.data()
+        changed_slices = self.family(
+            changed_capability, "libc.posix-runtime"
+        )["verified_slice"]
+        assert isinstance(changed_slices, list)
+        changed_slice = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-directory-selection"
+        )
+        changed_slice["capabilities"] = ["filesystem.extensions"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "filesystem directory selection must own exactly filesystem.directory",
+        ):
+            ledger.require_filesystem_directory_slice(
+                self.family(changed_capability, "libc.posix-runtime")
+            )
+
+        changed_command = self.data()
+        changed_slices = self.family(changed_command, "libc.posix-runtime")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_slice = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-directory-selection"
+        )
+        changed_slice["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-filesystem-traversal"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "filesystem directory selection must use its closed aggregate command",
+        ):
+            ledger.require_filesystem_directory_slice(
+                self.family(changed_command, "libc.posix-runtime")
+            )
 
     def test_process_globals_getopt_artifact_stays_disjoint_and_non_promoting(self) -> None:
         data = self.data()

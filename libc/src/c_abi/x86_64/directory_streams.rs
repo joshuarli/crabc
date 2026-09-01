@@ -104,6 +104,18 @@ pub(super) struct DirectoryStream {
     buffer: [u8; DIRECTORY_BUFFER_SIZE],
 }
 
+/// One borrowed validated directory-entry name for an internal consumer.
+///
+/// The bytes are owned by the `DIR` buffer and remain valid only until the
+/// next operation on that same stream or `closedir`. Keeping the public
+/// `dirent` layout private prevents another x86 leaf from recapitulating its
+/// raw-record offsets merely to consume a name immediately.
+#[cfg(feature = "x86-filesystem-traversal")]
+pub(super) struct DirectoryEntryName {
+    pub(super) bytes: *const c_char,
+    pub(super) length: usize,
+}
+
 const _: () = {
     assert!(size_of::<Dirent>() == 280);
     assert!(align_of::<Dirent>() == 8);
@@ -418,6 +430,56 @@ pub unsafe extern "C" fn readdir(stream: *mut DirectoryStream) -> *mut Dirent {
     // SAFETY: the caller's documented live/exclusive stream requirement
     // permits a temporary mutable view of its private state.
     unsafe { next_record(&mut *stream) }
+}
+
+/// Read one validated entry name without exposing the private `dirent` layout.
+///
+/// Normal end-of-stream restores the caller's prior errno, while malformed
+/// records and kernel I/O failures return their raw selected errno for the
+/// sibling to publish through its own C boundary.
+///
+/// # Safety
+///
+/// `stream` must be a live, exclusively accessible `DIR *` returned by this
+/// leaf. A returned name borrows its private buffer until the next operation
+/// on `stream` or `closedir`.
+#[cfg(feature = "x86-filesystem-traversal")]
+pub(super) unsafe fn next_entry_name(
+    stream: *mut DirectoryStream,
+) -> Result<Option<DirectoryEntryName>, c_int> {
+    if stream.is_null() {
+        return Err(EBADF);
+    }
+    let saved_errno = unsafe { errno::get_errno() };
+    // A zero errno distinguishes normal exhaustion from a null result caused
+    // by the selected raw-record/I/O failure path.
+    unsafe { errno::set_errno(0) };
+    // SAFETY: the caller's live/exclusive stream contract permits a temporary
+    // mutable view of the same private state used by readdir.
+    let record = unsafe { next_record(&mut *stream) };
+    let read_errno = unsafe { errno::get_errno() };
+    if record.is_null() {
+        if read_errno != 0 {
+            return Err(read_errno);
+        }
+        // SAFETY: normal end-of-stream preserves a preexisting errno exactly
+        // as the selected public readdir boundary does.
+        unsafe { errno::set_errno(saved_errno) };
+        return Ok(None);
+    }
+
+    let name = unsafe { (*record).name.as_ptr() };
+    let mut length = 0;
+    while length <= DIRECTORY_NAME_MAX && unsafe { *name.add(length) } != 0 {
+        length += 1;
+    }
+    debug_assert!(length <= DIRECTORY_NAME_MAX);
+    // SAFETY: a successful record read does not own errno publication.
+    unsafe { errno::set_errno(saved_errno) };
+    Ok(Some(DirectoryEntryName {
+        bytes: name,
+        length,
+    }))
 }
 
 /// Copy the next directory record into caller-owned `struct dirent` storage.

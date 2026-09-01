@@ -1546,6 +1546,27 @@ DIRECTORY_STREAM_UNSELECTED_SYMBOLS = (
     "scandir",
 )
 
+FILESYSTEM_DIRECTORY_SYMBOLS = (
+    "alphasort",
+    "ftw",
+    "nftw",
+    "readdir_r",
+    "scandir",
+    "telldir",
+    "versionsort",
+)
+
+FILESYSTEM_DIRECTORY_FEATURES = (
+    "x86-scandir",
+    "x86-filesystem-traversal",
+)
+
+FILESYSTEM_DIRECTORY_COMPONENT_RUNNERS = (
+    "run_libc_directory_streams.sh",
+    "run_libc_scandir.sh",
+    "run_libc_filesystem_traversal.sh",
+)
+
 EXTENDED_ATTRIBUTE_SYMBOLS = (
     "setxattr",
     "lsetxattr",
@@ -37814,6 +37835,558 @@ def require_scandir_allocation_client_artifact(family: Mapping[str, Any]) -> Non
     )
 
 
+def require_filesystem_traversal_artifact(family: Mapping[str, Any]) -> None:
+    """Keep opt-in ftw/nftw provenance below filesystem capability selection."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        str(family.get("status", "")),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-filesystem-traversal"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-filesystem-traversal artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-filesystem-traversal must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-filesystem-traversal must not select a capability",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-filesystem-traversal needs a description",
+    )
+    for phrase in (
+        "opt-in allocation-free static C filesystem-traversal artifact",
+        "`x86-filesystem-traversal = []`",
+        "exactly `ftw` and `nftw`",
+        "static_c_abi_exports.txt",
+        "src/legacy/ftw.c",
+        "src/misc/nftw.c",
+        "undefined extra-argument callback cast",
+        "`scandir`, malloc, a C allocator, cancellation",
+        "Pinned musl ignores `FTW_CHDIR`",
+        "callback-visible CWD",
+        "C++ exceptions and C `longjmp`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-filesystem-traversal description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-filesystem-traversal.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/filesystem_traversal.rs",
+        "libc/src/c_abi/x86_64/directory_streams.rs",
+        "libc/src/c_abi/x86_64/stat_compat.rs",
+        "libc/src/c_abi/x86_64/fchdir.rs",
+        "libc/src/c_abi/x86_64/pathname_lifecycle.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/ftw.h",
+        "include/dirent.h",
+        "include/sys/stat.h",
+        "include/unistd.h",
+        "compat/x86_64/ftw_header_abi_probe.c",
+        "compat/x86_64/ftw_header_abi_probe.cpp",
+        "compat/x86_64/run_ftw_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_filesystem_traversal_probe.c",
+        "compat/x86_64/libc_filesystem_traversal_start.S",
+        "compat/x86_64/run_libc_filesystem_traversal.sh",
+        "compat/x86_64/tests/test_ftw_header_abi.py",
+        "compat/x86_64/tests/test_libc_filesystem_traversal.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-filesystem-traversal source owners omit {owner}",
+        )
+
+    manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "filesystem_traversal.rs"
+    ).read_text(encoding="utf-8")
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "x86-filesystem-traversal = []" in manifest,
+        "filesystem traversal feature must remain dependency-free",
+    )
+    require(
+        '#[cfg(feature = "x86-filesystem-traversal")]\n#[path = "filesystem_traversal.rs"]\nmod filesystem_traversal;'
+        in static_root,
+        "x86 static C ABI must compose traversal only behind its opt-in feature",
+    )
+    require(
+        not ({"ftw", "nftw"} & static_exports),
+        "filesystem traversal must not widen default static exports",
+    )
+    for phrase in (
+        "src/legacy/ftw.c",
+        "src/misc/nftw.c",
+        "FTW_CHDIR",
+        "pthread cancellation",
+        "C++ exceptions and C `longjmp`",
+        'pub unsafe extern "C" fn ftw(',
+        'pub unsafe extern "C" fn nftw(',
+        "is_directory_kind(kind) && fd_limit > 0",
+        "A preceding non-directory callback may have changed CWD.",
+    ):
+        require(
+            phrase in implementation,
+            f"filesystem traversal implementation omits {phrase}",
+        )
+    for forbidden in ("cabi_scandir", "cabi_malloc", 'fn scandir('):
+        require(
+            forbidden not in implementation,
+            f"filesystem traversal must not select {forbidden}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-filesystem-traversal.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "struct FTW" in item
+            and "undefined three-to-four argument callback cast" in item
+            for item in prerequisites
+        ),
+        "filesystem traversal must retain its direct callback ABI boundary",
+    )
+    require(
+        any(
+            "src/legacy/ftw.c" in item
+            and "src/misc/nftw.c" in item
+            and "FTW_DNR" in item
+            and "fd_limit<=0" in item
+            and "pthread_setcancelstate" in item
+            for item in prerequisites
+        ),
+        "filesystem traversal must retain musl source and cancellation provenance",
+    )
+    require(
+        any(
+            "openat=257" in item
+            and "newfstatat=262" in item
+            and "chdir=80" in item
+            and "fchdir=81" in item
+            and "no scandir or allocator path" in item
+            for item in prerequisites
+        ),
+        "filesystem traversal must retain its selected syscall/allocator boundary",
+    )
+    require(
+        any(
+            "Pinned musl ignores FTW_CHDIR" in item
+            and "absolute I/O spelling" in item
+            and "C++ exceptions and C longjmp" in item
+            for item in prerequisites
+        ),
+        "filesystem traversal must retain its frozen CHDIR/callback boundary",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "filesystem traversal must retain its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-filesystem-traversal.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "nine-profile" in item
+            and "ftw.h" in item
+            and "ftw64/nftw64" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "filesystem traversal must retain its dedicated ftw header matrix",
+    )
+
+    header_runner = (ROOT / "compat" / "x86_64" / "run_ftw_header_abi.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "CRABC_FTW_REQUIRE_LARGEFILE_ALIASES",
+        "c11-gnu-largefile",
+        "cxx17-gnu-largefile",
+        "frozen ftw visibility divergence recorded",
+    ):
+        require(
+            snippet in header_runner,
+            f"filesystem traversal ftw header runner omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_filesystem_traversal.sh"
+    ).read_text(encoding="utf-8")
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_filesystem_traversal_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "x86-filesystem-traversal",
+        "run_ftw_header_abi.sh",
+        "pinned-musl ordinary traversal reference",
+        "frozen FTW_CHDIR profile",
+        "ftw.lo",
+        "nftw.lo",
+        "scandir.lo",
+        "pthread_setcancelstate.lo",
+        "-nostdlib -static",
+    ):
+        require(
+            snippet in runner,
+            f"filesystem traversal runner omits {snippet}",
+        )
+    for snippet in (
+        "check_directory_not_readable",
+        "FTW_DNR",
+        "SYS_setresuid",
+        "CRABC_TRAVERSAL_CANDIDATE",
+        "walk-tree/alpha",
+        "type == FTW_F",
+    ):
+        require(
+            snippet in probe,
+            f"filesystem traversal probe omits {snippet}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "filesystem traversal needs native evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-filesystem-traversal"},
+        "filesystem traversal must use its closed direct command",
+    )
+    scope = evidence[0].get("scope") if evidence else None
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6 ordinary traversal reference",
+                "`-nostdlib -static` candidate",
+                "exact feature delta `ftw`/`nftw`",
+                "FTW_DNR",
+                "frozen FTW_CHDIR",
+                "C allocation",
+                "public x86 support",
+            )
+        ),
+        "filesystem traversal evidence must retain its direct scope boundary",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "filesystem traversal needs an oracle")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/legacy/ftw.c" in entry["role"]
+            and "src/misc/nftw.c" in entry["role"]
+            and "FTW_CHDIR" in entry["role"]
+            for entry in oracle
+        ),
+        "filesystem traversal must retain musl/frozen behavior provenance",
+    )
+
+
+def require_filesystem_directory_slice(family: Mapping[str, Any]) -> None:
+    """Keep the frozen seven-symbol directory selection composed and private."""
+
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.posix-runtime].verified_slice",
+        str(family.get("status", "")),
+        string_list(
+            family.get("capabilities"),
+            "family[libc.posix-runtime].capabilities",
+            allow_empty=True,
+        ),
+    )
+    matching = [
+        entry
+        for entry in slices
+        if entry.get("id") == "static-c-filesystem-directory-selection"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one filesystem.directory selection slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "filesystem.directory selection must not promote libc.posix-runtime",
+    )
+    selected = matching[0]
+    require(
+        selected.get("capabilities") == ["filesystem.directory"],
+        "filesystem directory selection must own exactly filesystem.directory",
+    )
+
+    coverage = load_toml(ROOT / "compat" / "crabc-rs" / "coverage.toml")
+    coverage_records = coverage.get("capability")
+    require(isinstance(coverage_records, list), "coverage capability records are missing")
+    coverage_entry = next(
+        (
+            entry
+            for entry in coverage_records
+            if isinstance(entry, Mapping) and entry.get("id") == "filesystem.directory"
+        ),
+        None,
+    )
+    require(
+        isinstance(coverage_entry, Mapping)
+        and coverage_entry.get("symbols") == list(FILESYSTEM_DIRECTORY_SYMBOLS),
+        "filesystem.directory frozen symbol roster drifted",
+    )
+    frozen_rows = {
+        line.split("\t", 1)[0]
+        for line in (
+            ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "libc.a.static.tsv"
+        ).read_text(encoding="utf-8").splitlines()[1:]
+    }
+    require(
+        set(FILESYSTEM_DIRECTORY_SYMBOLS) <= frozen_rows,
+        "filesystem.directory frozen ABI rows drifted",
+    )
+
+    description = selected.get("description")
+    require(
+        isinstance(description, str),
+        "filesystem directory selection needs a description",
+    )
+    for symbol in FILESYSTEM_DIRECTORY_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"filesystem directory selection description omits frozen {symbol}",
+        )
+    for phrase in (
+        "Private native x86 selected-private frozen `filesystem.directory` capability",
+        "still-planned `libc.posix-runtime`",
+        "`x86-scandir`",
+        "`x86-filesystem-traversal`",
+        "frozen default selected-static archive",
+        "`static_c_abi_exports.txt`",
+        "`./scripts/dev-x86_64.sh libc-filesystem-directory`",
+        "candidate-only frozen FTW_CHDIR",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"filesystem directory selection description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            selected.get("source_owners"),
+            "static-c-filesystem-directory-selection.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/directory_streams.rs",
+        "libc/src/c_abi/x86_64/filesystem_traversal.rs",
+        "include/dirent.h",
+        "include/ftw.h",
+        "compat/x86_64/run_dirent_header_abi.sh",
+        "compat/x86_64/run_ftw_header_abi.sh",
+        "compat/x86_64/run_libc_directory_streams.sh",
+        "compat/x86_64/run_libc_scandir.sh",
+        "compat/x86_64/run_libc_filesystem_traversal.sh",
+        "compat/x86_64/run_libc_filesystem_directory.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"filesystem directory selection source owners omit {owner}",
+        )
+    for runner in FILESYSTEM_DIRECTORY_COMPONENT_RUNNERS:
+        require(
+            f"compat/x86_64/{runner}" in owners,
+            f"filesystem directory selection source owners omit component {runner}",
+        )
+
+    prerequisites = nonempty_strings(
+        selected.get("x86_abi_prerequisites"),
+        "static-c-filesystem-directory-selection.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            all(symbol in item for symbol in FILESYSTEM_DIRECTORY_SYMBOLS)
+            and "immutable frozen roster" in item
+            and "default selected-static export list" in item
+            for item in prerequisites
+        ),
+        "filesystem directory selection must retain its frozen/default boundary",
+    )
+    require(
+        any(
+            "x86-scandir,x86-filesystem-traversal" in item
+            and "adds only ftw and nftw" in item
+            and "general allocator or directory subsystem" in item
+            for item in prerequisites
+        ),
+        "filesystem directory selection must retain its exact feature closure",
+    )
+    require(
+        any(
+            "directory-stream differential" in item
+            and "scandir allocation-client differential" in item
+            and "nine-profile ftw" in item
+            and "FTW_CHDIR" in item
+            for item in prerequisites
+        ),
+        "filesystem directory selection must retain component evidence closure",
+    )
+    headers = nonempty_strings(
+        selected.get("x86_header_prerequisites"),
+        "static-c-filesystem-directory-selection.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "dirent.h" in item
+            and "ftw.h" in item
+            and "large-file aliases" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "filesystem directory selection must retain composed header evidence",
+    )
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        str(family.get("status", "")),
+    )
+    artifact_ids = {entry.get("id") for entry in artifacts}
+    for artifact_id in (
+        "static-c-directory-streams",
+        "static-c-scandir-allocation-client",
+        "static-c-filesystem-traversal",
+    ):
+        require(
+            artifact_id in artifact_ids,
+            f"filesystem directory selection omits {artifact_id}",
+        )
+
+    manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        'x86-scandir = ["x86-allocator-runtime"]' in manifest
+        and "x86-filesystem-traversal = []" in manifest,
+        "filesystem directory selection feature declarations drifted",
+    )
+    require(
+        {"alphasort", "readdir_r", "telldir", "versionsort"} <= static_exports
+        and not ({"ftw", "nftw", "scandir"} & static_exports),
+        "filesystem directory selection must preserve the frozen default export split",
+    )
+    aggregate_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_filesystem_directory.sh"
+    ).read_text(encoding="utf-8")
+    for runner in FILESYSTEM_DIRECTORY_COMPONENT_RUNNERS:
+        require(
+            runner in aggregate_runner,
+            f"filesystem directory aggregate omits {runner}",
+        )
+    for snippet in (
+        "x86-scandir,x86-filesystem-traversal",
+        "default selected-static C ABI export surface drifted",
+        "ftw",
+        "nftw",
+        "versionsort",
+    ):
+        require(
+            snippet in aggregate_runner,
+            f"filesystem directory aggregate omits {snippet}",
+        )
+
+    evidence = selected.get("native_evidence")
+    require(isinstance(evidence, list), "filesystem directory selection needs native evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-filesystem-directory"},
+        "filesystem directory selection must use its closed aggregate command",
+    )
+    scope = evidence[0].get("scope") if evidence else None
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "libc-directory-streams",
+                "libc-scandir",
+                "libc-filesystem-traversal",
+                "x86-scandir,x86-filesystem-traversal",
+                "alphasort, ftw, nftw, readdir_r, scandir, telldir, and versionsort",
+                "filesystem.directory privately",
+                "family completion, promotion, and public x86 support",
+            )
+        ),
+        "filesystem directory selection evidence must retain its aggregate scope",
+    )
+
+
 def require_extended_attributes_artifact(family: Mapping[str, Any]) -> None:
     """Keep the complete selected static C xattr family private and exact."""
     artifacts = require_verified_artifacts(
@@ -70207,6 +70780,8 @@ def validate_ledger(
     require_ulimit_artifact(by_id["libc.posix-runtime"])
     require_directory_streams_artifact(by_id["libc.posix-runtime"])
     require_scandir_allocation_client_artifact(by_id["libc.posix-runtime"])
+    require_filesystem_traversal_artifact(by_id["libc.posix-runtime"])
+    require_filesystem_directory_slice(by_id["libc.posix-runtime"])
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])
     require_inet_ntoa_artifact(by_id["libc.resolver"])

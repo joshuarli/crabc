@@ -129,8 +129,8 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             report["capability_state_counts"],
             {
                 "implemented-foundation": 180,
-                "missing": 20,
-                "selected-private": 23,
+                "missing": 19,
+                "selected-private": 24,
             },
         )
         self.assertEqual(len(report["families"]), 26)
@@ -174,6 +174,15 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         self.assertEqual(
             environment_mutation["contract_state"], "selected-private"
         )
+        filesystem_directory = next(
+            row
+            for row in report["capabilities"]
+            if row["id"] == "filesystem.directory"
+        )
+        self.assertEqual(filesystem_directory["x86_family"], "libc.posix-runtime")
+        self.assertEqual(
+            filesystem_directory["contract_state"], "selected-private"
+        )
         for identifier, family in (
             ("legacy.misc", "libc.c-abi-compat"),
             ("process.signal", "libc.posix-runtime"),
@@ -207,8 +216,16 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         posix_runtime = next(
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
-        self.assertEqual(posix_runtime["verified_artifact_count"], 157)
-        self.assertEqual(posix_runtime["verified_slice_count"], 5)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 158)
+        self.assertEqual(posix_runtime["verified_slice_count"], 6)
+        self.assertEqual(
+            sum(row["verified_artifact_count"] for row in report["families"]),
+            343,
+        )
+        self.assertEqual(
+            sum(row["verified_slice_count"] for row in report["families"]),
+            49,
+        )
         self.assertNotIn(
             {"family": "libc.posix-runtime", "id": "static-c-environment"},
             report["selected_private_artifacts"],
@@ -229,6 +246,13 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {"family": "libc.posix-runtime", "id": "static-c-wait-extensions"},
             report["selected_private_artifacts"],
         )
+        self.assertIn(
+            {
+                "family": "libc.posix-runtime",
+                "id": "static-c-filesystem-traversal",
+            },
+            report["selected_private_artifacts"],
+        )
         self.assertEqual(
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
@@ -247,7 +271,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
         self.assertEqual(posix_runtime["contract_state"], "selected-private")
-        self.assertEqual(posix_runtime["verified_artifact_count"], 157)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 158)
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-sleep"},
             report["selected_private_artifacts"],

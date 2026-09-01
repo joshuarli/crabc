@@ -658,6 +658,9 @@ mod lchown;
 mod hasmntopt;
 #[path = "directory_streams.rs"]
 mod directory_streams;
+#[cfg(feature = "x86-filesystem-traversal")]
+#[path = "filesystem_traversal.rs"]
+mod filesystem_traversal;
 #[path = "system_observation.rs"]
 mod system_observation;
 #[path = "system_information.rs"]

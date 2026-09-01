@@ -1646,6 +1646,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    candidate-header-closure) ;;", source)
         self.assertIn("    installed-header-tree-closure) ;;", source)
         self.assertIn("    dirent-header-abi) ;;", source)
+        self.assertIn("    ftw-header-abi) ;;", source)
         self.assertIn(
             "    inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi) ;;",
             source,
@@ -1774,6 +1775,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "event-descriptors-header-abi",
             "fanotify-header-abi",
             "dirent-header-abi",
+            "ftw-header-abi",
             "pathname-lifecycle-header-abi",
             "timeval-transitive-header-abi",
             "sys-time-direct-header-abi",
@@ -1805,6 +1807,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-extended-attributes",
             "libc-pathname-lifecycle",
             "libc-directory-streams",
+            "libc-filesystem-traversal",
+            "libc-filesystem-directory",
             "libc-lchmod-unsupported",
             "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
@@ -1967,6 +1971,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-event-descriptors", source)
         self.assertIn("libc-pathname-lifecycle", source)
         self.assertIn("libc-directory-streams", source)
+        self.assertIn("libc-filesystem-traversal", source)
+        self.assertIn("libc-filesystem-directory", source)
         self.assertIn("libc-lchmod-unsupported", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-sched-priority-bounds", source)
@@ -30407,6 +30413,39 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '    libc-directory-streams)\n        [ "$#" -eq 0 ] || fail "libc-directory-streams takes no arguments"',
             runner,
         )
+
+    def test_filesystem_directory_traversal_dispatch_stays_explicit(self) -> None:
+        """Keep ftw/nftw's opt-in gate and selected aggregate independently callable."""
+
+        traversal_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_filesystem_traversal.sh"
+        ).read_text(encoding="utf-8")
+        aggregate_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_filesystem_directory.sh"
+        ).read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "run_ftw_header_abi()",
+            "/workspace/compat/x86_64/run_ftw_header_abi.sh",
+            "run_libc_filesystem_traversal()",
+            "/workspace/compat/x86_64/run_libc_filesystem_traversal.sh",
+            "run_libc_filesystem_directory()",
+            "/workspace/compat/x86_64/run_libc_filesystem_directory.sh",
+            '    ftw-header-abi)\n        [ "$#" -eq 0 ] || fail "ftw-header-abi takes no arguments"',
+            '    libc-filesystem-traversal)\n        [ "$#" -eq 0 ] || fail "libc-filesystem-traversal takes no arguments"',
+            '    libc-filesystem-directory)\n        [ "$#" -eq 0 ] || fail "libc-filesystem-directory takes no arguments"',
+        ):
+            self.assertIn(required, runner)
+
+        for component in (
+            "run_libc_directory_streams.sh",
+            "run_libc_scandir.sh",
+            "run_libc_filesystem_traversal.sh",
+        ):
+            self.assertIn(component, aggregate_runner)
+        self.assertIn("x86-filesystem-traversal", traversal_runner)
+        self.assertIn("x86-scandir", aggregate_runner)
 
     def test_libc_static_c_abi_ffs_artifact_stays_narrow(self) -> None:
         static_root = (

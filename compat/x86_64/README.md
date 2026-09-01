@@ -269,6 +269,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh machine-context-header-abi
 ./scripts/dev-x86_64.sh types-header-abi
 ./scripts/dev-x86_64.sh stat-header-abi
+./scripts/dev-x86_64.sh ftw-header-abi
 ./scripts/dev-x86_64.sh utime-header-abi
 ./scripts/dev-x86_64.sh pthread-c11-header-abi
 ./scripts/dev-x86_64.sh pthread-spin-destroy-header-abi
@@ -555,6 +556,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-allocator-basic-runtime-v1
 ./scripts/dev-x86_64.sh libc-allocator-string-duplication
 ./scripts/dev-x86_64.sh libc-scandir
+./scripts/dev-x86_64.sh libc-filesystem-traversal
+./scripts/dev-x86_64.sh libc-filesystem-directory
 ./scripts/dev-x86_64.sh libc-allocator-observability
 ./scripts/dev-x86_64.sh libc-alloca
 ./scripts/dev-x86_64.sh libc-stack-chk-fail
@@ -850,6 +853,18 @@ remains GNU-only. The C++ `nm` check proves only header-requested unmangled C
 names. It is compile-only evidence: it does not prove actual archive linkage,
 directory-stream runtime behavior, directory/header-family promotion, or
 public x86 support. Full x86-64 parity remains the separate promotion goal.
+
+The separate private `ftw-header-abi` gate
+(`./scripts/dev-x86_64.sh ftw-header-abi`) compares project-header-first and
+pinned-musl 1.2.6 `<ftw.h>` declarations across seven base C11/C++17 feature
+profiles plus GNU C11/C++17 `_LARGEFILE64_SOURCE` alias profiles. Pinned musl
+exposes `ftw` in every profile, while the frozen project
+header deliberately retains its legacy GNU/BSD/XOPEN-below-800 visibility
+gate; the runner records that inherited divergence rather than hiding it.
+`nftw` remains declared in every profile; both LFS profiles prove the `ftw64`
+and `nftw64` macro aliases, and the C++ probes retain the unmangled C
+spellings. This is declaration evidence only: it does not prove
+archive linkage, traversal runtime behavior, promotion, or public x86 support.
 
 The separate private `xattr-header-abi` gate
 (`./scripts/dev-x86_64.sh xattr-header-abi`) compares project-header-first and
@@ -1479,6 +1494,33 @@ Rust boundary. It does not select `scandirat`, directory walking, allocator
 lifecycle/interposition, failures inside pinned-musl startup/opendir or every
 backend-corruption path, libc.so, CRT, loader, sysroot, promotion, or public
 x86 support.
+
+`libc-filesystem-traversal`
+(`./scripts/dev-x86_64.sh libc-filesystem-traversal`) is the separate opt-in,
+allocation-free static C artifact for `ftw` and `nftw`. Its
+`x86-filesystem-traversal` feature adds exactly those two exports without
+changing the default static archive; it walks from the established directory
+boundary rather than selecting `scandir` or a C allocator. The project-header
+fixture differentials ordinary traversal against pinned musl 1.2.6 and proves
+the frozen `FTW_CHDIR` profile only on the candidate, because musl 1.2.6
+ignores that flag. It covers physical/depth/mount traversal, descriptor-limit
+behavior, callback return, symlink cases, and callback CWD repair and
+restoration. Callbacks must return normally: C++ exceptions and C `longjmp`
+cannot cross the Rust boundary. Cancellation policy, general filesystem
+policy, libc.so, CRT, loader, sysroot, family promotion, and public x86
+support remain outside this artifact.
+
+`libc-filesystem-directory`
+(`./scripts/dev-x86_64.sh libc-filesystem-directory`) is the private aggregate
+over `libc-directory-streams`, `libc-scandir`, and
+`libc-filesystem-traversal`. It reruns their independent header, ordinary-musl,
+frozen-`FTW_CHDIR`, directory-stream, and allocation-client evidence, then
+proves that the combined `x86-scandir,x86-filesystem-traversal` archive owns
+the frozen `filesystem.directory` roster: `alphasort`, `ftw`, `nftw`,
+`readdir_r`, `scandir`, `telldir`, and `versionsort`. This makes that frozen
+capability `selected-private` while preserving the default archive.
+`libc.posix-runtime` remains planned and nonpublic; the aggregate does not
+claim family completion, promotion, or general x86 runtime support.
 
 `libc-lchmod-unsupported` is a private native `verified_slice`, not a
 promotion. Its project-header C fixture first runs a raw-created dangling
@@ -7248,7 +7290,8 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
 `libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-strtok`, `libc-random-entropy`, `libc-memory-search`,
-`libc-string-copy`, `libc-allocator-string-duplication`, `libc-scandir`, `libc-error-strings`,
+`libc-string-copy`, `libc-allocator-string-duplication`, `libc-scandir`,
+`libc-filesystem-traversal`, `libc-filesystem-directory`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-l64a`, `libc-a64l`, `libc-intmax-arithmetic`, `libc-credential-observation`,
 `libc-ffs`, `libc-math-complex`, `libc-math-complex-complete`, `libc-elementary-sqrt-fenv`, and
