@@ -1,5 +1,5 @@
 {
-  "format": 5,
+  "format": 6,
   "schema": "crabc-mimalloc-canonical-upstream-stress",
   "scope": {
     "claim": "one canonical executable inventory of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
@@ -290,7 +290,7 @@
     ]
   },
   "report": {
-    "format": 5,
+    "format": 6,
     "schema": "crabc-mimalloc-canonical-upstream-stress-report",
     "path": ".work/reports/allocator/upstream-stress/latest.json",
     "atomic_publish": true,
@@ -353,6 +353,9 @@
       "selected_static_libc",
       "selected_backend_build_record",
       "stress_binary"
+    ],
+    "execution_scoped_artifact_ids": [
+      "staged_canonical_loader"
     ]
   },
   "compile_requirements": {

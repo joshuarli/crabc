@@ -2735,29 +2735,15 @@ class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
         pin first. This isolated fixture instead passes a coherent synthetic
         archive/pin/fixture triple directly to the report validator, so its
         tar extraction and report binding remain real without pretending the
-        synthetic tarball is the pinned upstream archive.
+        synthetic tarball is the pinned upstream archive. Its staged loader
+        record stays execution-scoped evidence: no later `/lib` file is
+        fabricated or read by this test.
         """
-
-        root = Path(fixture["root"])
-        staged_loader = Path(fixture["staged_loader"])
-        canonical_loader = Path("/lib/ld-crabc-aarch64.so.1")
-        observed_file_record = RUNNER.canonical_upstream_stress_observed_file_record
-
-        def read_fixture_staged_loader(
-            observed_root: Path, path: Path, subject: str
-        ) -> dict[str, object]:
-            if path == canonical_loader:
-                return cls.canonical_loader_record(root, staged_loader)
-            return observed_file_record(observed_root, path, subject)
 
         with mock.patch.object(
             RUNNER,
             "canonical_current_git_source_state",
             return_value=(fixture["source"] if source_state is None else source_state),
-        ), mock.patch.object(
-            RUNNER,
-            "canonical_upstream_stress_observed_file_record",
-            side_effect=read_fixture_staged_loader,
         ):
             try:
                 verified = RUNNER.canonical_upstream_stress_validate_report(
@@ -2783,17 +2769,30 @@ class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
             pin=RUNNER.load_pin(),
         )
 
-    def test_report_validator_verifies_the_complete_current_head_matrix(self) -> None:
+    def test_report_validator_accepts_execution_scoped_staged_loader_record(self) -> None:
         RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
             fixture = self.write_fixture(Path(temporary))
-            evidence = self.validate_fixture(fixture)
+            Path(fixture["staged_loader"]).unlink()
+            observed_file_record = RUNNER.canonical_upstream_stress_observed_file_record
+            with mock.patch.object(
+                RUNNER,
+                "canonical_upstream_stress_observed_file_record",
+                wraps=observed_file_record,
+            ) as live_reads:
+                evidence = self.validate_fixture(fixture)
 
         self.assertEqual(evidence["status"], "verified")
         self.assertEqual(evidence["evidence_scope"], "shadow_subset")
         self.assertEqual(evidence["matrix"], {"case_count": 8, "worker_counts": [1, 2, 4, 8]})
         self.assertEqual(evidence["large_object_mode"]["status"], "not-claimed")
         self.assertEqual(evidence["current_head"]["source"], fixture["source"])
+        self.assertFalse(
+            any(
+                call.args[1] == Path("/lib/ld-crabc-aarch64.so.1")
+                for call in live_reads.call_args_list
+            )
+        )
 
     def test_archive_member_binding_rejects_a_coherent_archive_substitution(self) -> None:
         RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -2886,7 +2885,18 @@ class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
                 policy_drift, RUNNER.load_pin()
             )
 
-    def test_report_validator_rejects_relabelled_runtime_artifact_or_loader_mismatch(self) -> None:
+        broadened_scope = json.loads(json.dumps(contract))
+        broadened_scope["report"]["execution_scoped_artifact_ids"].append(
+            "selected_loader"
+        )
+        with self.assertRaisesRegex(
+            RUNNER.CanonicalUpstreamStressRejected, "report policy"
+        ):
+            RUNNER.validate_canonical_upstream_stress_contract(
+                broadened_scope, RUNNER.load_pin()
+            )
+
+    def test_report_validator_rejects_relabelled_runtime_artifact_or_execution_scoped_loader_drift(self) -> None:
         RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
             fixture = self.write_fixture(Path(temporary))
@@ -2911,23 +2921,42 @@ class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
             report["artifacts"]["staged_canonical_loader"] = self.canonical_loader_record(
                 root, staged_loader
             )
-            loader_evidence = self.validate_fixture(fixture)
+            mismatch_evidence = self.validate_fixture(fixture)
 
-            with self.assertRaisesRegex(
-                RUNNER.CanonicalUpstreamStressRejected, "noncanonical path"
-            ):
-                RUNNER.canonical_upstream_stress_live_file_record(
-                    root,
-                    self.file_record(root, staged_loader),
-                    "staged canonical loader",
-                    expected_path=Path("/lib/ld-crabc-aarch64.so.1"),
-                    allowed_external_path=Path("/lib/ld-crabc-aarch64.so.1"),
-                )
+        scoped_path_evidence: list[dict[str, object]] = []
+        for staged_path in (
+            "canonical-loader/ld-crabc-aarch64.so.1",
+            "/lib/not-the-crabc-loader.so",
+        ):
+            with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+                fixture = self.write_fixture(Path(temporary))
+                report = fixture["report"]
+                assert isinstance(report, dict)
+                record = dict(report["artifacts"]["staged_canonical_loader"])
+                record["path"] = staged_path
+                report["artifacts"]["staged_canonical_loader"] = record
+                scoped_path_evidence.append(self.validate_fixture(fixture))
+
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            report = fixture["report"]
+            assert isinstance(report, dict)
+            report["artifacts"]["staged_canonical_loader"] = {
+                "bytes": 0,
+                "path": "/lib/ld-crabc-aarch64.so.1",
+                "sha256": hashlib.sha256(b"").hexdigest(),
+            }
+            empty_evidence = self.validate_fixture(fixture)
 
         self.assertEqual(relabelled_evidence["status"], "rejected")
         self.assertIn("owned sysroot manifest", relabelled_evidence["reason"])
-        self.assertEqual(loader_evidence["status"], "rejected")
-        self.assertIn("staged loader", loader_evidence["reason"])
+        self.assertEqual(mismatch_evidence["status"], "rejected")
+        self.assertIn("staged loader", mismatch_evidence["reason"])
+        for evidence in scoped_path_evidence:
+            self.assertEqual(evidence["status"], "rejected")
+            self.assertIn("fixed execution path", evidence["reason"])
+        self.assertEqual(empty_evidence["status"], "rejected")
+        self.assertIn("fixed execution path", empty_evidence["reason"])
 
     def test_consumer_records_an_absent_fixed_report_as_unavailable(self) -> None:
         RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)

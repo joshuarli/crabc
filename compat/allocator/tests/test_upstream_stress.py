@@ -67,6 +67,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
     def test_closed_contract_keeps_the_archive_source_unmodified(self) -> None:
         contract, pin = RUNNER.load_contract()
         self.assertEqual(pin, RUNNER.FIXED_PIN)
+        self.assertEqual(contract["format"], 6)
         self.assertEqual(contract["upstream"]["archive_sha256"], pin["sha256"])
         self.assertEqual(contract["fixture"]["archive_member"], "test/test-stress.c")
         self.assertEqual(
@@ -141,7 +142,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         )
         report = contract["report"]
         self.assertEqual(report["schema"], "crabc-mimalloc-canonical-upstream-stress-report")
-        self.assertEqual(report["format"], 5)
+        self.assertEqual(report["format"], 6)
         self.assertEqual(
             report["path"],
             ".work/reports/allocator/upstream-stress/latest.json",
@@ -158,6 +159,10 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 "artifact": "mimalloc-3.5.0/test/test-stress.c",
                 "extraction_root": "<pinned-source>/mimalloc-3.5.0",
             },
+        )
+        self.assertEqual(
+            report["execution_scoped_artifact_ids"],
+            ["staged_canonical_loader"],
         )
         self.assertEqual(
             report["current_head"],
@@ -180,6 +185,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 "status_values": ["not-attested", "attested"],
             },
         )
+
         self.assertEqual(
             contract["compile_requirements"]["expected_elf_identity"],
             {"class": "ELF64", "endianness": "little", "machine": "AArch64"},
@@ -200,6 +206,19 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             contract["compile_requirements"]["isolated_output_directory"],
             ".work/target/compat/allocator/upstream-stress",
         )
+
+    def test_contract_rejects_broadened_execution_scoped_artifact_policy(self) -> None:
+        contract, _ = RUNNER.load_contract()
+        broadened = json.loads(json.dumps(contract))
+        broadened["report"]["execution_scoped_artifact_ids"].append(
+            "selected_loader"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            contract_path = Path(temporary) / "upstream-stress-v3.5.0.json"
+            contract_path.write_text(json.dumps(broadened), encoding="utf-8")
+            with mock.patch.object(RUNNER, "CONTRACT_PATH", contract_path):
+                with self.assertRaisesRegex(RUNNER.EvidenceError, "contract drifted"):
+                    RUNNER.load_contract()
 
     def test_default_work_root_routes_runner_owned_mutable_artifacts(self) -> None:
         work_root = RUNNER.WORK_ROOT
@@ -595,7 +614,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
 
         self.assertEqual(status, 1)
         commands.assert_not_called()
-        self.assertEqual(report["format"], 5)
+        self.assertEqual(report["format"], 6)
         self.assertEqual(report["status"], "blocked")
         self.assertEqual(report["blocked"]["prerequisite"], "current-head-source-state")
         self.assertFalse(report["capability"]["native_execution_started"])
@@ -1587,7 +1606,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         contract, pin = RUNNER.load_contract()
         args = RUNNER.parse_arguments([])
         report = RUNNER.report_base(contract, pin, args)
-        self.assertEqual(report["format"], 5)
+        self.assertEqual(report["format"], 6)
         self.assertEqual(report["capability"]["status"], "not-run")
         self.assertFalse(report["capability"]["native_execution_started"])
         self.assertEqual(report["current_head"], RUNNER.current_head_report())

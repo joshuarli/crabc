@@ -1578,6 +1578,9 @@ CANONICAL_UPSTREAM_STRESS_ARTIFACT_IDS = (
     "selected_backend_build_record",
     "stress_binary",
 )
+CANONICAL_UPSTREAM_STRESS_EXECUTION_SCOPED_ARTIFACT_IDS = (
+    "staged_canonical_loader",
+)
 CANONICAL_UPSTREAM_STRESS_WORKERS = (1, 2, 4, 8)
 
 
@@ -1687,7 +1690,6 @@ def canonical_upstream_stress_live_file_record(
     subject: str,
     *,
     expected_path: Path | None = None,
-    allowed_external_path: Path | None = None,
 ) -> dict[str, Any]:
     """Require a report artifact to be a current, non-symlinked named file."""
 
@@ -1709,23 +1711,20 @@ def canonical_upstream_stress_live_file_record(
         )
     candidate = Path(raw_path)
     if candidate.is_absolute():
-        if allowed_external_path is None or candidate.resolve() != allowed_external_path.resolve():
-            raise CanonicalUpstreamStressRejected(
-                f"canonical upstream stress {subject} escapes the canonical workspace"
-            )
-        path = candidate
-    else:
-        if any(part in {"", ".", ".."} for part in candidate.parts):
-            raise CanonicalUpstreamStressRejected(
-                f"canonical upstream stress {subject} has an unsafe relative path"
-            )
-        path = root / candidate
-        try:
-            path.resolve().relative_to(root.resolve())
-        except ValueError as error:
-            raise CanonicalUpstreamStressRejected(
-                f"canonical upstream stress {subject} escapes the canonical workspace"
-            ) from error
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} escapes the canonical workspace"
+        )
+    if any(part in {"", ".", ".."} for part in candidate.parts):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} has an unsafe relative path"
+        )
+    path = root / candidate
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError as error:
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} escapes the canonical workspace"
+        ) from error
     observed = canonical_upstream_stress_observed_file_record(root, path, subject)
     if not canonical_upstream_stress_exactly_matches(record, observed):
         raise CanonicalUpstreamStressRejected(
@@ -1738,6 +1737,41 @@ def canonical_upstream_stress_live_file_record(
                 f"canonical upstream stress {subject} has a noncanonical path"
             )
     return observed
+
+
+def canonical_upstream_stress_execution_scoped_loader_record(
+    record: object, selected_loader: Mapping[str, Any], canonical_loader: Path
+) -> dict[str, Any]:
+    """Validate the producer's transient staged-loader execution evidence.
+
+    The owned test-suite launcher stages the canonical loader only for the
+    producer container.  A later ``allocator --full`` runs elsewhere, so it
+    must bind the recorded literal `/lib` path to the still-live selected
+    loader rather than requiring that transient external file to remain.
+    """
+
+    if not isinstance(record, dict) or set(record) != {"bytes", "path", "sha256"}:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress staged canonical loader file record is invalid"
+        )
+    if (
+        type(record.get("bytes")) is not int
+        or record["bytes"] <= 0
+        or record.get("path") != canonical_loader.as_posix()
+        or not isinstance(record.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress staged canonical loader record is not the fixed execution path"
+        )
+    if (
+        record["bytes"] != selected_loader["bytes"]
+        or record["sha256"] != selected_loader["sha256"]
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress staged loader does not match the selected loader"
+        )
+    return dict(record)
 
 
 def canonical_upstream_stress_read_json(
@@ -1907,7 +1941,7 @@ def validate_canonical_upstream_stress_contract(
             "canonical upstream stress contract schema drifted"
         )
     if (
-        contract.get("format") != 5
+        contract.get("format") != 6
         or contract.get("schema") != "crabc-mimalloc-canonical-upstream-stress"
     ):
         raise CanonicalUpstreamStressRejected(
@@ -2113,7 +2147,7 @@ def validate_canonical_upstream_stress_contract(
     }
     if (
         not isinstance(report_contract, dict)
-        or report_contract.get("format") != 5
+        or report_contract.get("format") != 6
         or report_contract.get("schema")
         != "crabc-mimalloc-canonical-upstream-stress-report"
         or report_contract.get("path")
@@ -2121,6 +2155,8 @@ def validate_canonical_upstream_stress_contract(
         or report_contract.get("atomic_publish") is not True
         or report_contract.get("artifact_ids")
         != list(CANONICAL_UPSTREAM_STRESS_ARTIFACT_IDS)
+        or report_contract.get("execution_scoped_artifact_ids")
+        != list(CANONICAL_UPSTREAM_STRESS_EXECUTION_SCOPED_ARTIFACT_IDS)
         or not canonical_upstream_stress_exactly_matches(
             report_contract.get("current_head"), expected_current_head
         )
@@ -2505,13 +2541,15 @@ def canonical_upstream_stress_validate_report(
         raise CanonicalUpstreamStressRejected(
             "canonical upstream stress report runtime sysroot selection drifted"
         )
+    # The contract's sole execution-scoped record is validated below.  The
+    # contract/source-member bindings are reread separately; every remaining
+    # artifact must still be a live, canonical workspace file here.
     expected_paths = {
         "upstream_archive": work_root / "allocator-cache/mimalloc-3.5.0.tar.gz",
         "owned_sysroot_manifest": sysroot / "share/crabc/manifest.json",
         "owned_sysroot_purity": sysroot / "share/crabc/purity.json",
         "owned_compiler": sysroot / "bin/crabc-cc",
         "selected_loader": root / "target/debug/libldso.so",
-        "staged_canonical_loader": canonical_loader,
         "selected_libc": root / "target/debug/libc.so",
         "selected_static_libc": root / "target/debug/libc.a",
         "selected_backend_build_record": output / "selected-libc-build.json",
@@ -2523,7 +2561,6 @@ def canonical_upstream_stress_validate_report(
         "owned_sysroot_purity": "owned sysroot purity",
         "owned_compiler": "owned compiler",
         "selected_loader": "selected loader",
-        "staged_canonical_loader": "staged canonical loader",
         "selected_libc": "selected shared libc",
         "selected_static_libc": "selected static libc",
         "selected_backend_build_record": "selected libc build record",
@@ -2535,13 +2572,15 @@ def canonical_upstream_stress_validate_report(
             root,
             artifacts[artifact_id],
             name,
-            expected_path=expected_paths.get(artifact_id),
-            allowed_external_path=(
-                canonical_loader
-                if artifact_id == "staged_canonical_loader"
-                else None
-            ),
+            expected_path=expected_paths[artifact_id],
         )
+    live_artifacts["staged_canonical_loader"] = (
+        canonical_upstream_stress_execution_scoped_loader_record(
+            artifacts["staged_canonical_loader"],
+            live_artifacts["selected_loader"],
+            canonical_loader,
+        )
+    )
     archive_record, source_member = canonical_upstream_stress_archive_source_member(
         root,
         expected_paths["upstream_archive"],
@@ -2561,15 +2600,6 @@ def canonical_upstream_stress_validate_report(
             "canonical upstream stress report source-member attestation drifted"
         )
     live_artifacts["source_member"] = source_member
-    if (
-        live_artifacts["selected_loader"]["bytes"]
-        != live_artifacts["staged_canonical_loader"]["bytes"]
-        or live_artifacts["selected_loader"]["sha256"]
-        != live_artifacts["staged_canonical_loader"]["sha256"]
-    ):
-        raise CanonicalUpstreamStressRejected(
-            "canonical upstream stress staged loader does not match the selected loader"
-        )
     purity, purity_record = canonical_upstream_stress_read_json(
         root, expected_paths["owned_sysroot_purity"], "owned sysroot purity"
     )

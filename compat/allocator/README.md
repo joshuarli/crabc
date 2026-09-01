@@ -993,8 +993,11 @@ Before rendering that M5 record, `allocator --full` reads only the fixed
 not invoke `upstream-stress/run.py` itself. The consumer accepts a report only
 when its format, pin, ordered eight-case source matrix, failure-closed
 capability, selected native-shadow backend/build record, live named artifacts,
-and current-head companion all still bind to the current clean Git source. Its
-Git reads set `GIT_OPTIONAL_LOCKS=0`. The durable
+and current-head companion all still bind to the current clean Git source. The
+sole execution-scoped artifact is the producer-container's staged
+`/lib/ld-crabc-aarch64.so.1` record: its fixed path and bytes bind to the live
+selected loader, but the later consumer does not require that transient file.
+Its Git reads set `GIT_OPTIONAL_LOCKS=0`. The durable
 `canonical_upstream_stress` field is `verified`, `unavailable`, or `rejected`.
 Only a `verified` record is surfaced as observed Gate 5D evidence; it remains
 a nondefault `shadow_subset` with `large_object_mode: not-claimed`, so it does

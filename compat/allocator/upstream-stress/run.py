@@ -519,7 +519,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
     target_id = "linux-aarch64-little-endian"
     backend_id = "crabc-libc-native-mimalloc-shadow"
     return {
-        "format": 5,
+        "format": 6,
         "schema": "crabc-mimalloc-canonical-upstream-stress",
         "scope": {
             "claim": "one canonical executable inventory of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
@@ -665,7 +665,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             ],
         },
         "report": {
-            "format": 5,
+            "format": 6,
             "schema": "crabc-mimalloc-canonical-upstream-stress-report",
             "path": ".work/reports/allocator/upstream-stress/latest.json",
             "atomic_publish": True,
@@ -712,6 +712,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                 "selected_backend_build_record",
                 "stress_binary",
             ],
+            "execution_scoped_artifact_ids": ["staged_canonical_loader"],
         },
         "compile_requirements": {
             "allocator_feature": "native-mimalloc-shadow",
