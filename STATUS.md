@@ -1169,15 +1169,23 @@ direct-small source with the sole-medium source without exposing a
 direct-specific C ABI. Those bounded witnesses do not make it a general
 later-thread reclamation route. The opt-in `allocator --soak` lane repeats the
 same two-worker C schedule 1,024 times from seed `0x94d049bb133111eb` under a
-180-second watchdog; each report records the command, seed, routes per cycle,
-exact route-invocation count, and a scalar-only quiescent baseline after the
-first complete cycle. Every later cycle and the final ticket-zero
-allocation/free must match that baseline's process/page-owner readiness,
-PageMap registration/capacity, arena registry, live-TLD, metadata,
-shared-Theap, and regular/OS-abandonment state. The audit exposes no pointer,
-page, route, allocator, or release capability; the separate native-shadow
-registry high-water remains owned by the focused Rust regression. Both lanes
-remain bounded stability evidence. `allocator --full` additionally runs one
+180-second watchdog: two routes per cycle and exactly 2,048 route invocations.
+Only a completed run with byte-identical clean Git source states before the
+run and immediately before publication atomically replaces
+`.work/reports/allocator/runtime-ticket-zero-soak-1024.json`; it does not
+write the shared allocator `latest.json`. The format-1 stable report retains
+the live contract digest, pinned archive, adapter archive/shared library,
+fixture, oracle/target identity, commands, schedule, and all 13 scalar audit
+fields. Every later cycle and the final ticket-zero allocation/free must match
+the first complete cycle's process/page-owner readiness, PageMap
+registration/capacity, arena registry, live-TLD, metadata, shared-Theap, and
+regular/OS-abandonment baseline. The audit exposes no pointer, page, route,
+allocator, or release capability; the separate native-shadow registry
+high-water remains owned by the focused Rust regression. This report remains
+bounded stability evidence: the current M5 gate does not consume it, it
+unblocks no gate, and it establishes neither a selected/default libc backend
+nor general cross-thread/post-exit, upstream pthread, or large-object
+acceptance. `allocator --full` additionally runs one
 separate source-derived pinned `test/test-stress.c` route through the same
 16-symbol test adapter: `NTHREADS=1` and fixed `1 1 2` inputs keep the
 upstream allocation/cookie/realloc/retained-transfer cleanup workload on the

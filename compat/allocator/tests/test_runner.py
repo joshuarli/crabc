@@ -53,6 +53,10 @@ class WorkRootTests(unittest.TestCase):
             RUNNER.X86_64_ORACLE_ARTIFACT_ROOT,
             work_root / "target/compat/allocator/x86_64",
         )
+        self.assertEqual(
+            RUNNER.RUNTIME_TICKET_ZERO_SOAK_REPORT,
+            work_root / "reports/allocator/runtime-ticket-zero-soak-1024.json",
+        )
 
     def test_default_work_root_honors_crabc_work_dir(self) -> None:
         with mock.patch.dict(RUNNER.os.environ, {}, clear=True):
@@ -1703,6 +1707,11 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.HarnessError, "lifecycle audit contract"):
             RUNNER.validate_runtime_ticket_zero_adapter_contract(contract, header)
 
+        contract = RUNNER.read_json(RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT)
+        contract["soak_report"]["evidence_scope"] = "stale scope"
+        with self.assertRaisesRegex(RUNNER.HarnessError, "soak report contract"):
+            RUNNER.validate_runtime_ticket_zero_adapter_contract(contract, header)
+
     def test_runtime_ticket_zero_lifecycle_audit_record_is_exact(self) -> None:
         stdout = (
             "runtime ticket-zero lifecycle audit worker_cycles=3 process_active=1 "
@@ -2382,6 +2391,332 @@ class ContractTests(unittest.TestCase):
                     "allocator ratchet input changed: port_map_sha256",
                 ):
                     RUNNER.check_ratchet({})
+
+
+class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
+    """Exercise the durable opt-in soak publication without a native 180s run."""
+
+    @staticmethod
+    def clean_source_state(revision: str = "a" * 40) -> dict[str, object]:
+        return {
+            "kind": "git",
+            "revision": revision,
+            "worktree_clean": True,
+            "worktree_status": {
+                "bytes": 0,
+                "hex": "",
+                "sha256": hashlib.sha256(b"").hexdigest(),
+            },
+        }
+
+    @staticmethod
+    def lifecycle_audit(worker_cycles: int = 1024) -> dict[str, int]:
+        return {
+            "worker_cycles": worker_cycles,
+            "process_active": 1,
+            "page_owner_ready": 1,
+            "page_map_registered_entries": 0,
+            "page_map_published_submaps": 2,
+            "page_map_lazy_submap_allocations": 1,
+            "arena_registry_entries": 1,
+            "live_tlds": 1,
+            "metadata_live_capabilities": 0,
+            "metadata_high_water_capabilities": 3,
+            "shared_later_theaps": 0,
+            "abandoned_regular_pages": 0,
+            "os_abandoned_pages_empty": 1,
+        }
+
+    @classmethod
+    def successful_milestone_report(
+        cls, root: Path
+    ) -> tuple[dict[str, object], dict[str, str], Path]:
+        """Make live artifact records shaped like the completed native lane."""
+
+        def write(path: Path, payload: bytes) -> Path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+            return path
+
+        archive = write(root / "allocator-cache/mimalloc-3.5.0.tar.gz", b"mimalloc")
+        adapter_archive = write(
+            root / "target/runtime-ticket-zero/libadapter.a", b"adapter archive"
+        )
+        adapter_shared = write(
+            root / "target/runtime-ticket-zero/libadapter.so", b"adapter shared"
+        )
+        fixture_binary = write(
+            root / "target/runtime-ticket-zero/runtime-ticket-zero-fixture", b"fixture"
+        )
+        pin = {
+            **RUNNER.load_pin(),
+            "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        }
+        audit = cls.lifecycle_audit()
+        stdout = (
+            RUNNER.RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_PREFIX
+            + " ".join(f"{name}={audit[name]}" for name in audit)
+            + "\n"
+            + RUNNER.RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_SUCCESS_LINE
+            + "\n"
+        )
+        fixture = {
+            "artifact": RUNNER.artifact_record(fixture_binary),
+            "build_command": ["musl-gcc", "-o", str(fixture_binary)],
+            "lifecycle_stability": {
+                "audit_snapshot_count": 1025,
+                "post_warm_cycle_count": 1023,
+                "status": "passed",
+                "warm_baseline": audit,
+            },
+            "run_command": RUNNER.runtime_ticket_zero_fixture_command(
+                fixture_binary,
+                worker_cycles=1024,
+                stress_seed=RUNNER.RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+            ),
+            "stdout": stdout,
+            "stress_schedule": RUNNER.runtime_ticket_zero_stress_schedule(
+                worker_cycles=1024,
+                stress_seed=RUNNER.RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+            ),
+            "watchdog": {"seconds": 180, "status": "passed"},
+            "worker_cycles": 1024,
+        }
+        return (
+            {
+                "c_oracle": {
+                    "build_strategy": "pinned C oracle",
+                    "compiler": "musl-gcc (pinned container)",
+                    "profiles": {},
+                    "source_files": [],
+                },
+                "oracle": {
+                    "archive": RUNNER.artifact_record(archive),
+                    "archive_root": pin["archive_root"],
+                    "revision": pin["revision"],
+                    "sha256": pin["sha256"],
+                    "source": pin["source"],
+                    "tag_object": pin["tag_object"],
+                    "tag_verified": None,
+                    "version": pin["version"],
+                },
+                "runtime_ticket_zero_test_adapter": {
+                    "build": {
+                        "archive": RUNNER.artifact_record(adapter_archive),
+                        "archive_symbols": {"symbols": []},
+                        "shared_library": RUNNER.artifact_record(adapter_shared),
+                        "shared_symbols": {"symbols": []},
+                    },
+                    "fixture": fixture,
+                },
+                "target": {"architecture": "aarch64", "system": "Linux"},
+            },
+            pin,
+            fixture_binary,
+        )
+
+    def test_soak_publication_is_unique_attested_and_leaves_latest_untouched(self) -> None:
+        with RUNNER.temporary_directory("runtime-ticket-zero-soak-report-") as temporary:
+            root = Path(temporary)
+            report_path = root / "reports/allocator/runtime-ticket-zero-soak-1024.json"
+            latest_path = root / "reports/allocator/latest.json"
+            report_path.parent.mkdir(parents=True)
+            latest_path.write_text('{"shared":"keep"}\n', encoding="utf-8")
+            legacy_temporary = report_path.with_name(f".{report_path.name}.tmp")
+            legacy_temporary.write_text("occupied", encoding="utf-8")
+            milestone, pin, _ = self.successful_milestone_report(root)
+            source = self.clean_source_state()
+
+            with mock.patch.object(
+                RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
+            ), mock.patch.object(
+                RUNNER, "load_pin", return_value=pin
+            ), mock.patch.object(
+                RUNNER,
+                "runtime_ticket_zero_soak_source_state",
+                side_effect=[source, source],
+            ), mock.patch.object(
+                RUNNER, "run_milestone0", return_value=milestone
+            ) as run_milestone:
+                report = RUNNER.run_runtime_ticket_zero_soak(
+                    offline=True, architecture="aarch64"
+                )
+
+            self.assertEqual(
+                run_milestone.call_args.kwargs,
+                {
+                    "offline": True,
+                    "generate_contracts": False,
+                    "check_only": False,
+                    "include_test_adapter": True,
+                    "include_adapted_stress": False,
+                    "include_native_owner_exit_lifecycle": False,
+                    "runtime_ticket_zero_worker_cycles": 1024,
+                    "runtime_ticket_zero_watchdog_seconds": 180,
+                    "runtime_ticket_zero_stress_seed": RUNNER.RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+                    "architecture": "aarch64",
+                    "write_report": False,
+                },
+            )
+            self.assertEqual(
+                set(report),
+                {
+                    "format",
+                    "schema",
+                    "mode",
+                    "status",
+                    "evidence_scope",
+                    "nonclaims",
+                    "contract",
+                    "source",
+                    "pin",
+                    "oracle",
+                    "target",
+                    "build_artifacts",
+                    "fixture",
+                    "schedule",
+                    "audit",
+                },
+            )
+            self.assertEqual(report["format"], 1)
+            self.assertEqual(
+                report["schema"], "crabc-mimalloc-runtime-ticket-zero-soak-report"
+            )
+            self.assertEqual(report["mode"], "soak")
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(
+                report["evidence_scope"], "bounded-private-ticket-zero-soak"
+            )
+            self.assertEqual(
+                report["schedule"],
+                {
+                    "stress_seed": "0x94d049bb133111eb",
+                    "watchdog_seconds": 180,
+                    "worker_cycles": 1024,
+                    "worker_route_invocation_count": 2048,
+                    "worker_routes_per_cycle": 2,
+                },
+            )
+            self.assertEqual(
+                set(report["audit"]["warm_baseline"]),
+                set(RUNNER.RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_FIELDS),
+            )
+            self.assertEqual(len(report["audit"]["warm_baseline"]), 13)
+            self.assertEqual(report["source"]["before"], source)
+            self.assertEqual(report["source"]["after"], source)
+            self.assertTrue(report["source"]["unchanged_during_execution"])
+            self.assertEqual(
+                report["source"]["git_read_environment"], {"GIT_OPTIONAL_LOCKS": "0"}
+            )
+            self.assertEqual(report["contract"]["record"], RUNNER.artifact_record(
+                RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT
+            ))
+            self.assertEqual(
+                report["fixture"]["artifact"],
+                milestone["runtime_ticket_zero_test_adapter"]["fixture"]["artifact"],
+            )
+            self.assertEqual(
+                report["build_artifacts"]["adapter_archive"],
+                milestone["runtime_ticket_zero_test_adapter"]["build"]["archive"],
+            )
+            self.assertEqual(
+                report["build_artifacts"]["adapter_shared_library"],
+                milestone["runtime_ticket_zero_test_adapter"]["build"]["shared_library"],
+            )
+            self.assertEqual(json.loads(report_path.read_text(encoding="utf-8")), report)
+            self.assertEqual(latest_path.read_text(encoding="utf-8"), '{"shared":"keep"}\n')
+            self.assertEqual(legacy_temporary.read_text(encoding="utf-8"), "occupied")
+
+    def test_soak_failure_preserves_a_prior_good_stable_record(self) -> None:
+        with RUNNER.temporary_directory("runtime-ticket-zero-soak-preserve-") as temporary:
+            root = Path(temporary)
+            report_path = root / "reports/allocator/runtime-ticket-zero-soak-1024.json"
+            report_path.parent.mkdir(parents=True)
+            previous = '{"status":"passed","prior":true}\n'
+            report_path.write_text(previous, encoding="utf-8")
+            milestone, pin, _ = self.successful_milestone_report(root)
+            before = self.clean_source_state()
+            after = self.clean_source_state("b" * 40)
+
+            with mock.patch.object(
+                RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
+            ), mock.patch.object(
+                RUNNER, "load_pin", return_value=pin
+            ), mock.patch.object(
+                RUNNER,
+                "runtime_ticket_zero_soak_source_state",
+                side_effect=[before, after],
+            ), mock.patch.object(RUNNER, "run_milestone0", return_value=milestone):
+                with self.assertRaisesRegex(RUNNER.HarnessError, "source changed during execution"):
+                    RUNNER.run_runtime_ticket_zero_soak(offline=True, architecture="aarch64")
+
+            self.assertEqual(report_path.read_text(encoding="utf-8"), previous)
+
+    def test_soak_requires_live_fixture_artifact_before_replacing_the_stable_record(self) -> None:
+        with RUNNER.temporary_directory("runtime-ticket-zero-soak-live-artifact-") as temporary:
+            root = Path(temporary)
+            report_path = root / "reports/allocator/runtime-ticket-zero-soak-1024.json"
+            report_path.parent.mkdir(parents=True)
+            previous = '{"status":"passed","prior":true}\n'
+            report_path.write_text(previous, encoding="utf-8")
+            milestone, pin, fixture_binary = self.successful_milestone_report(root)
+            source = self.clean_source_state()
+
+            def completed_run(**_: object) -> dict[str, object]:
+                fixture_binary.write_bytes(b"fixture drift")
+                return milestone
+
+            with mock.patch.object(
+                RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
+            ), mock.patch.object(
+                RUNNER, "load_pin", return_value=pin
+            ), mock.patch.object(
+                RUNNER, "runtime_ticket_zero_soak_source_state", side_effect=[source, source]
+            ), mock.patch.object(RUNNER, "run_milestone0", side_effect=completed_run):
+                with self.assertRaisesRegex(RUNNER.HarnessError, "fixture artifact"):
+                    RUNNER.run_runtime_ticket_zero_soak(offline=True, architecture="aarch64")
+
+            self.assertEqual(report_path.read_text(encoding="utf-8"), previous)
+
+    def test_soak_source_attestation_disables_git_optional_locks_and_rejects_dirty_state(self) -> None:
+        revision = "a" * 40
+        clean_records = [
+            {"status": 0, "stdout": f"{revision}\n", "stderr": ""},
+            {"status": 0, "stdout": "", "stderr": ""},
+        ]
+        with mock.patch.object(RUNNER.shutil, "which", return_value="/usr/bin/git"), mock.patch.object(
+            RUNNER, "command_record", side_effect=clean_records
+        ) as commands:
+            self.assertEqual(RUNNER.runtime_ticket_zero_soak_source_state(), self.clean_source_state())
+        self.assertEqual(commands.call_count, 2)
+        self.assertTrue(
+            all(
+                call.kwargs["env"]["GIT_OPTIONAL_LOCKS"] == "0"
+                for call in commands.call_args_list
+            )
+        )
+
+        dirty_records = [
+            {"status": 0, "stdout": f"{revision}\n", "stderr": ""},
+            {"status": 0, "stdout": " M compat/allocator/run.py\0", "stderr": ""},
+        ]
+        with mock.patch.object(RUNNER.shutil, "which", return_value="/usr/bin/git"), mock.patch.object(
+            RUNNER, "command_record", side_effect=dirty_records
+        ):
+            with self.assertRaisesRegex(RUNNER.HarnessError, "clean Git source"):
+                RUNNER.runtime_ticket_zero_soak_source_state()
+
+    def test_main_routes_soak_only_to_the_dedicated_stable_producer(self) -> None:
+        with mock.patch.object(sys, "argv", ["run.py", "--soak"]), mock.patch.object(
+            RUNNER, "run_runtime_ticket_zero_soak", return_value={}
+        ) as soak, mock.patch.object(RUNNER, "run_milestone0") as milestone, mock.patch(
+            "builtins.print"
+        ) as output:
+            self.assertEqual(RUNNER.main(), 0)
+
+        soak.assert_called_once_with(offline=False, architecture="aarch64")
+        milestone.assert_not_called()
+        output.assert_called_once_with(RUNNER.RUNTIME_TICKET_ZERO_SOAK_REPORT)
 
 
 class CanonicalUpstreamStressConsumerTests(unittest.TestCase):

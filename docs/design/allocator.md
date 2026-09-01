@@ -1030,16 +1030,24 @@ a deterministic seed-shuffled order (`0xd1b54a32d192ed03`) in one fresh process
 under a 30-second watchdog, without widening the prefixed ABI. It intentionally has no shutdown because
 the source owner is process-lifetime.
 `allocator --soak` runs the same two-worker schedule for 1,024 cycles from
-seed `0x94d049bb133111eb` under a separate 180-second watchdog. The report
-records its command, seed, routes-per-cycle, exact route-invocation count, and
-a scalar quiescent baseline captured after the first complete cycle. The C
-fixture requires every later cycle and its final ticket-zero allocation/free
-to match that baseline's process/page-owner readiness, PageMap registration
-and capacity counts, arena/TLD/metadata/shared-Theap counts, and regular/OS
-abandonment state. It receives no pointer, page, route, allocator, or release
-capability; the distinct native-shadow registry high-water remains owned by
-its focused Rust regression. Both are bounded evidence
-lanes, not general allocator or backend-promotion claims.
+seed `0x94d049bb133111eb` under a separate 180-second watchdog: exactly two
+routes per cycle and 2,048 route invocations. Only a completed run with
+byte-identical clean Git source states before execution and immediately before
+publication atomically replaces
+`.work/reports/allocator/runtime-ticket-zero-soak-1024.json`; it does not
+write the shared allocator `latest.json` report. The format-1
+`crabc-mimalloc-runtime-ticket-zero-soak-report` binds the live ticket-zero
+contract digest, pinned archive, adapter archive/shared library, fixture,
+oracle identity, target, commands, schedule, and all 13 scalar audit fields.
+The C fixture requires every later cycle and its final ticket-zero
+allocation/free to match the first complete cycle's scalar baseline for
+process/page-owner readiness, PageMap registration and capacity counts,
+arena/TLD/metadata/shared-Theap counts, and regular/OS abandonment state. It
+receives no pointer, page, route, allocator, or release capability; the
+distinct native-shadow registry high-water remains owned by its focused Rust
+regression. This remains bounded private evidence: the full M5 gate does not
+consume it, and it does not establish general allocator, selected/default
+backend, upstream pthread, post-exit, or large-object acceptance.
 That test ABI does not make the runtime seam a
 crabc libc ABI, a selected backend, a pointer-domain fallback, or a fork
 repair mechanism. `main_heap_page.rs` now binds one current

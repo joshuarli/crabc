@@ -69,6 +69,24 @@
       "warm_baseline": "the exact first-complete-cycle scalar fixture record"
     }
   },
+  "soak_report": {
+    "evidence_scope": "bounded-private-ticket-zero-soak",
+    "format": 1,
+    "git_read_environment": {
+      "GIT_OPTIONAL_LOCKS": "0"
+    },
+    "mode": "soak",
+    "nonclaims": [
+      "does not consume or unblock an M5 gate",
+      "does not establish general cross-thread, post-exit, upstream-pthread, or large-object acceptance",
+      "does not establish a selected or default crabc-libc native-mimalloc allocator backend"
+    ],
+    "relative_path": "reports/allocator/runtime-ticket-zero-soak-1024.json",
+    "requires_clean_git_source": true,
+    "requires_source_before_equals_after": true,
+    "schema": "crabc-mimalloc-runtime-ticket-zero-soak-report",
+    "status": "passed"
+  },
   "caller_contract": [
     "The fixture is one fresh Linux/AArch64 process and calls init once with its original thread's nonzero AT_PAGESZ value.",
     "Every allocation, reallocation, and free is serialized on that original thread.",

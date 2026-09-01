@@ -100,6 +100,20 @@ RUNTIME_TICKET_ZERO_CHURN_WORKER_CYCLES = 128
 RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS = 30
 RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES = 1024
 RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS = 180
+RUNTIME_TICKET_ZERO_SOAK_REPORT_FILENAME = "runtime-ticket-zero-soak-1024.json"
+RUNTIME_TICKET_ZERO_SOAK_REPORT_RELATIVE_PATH = Path("reports/allocator") / (
+    RUNTIME_TICKET_ZERO_SOAK_REPORT_FILENAME
+)
+RUNTIME_TICKET_ZERO_SOAK_REPORT = REPORT_ROOT / RUNTIME_TICKET_ZERO_SOAK_REPORT_FILENAME
+RUNTIME_TICKET_ZERO_SOAK_REPORT_FORMAT = 1
+RUNTIME_TICKET_ZERO_SOAK_REPORT_SCHEMA = "crabc-mimalloc-runtime-ticket-zero-soak-report"
+RUNTIME_TICKET_ZERO_SOAK_EVIDENCE_SCOPE = "bounded-private-ticket-zero-soak"
+RUNTIME_TICKET_ZERO_SOAK_NONCLAIMS = [
+    "does not consume or unblock an M5 gate",
+    "does not establish general cross-thread, post-exit, upstream-pthread, or large-object acceptance",
+    "does not establish a selected or default crabc-libc native-mimalloc allocator backend",
+]
+RUNTIME_TICKET_ZERO_SOAK_GIT_READ_ENVIRONMENT = {"GIT_OPTIONAL_LOCKS": "0"}
 # The native lifecycle fixture visits every currently supported pointer-private
 # worker route once per cycle, but derives that cycle's order from this seed.
 # Keep the development and soak lanes deterministic and distinct so a report
@@ -136,6 +150,18 @@ RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_CONTRACT = {
         "status": "passed",
         "warm_baseline": "the exact first-complete-cycle scalar fixture record",
     },
+}
+RUNTIME_TICKET_ZERO_SOAK_REPORT_CONTRACT = {
+    "evidence_scope": RUNTIME_TICKET_ZERO_SOAK_EVIDENCE_SCOPE,
+    "format": RUNTIME_TICKET_ZERO_SOAK_REPORT_FORMAT,
+    "git_read_environment": dict(RUNTIME_TICKET_ZERO_SOAK_GIT_READ_ENVIRONMENT),
+    "mode": "soak",
+    "nonclaims": list(RUNTIME_TICKET_ZERO_SOAK_NONCLAIMS),
+    "relative_path": RUNTIME_TICKET_ZERO_SOAK_REPORT_RELATIVE_PATH.as_posix(),
+    "requires_clean_git_source": True,
+    "requires_source_before_equals_after": True,
+    "schema": RUNTIME_TICKET_ZERO_SOAK_REPORT_SCHEMA,
+    "status": "passed",
 }
 TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run.py"
 TLS_CODEGEN_REPORT = REPORT_ROOT / "tls-codegen.json"
@@ -1513,12 +1539,29 @@ def relative(path: Path) -> str:
 
 
 def write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    """Atomically replace one report without sharing a fixed staging filename."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    temporary.replace(path)
+    staged: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as stream:
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            staged = Path(stream.name)
+        os.replace(staged, path)
+    except BaseException:
+        if staged is not None:
+            try:
+                staged.unlink()
+            except FileNotFoundError:
+                pass
+        raise
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -6137,6 +6180,164 @@ def artifact_record(path: Path) -> dict[str, Any]:
     return {"bytes": path.stat().st_size, "path": relative(path), "sha256": sha256_file(path)}
 
 
+def source_byte_record(value: bytes) -> dict[str, Any]:
+    """Record Git's byte-oriented porcelain output without normalizing it."""
+
+    return {
+        "bytes": len(value),
+        "hex": value.hex(),
+        "sha256": hashlib.sha256(value).hexdigest(),
+    }
+
+
+def source_byte_payload(record: object, subject: str) -> bytes:
+    """Decode and verify a source-state byte record before using its clean flag."""
+
+    if not isinstance(record, Mapping) or set(record) != {"bytes", "hex", "sha256"}:
+        raise HarnessError(f"{subject} byte record is invalid")
+    try:
+        payload = bytes.fromhex(str(record["hex"]))
+    except (KeyError, ValueError) as error:
+        raise HarnessError(f"{subject} byte record has invalid hex") from error
+    if (
+        type(record["bytes"]) is not int
+        or record["bytes"] != len(payload)
+        or record["sha256"] != hashlib.sha256(payload).hexdigest()
+    ):
+        raise HarnessError(f"{subject} byte record attestation drifted")
+    return payload
+
+
+def runtime_ticket_zero_soak_git_read_environment() -> dict[str, str]:
+    """Preserve caller settings while keeping soak provenance reads index-safe."""
+
+    environment = dict(os.environ)
+    environment.update(RUNTIME_TICKET_ZERO_SOAK_GIT_READ_ENVIRONMENT)
+    return environment
+
+
+def validate_runtime_ticket_zero_soak_source_state(
+    value: object, subject: str
+) -> dict[str, Any]:
+    """Validate the compact clean-Git state retained by the durable soak report."""
+
+    if not isinstance(value, Mapping) or set(value) != {
+        "kind",
+        "revision",
+        "worktree_clean",
+        "worktree_status",
+    }:
+        raise HarnessError(f"{subject} source state is invalid")
+    revision = value.get("revision")
+    if value.get("kind") != "git" or not isinstance(revision, str) or not re.fullmatch(
+        r"[0-9a-f]{40}", revision
+    ):
+        raise HarnessError(f"{subject} source revision is invalid")
+    if type(value.get("worktree_clean")) is not bool:
+        raise HarnessError(f"{subject} source cleanliness is invalid")
+    status = source_byte_payload(value.get("worktree_status"), f"{subject} worktree status")
+    if value["worktree_clean"] != (status == b""):
+        raise HarnessError(f"{subject} source cleanliness contradicts its status")
+    return dict(value)
+
+
+def runtime_ticket_zero_soak_source_state() -> dict[str, Any]:
+    """Capture one clean Git source state without allowing Git to refresh its index."""
+
+    git = shutil.which("git")
+    if git is None:
+        raise HarnessError("runtime ticket-zero soak requires Git source attestation")
+    environment = runtime_ticket_zero_soak_git_read_environment()
+    revision_record = command_record(
+        (git, "rev-parse", "--verify", "HEAD"), cwd=ROOT, env=environment
+    )
+    status_record = command_record(
+        (git, "status", "--porcelain=v1", "--untracked-files=all", "-z"),
+        cwd=ROOT,
+        env=environment,
+    )
+    require_success(revision_record, "runtime ticket-zero soak Git revision")
+    require_success(status_record, "runtime ticket-zero soak Git status")
+    revision = revision_record.get("stdout")
+    status = status_record.get("stdout")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}\n?", revision):
+        raise HarnessError("runtime ticket-zero soak Git revision is invalid")
+    if not isinstance(status, str):
+        raise HarnessError("runtime ticket-zero soak Git status is invalid")
+    state = validate_runtime_ticket_zero_soak_source_state(
+        {
+            "kind": "git",
+            "revision": revision.strip(),
+            "worktree_clean": status == "",
+            "worktree_status": source_byte_record(status.encode("utf-8")),
+        },
+        "runtime ticket-zero soak",
+    )
+    if not state["worktree_clean"]:
+        raise HarnessError("runtime ticket-zero soak requires a clean Git source")
+    return state
+
+
+def runtime_ticket_zero_soak_source_attestation(
+    before: object, after: object
+) -> dict[str, Any]:
+    """Require the same clean Git state before and after the entire soak run."""
+
+    source_before = validate_runtime_ticket_zero_soak_source_state(
+        before, "runtime ticket-zero soak source before"
+    )
+    source_after = validate_runtime_ticket_zero_soak_source_state(
+        after, "runtime ticket-zero soak source after"
+    )
+    if not source_before["worktree_clean"] or not source_after["worktree_clean"]:
+        raise HarnessError("runtime ticket-zero soak requires a clean Git source")
+    if source_before != source_after:
+        raise HarnessError("runtime ticket-zero soak source changed during execution")
+    return {
+        "after": source_after,
+        "before": source_before,
+        "git_read_environment": dict(RUNTIME_TICKET_ZERO_SOAK_GIT_READ_ENVIRONMENT),
+        "unchanged_during_execution": True,
+    }
+
+
+def attest_runtime_ticket_zero_soak_artifact(
+    record: object, subject: str
+) -> dict[str, Any]:
+    """Require a report artifact to remain a regular live file beneath this checkout."""
+
+    if not isinstance(record, Mapping) or set(record) != {"bytes", "path", "sha256"}:
+        raise HarnessError(f"runtime ticket-zero soak {subject} artifact record is invalid")
+    raw_path = record.get("path")
+    if (
+        type(record.get("bytes")) is not int
+        or record["bytes"] <= 0
+        or not isinstance(raw_path, str)
+        or not raw_path
+        or not isinstance(record.get("sha256"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", str(record["sha256"]))
+    ):
+        raise HarnessError(f"runtime ticket-zero soak {subject} artifact record is invalid")
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = ROOT / path
+    if path.is_symlink():
+        raise HarnessError(f"runtime ticket-zero soak {subject} artifact is not a regular file")
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(ROOT.resolve())
+    except ValueError as error:
+        raise HarnessError(
+            f"runtime ticket-zero soak {subject} artifact escapes the checkout"
+        ) from error
+    if not resolved.is_file():
+        raise HarnessError(f"runtime ticket-zero soak {subject} artifact is not live")
+    observed = artifact_record(resolved)
+    if observed != dict(record):
+        raise HarnessError(f"runtime ticket-zero soak {subject} artifact changed")
+    return observed
+
+
 def x86_64_source_map_contract(archive: Path) -> dict[str, Any]:
     """Run the target-local source-map validator without spawning a child process."""
 
@@ -7015,6 +7216,15 @@ def validate_runtime_ticket_zero_adapter_contract(
         or contract.get("schema") != "crabc-mimalloc-runtime-ticket-zero-test"
     ):
         raise HarnessError("runtime ticket-zero adapter contract has an unknown schema")
+    pin = load_pin()
+    expected_upstream = {
+        "project": "microsoft/mimalloc",
+        "revision": pin["revision"],
+        "tag": pin["tag"],
+        "version": pin["version"],
+    }
+    if contract.get("upstream") != expected_upstream:
+        raise HarnessError("runtime ticket-zero adapter contract upstream identity differs")
     if contract.get("adapter_package") != "crabc-mimalloc-runtime-ticket-zero-adapter":
         raise HarnessError("runtime ticket-zero adapter contract names the wrong Cargo package")
     if (
@@ -7055,6 +7265,10 @@ def validate_runtime_ticket_zero_adapter_contract(
     if contract.get("lifecycle_audit") != RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_CONTRACT:
         raise HarnessError(
             "runtime ticket-zero lifecycle audit contract differs from the native lane"
+        )
+    if contract.get("soak_report") != RUNTIME_TICKET_ZERO_SOAK_REPORT_CONTRACT:
+        raise HarnessError(
+            "runtime ticket-zero soak report contract differs from the native lane"
         )
     compile_requirements = contract.get("compile_requirements")
     if not isinstance(compile_requirements, dict):
@@ -8823,6 +9037,263 @@ def run_runtime_ticket_zero_adapter_fixture(
     }
 
 
+def runtime_ticket_zero_soak_contract_record(
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind a durable soak observation to the checked-in witness contract."""
+
+    return {
+        "format": contract["format"],
+        "record": attest_runtime_ticket_zero_soak_artifact(
+            artifact_record(RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT), "contract"
+        ),
+        "schema": contract["schema"],
+        "soak_report": dict(contract["soak_report"]),
+        "upstream": dict(contract["upstream"]),
+    }
+
+
+def runtime_ticket_zero_soak_fixture_evidence(
+    milestone_report: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Extract only the completed 1,024-cycle private witness from its full run."""
+
+    oracle = milestone_report.get("oracle")
+    if not isinstance(oracle, Mapping):
+        raise HarnessError("runtime ticket-zero soak milestone report lacks its pinned oracle")
+    expected_oracle_fields = {
+        "archive",
+        "archive_root",
+        "revision",
+        "sha256",
+        "source",
+        "tag_object",
+        "tag_verified",
+        "version",
+    }
+    if set(oracle) != expected_oracle_fields:
+        raise HarnessError("runtime ticket-zero soak oracle record changed")
+    for field in ("archive_root", "revision", "sha256", "source", "tag_object", "version"):
+        if oracle.get(field) != pin[field]:
+            raise HarnessError("runtime ticket-zero soak oracle no longer matches its pin")
+    archive = attest_runtime_ticket_zero_soak_artifact(oracle.get("archive"), "archive")
+    if archive["sha256"] != pin["sha256"]:
+        raise HarnessError("runtime ticket-zero soak archive differs from its pin")
+
+    c_oracle = milestone_report.get("c_oracle")
+    if not isinstance(c_oracle, Mapping) or set(c_oracle) != {
+        "build_strategy",
+        "compiler",
+        "profiles",
+        "source_files",
+    }:
+        # The completed `run_milestone0` report has the complete C-oracle
+        # profile inventory. Keep the stable report smaller by retaining only
+        # its stable identity fields, but fail closed if that producer shape
+        # is absent or stale.
+        raise HarnessError("runtime ticket-zero soak C oracle record changed")
+    if (
+        not isinstance(c_oracle.get("build_strategy"), str)
+        or not c_oracle["build_strategy"]
+        or not isinstance(c_oracle.get("compiler"), str)
+        or not c_oracle["compiler"]
+        or not isinstance(c_oracle.get("source_files"), list)
+        or not isinstance(c_oracle.get("profiles"), Mapping)
+    ):
+        raise HarnessError("runtime ticket-zero soak C oracle record is invalid")
+
+    target = milestone_report.get("target")
+    if target != {"architecture": "aarch64", "system": "Linux"}:
+        raise HarnessError("runtime ticket-zero soak target is not native Linux/AArch64")
+
+    adapter = milestone_report.get("runtime_ticket_zero_test_adapter")
+    if not isinstance(adapter, Mapping) or set(adapter) != {"build", "fixture"}:
+        raise HarnessError("runtime ticket-zero soak adapter record changed")
+    build = adapter.get("build")
+    fixture = adapter.get("fixture")
+    if not isinstance(build, Mapping) or not isinstance(fixture, Mapping):
+        raise HarnessError("runtime ticket-zero soak adapter record is invalid")
+    adapter_archive = attest_runtime_ticket_zero_soak_artifact(
+        build.get("archive"), "adapter archive"
+    )
+    adapter_shared_library = attest_runtime_ticket_zero_soak_artifact(
+        build.get("shared_library"), "adapter shared library"
+    )
+
+    fixture_artifact = attest_runtime_ticket_zero_soak_artifact(
+        fixture.get("artifact"), "fixture"
+    )
+    fixture_build_command = fixture.get("build_command")
+    fixture_run_command = fixture.get("run_command")
+    stdout = fixture.get("stdout")
+    if (
+        not isinstance(fixture_build_command, list)
+        or not fixture_build_command
+        or not all(isinstance(argument, str) and argument for argument in fixture_build_command)
+        or not isinstance(fixture_run_command, list)
+        or not fixture_run_command
+        or not all(isinstance(argument, str) and argument for argument in fixture_run_command)
+        or not isinstance(stdout, str)
+    ):
+        raise HarnessError("runtime ticket-zero soak fixture command record is invalid")
+    expected_run_command = runtime_ticket_zero_fixture_command(
+        Path(fixture_run_command[0]),
+        worker_cycles=RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+        stress_seed=RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+    )
+    if fixture_run_command != expected_run_command:
+        raise HarnessError("runtime ticket-zero soak fixture command differs from the contract")
+
+    expected_schedule = runtime_ticket_zero_stress_schedule(
+        worker_cycles=RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+        stress_seed=RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+    )
+    schedule = fixture.get("stress_schedule")
+    if (
+        fixture.get("worker_cycles") != RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES
+        or schedule != expected_schedule
+        or fixture.get("watchdog")
+        != {"seconds": RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS, "status": "passed"}
+    ):
+        raise HarnessError("runtime ticket-zero soak schedule differs from the contract")
+
+    lifecycle = fixture.get("lifecycle_stability")
+    if not isinstance(lifecycle, Mapping) or set(lifecycle) != {
+        "audit_snapshot_count",
+        "post_warm_cycle_count",
+        "status",
+        "warm_baseline",
+    }:
+        raise HarnessError("runtime ticket-zero soak lifecycle audit record changed")
+    warm_baseline = lifecycle.get("warm_baseline")
+    if not isinstance(warm_baseline, Mapping) or set(warm_baseline) != set(
+        RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_FIELDS
+    ):
+        raise HarnessError("runtime ticket-zero soak lifecycle audit fields differ")
+    if any(
+        type(warm_baseline[name]) is not int or warm_baseline[name] < 0
+        for name in RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_FIELDS
+    ):
+        raise HarnessError("runtime ticket-zero soak lifecycle audit values are invalid")
+    expected_quiescent_values = {
+        "process_active": 1,
+        "page_owner_ready": 1,
+        "page_map_registered_entries": 0,
+        "arena_registry_entries": 1,
+        "live_tlds": 1,
+        "metadata_live_capabilities": 0,
+        "shared_later_theaps": 0,
+        "abandoned_regular_pages": 0,
+        "os_abandoned_pages_empty": 1,
+    }
+    if (
+        warm_baseline["worker_cycles"] != RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES
+        or any(
+            warm_baseline[name] != value
+            for name, value in expected_quiescent_values.items()
+        )
+        or lifecycle.get("audit_snapshot_count")
+        != RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES + 1
+        or lifecycle.get("post_warm_cycle_count")
+        != RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES - 1
+        or lifecycle.get("status") != "passed"
+    ):
+        raise HarnessError("runtime ticket-zero soak lifecycle audit is not quiescent")
+    if parse_runtime_ticket_zero_lifecycle_audit(stdout) != dict(warm_baseline):
+        raise HarnessError("runtime ticket-zero soak fixture stdout differs from its audit")
+
+    return {
+        "build_artifacts": {
+            "adapter_archive": adapter_archive,
+            "adapter_shared_library": adapter_shared_library,
+        },
+        "fixture": {
+            "artifact": fixture_artifact,
+            "build_command": list(fixture_build_command),
+            "run_command": list(fixture_run_command),
+            "stdout": stdout,
+        },
+        "oracle": {
+            "build_strategy": c_oracle["build_strategy"],
+            "compiler": c_oracle["compiler"],
+            "source_files": list(c_oracle["source_files"]),
+        },
+        "pin": {
+            "archive": archive,
+            "archive_root": oracle["archive_root"],
+            "revision": oracle["revision"],
+            "sha256": oracle["sha256"],
+            "source": oracle["source"],
+            "tag_object": oracle["tag_object"],
+            "tag_verified": oracle["tag_verified"],
+            "version": oracle["version"],
+        },
+        "schedule": {
+            "stress_seed": expected_schedule["seed"],
+            "watchdog_seconds": RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS,
+            "worker_cycles": RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+            "worker_route_invocation_count": expected_schedule[
+                "worker_route_invocation_count"
+            ],
+            "worker_routes_per_cycle": expected_schedule["worker_routes_per_cycle"],
+        },
+        "audit": dict(lifecycle),
+        "target": {
+            "architecture": target["architecture"],
+            "rust_target": PRODUCTION_RUST_TARGET,
+            "system": target["system"],
+        },
+    }
+
+
+def run_runtime_ticket_zero_soak(*, offline: bool, architecture: str) -> dict[str, Any]:
+    """Run and atomically publish the one source-attested private 1,024-cycle soak."""
+
+    if architecture != "aarch64":
+        raise HarnessError("runtime ticket-zero soak is available only for Linux/AArch64")
+    pin = load_pin()
+    contract = read_json(RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT)
+    validate_runtime_ticket_zero_adapter_contract(
+        contract, RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8")
+    )
+    source_before = runtime_ticket_zero_soak_source_state()
+    milestone_report = run_milestone0(
+        offline=offline,
+        generate_contracts=False,
+        check_only=False,
+        include_test_adapter=True,
+        include_adapted_stress=False,
+        include_native_owner_exit_lifecycle=False,
+        runtime_ticket_zero_worker_cycles=RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+        runtime_ticket_zero_watchdog_seconds=RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS,
+        runtime_ticket_zero_stress_seed=RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+        architecture=architecture,
+        write_report=False,
+    )
+    contract_record = runtime_ticket_zero_soak_contract_record(contract)
+    evidence = runtime_ticket_zero_soak_fixture_evidence(milestone_report, pin)
+    report = {
+        "format": RUNTIME_TICKET_ZERO_SOAK_REPORT_FORMAT,
+        "schema": RUNTIME_TICKET_ZERO_SOAK_REPORT_SCHEMA,
+        "mode": "soak",
+        "status": "passed",
+        "evidence_scope": RUNTIME_TICKET_ZERO_SOAK_EVIDENCE_SCOPE,
+        "nonclaims": list(RUNTIME_TICKET_ZERO_SOAK_NONCLAIMS),
+        "contract": contract_record,
+        "source": None,
+        **evidence,
+    }
+    # Keep this capture as the last substantive operation before publication:
+    # a source edit during build, audit, or artifact attestation invalidates
+    # the run and leaves a previously published stable report untouched.
+    source_after = runtime_ticket_zero_soak_source_state()
+    report["source"] = runtime_ticket_zero_soak_source_attestation(
+        source_before, source_after
+    )
+    write_json(RUNTIME_TICKET_ZERO_SOAK_REPORT, report)
+    return report
+
+
 def milestone0_report(
     pin: Mapping[str, str],
     archive: Path,
@@ -9010,6 +9481,7 @@ def run_milestone0(
     runtime_ticket_zero_worker_cycles: int = RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES,
     runtime_ticket_zero_watchdog_seconds: int = RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS,
     runtime_ticket_zero_stress_seed: int = RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED,
+    write_report: bool = True,
 ) -> dict[str, Any]:
     if architecture not in {"aarch64", "x86_64"}:
         raise HarnessError(f"unsupported allocator oracle architecture: {architecture}")
@@ -9256,7 +9728,8 @@ def run_milestone0(
                     stress_seed=runtime_ticket_zero_stress_seed,
                 ),
             }
-        write_json(REPORT_ROOT / "latest.json", report)
+        if write_report:
+            write_json(REPORT_ROOT / "latest.json", report)
         return report
 
 
@@ -9364,35 +9837,32 @@ def main() -> int:
             )
             print(json.dumps(result, sort_keys=True))
             return 0
+        if arguments.soak:
+            run_runtime_ticket_zero_soak(
+                offline=arguments.offline,
+                architecture=arguments.architecture,
+            )
+            print(RUNTIME_TICKET_ZERO_SOAK_REPORT)
+            return 0
         report = run_milestone0(
             offline=arguments.offline,
             generate_contracts=False,
             check_only=False,
-            include_test_adapter=arguments.full or arguments.churn or arguments.soak,
+            include_test_adapter=arguments.full or arguments.churn,
             include_adapted_stress=arguments.full,
             include_native_owner_exit_lifecycle=arguments.full,
             runtime_ticket_zero_worker_cycles=(
-                RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES
-                if arguments.soak
-                else (
-                    RUNTIME_TICKET_ZERO_CHURN_WORKER_CYCLES
-                    if arguments.full or arguments.churn
-                    else RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES
-                )
+                RUNTIME_TICKET_ZERO_CHURN_WORKER_CYCLES
+                if arguments.full or arguments.churn
+                else RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES
             ),
             runtime_ticket_zero_watchdog_seconds=(
-                RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS
-                if arguments.soak
-                else RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS
+                RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS
             ),
             runtime_ticket_zero_stress_seed=(
-                RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED
-                if arguments.soak
-                else (
-                    RUNTIME_TICKET_ZERO_CHURN_STRESS_SEED
-                    if arguments.full or arguments.churn
-                    else RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED
-                )
+                RUNTIME_TICKET_ZERO_CHURN_STRESS_SEED
+                if arguments.full or arguments.churn
+                else RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED
             ),
             architecture=arguments.architecture,
         )

@@ -1006,36 +1006,37 @@ metadata high-water acceptance remain required.
 
 `allocator --churn` uses that same prefixed evidence adapter but succeeds only
 when one fresh process completes 128 bounded C cycles within its 30-second
-watchdog. Each cycle runs the existing mixed-local, live-owner remote-free,
-mixed post-exit owner-exit, and alternating mapped-regular reclamation worker
-exactly once, in a deterministic Fisher-Yates order from recorded unsigned
-64-bit seed `0xd1b54a32d192ed03`. The fixture accepts no arguments for its
-three-cycle default, or at most one each of `--worker-cycles N` for decimal
-`N` in 1..1024 and `--stress-seed SEED` for a base-0 unsigned-64-bit seed, in
-either order; it exports no additional symbol. Its
-mixed route and alternating mapped-regular reclamation route first suspend A's
-exact page engine into the private runtime TLS slot and invoke ordinary
-post-destructor finish. That dispatcher resumes the matching engine, runs the
-existing aggregate source traversal for the mixed and sole-medium cases or the
-direct-cache-validating small-or-medium drain for direct small, and retains
-A's admission until the resulting typed B-side route terminally releases; A
-cannot fall through the no-page finalizer after its Theap/TLD has detached. Its
-mixed opaque owner-exit route carries two full medium pages (one mapped by a
-joined pre-exit remote free and one source-unmapped), a distinct one-client
-large page whose joined remote free releases it during source collection, one
-live arena singleton, and one live OS-aligned singleton; B receives no client
-address and must terminally release the arena singleton's PageMap-only tail
-and the OS singleton's private-list/clipped-mapping tail before A becomes
-fork-quiescent. On B's first direct free of either an existing direct-small
-client or one of three remaining clients on the pre-exit-normalized mapped,
-non-full medium page, joined C and D each receive the matching nominal scoped
-same-page producer after B claims the source low owner bit; C and D atomically
-append distinct private clients in separate joined turns and B's ordinary
-collector consumes the resulting two-node remote chain before the route
-continues. The direct runtime regressions pause after this opaque route
-transfers and prove ticket zero remains unavailable until B returns the final
-PageMap-release proof; a missing or mismatched publisher retains the route
-instead of invoking B's ordinary no-page finalizer. The alternating sole-medium
+watchdog. Each cycle runs exactly the two pointer-private workers,
+mixed-local and live-owner remote-free, once in a deterministic
+Fisher-Yates order from recorded unsigned-64-bit seed
+`0xd1b54a32d192ed03`. The fixture accepts no arguments for its three-cycle
+default, or at most one each of `--worker-cycles N` for decimal `N` in
+1..1024 and `--stress-seed SEED` for a base-0 unsigned-64-bit seed, in either
+order; it exports no additional symbol. The separately focused mixed post-exit
+owner-exit and alternating mapped-regular reclamation regressions are not
+additional C fixture schedule routes. They first suspend A's exact page engine
+into the private runtime TLS slot and invoke ordinary post-destructor finish.
+That dispatcher resumes the matching engine, runs the existing aggregate source
+traversal for the mixed and sole-medium cases or the direct-cache-validating
+small-or-medium drain for direct small, and retains A's admission until the
+resulting typed B-side route terminally releases; A cannot fall through the
+no-page finalizer after its Theap/TLD has detached. The mixed opaque owner-exit
+route carries two full medium pages (one mapped by a joined pre-exit remote
+free and one source-unmapped), a distinct one-client large page whose joined
+remote free releases it during source collection, one live arena singleton,
+and one live OS-aligned singleton; B receives no client address and must
+terminally release the arena singleton's PageMap-only tail and the OS
+singleton's private-list/clipped-mapping tail before A becomes fork-quiescent.
+On B's first direct free of either an existing direct-small client or one of
+three remaining clients on the pre-exit-normalized mapped, non-full medium
+page, joined C and D each receive the matching nominal scoped same-page
+producer after B claims the source low owner bit; C and D atomically append
+distinct private clients in separate joined turns and B's ordinary collector
+consumes the resulting two-node remote chain before the route continues. The
+direct runtime regressions pause after this opaque route transfers and prove
+ticket zero remains unavailable until B returns the final PageMap-release
+proof; a missing or mismatched publisher retains the route instead of invoking
+B's ordinary no-page finalizer. The alternating sole-medium
 and direct-small reclamation sides give B no client identity or PageMap handle;
 B attaches, adopts/uses the exact page, drains it, and finishes its attachment
 before returning the only proof that releases A's admission. The direct-small
@@ -1050,19 +1051,31 @@ scoped B/C/D post-exit publication group, for eight epochs from seed
 `0x9e3779b97f4a7c15` and proves ticket-zero reactivation after every route.
 It does not close general abandonment/reclamation or promote a libc backend.
 `allocator --soak` runs the same two-worker C fixture schedule for 1,024
-cycles from seed `0x94d049bb133111eb` under a separate 180-second watchdog;
-its JSON report records the run command, seed, two routes per cycle, and exact
-route-invocation count. After its first complete two-worker cycle, the
-original fixture thread also records a scalar-only quiescent baseline: process
-and ticket-zero readiness, PageMap registration/submap counts, arena registry,
-live TLDs, metadata live/high-water capabilities, shared Theaps, regular
-abandoned pages, and whether the private OS-abandoned list is empty. Every
-later cycle and the final ticket-zero allocation/free must match it; the report
-records the baseline and audit-snapshot count. This direct adapter does not
-install a post-exit registry; its C worker paths start from their supplied
-pointer or their own live engine. It
-is opt-in larger stability evidence, while `allocator --churn` remains the
-128-cycle, 30-second development gate.
+cycles from seed `0x94d049bb133111eb` under a separate 180-second watchdog:
+two routes per cycle, for exactly 2,048 route invocations. On success it
+atomically replaces only
+`.work/reports/allocator/runtime-ticket-zero-soak-1024.json`; it never writes
+the shared `.work/reports/allocator/latest.json` slot. The durable report is
+`crabc-mimalloc-runtime-ticket-zero-soak-report` format 1 and binds the live
+ticket-zero contract digest, pinned archive, adapter archive/shared library,
+fixture binary, C-oracle identity, target, commands, schedule, and all
+13 scalar audit fields. Its Git source attestation reads with
+`GIT_OPTIONAL_LOCKS=0` and requires byte-identical clean source states before
+the run and immediately before publication, so a failed, dirty, changed, or
+artifact-drifting run preserves a prior good stable record. After its first
+complete two-worker cycle, the original fixture thread records the scalar-only
+quiescent baseline: process and ticket-zero readiness, PageMap
+registration/submap counts, arena registry, live TLDs, metadata
+live/high-water capabilities, shared Theaps, regular abandoned pages, and
+whether the private OS-abandoned list is empty. Every later cycle and the
+final ticket-zero allocation/free must match it; the report records the
+baseline and audit-snapshot count. This direct adapter does not install a
+post-exit registry; its C worker paths start from their supplied pointer or
+their own live engine. It remains opt-in bounded stability evidence:
+`allocator --full` does not consume it, it unblocks no M5 gate, and it does
+not establish a selected/default libc backend, general cross-thread/post-exit
+acceptance, upstream pthread acceptance, or large-object coverage.
+`allocator --churn` remains the 128-cycle, 30-second development gate.
 
 The prefixed mixed-local and live-owner remote-free workers now enter through
 the typed runtime A-side operation and prove their ordinary
@@ -1985,7 +1998,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `adapted/test-stress-native-shadow-pthreads.patch` | Minimal selected-shadow adaptation of the exact upstream stress fixture; standard C allocation names bind to the native shadow `libc.so`, while unsupported upstream modes fail at compile time. |
 | `shadow-abi-matrix-v1.json` and `shadow-abi-matrix/` | Closed paired-artifact local C ABI contract and runner. It snapshots and attests the ordinary C-backed `libc.so` before native feature selection, then independently attests and compares one normalized `malloc`/`free`/`realloc` trace through both artifacts. It records the two current zero-size `realloc` ordinary/native alignment known reds exactly and keeps lifecycle, cross-owner, DSO/static-linkage, and allocator-layout cases explicitly blocked rather than smuggling them into a local comparison. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
-| `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, nine-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including scalar-only lifecycle stability auditing plus the retained narrow, persistent mixed-local, and live-owner remote-free worker round trips. |
+| `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, nine-symbol inventory, one-shot caller contract, native link contract, and durable 1,024-cycle soak-report contract for the process-lifetime ticket-zero C witness, including scalar-only lifecycle stability auditing plus the retained narrow, persistent mixed-local, and live-owner remote-free worker round trips. |
 | `native-owner-exit-lifecycle-v3.5.0.json` | Reviewed direct-engine Gate 5C suite: exact Cargo feature set, fifteen focused runtime/source traversal checks, and the required owner-exit scenario coverage. |
 | `owner-exit-publication-v3.5.0.json` | Pinned-source order gate for collection, queue detach, abandoned identity, mapped bitmap/count or non-arena OS-list publication, and common unown. It keeps empty terminal release distinct and prohibits treating a raw page/block snapshot or Loom-only W07 model as a reconstructed owner-exit claim. |
 | `m5-gate-v3.5.0.json` | Versioned full-lane contract for the 128-cycle lifecycle schedule and its current Gate 5A--5E acceptance/blocker classification. |
