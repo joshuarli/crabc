@@ -498,6 +498,8 @@ mod posix_spawnattr_init;
 mod posix_spawnattr_getpgroup;
 #[path = "posix_spawnattr_getschedpolicy.rs"]
 mod posix_spawnattr_getschedpolicy;
+#[path = "posix_spawnattr_getschedparam.rs"]
+mod posix_spawnattr_getschedparam;
 #[path = "static_startup.rs"]
 mod static_startup;
 #[path = "stack_chk_fail.rs"]

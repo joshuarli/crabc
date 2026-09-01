@@ -185,6 +185,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/posix_exit.rs"),
     Path("libc/src/c_abi/x86_64/posix_spawnattr_init.rs"),
     Path("libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs"),
+    Path("libc/src/c_abi/x86_64/posix_spawnattr_getschedparam.rs"),
     Path("libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs"),
     Path("libc/src/c_abi/x86_64/posix_spawnattr_setschedparam.rs"),
     Path("libc/src/c_abi/x86_64/bsearch.rs"),
@@ -9234,6 +9235,90 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "evidence must not force-link the archive"
         )
 
+    posix_spawnattr_getschedparam_source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawnattr_getschedparam.rs"
+    )
+    posix_spawnattr_getschedparam_text = (
+        posix_spawnattr_getschedparam_source.read_text(errors="replace")
+    )
+    for required in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute scheduler-parameter C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedparam",
+        "return ENOSYS;",
+        "ENOSYS: c_int = 38",
+        'pub extern "C" fn posix_spawnattr_getschedparam',
+    ):
+        if required not in posix_spawnattr_getschedparam_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_getschedparam.rs: "
+                f"selected static boundary is missing {required!r}"
+            )
+    posix_spawnattr_getschedparam_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawnattr_getschedparam_text,
+        )
+    )
+    if posix_spawnattr_getschedparam_exports != {
+        "posix_spawnattr_getschedparam"
+    }:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawnattr_getschedparam.rs: selected "
+            "static artifact must export only posix_spawnattr_getschedparam"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fork(",
+        "execve",
+    ):
+        if forbidden in posix_spawnattr_getschedparam_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_getschedparam.rs: "
+                f"selected static leaf must not select {forbidden!r}"
+            )
+    posix_spawnattr_getschedparam_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getschedparam.sh"
+    )
+    posix_spawnattr_getschedparam_runner_text = (
+        posix_spawnattr_getschedparam_runner.read_text(errors="replace")
+    )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_getschedparam_header_abi.sh",
+        "posix_spawnattr_sched.lo",
+        "archive_member_for_symbol",
+        "posix_spawnattr_getschedparam object export surface drifted",
+        "posix_spawnattr_getschedparam object unexpectedly depends on another symbol",
+        "posix_spawnattr_getschedparam object unexpectedly performs a call or syscall",
+        "assert_ignored_pointer_enosys_boundary",
+        "-nostdlib -static",
+        "--gc-sections",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "fork vfork clone execve wait4",
+    ):
+        if required not in posix_spawnattr_getschedparam_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_posix_spawnattr_getschedparam.sh: "
+                f"selected static evidence is missing {required!r}"
+            )
+    if "--whole-archive" in posix_spawnattr_getschedparam_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_posix_spawnattr_getschedparam.sh: selected "
+            "static evidence must not force-link the archive"
+        )
+
     posix_spawnattr_getschedpolicy_source = (
         ROOT
         / "libc"
@@ -14580,6 +14665,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         posix_exit_text,
         posix_spawnattr_init_text,
         posix_spawnattr_getpgroup_text,
+        posix_spawnattr_getschedparam_text,
         posix_spawnattr_getschedpolicy_text,
         posix_spawnattr_setschedparam_text,
         bsearch_text,
@@ -15183,6 +15269,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "_exit",
         "posix_spawnattr_init",
         "posix_spawnattr_getpgroup",
+        "posix_spawnattr_getschedparam",
         "posix_spawnattr_getschedpolicy",
         "posix_spawnattr_setschedparam",
         "exit",
@@ -15325,6 +15412,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("posix_exit.rs", posix_exit_text),
         ("posix_spawnattr_init.rs", posix_spawnattr_init_text),
         ("posix_spawnattr_getpgroup.rs", posix_spawnattr_getpgroup_text),
+        ("posix_spawnattr_getschedparam.rs", posix_spawnattr_getschedparam_text),
         ("posix_spawnattr_getschedpolicy.rs", posix_spawnattr_getschedpolicy_text),
         ("posix_spawnattr_setschedparam.rs", posix_spawnattr_setschedparam_text),
         ("bsearch.rs", bsearch_text),

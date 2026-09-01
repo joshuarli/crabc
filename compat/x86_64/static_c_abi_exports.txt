@@ -684,6 +684,7 @@ posix_spawn_file_actions_init
 posix_spawnattr_destroy
 posix_spawnattr_getflags
 posix_spawnattr_getpgroup
+posix_spawnattr_getschedparam
 posix_spawnattr_getschedpolicy
 posix_spawnattr_init
 posix_spawnattr_setpgroup

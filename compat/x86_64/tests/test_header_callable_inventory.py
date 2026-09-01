@@ -192,6 +192,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(complement, sorted(complement))
         self.assertEqual(report["summary"]["static_export_complement_count"], len(complement))
         self.assertGreater(len(complement), 0)
+        self.assertNotIn("posix_spawnattr_getschedparam", complement)
         self.assertNotIn("posix_spawnattr_setschedparam", complement)
         self.assertNotIn("sched_setscheduler", complement)
         self.assertIn(

@@ -8998,6 +8998,392 @@ def require_posix_spawnattr_getpgroup_artifact(family: Mapping[str, Any]) -> Non
         )
 
 
+def require_posix_spawnattr_getschedparam_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep musl's direct scheduler-parameter ENOSYS return private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-posix-spawnattr-getschedparam"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime needs exactly one static-c-posix-spawnattr-getschedparam artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-spawnattr-getschedparam must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-spawnattr-getschedparam must not promote a spawn or scheduler capability",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-posix-spawnattr-getschedparam needs a description",
+    )
+    for phrase in (
+        "POSIX spawn-attribute scheduler-parameter compatibility-return leaf",
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `posix_spawnattr_getschedparam`",
+        "no undefined symbol, helper call, syscall, errno/TLS, allocator",
+        "`src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedparam`",
+        "`return ENOSYS;`",
+        "positive error number `ENOSYS=38`",
+        "nonnull arguments, null attribute, null scheduler parameter, and both-null",
+        "stale errno unchanged",
+        "neither reads nor writes byte-filled 336-byte caller-owned",
+        "48-byte `struct sched_param` records",
+        "does not validate or dereference either pointer",
+        "`posix_spawn`",
+        "`posix_spawnp`",
+        "attribute initialization/destruction/mutation or other queries",
+        "file actions",
+        "fork/vfork/clone",
+        "exec",
+        "child lifecycle",
+        "signal delivery",
+        "scheduler policy or parameter behavior",
+        "family completion",
+        "promotion",
+        "public x86 support",
+        "generic AArch64 `posix_spawnattr_getschedparam` export remains unchanged",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-spawnattr-getschedparam description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-posix-spawnattr-getschedparam.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_spawnattr_getschedparam.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/sys/types.h",
+        "include/sched.h",
+        "include/spawn.h",
+        "include/errno.h",
+        "compat/x86_64/posix_spawnattr_getschedparam_header_abi_probe.c",
+        "compat/x86_64/posix_spawnattr_getschedparam_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_spawnattr_getschedparam_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_spawnattr_getschedparam_probe.c",
+        "compat/x86_64/libc_posix_spawnattr_getschedparam_start.S",
+        "compat/x86_64/run_libc_posix_spawnattr_getschedparam.sh",
+        "compat/x86_64/header_callable_inventory.py",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_linkage_audit.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-posix-spawnattr-getschedparam source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-posix-spawnattr-getschedparam.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "int posix_spawnattr_getschedparam(const posix_spawnattr_t *, struct sched_param *)"
+            in item
+            and "rdi/rsi" in item
+            and "eax" in item
+            and "ENOSYS=38" in item
+            and "both-null" in item
+            and "stale errno" in item
+            and "48-byte/eight-byte-aligned sched_param" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getschedparam must retain its ignored-pointer ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedparam"
+            in item
+            and "return ENOSYS;" in item
+            and "posix_spawnattr_sched.lo" in item
+            and "generic AArch64 export remains unchanged" in item
+            and "scheduler behavior" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getschedparam must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static --gc-sections`" in item
+            and "exactly one Rust object exporting only posix_spawnattr_getschedparam"
+            in item
+            and "no undefined symbols" in item
+            and "PT_TLS" in item
+            and "fixed ENOSYS immediate return" in item
+            and "peer spawn/process export" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getschedparam must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-posix-spawnattr-getschedparam.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int posix_spawnattr_getschedparam(const posix_spawnattr_t *, struct sched_param *)`"
+            in item
+            and "<spawn.h>` plus `<sched.h>" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "const-pointer/mutable-pointer function-pointer ABI" in item
+            and "48-byte/eight-byte-aligned scheduler-parameter record" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-posix-spawnattr-getschedparam must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-posix-spawnattr-getschedparam needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-posix-spawnattr-getschedparam"},
+        "static-c-posix-spawnattr-getschedparam must use its closed command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static --gc-sections` candidate",
+                "direct and function-pointer positive ENOSYS=38 returns",
+                "nonnull arguments, null attribute, null scheduler parameter, and both-null",
+                "byte-filled caller-owned posix_spawnattr_t and sched_param storage unchanged",
+                "stale errno preservation",
+                "posix_spawnattr_sched.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "fixed ignored-pointer ENOSYS no-call/no-syscall object",
+                "peer spawn and process extraction",
+                "attribute initialization/destruction/mutation or other queries",
+                "fork/vfork/clone",
+                "child lifecycle",
+                "signal or scheduler behavior",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-spawnattr-getschedparam evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "posix_spawnattr_getschedparam" in exports,
+        "static C ABI export contract omits posix_spawnattr_getschedparam",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "posix_spawnattr_getschedparam.rs"]\nmod posix_spawnattr_getschedparam;'
+        in static_root,
+        "x86 static C ABI must compose the posix_spawnattr_getschedparam leaf",
+    )
+    source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawnattr_getschedparam.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute scheduler-parameter C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedparam",
+        "return ENOSYS;",
+        "const ENOSYS: c_int = 38;",
+        'pub extern "C" fn posix_spawnattr_getschedparam',
+        "does not dereference, validate, retain, or alter either",
+        "generic AArch64\n//! export and behavior remain exactly unchanged",
+    ):
+        require(
+            snippet in source,
+            f"posix_spawnattr_getschedparam implementation omits {snippet}",
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fork(",
+        "execve",
+    ):
+        require(
+            forbidden not in source,
+            f"posix_spawnattr_getschedparam leaf widens into {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getschedparam.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_getschedparam_header_abi.sh",
+        "posix_spawnattr_sched.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "posix_spawnattr_getschedparam object export surface drifted",
+        "posix_spawnattr_getschedparam object unexpectedly depends on another symbol",
+        "posix_spawnattr_getschedparam object unexpectedly performs a call or syscall",
+        "assert_ignored_pointer_enosys_boundary",
+        "-nostdlib -static",
+        "--gc-sections",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "for unselected in posix_spawn",
+        "fork vfork clone execve wait4",
+    ):
+        require(
+            snippet in runner,
+            f"posix_spawnattr_getschedparam runner omits {snippet}",
+        )
+    require(
+        "--whole-archive" not in runner,
+        "posix_spawnattr_getschedparam runner must not force-link the archive",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getschedparam_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <sched.h>",
+        "posix_spawnattr_getschedparam_signature",
+        "sizeof(struct sched_param) == 48",
+        "function((const posix_spawnattr_t *)0, &parameter)",
+        "function(&attributes, (struct sched_param *)0)",
+        "function((const posix_spawnattr_t *)0, (struct sched_param *)0)",
+        "CRABC_POSIX_SPAWNATTR_GETSCHEDPARAM_FREESTANDING",
+        "errno = E2BIG",
+    ):
+        require(
+            snippet in probe,
+            f"posix_spawnattr_getschedparam probe omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getschedparam_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "crabc_x86_64_posix_spawnattr_getschedparam_probe",
+        "mov $60, %eax",
+    ):
+        require(
+            snippet in start,
+            f"posix_spawnattr_getschedparam start shim omits {snippet}",
+        )
+
+    header_c = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "posix_spawnattr_getschedparam_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "posix_spawnattr_getschedparam_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_spawnattr_getschedparam_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for header in (header_c, header_cxx):
+        for snippet in (
+            "#include <sched.h>",
+            "#include <spawn.h>",
+            "posix_spawnattr_getschedparam_signature",
+            "posix_spawnattr_getschedparam_function",
+            "336",
+            "48",
+            "8",
+        ):
+            require(
+                snippet in header,
+                f"posix_spawnattr_getschedparam header evidence omits {snippet}",
+            )
+    for snippet in (
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "cxx17-strict",
+        "cxx17-gnu",
+        "-nostdinc",
+        "-nostdinc++",
+        "retained a mangled posix_spawnattr_getschedparam reference",
+        "for header in sched.h spawn.h features.h bits/alltypes.h",
+    ):
+        require(
+            snippet in header_runner,
+            f"posix_spawnattr_getschedparam header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "posix-spawnattr-getschedparam-header-abi)",
+        "run_posix_spawnattr_getschedparam_header_abi()",
+        "run_posix_spawnattr_getschedparam_header_abi",
+        "libc-posix-spawnattr-getschedparam)",
+        "run_libc_posix_spawnattr_getschedparam()",
+        "run_libc_posix_spawnattr_getschedparam",
+    ):
+        require(
+            snippet in dispatcher,
+            f"posix_spawnattr_getschedparam dispatcher omits {snippet}",
+        )
+
+
 def require_posix_spawnattr_getschedpolicy_artifact(
     family: Mapping[str, Any],
 ) -> None:
@@ -71259,6 +71645,7 @@ def validate_ledger(
     )
     require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getpgroup_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawnattr_getschedparam_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getschedpolicy_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
