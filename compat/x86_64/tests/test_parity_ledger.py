@@ -51,7 +51,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 344)
+        self.assertEqual(report["verified_artifact_count"], 345)
         self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -20602,6 +20602,97 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh scheduler-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sched-getscheduler command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sched_setscheduler_artifact_keeps_its_musl_enosys_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-setscheduler"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi/x86_64/sched_setscheduler.rs",
+            "include/sched.h",
+            "compat/x86_64/sched_setscheduler_header_abi_probe.c",
+            "compat/x86_64/sched_setscheduler_header_abi_probe.cpp",
+            "compat/x86_64/run_sched_setscheduler_header_abi.sh",
+            "compat/x86_64/libc_sched_setscheduler_probe.c",
+            "compat/x86_64/libc_sched_setscheduler_start.S",
+            "compat/x86_64/run_libc_sched_setscheduler.sh",
+            "compat/x86_64/header_callable_inventory.json",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sched-setscheduler"},
+        )
+        for phrase in (
+            "one-symbol POSIX scheduler-policy compatibility-failure artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `sched_setscheduler`",
+            "`src/sched/sched_setscheduler.c`",
+            "`__syscall_ret(-ENOSYS)`",
+            "`-1` and writes `ENOSYS=38`",
+            "thread-scoped raw x86 syscall 144",
+            "strict/POSIX/X/Open/GNU C and C++17 feature matrix",
+            "makes no raw syscall",
+            "system.kernel-admin capability",
+            "scheduler-family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "pid_t" in prerequisite
+                and "edi" in prerequisite
+                and "esi" in prerequisite
+                and "rdx" in prerequisite
+                and "eax" in prerequisite
+                and "syscall 144" in prerequisite
+                and "does not issue" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/sched/sched_setscheduler.c" in prerequisite
+                and "__syscall_ret(-ENOSYS)" in prerequisite
+                and "thread-scoped" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "raw 144 only" in prerequisite
+                and "SCHED_OTHER" in prerequisite
+                and "non-mutating -ESRCH" in prerequisite
+                and "-1/ENOSYS" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-setscheduler"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        prerequisites[2] = prerequisites[2].replace("raw 144 only", "raw 143 only")
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-sched-setscheduler must retain its raw/C ABI differential",
         ):
             ledger.validate_ledger(data)
 

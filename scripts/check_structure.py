@@ -4262,6 +4262,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "signal_realtime_max.rs"]',
         '#[path = "signal_realtime_min.rs"]',
         '#[path = "sched_getscheduler.rs"]',
+        '#[path = "sched_setscheduler.rs"]',
         '#[path = "signal_alarm.rs"]',
         '#[path = "signal_pending.rs"]',
         '#[path = "signal_set_mutation.rs"]',
@@ -5684,6 +5685,45 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         if forbidden in sched_getscheduler_text:
             errors.append(
                 "libc/src/c_abi/x86_64/sched_getscheduler.rs: selected static "
+                f"musl-ENOSYS scheduler boundary must not select {forbidden!r}"
+            )
+
+    sched_setscheduler_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_setscheduler.rs"
+    )
+    sched_setscheduler_text = sched_setscheduler_source.read_text(errors="replace")
+    for required in (
+        "Bounded Linux/x86-64 static POSIX scheduler-policy compatibility-failure boundary",
+        "src/sched/sched_setscheduler.c::sched_setscheduler",
+        "__syscall_ret(-ENOSYS)",
+        "raw syscall `sched_setscheduler=144`",
+        "c_status(-ENOSYS)",
+    ):
+        if required not in sched_setscheduler_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sched_setscheduler.rs: selected static "
+                f"musl-ENOSYS scheduler boundary is missing {required!r}"
+            )
+    sched_setscheduler_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            sched_setscheduler_text,
+        )
+    )
+    if sched_setscheduler_exports != {"sched_setscheduler"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sched_setscheduler.rs: selected static "
+            "artifact must export only sched_setscheduler"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "SYS_SCHED_SETSCHEDULER",
+        "sched_setparam",
+        "pthread_",
+    ):
+        if forbidden in sched_setscheduler_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sched_setscheduler.rs: selected static "
                 f"musl-ENOSYS scheduler boundary must not select {forbidden!r}"
             )
 
@@ -14498,6 +14538,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         signal_realtime_max_text,
         signal_realtime_min_text,
         sched_getscheduler_text,
+        sched_setscheduler_text,
         signal_alarm_text,
         signal_pending_text,
         signal_set_mutation_text,
@@ -14823,6 +14864,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__libc_current_sigrtmin",
         "__libc_current_sigrtmax",
         "sched_getscheduler",
+        "sched_setscheduler",
         "alarm",
         "kill",
         "killpg",
@@ -15241,6 +15283,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("signal_realtime_max.rs", signal_realtime_max_text),
         ("signal_realtime_min.rs", signal_realtime_min_text),
         ("sched_getscheduler.rs", sched_getscheduler_text),
+        ("sched_setscheduler.rs", sched_setscheduler_text),
         ("signal_alarm.rs", signal_alarm_text),
         ("signal_pending.rs", signal_pending_text),
         ("signal_set_mutation.rs", signal_set_mutation_text),

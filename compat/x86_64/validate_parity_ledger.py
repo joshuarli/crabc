@@ -70160,6 +70160,226 @@ def require_sched_setparam_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_sched_setscheduler_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's scheduler-policy process/thread mismatch below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-sched-setscheduler"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-setscheduler artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-setscheduler must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sched-setscheduler must not select scheduler policy behavior",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol POSIX scheduler-policy compatibility-failure artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `sched_setscheduler`",
+        "`src/sched/sched_setscheduler.c`",
+        "`__syscall_ret(-ENOSYS)`",
+        "`-1` and writes `ENOSYS=38`",
+        "thread-scoped raw x86 syscall 144",
+        "non-mutating `-ESRCH`",
+        "48-byte `struct sched_param`",
+        "strict/POSIX/X/Open/GNU C and C++17 feature matrix",
+        "makes no raw syscall",
+        "separate `sched_setparam`, `sched_getparam`, `sched_getscheduler`, C11 `thrd_yield`, and priority-bounds",
+        "scheduler mutation or policy, parameter records, priority bounds, POSIX `sched_yield`, affinity",
+        "pthread scheduling attributes",
+        "thread/process lifecycle",
+        "system.kernel-admin capability",
+        "scheduler-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-setscheduler description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "static-c-sched-setscheduler.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sched_setscheduler.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/sched.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/sched_setscheduler_header_abi_probe.c",
+        "compat/x86_64/sched_setscheduler_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_setscheduler_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_setscheduler_probe.c",
+        "compat/x86_64/libc_sched_setscheduler_start.S",
+        "compat/x86_64/run_libc_sched_setscheduler.sh",
+        "compat/x86_64/header_callable_inventory.py",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sched-setscheduler source owners omit {owner}",
+        )
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sched-setscheduler.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "pid_t" in item
+            and "edi" in item
+            and "esi" in item
+            and "rdx" in item
+            and "eax" in item
+            and "syscall 144" in item
+            and "does not issue" in item
+            and "dereference" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-setscheduler must retain its process API/x86 syscall boundary",
+    )
+    require(
+        any(
+            "src/sched/sched_setscheduler.c" in item
+            and "__syscall_ret(-ENOSYS)" in item
+            and "thread-scoped" in item
+            and "sched_setparam" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-setscheduler must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "raw 144 only" in item
+            and "SCHED_OTHER" in item
+            and "non-mutating -ESRCH" in item
+            and "untouched 48-byte record" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-setscheduler must retain its raw/C ABI differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sched-setscheduler.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open/GNU C and C++17" in item
+            and "int sched_setscheduler(pid_t, int, const struct sched_param *)"
+            in item
+            and "48-byte align-8" in item
+            and "unmangled C++ C linkage" in item
+            and "syscall.h" in item
+            for item in headers
+        ),
+        "static-c-sched-setscheduler must retain its C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "sched_setscheduler" in static_exports,
+        "static-c-sched-setscheduler must expose its exact scheduler spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/sched/sched_setscheduler.c" in entry["role"]
+            and "ENOSYS" in entry["role"]
+            and "read-only record" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-setscheduler must retain its pinned-musl ENOSYS oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "144" in entry["role"]
+            and "thread-scoped" in entry["role"]
+            and "INT_MAX" in entry["role"]
+            and "SCHED_OTHER" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-setscheduler must retain its Linux raw-syscall contrast",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sched-setscheduler"},
+        "static-c-sched-setscheduler must use the closed libc-sched-setscheduler command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "frozen AArch64 static ABI row",
+                "scheduler mutation/policy/parameters",
+                "priority bounds",
+                "POSIX sched_yield",
+                "affinity",
+                "pthread scheduling",
+                "sched_setscheduler disassembly",
+                "raw syscall 144",
+                "raw-impossible-task contrast",
+                "C ABI -1/ENOSYS",
+                "untouched record",
+                "sched_setparam, sched_getparam, sched_getscheduler, C11 thrd_yield, and priority-bounds",
+                "scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sched-setscheduler evidence must retain its musl ENOSYS regression",
+    )
+
+
 def require_sched_getaffinity_artifact(family: Mapping[str, Any]) -> None:
     """Keep the GNU affinity observation leaf below scheduler promotion."""
     artifacts = require_verified_artifacts(
@@ -71118,6 +71338,7 @@ def validate_ledger(
     require_sched_getscheduler_artifact(by_id["libc.posix-runtime"])
     require_sched_getparam_artifact(by_id["libc.posix-runtime"])
     require_sched_setparam_artifact(by_id["libc.posix-runtime"])
+    require_sched_setscheduler_artifact(by_id["libc.posix-runtime"])
     require_sched_getaffinity_artifact(by_id["libc.posix-runtime"])
     require_alarm_artifact(by_id["libc.posix-runtime"])
     require_sigset_mutation_artifact(by_id["libc.posix-runtime"])

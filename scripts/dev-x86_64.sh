@@ -2325,6 +2325,7 @@ general facade admission, or C ABI support claim.
   libc-sched-getaffinity  run the static x86 GNU scheduler-affinity observation slice
   libc-sched-getparam  run the static x86 musl-ENOSYS scheduler-record observation slice
   libc-sched-setparam  run the static x86 musl-ENOSYS scheduler-parameter compatibility slice
+  libc-sched-setscheduler  run the static x86 musl-ENOSYS scheduler-policy compatibility slice
   libc-setfsgid  run the static x86 filesystem-credential setfsgid slice
   libc-setfsuid  run the static x86 filesystem-credential setfsuid slice
   personality-header-abi  compile x86 sys/personality.h C/C++ declarations
@@ -2334,6 +2335,7 @@ general facade admission, or C ABI support claim.
   sched-getaffinity-header-abi  compile x86 GNU sched_getaffinity C/C++ declarations
   sched-getparam-header-abi  compile x86 sched_getparam C/C++ declarations
   sched-setparam-header-abi  compile x86 sched_setparam C/C++ declarations
+  sched-setscheduler-header-abi  compile x86 sched_setscheduler C/C++ declarations
   setfsgid-header-abi  compile x86 sys/fsuid.h setfsgid C/C++ declarations
   setfsuid-header-abi  compile x86 sys/fsuid.h setfsuid C/C++ declarations
   libc-pthread-condattr-clock  run the static x86 crabc-libc condition-attribute clock record slice
@@ -3078,6 +3080,10 @@ run_libc_sched_setparam_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_setparam.sh
 }
 
+run_libc_sched_setscheduler_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sched_setscheduler.sh
+}
+
 run_libc_sched_getaffinity_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_getaffinity.sh
 }
@@ -3340,6 +3346,10 @@ run_sched_getparam_header_abi() {
 
 run_sched_setparam_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sched_setparam_header_abi.sh
+}
+
+run_sched_setscheduler_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sched_setscheduler_header_abi.sh
 }
 
 run_sched_getaffinity_header_abi() {
@@ -4900,9 +4910,9 @@ case "$command" in
     psignal-header-abi|libc-psignal|libc-process-signal) ;;
     resolver-runtime-header-abi|libc-resolver-runtime) ;;
     legacy-misc-header-abi|libc-legacy-misc) ;;
-    usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
+    usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
-    sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
+    sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
     tee-header-abi|splice-header-abi) ;;
@@ -8587,6 +8597,11 @@ case "$command" in
         ensure_image
         run_libc_sched_setparam_probe
         ;;
+    libc-sched-setscheduler)
+        [ "$#" -eq 0 ] || fail "libc-sched-setscheduler takes no arguments"
+        ensure_image
+        run_libc_sched_setscheduler_probe
+        ;;
     libc-setfsgid)
         [ "$#" -eq 0 ] || fail "libc-setfsgid takes no arguments"
         ensure_image
@@ -8616,6 +8631,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "sched-setparam-header-abi takes no arguments"
         ensure_image
         run_sched_setparam_header_abi
+        ;;
+    sched-setscheduler-header-abi)
+        [ "$#" -eq 0 ] || fail "sched-setscheduler-header-abi takes no arguments"
+        ensure_image
+        run_sched_setscheduler_header_abi
         ;;
     setfsgid-header-abi)
         [ "$#" -eq 0 ] || fail "setfsgid-header-abi takes no arguments"

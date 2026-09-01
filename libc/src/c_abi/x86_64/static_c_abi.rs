@@ -841,6 +841,8 @@ mod inet_network;
 mod sched_getparam;
 #[path = "sched_setparam.rs"]
 mod sched_setparam;
+#[path = "sched_setscheduler.rs"]
+mod sched_setscheduler;
 #[path = "sched_getaffinity.rs"]
 mod sched_getaffinity;
 #[path = "pthread_getconcurrency.rs"]

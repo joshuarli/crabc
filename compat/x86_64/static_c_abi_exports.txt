@@ -824,6 +824,7 @@ sched_getcpu
 sched_getparam
 sched_getscheduler
 sched_setparam
+sched_setscheduler
 sched_yield
 secure_getenv
 seekdir

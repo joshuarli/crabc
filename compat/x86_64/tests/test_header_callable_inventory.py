@@ -193,6 +193,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(report["summary"]["static_export_complement_count"], len(complement))
         self.assertGreater(len(complement), 0)
         self.assertNotIn("posix_spawnattr_setschedparam", complement)
+        self.assertNotIn("sched_setscheduler", complement)
         self.assertIn(
             "candidate external callable names are absent from the static export ratchet",
             report["summary"]["incomplete_reasons"],

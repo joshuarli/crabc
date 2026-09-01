@@ -1706,11 +1706,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "psignal-header-abi|libc-psignal|libc-process-signal",
             "resolver-runtime-header-abi|libc-resolver-runtime",
             "legacy-misc-header-abi|libc-legacy-misc",
-            "usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
+            "usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
-            "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
+            "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
             "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
-            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
+            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
             "tee-header-abi|splice-header-abi",
             "sync-file-range-header-abi|copy-file-range-header-abi",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi|stdio-fixed-format-whitespace-scan-header-abi|stdio-fixed-literal-scan-header-abi|stdio-fixed-empty-format-scan-header-abi|stdio-fixed-suppressed-character-scan-header-abi|stdio-fixed-suppressed-string-scan-header-abi|stdio-fixed-suppressed-scanset-scan-header-abi|stdio-fixed-suppressed-count-scan-header-abi",
@@ -1727,6 +1727,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "stdio-permanent-fileno-header-abi",
             "stdio-permanent-fileno-unlocked-header-abi",
             "stdio-permanent-feof-unlocked-header-abi",
+            "stdio-permanent-ferror-unlocked-header-abi",
             "clock-adjtime-header-abi",
             "clock-settime-header-abi",
             "timer-getoverrun-header-abi",
@@ -1770,6 +1771,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "linux-5-10-uapi",
             "candidate-header-closure",
             "installed-header-tree-closure",
+            "header-callable-linkage-audit",
             "uapi-wrapper-matrix",
             "epoll-header-abi",
             "event-descriptors-header-abi",
@@ -1810,7 +1812,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-filesystem-traversal",
             "libc-filesystem-directory",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
@@ -35234,6 +35236,154 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("sched-setparam-header-abi)", dispatcher)
         self.assertIn("libc-sched-setparam)", dispatcher)
 
+
+    def test_libc_static_c_abi_sched_setscheduler_artifact_stays_musl_enosys(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_setscheduler.rs"
+        )
+        c_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_setscheduler_header_abi_probe.c"
+        )
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_setscheduler_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_setscheduler_header_abi.sh"
+        )
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_sched_setscheduler_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_sched_setscheduler_start.S"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_setscheduler.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(
+                path.is_file(), f"missing sched_setscheduler input: {path}"
+            )
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_setscheduler.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static POSIX scheduler-policy compatibility-failure boundary",
+            "src/sched/sched_setscheduler.c::sched_setscheduler",
+            "__syscall_ret(-ENOSYS)",
+            "raw syscall `sched_setscheduler=144`",
+            "c_status(-ENOSYS)",
+            'pub extern "C" fn sched_setscheduler(',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "raw_syscall::",
+            "SYS_SCHED_SETSCHEDULER",
+            "sched_setparam",
+            "run_libc_process_resources",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&sched_setscheduler)",
+            "sched_setscheduler_signature)(",
+            "pid_t, int, const struct sched_param *",
+            "sizeof(struct sched_param) == 48",
+            "offsetof(struct sched_param, __reserved3) == 40",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&sched_setscheduler)",
+            "sched_setscheduler_signature",
+            "sizeof(sched_param) == 48",
+            'extern "C" void crabc_sched_setscheduler_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "strict posix xopen gnu",
+            "sched_setscheduler_header_abi_probe.c",
+            "sched_setscheduler_header_abi_probe.cpp",
+            "unmangled sched_setscheduler",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_sched_setscheduler == 144",
+            "raw_sched_setscheduler",
+            "SCHED_OTHER",
+            "param_is_unchanged",
+            "check_musl_process_api",
+            "check_musl_null_parameter",
+            "errno != ENOSYS",
+            "CRABC_SCHED_SETSCHEDULER_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sched_setscheduler_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_sched_setscheduler_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "AARCH64_STATIC_ABI",
+            "sched_setscheduler.lo",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_musl_enosys_boundary",
+            "sched_setscheduler forwarded raw Linux syscall 144",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn("run_libc_process_resources", artifact_runner)
+        self.assertIn("sched_setscheduler", static_exports)
+        self.assertIn('id = "static-c-sched-setscheduler"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-setscheduler"',
+            parity_ledger,
+        )
+        self.assertIn("run_sched_setscheduler_header_abi()", dispatcher)
+        self.assertIn("run_libc_sched_setscheduler_probe()", dispatcher)
+        self.assertIn("sched-setscheduler-header-abi)", dispatcher)
+        self.assertIn("libc-sched-setscheduler)", dispatcher)
 
     def test_libc_static_c_abi_sched_getaffinity_artifact_stays_bounded(self) -> None:
         static_root = (
