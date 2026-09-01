@@ -6350,15 +6350,16 @@ def rust_layout_probe(
         "-p",
         "crabc-mimalloc",
         "--lib",
+        "--locked",
     ]
     if rust_target is not None:
         if rust_target == X86_64_RUST_TARGET:
-            # The x86 evidence lane must neither update the lockfile nor
-            # inherit a feature-selected adapter/test artifact from the shared
-            # target volume. Its test harness remains behavioral evidence,
-            # while the separate normal rlib audit owns the no_std artifact
-            # claim below.
-            command.extend(("--locked", "--no-default-features"))
+            # The x86 evidence lane must not inherit a feature-selected
+            # adapter/test artifact from the shared target volume. Its test
+            # harness remains behavioral evidence, while the separate normal
+            # rlib audit owns the no_std artifact claim below. The common
+            # command above already locks the workspace resolution.
+            command.append("--no-default-features")
         command.extend(("--target", rust_target))
     command.extend((
         "--",
@@ -6498,6 +6499,7 @@ def build_test_adapter(
     clean_command = [
         "cargo",
         "clean",
+        "--locked",
         "--package",
         "crabc-mimalloc-test-adapter",
         "--target",
@@ -6652,6 +6654,7 @@ def build_runtime_ticket_zero_adapter(
     clean_command = [
         "cargo",
         "clean",
+        "--locked",
         "--package",
         package,
         "--target",

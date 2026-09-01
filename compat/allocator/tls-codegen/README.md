@@ -29,6 +29,9 @@ default TLS model as a negative control. It explicitly clears
 target-wide setting in `.cargo/config.toml`; that object must contain
 `R_AARCH64_TLSDESC_CALL` for every root. This demonstrates that the explicit
 initial-exec flag is required; it is not redundant source documentation.
+Both AArch64 control builds use the checked-in lockfile with `--locked` in
+addition to their existing `--offline` requirement, so neither control can
+silently refresh `Cargo.lock`.
 
 This proves the exact bounded rlib codegen shape, not production integration.
 Rust has no per-static TLS-model attribute: the initial-exec choice is a crate

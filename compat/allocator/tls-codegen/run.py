@@ -187,6 +187,24 @@ def reject_forbidden_tls_forms(text: str) -> None:
         raise VerificationError(f"forbidden dynamic TLS access forms are present: {present}")
 
 
+def cargo_probe_command(cargo: str) -> list[str]:
+    """Build both AArch64 TLS controls from the checked-in lockfile."""
+
+    return [
+        cargo,
+        "rustc",
+        "--locked",
+        "--offline",
+        "-p",
+        "crabc-mimalloc",
+        "--lib",
+        "--features",
+        "tls-codegen-probe",
+        "--message-format=json-render-diagnostics",
+        "--",
+    ]
+
+
 def main() -> int:
     cargo = require_tool("cargo")
     rustc = require_tool("rustc")
@@ -206,18 +224,7 @@ def main() -> int:
         target_dir = temporary_root / "target"
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target_dir)
-        cargo_base_command = [
-            cargo,
-            "rustc",
-            "--offline",
-            "-p",
-            "crabc-mimalloc",
-            "--lib",
-            "--features",
-            "tls-codegen-probe",
-            "--message-format=json-render-diagnostics",
-            "--",
-        ]
+        cargo_base_command = cargo_probe_command(cargo)
         common_codegen_flags = [
             "-Copt-level=3",
             "-Cdebug-assertions=no",

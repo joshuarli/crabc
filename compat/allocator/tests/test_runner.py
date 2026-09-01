@@ -658,6 +658,47 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(report["dependency_resolution"], RUNNER.X86_64_LOCKFILE_RESOLUTION)
         self.assertEqual(report["target_directory"], "fresh temporary CARGO_TARGET_DIR")
 
+    def test_aarch64_direct_engine_probe_is_lockfile_pinned(self) -> None:
+        c_layout = {"config.value": 1}
+        c_small_trace = {"small.value": 2}
+        c_fundamental_trace = {
+            key: 3 for key in RUNNER.FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS
+        }
+        with mock.patch.object(
+            RUNNER,
+            "command_record",
+            return_value={"status": 0, "stderr": "", "stdout": "probe output"},
+        ) as command_record, mock.patch.object(
+            RUNNER, "parse_rust_layout", return_value=c_layout
+        ), mock.patch.object(
+            RUNNER, "parse_small_trace", return_value=c_small_trace
+        ), mock.patch.object(
+            RUNNER, "parse_fundamental_trace", return_value=c_fundamental_trace
+        ), mock.patch.object(RUNNER, "parse_rust_test_count", return_value=1):
+            report = RUNNER.rust_layout_probe(
+                c_layout,
+                c_small_trace,
+                c_fundamental_trace,
+            )
+        self.assertEqual(
+            command_record.call_args.args[0],
+            [
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--lib",
+                "--locked",
+                "--",
+                "--nocapture",
+            ],
+        )
+        self.assertEqual(
+            command_record.call_args.kwargs["env"]["CARGO_TARGET_DIR"],
+            str(RUNNER.RUST_LAYOUT_CARGO_TARGET),
+        )
+        self.assertEqual(report["comparison"], {"compared_value_count": 1, "status": "matched"})
+
     def test_external_static_inline_and_cxx_template_parsing_are_distinct(self) -> None:
         header = """
             mi_decl_export void* mi_malloc(size_t size);
