@@ -1051,8 +1051,12 @@ arena/TLD/metadata/shared-Theap counts, and regular/OS abandonment state. It
 receives no pointer, page, route, allocator, or release capability; the
 distinct native-shadow registry high-water remains owned by its focused Rust
 regression. This remains bounded private evidence: the full M5 gate does not
-consume it, and it does not establish general allocator, selected/default
-backend, upstream pthread, post-exit, or large-object acceptance.
+consume it. `allocator --full` only reads this one fixed report through a
+non-executing strict consumer and renders its `verified`, `unavailable`, or
+`rejected` result as top-level `runtime_ticket_zero_soak` provenance; that
+rendered result satisfies, advances, and unblocks no M5 gate. It does not
+establish general allocator, selected/default backend, upstream pthread,
+post-exit, or large-object acceptance.
 That test ABI does not make the runtime seam a
 crabc libc ABI, a selected backend, a pointer-domain fallback, or a fork
 repair mechanism. `main_heap_page.rs` now binds one current

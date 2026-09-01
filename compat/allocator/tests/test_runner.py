@@ -3007,6 +3007,399 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
         output.assert_called_once_with(RUNNER.RUNTIME_TICKET_ZERO_SOAK_REPORT)
 
 
+class RuntimeTicketZeroSoakConsumerTests(unittest.TestCase):
+    """Exercise the non-executing private-soak reader with hostile records."""
+
+    @staticmethod
+    def byte_record(payload: bytes) -> dict[str, object]:
+        return {
+            "bytes": len(payload),
+            "hex": payload.hex(),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    @staticmethod
+    def file_record(root: Path, path: Path) -> dict[str, object]:
+        payload = path.read_bytes()
+        return {
+            "bytes": len(payload),
+            "path": path.relative_to(root).as_posix(),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    @classmethod
+    def write_fixture(cls, root: Path) -> dict[str, object]:
+        """Create a complete current private-soak record without running it."""
+
+        def write(path: Path, payload: bytes) -> Path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+            return path
+
+        contract_path = root / "compat/allocator/runtime-ticket-zero-test-v3.5.0.json"
+        header_path = root / (
+            "compat/allocator/runtime-ticket-zero-adapter/"
+            "crabc-mimalloc-runtime-ticket-zero-test.h"
+        )
+        fixture_source = root / (
+            "compat/allocator/runtime-ticket-zero-adapter/"
+            "runtime-ticket-zero-fixture.c"
+        )
+        write(
+            contract_path,
+            RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT.read_bytes(),
+        )
+        write(
+            header_path,
+            RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_bytes(),
+        )
+        write(
+            fixture_source,
+            RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_FIXTURE.read_bytes(),
+        )
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        work_root = root / ".work"
+        artifact_paths = RUNNER.runtime_ticket_zero_soak_consumer_artifact_paths(
+            work_root
+        )
+        archive = write(artifact_paths["archive"], b"synthetic pinned archive")
+        adapter_archive = write(
+            artifact_paths["adapter_archive"], b"synthetic adapter archive"
+        )
+        adapter_shared_library = write(
+            artifact_paths["adapter_shared_library"], b"synthetic adapter shared"
+        )
+        fixture_binary = write(artifact_paths["fixture"], b"synthetic fixture")
+        pin = {
+            **RUNNER.load_pin(),
+            "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        }
+        tag = {
+            "format": 1,
+            "repository": pin["repository"],
+            "revision": pin["revision"],
+            "tag": pin["tag"],
+            "tag_object": pin["tag_object"],
+        }
+        write(
+            artifact_paths["tag_attestation"],
+            (json.dumps(tag, sort_keys=True) + "\n").encode(),
+        )
+        source = {
+            "kind": "git",
+            "revision": "a" * 40,
+            "worktree_clean": True,
+            "worktree_status": cls.byte_record(b""),
+        }
+        audit = RuntimeTicketZeroSoakReportTests.lifecycle_audit()
+        stdout = (
+            RUNNER.RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_PREFIX
+            + " ".join(f"{field}={audit[field]}" for field in audit)
+            + "\n"
+            + RUNNER.RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_SUCCESS_LINE
+            + "\n"
+        )
+        compiler = str(root / "pinned-container/bin/musl-gcc")
+        fixture = {
+            "artifact": cls.file_record(root, fixture_binary),
+            "build_command": [
+                compiler,
+                "-std=c11",
+                "-O2",
+                "-fPIE",
+                "-pie",
+                "-ftls-model=initial-exec",
+                "-pthread",
+                "-I",
+                str(header_path.parent),
+                str(fixture_source),
+                str(adapter_archive),
+                "-o",
+                str(fixture_binary),
+            ],
+            "run_command": RUNNER.runtime_ticket_zero_fixture_command(
+                fixture_binary,
+                worker_cycles=RUNNER.RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+                stress_seed=RUNNER.RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+            ),
+            "stdout": stdout,
+        }
+        report = {
+            "format": RUNNER.RUNTIME_TICKET_ZERO_SOAK_REPORT_FORMAT,
+            "schema": RUNNER.RUNTIME_TICKET_ZERO_SOAK_REPORT_SCHEMA,
+            "mode": "soak",
+            "status": "passed",
+            "evidence_scope": RUNNER.RUNTIME_TICKET_ZERO_SOAK_EVIDENCE_SCOPE,
+            "nonclaims": list(RUNNER.RUNTIME_TICKET_ZERO_SOAK_NONCLAIMS),
+            "contract": {
+                "format": contract["format"],
+                "record": cls.file_record(root, contract_path),
+                "schema": contract["schema"],
+                "soak_report": contract["soak_report"],
+                "upstream": contract["upstream"],
+            },
+            "source": {
+                "after": source,
+                "before": source,
+                "git_read_environment": {"GIT_OPTIONAL_LOCKS": "0"},
+                "unchanged_during_execution": True,
+            },
+            "pin": {
+                "archive": cls.file_record(root, archive),
+                "archive_root": pin["archive_root"],
+                "repository": pin["repository"],
+                "revision": pin["revision"],
+                "sha256": pin["sha256"],
+                "source": pin["source"],
+                "tag": pin["tag"],
+                "tag_object": pin["tag_object"],
+                "tag_verified": tag,
+                "version": pin["version"],
+            },
+            "oracle": {
+                "build_strategy": "pinned C oracle",
+                "compiler": "musl-gcc (pinned container)",
+                "source_files": ["src/init.c"],
+            },
+            "target": {
+                "architecture": "aarch64",
+                "rust_target": RUNNER.PRODUCTION_RUST_TARGET,
+                "system": "Linux",
+            },
+            "build_artifacts": {
+                "adapter_archive": cls.file_record(root, adapter_archive),
+                "adapter_shared_library": cls.file_record(root, adapter_shared_library),
+            },
+            "fixture": fixture,
+            "schedule": {
+                "stress_seed": f"0x{RUNNER.RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED:016x}",
+                "watchdog_seconds": RUNNER.RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS,
+                "worker_cycles": RUNNER.RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+                "worker_route_invocation_count": 2048,
+                "worker_routes_per_cycle": 2,
+            },
+            "audit": {
+                "audit_snapshot_count": 1025,
+                "post_warm_cycle_count": 1023,
+                "status": "passed",
+                "warm_baseline": audit,
+            },
+        }
+        report_path = work_root / "reports/allocator/runtime-ticket-zero-soak-1024.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, sort_keys=True) + "\n", encoding="utf-8")
+        return {
+            "artifact_paths": artifact_paths,
+            "compiler": compiler,
+            "contract_path": contract_path,
+            "fixture_source": fixture_source,
+            "header_path": header_path,
+            "pin": pin,
+            "report": report,
+            "report_path": report_path,
+            "root": root,
+            "source": source,
+            "work_root": work_root,
+        }
+
+    @classmethod
+    def consume(cls, fixture: dict[str, object]) -> dict[str, object]:
+        with mock.patch.object(
+            RUNNER,
+            "runtime_ticket_zero_soak_consumer_current_git_source_state",
+            return_value=fixture["source"],
+        ), mock.patch.object(RUNNER.shutil, "which", return_value=fixture["compiler"]):
+            return RUNNER.consume_runtime_ticket_zero_soak_evidence(
+                contract_path=fixture["contract_path"],
+                report_path=fixture["report_path"],
+                root=fixture["root"],
+                work_root=fixture["work_root"],
+                pin=fixture["pin"],
+            )
+
+    def test_consumer_accepts_one_current_fixed_private_report_without_execution(self) -> None:
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            with mock.patch.object(
+                RUNNER,
+                "run_runtime_ticket_zero_soak",
+                side_effect=AssertionError("consumer must not execute soak"),
+            ):
+                evidence = self.consume(fixture)
+
+        self.assertEqual(evidence["status"], "verified")
+        self.assertEqual(evidence["report_path"], ".work/reports/allocator/runtime-ticket-zero-soak-1024.json")
+        self.assertEqual(evidence["evidence_scope"], "bounded-private-ticket-zero-soak")
+        self.assertEqual(evidence["nonclaims"], RUNNER.RUNTIME_TICKET_ZERO_SOAK_NONCLAIMS)
+        self.assertEqual(evidence["schedule"]["worker_route_invocation_count"], 2048)
+        self.assertEqual(evidence["source"]["after"], fixture["source"])
+
+    def test_consumer_classifies_a_missing_fixed_report_and_rejects_redirects(self) -> None:
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            root = Path(temporary)
+            work_root = root / ".work"
+            expected_contract = root / "compat/allocator/runtime-ticket-zero-test-v3.5.0.json"
+            expected_report = work_root / "reports/allocator/runtime-ticket-zero-soak-1024.json"
+            unavailable = RUNNER.consume_runtime_ticket_zero_soak_evidence(
+                contract_path=expected_contract,
+                report_path=expected_report,
+                root=root,
+                work_root=work_root,
+                pin=RUNNER.load_pin(),
+            )
+            redirected = RUNNER.consume_runtime_ticket_zero_soak_evidence(
+                contract_path=expected_contract,
+                report_path=work_root / "reports/allocator/latest.json",
+                root=root,
+                work_root=work_root,
+                pin=RUNNER.load_pin(),
+            )
+
+        self.assertEqual(unavailable["status"], "unavailable")
+        self.assertEqual(redirected["status"], "rejected")
+        self.assertIn("fixed raw", redirected["reason"])
+
+    def test_consumer_rejects_mutated_contract_pin_command_schedule_audit_and_target(self) -> None:
+        mutations = {
+            "nonclaims": lambda report: report["nonclaims"].pop(),
+            "contract-record": lambda report: report["contract"]["record"].update(
+                {"path": "compat/allocator/other.json"}
+            ),
+            "pin-archive": lambda report: report["pin"]["archive"].update(
+                {"path": ".work/allocator-cache/other.tar.gz"}
+            ),
+            "tag": lambda report: report["pin"]["tag_verified"].update(
+                {"tag": "v0.0.0"}
+            ),
+            "build-command": lambda report: report["fixture"]["build_command"].__setitem__(
+                0, "/unreviewed/musl-gcc"
+            ),
+            "run-command": lambda report: report["fixture"]["run_command"].__setitem__(
+                0, "/unreviewed/fixture"
+            ),
+            "schedule": lambda report: report["schedule"].update({"worker_cycles": 128}),
+            "audit": lambda report: report["audit"]["warm_baseline"].update(
+                {"live_tlds": 0}
+            ),
+            "target": lambda report: report["target"].update({"architecture": "x86_64"}),
+            "source": lambda report: report["source"].update(
+                {"after": {**report["source"]["after"], "revision": "b" * 40}}
+            ),
+        }
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        for name, mutate in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory(
+                dir=RUNNER.TEMP_ROOT
+            ) as temporary:
+                fixture = self.write_fixture(Path(temporary))
+                report = fixture["report"]
+                assert isinstance(report, dict)
+                mutate(report)
+                Path(fixture["report_path"]).write_text(
+                    json.dumps(report, sort_keys=True) + "\n", encoding="utf-8"
+                )
+                evidence = self.consume(fixture)
+
+                self.assertEqual(evidence["status"], "rejected")
+                self.assertIsInstance(evidence["reason"], str)
+
+    def test_consumer_rejects_report_and_artifact_final_or_parent_symlinks(self) -> None:
+        cases = (
+            "report-final",
+            "report-parent",
+            "contract-final",
+            "header-parent",
+            "fixture-source-final",
+            "tag-final",
+            "artifact-final",
+            "artifact-parent",
+        )
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory(
+                dir=RUNNER.TEMP_ROOT
+            ) as temporary:
+                fixture = self.write_fixture(Path(temporary))
+                report_path = Path(fixture["report_path"])
+                artifact_paths = fixture["artifact_paths"]
+                assert isinstance(artifact_paths, dict)
+                if case == "report-final":
+                    target = report_path.with_name("other-soak-report.json")
+                    report_path.rename(target)
+                    report_path.symlink_to(target.name)
+                elif case == "report-parent":
+                    parent = report_path.parent
+                    target = parent.with_name("allocator-real")
+                    parent.rename(target)
+                    parent.symlink_to(target.name)
+                elif case == "contract-final":
+                    contract_path = Path(fixture["contract_path"])
+                    target = contract_path.with_name("other-contract.json")
+                    contract_path.rename(target)
+                    contract_path.symlink_to(target.name)
+                elif case == "header-parent":
+                    header_path = Path(fixture["header_path"])
+                    parent = header_path.parent
+                    target = parent.with_name("runtime-ticket-zero-adapter-real")
+                    parent.rename(target)
+                    parent.symlink_to(target.name)
+                elif case == "fixture-source-final":
+                    fixture_source = Path(fixture["fixture_source"])
+                    target = fixture_source.with_name("other-fixture.c")
+                    fixture_source.rename(target)
+                    fixture_source.symlink_to(target.name)
+                elif case == "tag-final":
+                    tag_path = artifact_paths["tag_attestation"]
+                    assert isinstance(tag_path, Path)
+                    target = tag_path.with_name("other-tag.json")
+                    tag_path.rename(target)
+                    tag_path.symlink_to(target.name)
+                else:
+                    archive = artifact_paths["adapter_archive"]
+                    assert isinstance(archive, Path)
+                    if case == "artifact-final":
+                        target = archive.with_name("other-adapter.a")
+                        archive.rename(target)
+                        archive.symlink_to(target.name)
+                    else:
+                        parent = archive.parent
+                        target = parent.with_name("release-real")
+                        parent.rename(target)
+                        parent.symlink_to(target.name)
+                evidence = self.consume(fixture)
+
+                self.assertEqual(evidence["status"], "rejected")
+                self.assertIn("not a regular file", evidence["reason"])
+
+    def test_main_full_renders_the_consumer_without_running_or_gating_the_soak(self) -> None:
+        soak_evidence = {"status": "verified", "nonclaims": list(RUNNER.RUNTIME_TICKET_ZERO_SOAK_NONCLAIMS)}
+        gate = {"overall_status": "passed", "unmet_required": []}
+        with mock.patch.object(sys, "argv", ["run.py", "--full"]), mock.patch.object(
+            RUNNER, "run_milestone0", return_value={}
+        ), mock.patch.object(
+            RUNNER, "consume_canonical_upstream_stress_evidence", return_value={"status": "unavailable"}
+        ), mock.patch.object(
+            RUNNER, "consume_runtime_ticket_zero_soak_evidence", return_value=soak_evidence
+        ) as consumer, mock.patch.object(
+            RUNNER, "run_runtime_ticket_zero_soak", side_effect=AssertionError("nested soak")
+        ) as soak, mock.patch.object(
+            RUNNER, "m5_gate_report", return_value=gate
+        ) as m5_gate, mock.patch.object(RUNNER, "write_json") as write_report, mock.patch(
+            "builtins.print"
+        ):
+            self.assertEqual(RUNNER.main(), 0)
+
+        consumer.assert_called_once_with()
+        soak.assert_not_called()
+        self.assertIn("runtime_ticket_zero_soak", m5_gate.call_args.args[1])
+        self.assertEqual(
+            m5_gate.call_args.args[1]["runtime_ticket_zero_soak"], soak_evidence
+        )
+        write_report.assert_called_once()
+
+
 class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
     """Exercise the M5 consumer without compiling the canonical fixture."""
 

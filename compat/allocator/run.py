@@ -1523,6 +1523,10 @@ class CanonicalUpstreamStressRejected(HarnessError):
     """A canonical upstream-stress report cannot be consumed as M5 evidence."""
 
 
+class RuntimeTicketZeroSoakRejected(HarnessError):
+    """A durable private ticket-zero soak report cannot be consumed."""
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -1574,12 +1578,11 @@ def read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def load_pin(path: Path = UPSTREAMS) -> dict[str, str]:
-    try:
-        with path.open("rb") as stream:
-            raw = tomllib.load(stream)
-    except (OSError, tomllib.TOMLDecodeError) as error:
-        raise HarnessError(f"invalid upstream pin file: {path}") from error
+def normalize_mimalloc_pin(raw: object) -> dict[str, str]:
+    """Validate the fixed v3.5.0 pin after one trusted byte read."""
+
+    if not isinstance(raw, Mapping):
+        raise HarnessError("compat/upstreams.toml must be a TOML object")
     pin = raw.get("mimalloc")
     if not isinstance(pin, dict):
         raise HarnessError("compat/upstreams.toml requires a [mimalloc] table")
@@ -1601,6 +1604,15 @@ def load_pin(path: Path = UPSTREAMS) -> dict[str, str]:
     if normalized["archive_root"] != "mimalloc-3.5.0":
         raise HarnessError("mimalloc.archive_root must be mimalloc-3.5.0")
     return normalized
+
+
+def load_pin(path: Path = UPSTREAMS) -> dict[str, str]:
+    try:
+        with path.open("rb") as stream:
+            raw = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise HarnessError(f"invalid upstream pin file: {path}") from error
+    return normalize_mimalloc_pin(raw)
 
 
 # The upstream-stress producer owns execution.  This runner only consumes its
@@ -7260,7 +7272,10 @@ def validate_runtime_ticket_zero_adapter_symbols(
 
 
 def validate_runtime_ticket_zero_adapter_contract(
-    contract: Mapping[str, Any], adapter_header: str
+    contract: Mapping[str, Any],
+    adapter_header: str,
+    *,
+    pin: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Validate the separate C witness without widening the M4 adapter."""
 
@@ -7269,12 +7284,12 @@ def validate_runtime_ticket_zero_adapter_contract(
         or contract.get("schema") != "crabc-mimalloc-runtime-ticket-zero-test"
     ):
         raise HarnessError("runtime ticket-zero adapter contract has an unknown schema")
-    pin = load_pin()
+    active_pin = dict(load_pin() if pin is None else pin)
     expected_upstream = {
         "project": "microsoft/mimalloc",
-        "revision": pin["revision"],
-        "tag": pin["tag"],
-        "version": pin["version"],
+        "revision": active_pin["revision"],
+        "tag": active_pin["tag"],
+        "version": active_pin["version"],
     }
     if contract.get("upstream") != expected_upstream:
         raise HarnessError("runtime ticket-zero adapter contract upstream identity differs")
@@ -9406,6 +9421,800 @@ def run_runtime_ticket_zero_soak(*, offline: bool, architecture: str) -> dict[st
     return report
 
 
+def runtime_ticket_zero_soak_consumer_exactly_matches(
+    observed: object, expected: object
+) -> bool:
+    """Compare report data without accepting JSON type coercion."""
+
+    if type(observed) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        assert isinstance(observed, dict)
+        return set(observed) == set(expected) and all(
+            runtime_ticket_zero_soak_consumer_exactly_matches(
+                observed[key], expected[key]
+            )
+            for key in expected
+        )
+    if isinstance(expected, list):
+        assert isinstance(observed, list)
+        return len(observed) == len(expected) and all(
+            runtime_ticket_zero_soak_consumer_exactly_matches(left, right)
+            for left, right in zip(observed, expected)
+        )
+    return observed == expected
+
+
+def runtime_ticket_zero_soak_consumer_raw_path(path: Path) -> Path:
+    """Make one lexical absolute path without resolving its components."""
+
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def runtime_ticket_zero_soak_consumer_relative_path(root: Path, path: Path) -> str:
+    """Render one fixed raw checkout-relative path after containment checks."""
+
+    raw_root = runtime_ticket_zero_soak_consumer_raw_path(root)
+    raw_path = runtime_ticket_zero_soak_consumer_raw_path(path)
+    try:
+        return raw_path.relative_to(raw_root).as_posix()
+    except ValueError as error:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer artifact escapes the checkout"
+        ) from error
+
+
+def runtime_ticket_zero_soak_consumer_regular_path(
+    root: Path, path: Path, subject: str
+) -> Path:
+    """Require one fixed path and every checkout-local parent to be non-symlinked."""
+
+    raw_root = runtime_ticket_zero_soak_consumer_raw_path(root)
+    raw_path = runtime_ticket_zero_soak_consumer_raw_path(path)
+    if raw_root.is_symlink() or not raw_root.is_dir():
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer checkout root is not a real directory"
+        )
+    try:
+        relative_parts = raw_path.relative_to(raw_root).parts
+    except ValueError as error:
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} escapes the checkout"
+        ) from error
+    if not relative_parts or any(part in {"", ".", ".."} for part in relative_parts):
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} has an invalid fixed path"
+        )
+    current = raw_root
+    for part in relative_parts:
+        current /= part
+        if current.is_symlink():
+            raise RuntimeTicketZeroSoakRejected(
+                f"runtime ticket-zero soak consumer {subject} is not a regular file"
+            )
+    if not raw_path.is_file():
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} is unavailable or not a regular file"
+        )
+    return raw_path
+
+
+def runtime_ticket_zero_soak_consumer_observed_file(
+    root: Path, path: Path, subject: str
+) -> tuple[bytes, dict[str, Any]]:
+    """Read one stable fixed file and retain the exact record that was read."""
+
+    raw_path = runtime_ticket_zero_soak_consumer_regular_path(root, path, subject)
+    try:
+        before = raw_path.stat()
+        payload = raw_path.read_bytes()
+        after = raw_path.stat()
+    except OSError as error:
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer cannot read {subject}"
+        ) from error
+    if (
+        before.st_size != len(payload)
+        or after.st_size != len(payload)
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ino != after.st_ino
+        or before.st_dev != after.st_dev
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} changed while being read"
+        )
+    return payload, {
+        "bytes": len(payload),
+        "path": runtime_ticket_zero_soak_consumer_relative_path(root, raw_path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def runtime_ticket_zero_soak_consumer_read_json(
+    root: Path, path: Path, subject: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Decode one fixed JSON input from the bytes whose record is retained."""
+
+    payload, record = runtime_ticket_zero_soak_consumer_observed_file(root, path, subject)
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} is not valid JSON"
+        ) from error
+    if not isinstance(value, dict):
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} is not a JSON object"
+        )
+    return value, record
+
+
+def runtime_ticket_zero_soak_consumer_live_pin(root: Path) -> dict[str, str]:
+    """Read the pinned oracle through its fixed non-symlinked source path."""
+
+    pin_path = runtime_ticket_zero_soak_consumer_raw_path(root) / "compat/upstreams.toml"
+    payload, _ = runtime_ticket_zero_soak_consumer_observed_file(
+        root, pin_path, "upstream pin"
+    )
+    try:
+        raw = tomllib.loads(payload.decode("utf-8"))
+        return normalize_mimalloc_pin(raw)
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, HarnessError) as error:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer upstream pin is invalid"
+        ) from error
+
+
+def runtime_ticket_zero_soak_consumer_byte_payload(
+    record: object, subject: str
+) -> bytes:
+    """Decode the exact source-status byte record without trusting its flag."""
+
+    if not isinstance(record, dict) or set(record) != {"bytes", "hex", "sha256"}:
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} byte record is invalid"
+        )
+    if (
+        type(record.get("bytes")) is not int
+        or record["bytes"] < 0
+        or not isinstance(record.get("hex"), str)
+        or not isinstance(record.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} byte record is invalid"
+        )
+    try:
+        payload = bytes.fromhex(record["hex"])
+    except ValueError as error:
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} byte record has invalid hex"
+        ) from error
+    if (
+        len(payload) != record["bytes"]
+        or hashlib.sha256(payload).hexdigest() != record["sha256"]
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} byte record drifted"
+        )
+    return payload
+
+
+def runtime_ticket_zero_soak_consumer_clean_source_state(
+    value: object, subject: str
+) -> dict[str, Any]:
+    """Validate one clean-Git source state retained by the stable report."""
+
+    if not isinstance(value, dict) or set(value) != {
+        "kind",
+        "revision",
+        "worktree_clean",
+        "worktree_status",
+    }:
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} source state is invalid"
+        )
+    if (
+        value.get("kind") != "git"
+        or not isinstance(value.get("revision"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", value["revision"]) is None
+        or type(value.get("worktree_clean")) is not bool
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} source state is invalid"
+        )
+    status = runtime_ticket_zero_soak_consumer_byte_payload(
+        value.get("worktree_status"), f"{subject} worktree status"
+    )
+    if value["worktree_clean"] is not True or status != b"":
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} requires a clean Git source"
+        )
+    return dict(value)
+
+
+def runtime_ticket_zero_soak_consumer_current_git_source_state(root: Path) -> dict[str, Any]:
+    """Read the live source state without allowing Git to refresh its index."""
+
+    git = shutil.which("git")
+    if git is None:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer requires Git source attestation"
+        )
+    environment = dict(os.environ)
+    environment.update(RUNTIME_TICKET_ZERO_SOAK_GIT_READ_ENVIRONMENT)
+    try:
+        revision = subprocess.run(
+            [git, "rev-parse", "--verify", "HEAD"],
+            cwd=root,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        status = subprocess.run(
+            [git, "status", "--porcelain=v1", "--untracked-files=all", "-z"],
+            cwd=root,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer cannot read its Git source state"
+        ) from error
+    if revision.returncode != 0 or status.returncode != 0:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer requires an available Git source tree"
+        )
+    try:
+        revision_text = revision.stdout.decode("ascii", errors="strict").strip()
+    except UnicodeDecodeError as error:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer has an invalid Git revision"
+        ) from error
+    state = {
+        "kind": "git",
+        "revision": revision_text,
+        "worktree_clean": status.stdout == b"",
+        "worktree_status": source_byte_record(status.stdout),
+    }
+    return runtime_ticket_zero_soak_consumer_clean_source_state(
+        state, "current execution"
+    )
+
+
+def runtime_ticket_zero_soak_consumer_artifact_paths(
+    work_root: Path,
+) -> dict[str, Path]:
+    """Name every live raw artifact accepted by the durable soak consumer."""
+
+    artifact_root = (
+        work_root / "target/compat/allocator/runtime-ticket-zero-adapter"
+    )
+    release_root = artifact_root / "cargo-target" / PRODUCTION_RUST_TARGET / "release"
+    return {
+        "archive": work_root / "allocator-cache/mimalloc-3.5.0.tar.gz",
+        "tag_attestation": work_root / "allocator-cache/mimalloc-3.5.0.tag.json",
+        "adapter_archive": release_root
+        / "libcrabc_mimalloc_runtime_ticket_zero_adapter.a",
+        "adapter_shared_library": release_root
+        / "libcrabc_mimalloc_runtime_ticket_zero_adapter.so",
+        "fixture": artifact_root / "runtime-ticket-zero-fixture",
+    }
+
+
+def runtime_ticket_zero_soak_consumer_attest_artifact(
+    root: Path,
+    record: object,
+    subject: str,
+    *,
+    expected_path: Path,
+) -> dict[str, Any]:
+    """Bind one report file record to its only accepted current raw pathname."""
+
+    if not isinstance(record, dict) or set(record) != {"bytes", "path", "sha256"}:
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} artifact record is invalid"
+        )
+    expected_relative = runtime_ticket_zero_soak_consumer_relative_path(
+        root, expected_path
+    )
+    if (
+        type(record.get("bytes")) is not int
+        or record["bytes"] <= 0
+        or record.get("path") != expected_relative
+        or not isinstance(record.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} artifact has a noncanonical record"
+        )
+    _, observed = runtime_ticket_zero_soak_consumer_observed_file(
+        root, expected_path, subject
+    )
+    if not runtime_ticket_zero_soak_consumer_exactly_matches(record, observed):
+        raise RuntimeTicketZeroSoakRejected(
+            f"runtime ticket-zero soak consumer {subject} artifact changed"
+        )
+    return observed
+
+
+def runtime_ticket_zero_soak_consumer_fixture_build_command(
+    root: Path, artifact_paths: Mapping[str, Path]
+) -> list[str]:
+    """Reconstruct the one pinned-container fixture build command exactly."""
+
+    compiler = shutil.which("musl-gcc")
+    if compiler is None:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer requires the pinned musl-gcc path"
+        )
+    adapter_root = runtime_ticket_zero_soak_consumer_raw_path(root) / (
+        "compat/allocator/runtime-ticket-zero-adapter"
+    )
+    fixture_source = adapter_root / "runtime-ticket-zero-fixture.c"
+    return [
+        compiler,
+        "-std=c11",
+        "-O2",
+        "-fPIE",
+        "-pie",
+        "-ftls-model=initial-exec",
+        "-pthread",
+        "-I",
+        str(adapter_root),
+        str(fixture_source),
+        str(artifact_paths["adapter_archive"]),
+        "-o",
+        str(artifact_paths["fixture"]),
+    ]
+
+
+def runtime_ticket_zero_soak_consumer_validate_report(
+    report: Mapping[str, Any],
+    *,
+    root: Path,
+    work_root: Path,
+    contract: Mapping[str, Any],
+    contract_record: Mapping[str, Any],
+    pin: Mapping[str, str],
+) -> dict[str, Any]:
+    """Reject stale, redirected, or broadened private-soak evidence."""
+
+    expected_keys = {
+        "audit",
+        "build_artifacts",
+        "contract",
+        "evidence_scope",
+        "fixture",
+        "format",
+        "mode",
+        "nonclaims",
+        "oracle",
+        "pin",
+        "schedule",
+        "schema",
+        "source",
+        "status",
+        "target",
+    }
+    if not isinstance(report, dict) or set(report) != expected_keys:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer report schema drifted"
+        )
+    if (
+        report.get("format") != RUNTIME_TICKET_ZERO_SOAK_REPORT_FORMAT
+        or report.get("schema") != RUNTIME_TICKET_ZERO_SOAK_REPORT_SCHEMA
+        or report.get("mode") != "soak"
+        or report.get("status") != "passed"
+        or report.get("evidence_scope") != RUNTIME_TICKET_ZERO_SOAK_EVIDENCE_SCOPE
+        or report.get("nonclaims") != RUNTIME_TICKET_ZERO_SOAK_NONCLAIMS
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer report identity or nonclaims drifted"
+        )
+
+    expected_contract = {
+        "format": contract["format"],
+        "record": dict(contract_record),
+        "schema": contract["schema"],
+        "soak_report": dict(contract["soak_report"]),
+        "upstream": dict(contract["upstream"]),
+    }
+    if not runtime_ticket_zero_soak_consumer_exactly_matches(
+        report.get("contract"), expected_contract
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer contract binding drifted"
+        )
+
+    source = report.get("source")
+    if not isinstance(source, dict) or set(source) != {
+        "after",
+        "before",
+        "git_read_environment",
+        "unchanged_during_execution",
+    }:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer source attestation schema drifted"
+        )
+    before = runtime_ticket_zero_soak_consumer_clean_source_state(
+        source.get("before"), "report before"
+    )
+    after = runtime_ticket_zero_soak_consumer_clean_source_state(
+        source.get("after"), "report after"
+    )
+    if (
+        source.get("git_read_environment")
+        != RUNTIME_TICKET_ZERO_SOAK_GIT_READ_ENVIRONMENT
+        or source.get("unchanged_during_execution") is not True
+        or not runtime_ticket_zero_soak_consumer_exactly_matches(before, after)
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer source attestation drifted"
+        )
+
+    artifact_paths = runtime_ticket_zero_soak_consumer_artifact_paths(work_root)
+    report_pin = report.get("pin")
+    if not isinstance(report_pin, dict):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer pin record is invalid"
+        )
+    archive = runtime_ticket_zero_soak_consumer_attest_artifact(
+        root,
+        report_pin.get("archive"),
+        "pinned archive",
+        expected_path=artifact_paths["archive"],
+    )
+    expected_tag = {
+        "format": 1,
+        "repository": pin["repository"],
+        "revision": pin["revision"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+    }
+    tag, tag_record = runtime_ticket_zero_soak_consumer_read_json(
+        root, artifact_paths["tag_attestation"], "tag attestation"
+    )
+    expected_pin = {
+        "archive": archive,
+        "archive_root": pin["archive_root"],
+        "repository": pin["repository"],
+        "revision": pin["revision"],
+        "sha256": pin["sha256"],
+        "source": pin["source"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+        "tag_verified": expected_tag,
+        "version": pin["version"],
+    }
+    if (
+        archive["sha256"] != pin["sha256"]
+        or not runtime_ticket_zero_soak_consumer_exactly_matches(report_pin, expected_pin)
+        or not runtime_ticket_zero_soak_consumer_exactly_matches(tag, expected_tag)
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer pin, archive, or tag binding drifted"
+        )
+
+    oracle = report.get("oracle")
+    if (
+        not isinstance(oracle, dict)
+        or set(oracle) != {"build_strategy", "compiler", "source_files"}
+        or not isinstance(oracle.get("build_strategy"), str)
+        or not oracle["build_strategy"]
+        or not isinstance(oracle.get("compiler"), str)
+        or not oracle["compiler"]
+        or not isinstance(oracle.get("source_files"), list)
+        or not all(isinstance(source_file, str) and source_file for source_file in oracle["source_files"])
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer C oracle identity drifted"
+        )
+    expected_target = {
+        "architecture": "aarch64",
+        "rust_target": PRODUCTION_RUST_TARGET,
+        "system": "Linux",
+    }
+    if not runtime_ticket_zero_soak_consumer_exactly_matches(
+        report.get("target"), expected_target
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer target is not native Linux/AArch64"
+        )
+
+    build_artifacts = report.get("build_artifacts")
+    if not isinstance(build_artifacts, dict) or set(build_artifacts) != {
+        "adapter_archive",
+        "adapter_shared_library",
+    }:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer adapter artifact inventory drifted"
+        )
+    adapter_archive = runtime_ticket_zero_soak_consumer_attest_artifact(
+        root,
+        build_artifacts.get("adapter_archive"),
+        "adapter archive",
+        expected_path=artifact_paths["adapter_archive"],
+    )
+    adapter_shared_library = runtime_ticket_zero_soak_consumer_attest_artifact(
+        root,
+        build_artifacts.get("adapter_shared_library"),
+        "adapter shared library",
+        expected_path=artifact_paths["adapter_shared_library"],
+    )
+
+    fixture = report.get("fixture")
+    if not isinstance(fixture, dict) or set(fixture) != {
+        "artifact",
+        "build_command",
+        "run_command",
+        "stdout",
+    }:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer fixture record schema drifted"
+        )
+    fixture_artifact = runtime_ticket_zero_soak_consumer_attest_artifact(
+        root,
+        fixture.get("artifact"),
+        "fixture",
+        expected_path=artifact_paths["fixture"],
+    )
+    fixture_source = runtime_ticket_zero_soak_consumer_raw_path(root) / (
+        "compat/allocator/runtime-ticket-zero-adapter/runtime-ticket-zero-fixture.c"
+    )
+    runtime_ticket_zero_soak_consumer_regular_path(
+        root, fixture_source, "fixture source"
+    )
+    expected_build_command = runtime_ticket_zero_soak_consumer_fixture_build_command(
+        root, artifact_paths
+    )
+    expected_run_command = runtime_ticket_zero_fixture_command(
+        artifact_paths["fixture"],
+        worker_cycles=RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+        stress_seed=RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+    )
+    if (
+        not runtime_ticket_zero_soak_consumer_exactly_matches(
+            fixture.get("build_command"), expected_build_command
+        )
+        or not runtime_ticket_zero_soak_consumer_exactly_matches(
+            fixture.get("run_command"), expected_run_command
+        )
+        or not isinstance(fixture.get("stdout"), str)
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer fixture build or run command drifted"
+        )
+
+    expected_schedule = runtime_ticket_zero_stress_schedule(
+        worker_cycles=RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+        stress_seed=RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+    )
+    expected_schedule_record = {
+        "stress_seed": expected_schedule["seed"],
+        "watchdog_seconds": RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS,
+        "worker_cycles": RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+        "worker_route_invocation_count": expected_schedule[
+            "worker_route_invocation_count"
+        ],
+        "worker_routes_per_cycle": expected_schedule["worker_routes_per_cycle"],
+    }
+    if not runtime_ticket_zero_soak_consumer_exactly_matches(
+        report.get("schedule"), expected_schedule_record
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer schedule drifted"
+        )
+    audit = report.get("audit")
+    if not isinstance(audit, dict) or set(audit) != {
+        "audit_snapshot_count",
+        "post_warm_cycle_count",
+        "status",
+        "warm_baseline",
+    }:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer lifecycle audit schema drifted"
+        )
+    warm_baseline = audit.get("warm_baseline")
+    if (
+        not isinstance(warm_baseline, dict)
+        or set(warm_baseline) != set(RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_FIELDS)
+        or any(
+            type(warm_baseline[field]) is not int or warm_baseline[field] < 0
+            for field in RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_FIELDS
+        )
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer lifecycle audit fields drifted"
+        )
+    expected_quiescent_values = {
+        "process_active": 1,
+        "page_owner_ready": 1,
+        "page_map_registered_entries": 0,
+        "arena_registry_entries": 1,
+        "live_tlds": 1,
+        "metadata_live_capabilities": 0,
+        "shared_later_theaps": 0,
+        "abandoned_regular_pages": 0,
+        "os_abandoned_pages_empty": 1,
+    }
+    try:
+        stdout_audit = parse_runtime_ticket_zero_lifecycle_audit(fixture["stdout"])
+    except HarnessError as error:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer fixture stdout audit drifted"
+        ) from error
+    if (
+        warm_baseline["worker_cycles"] != RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES
+        or any(
+            warm_baseline[field] != value
+            for field, value in expected_quiescent_values.items()
+        )
+        or audit.get("audit_snapshot_count")
+        != RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES + 1
+        or audit.get("post_warm_cycle_count")
+        != RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES - 1
+        or audit.get("status") != "passed"
+        or not runtime_ticket_zero_soak_consumer_exactly_matches(
+            stdout_audit, warm_baseline
+        )
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer lifecycle audit is not quiescent"
+        )
+
+    live_source = runtime_ticket_zero_soak_consumer_current_git_source_state(root)
+    if not runtime_ticket_zero_soak_consumer_exactly_matches(live_source, after):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer current Git HEAD no longer matches the report"
+        )
+    return {
+        "artifacts": {
+            "adapter_archive": adapter_archive,
+            "adapter_shared_library": adapter_shared_library,
+            "archive": archive,
+            "fixture": fixture_artifact,
+            "tag_attestation": tag_record,
+        },
+        "audit": dict(audit),
+        "evidence_scope": report["evidence_scope"],
+        "nonclaims": list(report["nonclaims"]),
+        "pin": {
+            "revision": pin["revision"],
+            "tag": pin["tag"],
+            "version": pin["version"],
+        },
+        "schedule": dict(report["schedule"]),
+        "source": dict(source),
+        "target": dict(expected_target),
+    }
+
+
+def consume_runtime_ticket_zero_soak_evidence(
+    *,
+    contract_path: Path = RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT,
+    report_path: Path = RUNTIME_TICKET_ZERO_SOAK_REPORT,
+    root: Path = ROOT,
+    work_root: Path = WORK_ROOT,
+    pin: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Classify the one durable private soak report without running its fixture.
+
+    This is intentionally a top-level provenance reader.  It neither invokes
+    the opt-in soak producer nor supplies evidence to the M5 gate contract.
+    """
+
+    raw_root = runtime_ticket_zero_soak_consumer_raw_path(root)
+    raw_work_root = runtime_ticket_zero_soak_consumer_raw_path(work_root)
+    expected_work_root = raw_root / ".work"
+    expected_contract_path = raw_root / "compat/allocator/runtime-ticket-zero-test-v3.5.0.json"
+    expected_report_path = expected_work_root / RUNTIME_TICKET_ZERO_SOAK_REPORT_RELATIVE_PATH
+    base: dict[str, Any] = {
+        "format": 1,
+        "schema": "crabc-mimalloc-runtime-ticket-zero-soak-consumer",
+        "status": "rejected",
+        "reason": None,
+        "report_path": runtime_ticket_zero_soak_consumer_relative_path(
+            raw_root, expected_report_path
+        ),
+        "report": None,
+        "contract": None,
+        "source": None,
+        "target": None,
+        "schedule": None,
+        "audit": None,
+        "evidence_scope": None,
+        "nonclaims": None,
+        "artifacts": None,
+    }
+    if (
+        raw_work_root != expected_work_root
+        or runtime_ticket_zero_soak_consumer_raw_path(contract_path)
+        != expected_contract_path
+        or runtime_ticket_zero_soak_consumer_raw_path(report_path) != expected_report_path
+    ):
+        base["reason"] = (
+            "runtime ticket-zero soak consumer accepts only its fixed raw contract and report paths"
+        )
+        return base
+    if (
+        raw_root.is_symlink()
+        or not raw_root.is_dir()
+        or expected_work_root.is_symlink()
+    ):
+        base["reason"] = (
+            "runtime ticket-zero soak consumer fixed checkout or work root is redirected"
+        )
+        return base
+    if not os.path.lexists(expected_report_path):
+        base["status"] = "unavailable"
+        base["reason"] = "runtime ticket-zero soak report is unavailable"
+        return base
+    try:
+        actual_pin = (
+            runtime_ticket_zero_soak_consumer_live_pin(raw_root)
+            if pin is None
+            else normalize_mimalloc_pin({"mimalloc": dict(pin)})
+        )
+        contract, contract_record = runtime_ticket_zero_soak_consumer_read_json(
+            raw_root, expected_contract_path, "contract"
+        )
+        header_path = raw_root / (
+            "compat/allocator/runtime-ticket-zero-adapter/"
+            "crabc-mimalloc-runtime-ticket-zero-test.h"
+        )
+        header_payload, _ = runtime_ticket_zero_soak_consumer_observed_file(
+            raw_root, header_path, "adapter header"
+        )
+        try:
+            header = header_payload.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise RuntimeTicketZeroSoakRejected(
+                "runtime ticket-zero soak consumer adapter header is not UTF-8"
+            ) from error
+        try:
+            validate_runtime_ticket_zero_adapter_contract(
+                contract, header, pin=actual_pin
+            )
+        except HarnessError as error:
+            raise RuntimeTicketZeroSoakRejected(
+                "runtime ticket-zero soak consumer contract is invalid"
+            ) from error
+        report, report_record = runtime_ticket_zero_soak_consumer_read_json(
+            raw_root, expected_report_path, "report"
+        )
+        verified = runtime_ticket_zero_soak_consumer_validate_report(
+            report,
+            root=raw_root,
+            work_root=raw_work_root,
+            contract=contract,
+            contract_record=contract_record,
+            pin=actual_pin,
+        )
+    except (RuntimeTicketZeroSoakRejected, HarnessError, OSError, TypeError) as error:
+        base["reason"] = str(error)
+        return base
+    base.update(
+        {
+            "status": "verified",
+            "reason": None,
+            "report": report_record,
+            "contract": {
+                "format": contract["format"],
+                "record": contract_record,
+                "schema": contract["schema"],
+            },
+            **verified,
+        }
+    )
+    return base
+
+
 def milestone0_report(
     pin: Mapping[str, str],
     archive: Path,
@@ -9984,6 +10793,13 @@ def main() -> int:
             # triggers a nested upstream-stress build or process.
             report["canonical_upstream_stress"] = (
                 consume_canonical_upstream_stress_evidence()
+            )
+            # This separate private-soak reader is intentionally only a
+            # top-level provenance result.  Its checked-in nonclaims keep it
+            # out of the M5 acceptance model and prevent a full run from
+            # spawning the optional 1,024-cycle fixture again.
+            report["runtime_ticket_zero_soak"] = (
+                consume_runtime_ticket_zero_soak_evidence()
             )
             gate = m5_gate_report(read_json(M5_GATE_CONTRACT), report)
             report["m5_gate"] = gate

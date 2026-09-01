@@ -1078,9 +1078,12 @@ final ticket-zero allocation/free must match it; the report records the
 baseline and audit-snapshot count. This direct adapter does not install a
 post-exit registry; its C worker paths start from their supplied pointer or
 their own live engine. It remains opt-in bounded stability evidence:
-`allocator --full` does not consume it, it unblocks no M5 gate, and it does
-not establish a selected/default libc backend, general cross-thread/post-exit
-acceptance, upstream pthread acceptance, or large-object coverage.
+`allocator --full` only validates and renders its one fixed report through the
+top-level non-executing `runtime_ticket_zero_soak` consumer. Its result is
+`verified`, `unavailable`, or `rejected`, but it satisfies, advances, and
+unblocks no M5 gate; it does not establish a selected/default libc backend,
+general cross-thread/post-exit acceptance, upstream pthread acceptance, or
+large-object coverage.
 `allocator --churn` remains the 128-cycle, 30-second development gate.
 
 The prefixed mixed-local and live-owner remote-free workers now enter through

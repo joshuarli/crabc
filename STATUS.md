@@ -1186,10 +1186,13 @@ registration/capacity, arena registry, live-TLD, metadata, shared-Theap, and
 regular/OS-abandonment baseline. The audit exposes no pointer, page, route,
 allocator, or release capability; the separate native-shadow registry
 high-water remains owned by the focused Rust regression. This report remains
-bounded stability evidence: the current M5 gate does not consume it, it
-unblocks no gate, and it establishes neither a selected/default libc backend
-nor general cross-thread/post-exit, upstream pthread, or large-object
-acceptance. `allocator --full` additionally runs one
+bounded stability evidence: `allocator --full` only validates and renders its
+fixed durable record through the top-level non-executing
+`runtime_ticket_zero_soak` consumer. `verified`, `unavailable`, and `rejected`
+are provenance classifications only: they satisfy, advance, and unblock no M5
+gate, and establish neither a selected/default libc backend nor general
+cross-thread/post-exit, upstream pthread, or large-object acceptance.
+`allocator --full` additionally runs one
 separate source-derived pinned `test/test-stress.c` route through the same
 16-symbol test adapter: `NTHREADS=1` and fixed `1 1 2` inputs keep the
 upstream allocation/cookie/realloc/retained-transfer cleanup workload on the
