@@ -2356,3 +2356,35 @@ At each point, use the first failing objective gate to select the next
 implementation wave. Do not ask for another page-shape assignment. Do not
 append another checkpoint narrative. Keep each active implementation worktree
 productive until the active wave is integrated and verified.
+
+---
+
+# 26. Paused handoff (2026-08-31)
+
+This is a pause record, not a completion claim. The most recent behavior slice
+preserves an all-free, resident initial engine across the held direct-fork
+boundary; ordinary local free still retains that engine outside the fork path.
+The accompanying `port-map.toml` review changed only its checked-in digest,
+with no status-count or monotonic-status regression.
+
+The latest canonical checkpoint is:
+
+```sh
+./scripts/dev.sh allocator --full
+```
+
+It generated `compat/reports/allocator/latest.json`. `m5.base`, `m5.5a`,
+`m5.5b`, and `m5.5c` passed; `m5.5d` and `m5.5e` remain blocked. The first
+unmet objective is `m5.5d`: replace the creating-thread-only source-derived
+`test/test-stress.c` lane with the minimally environment-bound upstream
+schedule, including real pthread transfer/cleanup behavior, then prove the
+required 1/2/4/8-worker and applicable large-object matrix. Do not reschedule
+transferred-object cleanup to make that workload pass. `m5.5e` remains the
+following selected-shadow ABI, pthread, differential, and stress closure;
+the Rust backend is still nondefault and must not be promoted from the current
+bounded evidence.
+
+Resume from that gate after explicit reprioritization. Preserve the pinned
+v3.5.0 C oracle, existing regressions, and generated-report boundaries; do
+not treat this pause as permission to weaken blocked gates or promote the
+shadow backend.
