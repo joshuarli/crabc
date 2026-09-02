@@ -26,7 +26,7 @@ export_check = "static-c-abi-export-ratchet"
 
 [[family]]
 id = "libc.posix-runtime"
-aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.posix-runtime"
+aggregate_command = "./scripts/dev-x86_64.sh routine-c-abi-matrix libc.posix-runtime"
 
 [[row]]
 id = "getpagesize-noarg-scalar"

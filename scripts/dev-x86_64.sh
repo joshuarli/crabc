@@ -48,6 +48,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   campaign-qualification  run the ordered qualification gate when it is ready
   campaign-promotion-check  run the final promotion gate when it is ready
   campaign-all  run the complete native x86 campaign gate sequence
+  routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
   image  build the pinned Linux/amd64 core-evidence image
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   linux-5-10-uapi  verify the fixed Linux 5.10 x86 exported-UAPI input
@@ -4953,6 +4954,11 @@ case "$command" in
     campaign-all)
         [ "$#" -eq 0 ] || fail "campaign-all takes no arguments"
         python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" all
+        ;;
+    routine-c-abi-matrix)
+        [ "$#" -eq 1 ] || fail "routine-c-abi-matrix requires exactly one family id"
+        ensure_image
+        run_in_container python3 /workspace/compat/x86_64/generate_c_abi_evidence_matrix.py --run-family "$1"
         ;;
     getloadavg-header-abi) ;;
     libc-getloadavg) ;;

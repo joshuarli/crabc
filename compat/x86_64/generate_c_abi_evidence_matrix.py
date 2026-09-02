@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any, Mapping
@@ -26,9 +27,11 @@ CAPABILITY_PATH = ROOT / "compat" / "crabc-rs" / "coverage.toml"
 STATIC_EXPORTS_PATH = ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
 GENERATED_DIRECTORY = Path("compat/x86_64/generated/c_abi_evidence_matrix")
 SCHEMA = "crabc.x86_64-c-abi-evidence-matrix/v1"
+REPORT_SCHEMA = "crabc.x86_64-c-abi-evidence-matrix-report/v1"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 TEMPLATE_ID = "noarg-scalar-static-v1"
+FAMILY_AGGREGATE_COMMAND = "./scripts/dev-x86_64.sh routine-c-abi-matrix"
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9-]*$")
 SYMBOL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 BESPOKE_CLASSES = {
@@ -175,7 +178,10 @@ def validate_matrix(document: Mapping[str, Any]) -> list[dict[str, Any]]:
         require(identifier in required_families, f"matrix family {identifier} is not a required parity family")
         require(identifier not in aggregates, f"matrix family {identifier} is duplicated")
         command = checked_string(family.get("aggregate_command"), f"matrix.family[{index}].aggregate_command")
-        require(command.endswith(f"campaign-family {identifier}"), f"matrix family {identifier} has the wrong aggregate command")
+        require(
+            command == f"{FAMILY_AGGREGATE_COMMAND} {identifier}",
+            f"matrix family {identifier} has the wrong aggregate command",
+        )
         aggregates[identifier] = command
 
     rows = document.get("row")
@@ -269,6 +275,11 @@ def validate_matrix(document: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "family_aggregate": family_aggregate,
             }
         )
+    for family in aggregates:
+        require(
+            any(row["owner_family"] == family for row in normalized_rows),
+            f"matrix family {family} has no routine rows",
+        )
     return normalized_rows
 
 
@@ -331,7 +342,7 @@ def runner(row: Mapping[str, Any]) -> str:
     return f"""#!/usr/bin/env bash
 # Generated from c_abi_evidence_matrix.toml; do not edit.
 # The focused runner owns the pinned-musl oracle/candidate build-and-run and
-# static export check; this wrapper keeps routine family membership explicit.
+# static export check; the checked matrix family aggregate executes this wrapper.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/../../../../.." && pwd)"
@@ -343,18 +354,32 @@ bash "$ROOT_DIR/{row['focused_runner']}"
 def output_relpaths(rows: list[dict[str, Any]]) -> list[Path]:
     paths = [GENERATED_DIRECTORY / "report.json"]
     for row in rows:
-        if row["template"] is None:
-            continue
         prefix = GENERATED_DIRECTORY / row["id"]
-        paths.extend((prefix / "header_probe.c", prefix / "header_probe.cpp", prefix / "start.S", prefix / "run.sh"))
+        paths.append(prefix / "run.sh")
+        if row["template"] is not None:
+            paths.extend((prefix / "header_probe.c", prefix / "header_probe.cpp", prefix / "start.S"))
     return paths
+
+
+def generated_row_outputs(row: Mapping[str, Any]) -> dict[str, str]:
+    """Describe the checked paths that one matrix row can execute."""
+    prefix = GENERATED_DIRECTORY / str(row["id"])
+    outputs = {"routine_runner": str(prefix / "run.sh")}
+    if row["template"] is not None:
+        outputs = {
+            "c_probe": str(prefix / "header_probe.c"),
+            "cxx_probe": str(prefix / "header_probe.cpp"),
+            "static_entry": str(prefix / "start.S"),
+            **outputs,
+        }
+    return outputs
 
 
 def generated_report(document: Mapping[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
     families = document["family"]
     assert isinstance(families, list)
     return {
-        "schema": "crabc.x86_64-c-abi-evidence-matrix-report/v1",
+        "schema": REPORT_SCHEMA,
         "matrix_schema": SCHEMA,
         "matrix_sha256": hashlib.sha256(MATRIX_PATH.read_bytes()).hexdigest(),
         "target": TARGET,
@@ -388,16 +413,7 @@ def generated_report(document: Mapping[str, Any], rows: list[dict[str, Any]]) ->
                 "bespoke_reason": row["bespoke_reason"],
                 "bespoke_class": row["bespoke_class"],
                 "oracle": {"route": row["oracle_route"], "behavior_class": row["expected_behavior_class"]},
-                "generated": (
-                    {
-                        "c_probe": str(GENERATED_DIRECTORY / row["id"] / "header_probe.c"),
-                        "cxx_probe": str(GENERATED_DIRECTORY / row["id"] / "header_probe.cpp"),
-                        "static_entry": str(GENERATED_DIRECTORY / row["id"] / "start.S"),
-                        "routine_runner": str(GENERATED_DIRECTORY / row["id"] / "run.sh"),
-                    }
-                    if row["template"] is not None
-                    else {}
-                ),
+                "generated": generated_row_outputs(row),
                 "execution": {"header_probe": row["header_runner"], "oracle_candidate_build_run_and_export_check": row["focused_runner"], "focused_command": row["focused_command"], "family_aggregate": row["family_aggregate"]},
             }
             for row in rows
@@ -416,7 +432,7 @@ def build_outputs(document: Mapping[str, Any]) -> dict[Path, str]:
             outputs[prefix / "header_probe.c"] = c_probe(row)
             outputs[prefix / "header_probe.cpp"] = cxx_probe(row)
             outputs[prefix / "start.S"] = static_entry(row)
-            outputs[prefix / "run.sh"] = runner(row)
+        outputs[prefix / "run.sh"] = runner(row)
     require(set(outputs) == set(output_relpaths(rows)), "template output set is incomplete")
     return outputs
 
@@ -446,9 +462,134 @@ def check_outputs(outputs: Mapping[Path, str], output_root: Path) -> None:
             require(path.stat().st_mode & 0o111, f"generated routine runner is not executable: {relative}")
 
 
+def checked_generated_report(
+    outputs: Mapping[Path, str],
+    output_root: Path,
+) -> dict[str, Any]:
+    """Load the checked registry after proving it exactly matches matrix source."""
+    report_relative = GENERATED_DIRECTORY / "report.json"
+    expected = outputs.get(report_relative)
+    require(expected is not None, "generated routine matrix report is missing from output set")
+    report_path = output_root / report_relative
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise MatrixError(f"cannot load checked generated routine matrix report: {error}") from error
+    require(isinstance(report, dict), "checked generated routine matrix report is not an object")
+    require(report.get("schema") == REPORT_SCHEMA, "checked generated routine matrix report schema drifted")
+    require(
+        report == json.loads(expected),
+        "checked generated routine matrix report does not match matrix source",
+    )
+    require(
+        report.get("matrix_sha256") == hashlib.sha256(MATRIX_PATH.read_bytes()).hexdigest(),
+        "checked generated routine matrix report matrix digest drifted",
+    )
+    return report
+
+
+def generated_runner_path(
+    row_identifier: str,
+    row: Mapping[str, Any],
+    output_root: Path,
+) -> Path:
+    generated = row.get("generated")
+    require(isinstance(generated, Mapping), f"matrix row {row_identifier} has no generated registry")
+    runner_text = checked_string(
+        generated.get("routine_runner"),
+        f"matrix row {row_identifier}.generated.routine_runner",
+    )
+    relative = Path(runner_text)
+    require(
+        not relative.is_absolute() and ".." not in relative.parts,
+        f"matrix row {row_identifier}.generated.routine_runner escapes generated output",
+    )
+    expected = GENERATED_DIRECTORY / row_identifier / "run.sh"
+    require(
+        relative == expected,
+        f"matrix row {row_identifier}.generated.routine_runner is not its deterministic runner",
+    )
+    generated_root = (output_root / GENERATED_DIRECTORY).resolve()
+    path = output_root / relative
+    require(not path.is_symlink(), f"matrix row {row_identifier} generated runner must not be a symlink")
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(generated_root)
+    except ValueError as error:
+        raise MatrixError(
+            f"matrix row {row_identifier}.generated.routine_runner escapes generated output"
+        ) from error
+    require(resolved.is_file(), f"matrix row {row_identifier} generated runner is not a regular file")
+    require(
+        resolved.stat().st_mode & 0o111,
+        f"matrix row {row_identifier} generated runner is not executable",
+    )
+    return resolved
+
+
+def run_family(
+    document: Mapping[str, Any],
+    output_root: Path,
+    family_identifier: str,
+    *,
+    outputs: Mapping[Path, str] | None = None,
+) -> int:
+    """Execute one validated family in checked generated-row order."""
+    if outputs is None:
+        outputs = build_outputs(document)
+    check_outputs(outputs, output_root)
+    report = checked_generated_report(outputs, output_root)
+    family_identifier = checked_string(family_identifier, "matrix family identifier")
+    families = report.get("families")
+    rows = report.get("rows")
+    require(isinstance(families, list), "checked generated routine matrix report has no families")
+    require(isinstance(rows, list), "checked generated routine matrix report has no rows")
+
+    matches = [entry for entry in families if isinstance(entry, Mapping) and entry.get("id") == family_identifier]
+    require(len(matches) == 1, f"unknown matrix family: {family_identifier}")
+    family = matches[0]
+    row_identifiers = checked_string_list(
+        family.get("row_ids"),
+        f"matrix family {family_identifier}.row_ids",
+    )
+    expected_command = f"{FAMILY_AGGREGATE_COMMAND} {family_identifier}"
+    require(
+        family.get("aggregate_command") == expected_command,
+        f"matrix family {family_identifier} aggregate command drifted",
+    )
+
+    rows_by_id: dict[str, Mapping[str, Any]] = {}
+    for index, row in enumerate(rows):
+        require(isinstance(row, Mapping), f"matrix report row[{index}] is invalid")
+        identifier = checked_string(row.get("id"), f"matrix report row[{index}].id")
+        require(identifier not in rows_by_id, f"matrix report row {identifier} is duplicated")
+        rows_by_id[identifier] = row
+
+    for identifier in row_identifiers:
+        row = rows_by_id.get(identifier)
+        require(row is not None, f"matrix family {family_identifier} names unknown row {identifier}")
+        owner = row.get("owner")
+        require(isinstance(owner, Mapping), f"matrix report row {identifier} has no owner")
+        require(
+            owner.get("family") == family_identifier,
+            f"matrix family {family_identifier} does not own row {identifier}",
+        )
+        path = generated_runner_path(identifier, row, output_root)
+        completed = subprocess.run([str(path)], cwd=ROOT, check=False)
+        if completed.returncode != 0:
+            return completed.returncode
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--write", action="store_true", help="materialize reviewed generated outputs")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--write", action="store_true", help="materialize reviewed generated outputs")
+    action.add_argument(
+        "--run-family",
+        metavar="FAMILY-ID",
+        help="run one family through its checked generated routine registry",
+    )
     parser.add_argument("--check", action="store_true", help="check checked-in generated outputs (default)")
     arguments = parser.parse_args()
     document = load_toml(MATRIX_PATH)
@@ -456,6 +597,10 @@ def main() -> int:
     if arguments.write:
         write_outputs(outputs, ROOT)
     check_outputs(outputs, ROOT)
+    if arguments.run_family is not None:
+        result = run_family(document, ROOT, arguments.run_family, outputs=outputs)
+        if result != 0:
+            return result
     print(f"x86 routine C ABI evidence matrix: PASS ({len(outputs) - 1} generated routine artifacts; {len(document['row'])} rows)")
     return 0
 

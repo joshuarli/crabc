@@ -30831,6 +30831,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-nostdlib -static",
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
+            "-Wl,--gc-sections",
             "--disassemble=gethostid",
             "gethostid candidate unexpectedly retains TLS",
             "gethostid unexpectedly performs a call or syscall",
@@ -36344,9 +36345,27 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         self.assertIn("compat/x86_64/campaign_report.py", dispatcher)
         self.assertIn("compat/x86_64/campaign_runner.py", dispatcher)
+        self.assertIn("compat/x86_64/generate_c_abi_evidence_matrix.py --run-family \"$1\"", dispatcher)
         campaign_status = dispatcher.index("campaign-status)")
         next_arm = dispatcher.index("campaign-family)", campaign_status)
         self.assertNotIn("ensure_image", dispatcher[campaign_status:next_arm])
+
+    def test_routine_c_abi_matrix_dispatches_checked_registry_natively(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn("routine-c-abi-matrix <family-id>", dispatcher)
+        self.assertIn("routine-c-abi-matrix)", dispatcher)
+        self.assertIn(
+            "compat/x86_64/generate_c_abi_evidence_matrix.py --run-family \"$1\"",
+            dispatcher,
+        )
+        routine_matrix = dispatcher.index("routine-c-abi-matrix)")
+        next_arm = dispatcher.index("getloadavg-header-abi)", routine_matrix)
+        routine_matrix_arm = dispatcher[routine_matrix:next_arm]
+        self.assertIn("ensure_image", routine_matrix_arm)
+        self.assertIn("run_in_container", routine_matrix_arm)
+        self.assertNotIn("getpagesize-noarg-scalar", routine_matrix_arm)
+        self.assertNotIn("gethostid-noarg-scalar", routine_matrix_arm)
 
 
 

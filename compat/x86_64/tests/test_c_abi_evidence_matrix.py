@@ -10,6 +10,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -66,7 +68,58 @@ class X86RoutineCAbiEvidenceMatrixTests(unittest.TestCase):
         self.assertIn("run_libc_getpagesize.sh", runner)
         self.assertIn("oracle_candidate_build_run_and_export_check", report)
         self.assertIn("ledger_fields", report)
-        self.assertIn("campaign-family libc.posix-runtime", report)
+        self.assertIn("routine-c-abi-matrix libc.posix-runtime", report)
+
+    def test_family_aggregate_executes_the_checked_generated_runner_registry(self) -> None:
+        document = self.document()
+        outputs = matrix.build_outputs(document)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            matrix.write_outputs(outputs, root)
+            with mock.patch.object(
+                matrix.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0),
+            ) as run:
+                result = matrix.run_family(document, root, "libc.posix-runtime")
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            [Path(call.args[0][0]).relative_to(root).as_posix() for call in run.call_args_list],
+            [
+                "compat/x86_64/generated/c_abi_evidence_matrix/getpagesize-noarg-scalar/run.sh",
+                "compat/x86_64/generated/c_abi_evidence_matrix/gethostid-noarg-scalar/run.sh",
+            ],
+        )
+        self.assertTrue(all(call.kwargs["cwd"] == matrix.ROOT for call in run.call_args_list))
+        self.assertTrue(all(call.kwargs["check"] is False for call in run.call_args_list))
+
+    def test_family_aggregate_rejects_unknown_family_before_running_anything(self) -> None:
+        document = self.document()
+        outputs = matrix.build_outputs(document)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            matrix.write_outputs(outputs, root)
+            with mock.patch.object(matrix.subprocess, "run") as run:
+                with self.assertRaisesRegex(matrix.MatrixError, "unknown matrix family"):
+                    matrix.run_family(document, root, "libc.unknown")
+        run.assert_not_called()
+
+    def test_family_aggregate_stops_at_the_first_runner_failure(self) -> None:
+        document = self.document()
+        outputs = matrix.build_outputs(document)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            matrix.write_outputs(outputs, root)
+            with mock.patch.object(
+                matrix.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=23),
+            ) as run:
+                result = matrix.run_family(document, root, "libc.posix-runtime")
+
+        self.assertEqual(result, 23)
+        self.assertEqual(run.call_count, 1)
 
     def test_template_escape_requires_a_nonempty_bespoke_reason(self) -> None:
         document = self.document()

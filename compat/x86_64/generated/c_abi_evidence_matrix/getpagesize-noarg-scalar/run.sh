@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Generated from c_abi_evidence_matrix.toml; do not edit.
 # The focused runner owns the pinned-musl oracle/candidate build-and-run and
-# static export check; this wrapper keeps routine family membership explicit.
+# static export check; the checked matrix family aggregate executes this wrapper.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"

@@ -111,6 +111,13 @@ class CampaignReportTests(unittest.TestCase):
             self.assertIsInstance(family["routine_c_abi_matrix"]["row_ids"], list)
             self.assertEqual(family["transition"]["to"], "foundation-verified")
             self.assertTrue(family["transition"]["commands"])
+        posix_runtime = next(
+            family for family in value["families"] if family["id"] == "libc.posix-runtime"
+        )
+        self.assertEqual(
+            posix_runtime["routine_c_abi_matrix"]["aggregate_command"],
+            "./scripts/dev-x86_64.sh routine-c-abi-matrix libc.posix-runtime",
+        )
         self.assertEqual(
             value["next_dependency_ready_transitions"],
             [

@@ -1,7 +1,7 @@
 {
   "families": [
     {
-      "aggregate_command": "./scripts/dev-x86_64.sh campaign-family libc.posix-runtime",
+      "aggregate_command": "./scripts/dev-x86_64.sh routine-c-abi-matrix libc.posix-runtime",
       "id": "libc.posix-runtime",
       "row_ids": [
         "getpagesize-noarg-scalar",
@@ -10,7 +10,7 @@
     }
   ],
   "matrix_schema": "crabc.x86_64-c-abi-evidence-matrix/v1",
-  "matrix_sha256": "9206c38077c1c9bdff9076f2d94975dff7b6765074532f0ea75280741b46d16d",
+  "matrix_sha256": "f5dc399f1261eea8a79fd8c6414788edf7c6b195344788a081d7e6edf1a581d6",
   "platform": "Linux/x86-64 little-endian",
   "rows": [
     {

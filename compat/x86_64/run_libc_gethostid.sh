@@ -82,6 +82,7 @@ grep -Eq '[[:space:]][TW][[:space:]]gethostid$' "$archive_symbols" ||
 "$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -DCRABC_GETHOSTID_FREESTANDING \
     -I "$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections \
     compat/x86_64/libc_gethostid_probe.c compat/x86_64/libc_gethostid_start.S \
     "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"

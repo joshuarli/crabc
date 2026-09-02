@@ -43751,6 +43751,7 @@ def require_gethostid_artifact(family: Mapping[str, Any]) -> None:
         "static_c_abi_exports.txt",
         "-nostdlib -static",
         "--no-undefined",
+        "--gc-sections",
         "archive does not define gethostid",
         "--disassemble=gethostid",
         "gethostid candidate unexpectedly retains TLS",
