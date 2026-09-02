@@ -632,10 +632,15 @@
         "posix_spawnattr_getpgroup",
         "posix_spawnattr_getschedparam",
         "posix_spawnattr_getschedpolicy",
+        "posix_spawnattr_getsigdefault",
+        "posix_spawnattr_getsigmask",
         "posix_spawnattr_init",
+        "posix_spawnattr_setflags",
         "posix_spawnattr_setpgroup",
         "posix_spawnattr_setschedparam",
         "posix_spawnattr_setschedpolicy",
+        "posix_spawnattr_setsigdefault",
+        "posix_spawnattr_setsigmask",
         "pow",
         "pow10",
         "pow10f",
@@ -1344,11 +1349,6 @@
         "posix_spawn_file_actions_addfchdir_np",
         "posix_spawn_file_actions_addopen",
         "posix_spawn_file_actions_destroy",
-        "posix_spawnattr_getsigdefault",
-        "posix_spawnattr_getsigmask",
-        "posix_spawnattr_setflags",
-        "posix_spawnattr_setsigdefault",
-        "posix_spawnattr_setsigmask",
         "posix_spawnp",
         "prctl",
         "preadv2",
@@ -424028,8 +424028,8 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "5c9b7f148fc2571c8c271f1fd854e25145cf47d57c4f53e1929e04a80679f592",
-    "static_c_abi_exports_sha256": "0944ab51a0ab27b1993f97c7fda6067631b1d82419c3eee575f3789e4ba5d9fa"
+    "parity_ledger_sha256": "538630712d8d22c61171925fc14ea18a6e5ce8068664437b38b4867315e12c95",
+    "static_c_abi_exports_sha256": "b127505f18ab8405b7e1bbc605215ee790fcbaf36e79b8b64fe2551c21e3af48"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -442677,11 +442677,6 @@
       "posix_spawn_file_actions_addfchdir_np",
       "posix_spawn_file_actions_addopen",
       "posix_spawn_file_actions_destroy",
-      "posix_spawnattr_getsigdefault",
-      "posix_spawnattr_getsigmask",
-      "posix_spawnattr_setflags",
-      "posix_spawnattr_setsigdefault",
-      "posix_spawnattr_setsigmask",
       "posix_spawnp",
       "pow10l",
       "prctl",
@@ -442863,8 +442858,8 @@
     },
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
-      "default_static": 1087,
-      "unprovided": 379,
+      "default_static": 1092,
+      "unprovided": 374,
       "verified_feature_archives": 47
     },
     "candidate_external_callable_count": 1513,
@@ -442879,7 +442874,7 @@
       "ok": 2617,
       "oracle-not-applicable": 1
     },
-    "static_export_complement_count": 426
+    "static_export_complement_count": 421
   },
   "target": "x86_64-unknown-linux-musl"
 }
