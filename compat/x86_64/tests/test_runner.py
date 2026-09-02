@@ -1646,6 +1646,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    candidate-header-closure) ;;", source)
         self.assertIn("    installed-header-tree-closure) ;;", source)
         self.assertIn("    header-callable-visibility-matrix) ;;", source)
+        self.assertIn("    header-abi-matrix) ;;", source)
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    ftw-header-abi) ;;", source)
         self.assertIn(
@@ -1773,6 +1774,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "candidate-header-closure",
             "installed-header-tree-closure",
             "header-callable-visibility-matrix",
+            "header-abi-matrix",
             "header-callable-linkage-audit",
             "uapi-wrapper-matrix",
             "epoll-header-abi",

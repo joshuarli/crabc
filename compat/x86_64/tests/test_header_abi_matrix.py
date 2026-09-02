@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""Focused contracts for the native x86 all-header ABI matrix."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[3]
+MATRIX_PATH = ROOT / "compat" / "x86_64" / "header_abi_matrix.py"
+CHECKED_REPORT = ROOT / "compat" / "x86_64" / "generated" / "header_abi_matrix" / "report.json"
+RUNNER = ROOT / "compat" / "x86_64" / "run_header_abi_matrix.sh"
+
+
+def load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+MATRIX = load_module("header_abi_matrix_test", MATRIX_PATH)
+
+
+class HeaderAbiMatrixTests(unittest.TestCase):
+    def test_comparator_preserves_matched_missing_and_incompatible_facts(self) -> None:
+        candidate = [
+            MATRIX.fact("function", "shared", "int (int)"),
+            MATRIX.fact("macro", "MODE", "function-like:(value) (value)"),
+            MATRIX.fact("record", "candidate_record", "struct:int:first"),
+        ]
+        reference = [
+            MATRIX.fact("function", "shared", "int (int)"),
+            MATRIX.fact("macro", "MODE", "function-like:(value) ((value)+1)"),
+            MATRIX.fact("typedef", "reference_size", "unsigned long"),
+        ]
+
+        comparison = MATRIX.compare_facts(candidate, reference)
+
+        self.assertEqual(comparison["matched_count"], 1)
+        self.assertEqual(
+            comparison["candidate_only"],
+            [
+                {
+                    "kind": "record",
+                    "name": "candidate_record",
+                    "signature": "struct:int:first",
+                }
+            ],
+        )
+        self.assertEqual(
+            comparison["reference_only"],
+            [
+                {
+                    "kind": "typedef",
+                    "name": "reference_size",
+                    "signature": "unsigned long",
+                }
+            ],
+        )
+        self.assertEqual(
+            comparison["incompatible"],
+            [
+                {
+                    "candidate_signature": "function-like:(value) (value)",
+                    "kind": "macro",
+                    "name": "MODE",
+                    "reference_signature": "function-like:(value) ((value)+1)",
+                }
+            ],
+        )
+        self.assertEqual(comparison["incompatible_count"], 1)
+
+    def test_ast_discovery_uses_only_header_owned_named_abi_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            header = root / "demo.h"
+            header.write_text("/* synthetic AST origin */\n", encoding="utf-8")
+            ast = {
+                "kind": "TranslationUnitDecl",
+                "inner": [
+                    {
+                        "kind": "TypedefDecl",
+                        "name": "demo_size",
+                        "loc": {"file": str(header), "line": 3},
+                        "type": {"qualType": "unsigned long"},
+                    },
+                    {
+                        "kind": "RecordDecl",
+                        "name": "demo_record",
+                        "tagUsed": "struct",
+                        "completeDefinition": True,
+                        "loc": {"file": str(header), "line": 5},
+                        "inner": [
+                            {
+                                "kind": "FieldDecl",
+                                "name": "first",
+                                "type": {"qualType": "int"},
+                            },
+                            {
+                                "kind": "FieldDecl",
+                                "name": "second",
+                                "type": {"qualType": "long"},
+                            },
+                        ],
+                    },
+                    {
+                        "kind": "EnumDecl",
+                        "name": "demo_mode",
+                        "loc": {"file": str(header), "line": 10},
+                        "inner": [
+                            {"kind": "EnumConstantDecl", "name": "DEMO_A", "value": "1"},
+                            {"kind": "EnumConstantDecl", "name": "DEMO_B", "value": "2"},
+                        ],
+                    },
+                    {
+                        "kind": "VarDecl",
+                        "name": "demo_global",
+                        "loc": {"file": str(header), "line": 15},
+                        "type": {"qualType": "int"},
+                    },
+                    {
+                        "kind": "FunctionDecl",
+                        "name": "demo_function",
+                        "loc": {"file": str(header), "line": 17},
+                        "type": {"qualType": "int (int)"},
+                    },
+                    {
+                        "kind": "TypedefDecl",
+                        "name": "builtin_ignored",
+                        "loc": {"file": "<built-in>", "line": 1},
+                        "type": {"qualType": "int"},
+                    },
+                ],
+            }
+
+            facts = MATRIX.discover_ast_facts(ast, root)
+
+        self.assertEqual(
+            [(fact["kind"], fact["name"]) for fact in facts],
+            [
+                ("enum", "demo_mode"),
+                ("function", "demo_function"),
+                ("record", "demo_record"),
+                ("typedef", "demo_size"),
+                ("variable", "demo_global"),
+            ],
+        )
+        record = next(fact for fact in facts if fact["name"] == "demo_record")
+        self.assertEqual(record["signature"], "struct{first:int,second:long}")
+        enum = next(fact for fact in facts if fact["name"] == "demo_mode")
+        self.assertEqual(enum["signature"], "enum{DEMO_A=1,DEMO_B=2}")
+
+    def test_ast_discovery_retains_compact_ast_declarations_from_the_direct_include(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            header = root / "demo.h"
+            header.write_text("/* synthetic direct include */\n", encoding="utf-8")
+            ast = {
+                "kind": "TranslationUnitDecl",
+                "inner": [
+                    {
+                        "kind": "TypedefDecl",
+                        "name": "demo_anchor",
+                        "loc": {"file": str(header), "line": 2},
+                        "type": {"qualType": "unsigned long"},
+                    },
+                    {
+                        "kind": "FunctionDecl",
+                        "name": "demo_compact_function",
+                        # Clang's compact AST can omit the repeated file path
+                        # after another declaration from the same direct include.
+                        "loc": {"offset": 40, "line": 3, "col": 5},
+                        "type": {"qualType": "int (int)"},
+                    },
+                    {
+                        "kind": "TypedefDecl",
+                        "name": "builtin_must_not_fall_back",
+                        "loc": {},
+                        "type": {"qualType": "int"},
+                    },
+                    {
+                        "kind": "TypedefDecl",
+                        "name": "explicit_external_must_not_fall_back",
+                        "loc": {"file": "<built-in>", "line": 1},
+                        "type": {"qualType": "int"},
+                    },
+                ],
+            }
+
+            facts = MATRIX.discover_ast_facts(ast, root, "demo.h")
+
+        self.assertEqual(
+            [(fact["kind"], fact["name"], fact["signature"]) for fact in facts],
+            [
+                ("function", "demo_compact_function", "int (int)"),
+                ("typedef", "demo_anchor", "unsigned long"),
+            ],
+        )
+
+    def test_ast_discovery_retains_cxx_named_records_from_the_direct_include(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            header = root / "demo.h"
+            header.write_text("/* synthetic C++ AST origin */\n", encoding="utf-8")
+            ast = {
+                "kind": "TranslationUnitDecl",
+                "inner": [
+                    {
+                        "kind": "CXXRecordDecl",
+                        "name": "demo_cxx_record",
+                        "tagUsed": "struct",
+                        "completeDefinition": True,
+                        "loc": {"file": str(header), "line": 3},
+                        "inner": [
+                            {
+                                "kind": "FieldDecl",
+                                "name": "member",
+                                "type": {"qualType": "long"},
+                            }
+                        ],
+                    }
+                ],
+            }
+
+            facts = MATRIX.discover_ast_facts(ast, root)
+
+        self.assertEqual(
+            [(fact["kind"], fact["name"], fact["signature"]) for fact in facts],
+            [("record", "demo_cxx_record", "struct{member:long}")],
+        )
+
+    def test_record_shapes_retain_compiler_bitfield_widths(self) -> None:
+        node = {
+            "kind": "RecordDecl",
+            "tagUsed": "struct",
+            "completeDefinition": True,
+            "inner": [
+                {
+                    "kind": "FieldDecl",
+                    "name": "flags",
+                    "type": {"qualType": "unsigned int"},
+                    "isBitfield": True,
+                    "inner": [
+                        {"kind": "ConstantExpr", "value": "4"},
+                    ],
+                }
+            ],
+        }
+
+        self.assertEqual(MATRIX.record_signature(node), "struct{flags:unsigned int:4}")
+
+    def test_enum_values_follow_the_compiler_constant_expression(self) -> None:
+        node = {
+            "kind": "EnumDecl",
+            "inner": [
+                {
+                    "kind": "EnumConstantDecl",
+                    "name": "DEMO_ZERO",
+                    "inner": [{"kind": "ConstantExpr", "value": "0"}],
+                },
+                {
+                    "kind": "EnumConstantDecl",
+                    "name": "DEMO_FOUR",
+                    "inner": [{"kind": "ConstantExpr", "value": "4"}],
+                },
+            ],
+        }
+
+        self.assertEqual(MATRIX.enum_signature(node), "enum{DEMO_ZERO=0,DEMO_FOUR=4}")
+
+    def test_type_spelling_normalizes_anonymous_source_locations(self) -> None:
+        with tempfile.TemporaryDirectory() as project_directory, tempfile.TemporaryDirectory() as musl_directory:
+            project_root = Path(project_directory)
+            musl_root = Path(musl_directory)
+            project_type = f"struct (unnamed at {project_root}/resolv.h:40:5)[10]"
+            musl_type = f"struct (unnamed at {musl_root}/resolv.h:40:5)[10]"
+
+            project_normalized = MATRIX.normalize_type_spelling(
+                project_type, ((project_root, "public"),)
+            )
+            musl_normalized = MATRIX.normalize_type_spelling(
+                musl_type, ((musl_root, "public"),)
+            )
+
+        self.assertEqual(project_normalized, "struct (unnamed at public/resolv.h:40:5)[10]")
+        self.assertEqual(project_normalized, musl_normalized)
+
+    def test_macro_discovery_keeps_only_the_final_active_definition(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            header = root / "fcntl.h"
+            header.write_text("/* synthetic preprocessor origin */\n", encoding="utf-8")
+            preprocessed = "\n".join(
+                [
+                    f'# 1 "{header}"',
+                    "#define O_CREAT 64",
+                    "#undef O_CREAT",
+                    "#define O_CREAT 0100",
+                    "",
+                ]
+            )
+
+            facts = MATRIX.discover_macro_facts(preprocessed, root)
+
+        self.assertEqual(
+            facts,
+            [MATRIX.fact("macro", "O_CREAT", "object-like: 0100")],
+        )
+
+    def test_checked_report_is_a_deterministic_partial_header_abi_record(self) -> None:
+        contract = MATRIX.load_contract()
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+
+        MATRIX.validate_checked_report(checked, contract)
+        self.assertEqual(checked["schema"], MATRIX.SCHEMA)
+        self.assertFalse(checked["summary"]["complete"])
+        self.assertEqual(checked["summary"]["row_count"], 1337)
+        self.assertEqual(checked["scope"]["archive_linkage"], False)
+        self.assertEqual(checked["scope"]["runtime"], False)
+        self.assertEqual(checked["work_package"]["target_family"], "libc.headers-layouts")
+        self.assertEqual(
+            checked["work_package"]["target_obligations"],
+            ["callable-prototype-layout", "noncallable-header-abi"],
+        )
+        self.assertIn("generated-x86-prototype-layout-matrix", checked["work_package"]["evidence"])
+
+        runner = RUNNER.read_text(encoding="utf-8")
+        for phrase in (
+            "header_abi_matrix.py",
+            "--check",
+            "Pinned musl",
+            "Linux 5.10",
+            "partial declaration-form inventory",
+        ):
+            self.assertIn(phrase, runner)
+
+
+if __name__ == "__main__":
+    unittest.main()

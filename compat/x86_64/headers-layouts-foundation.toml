@@ -2,7 +2,7 @@
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
 # `headers-layouts.toml` remains the v1 inventory of fifty-three direct probes.
-# This v10 manifest accounts for every pinned public header and every project-
+# This v11 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
 # event-descriptor, timeval-transitive, direct sys/time, and access-header profile ABI slices
@@ -13,7 +13,7 @@
 # `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
 # x86 `headers_install` identity; it is repeated here and in the Docker build
 # because those independent consumers cannot load TOML from one another.
-schema = "crabc.x86_64-headers-layouts-foundation/v10"
+schema = "crabc.x86_64-headers-layouts-foundation/v11"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -33,6 +33,7 @@ full_c11_consumer_matrix = true
 full_cxx17_consumer_matrix = true
 feature_visibility_matrix = false
 callable_feature_visibility_matrix = true
+prototype_layout_matrix = true
 abi_facet_matrix = false
 callable_linkage_audit = false
 aggregate_family_completion = false
@@ -66,6 +67,7 @@ c11_consumer_matrix = true
 cxx17_consumer_matrix = true
 feature_visibility_matrix = false
 callable_feature_visibility_matrix = true
+prototype_layout_matrix = true
 abi_facet_matrix = false
 callable_linkage_audit = false
 runtime_completion = false
@@ -1269,6 +1271,25 @@ candidate_public_header_count = 191
 record_count = 1337
 scope = "Compiler-derived direct-public-include callable name-and-class visibility across all seven C11/C++17 profiles. It records every current pinned-musl/project difference and project-only current surface, but excludes prototype and macro-replacement equality, typedefs, records, constants, noncallable ABI, archive linkage, runtime behavior, family promotion, and public support."
 
+# This checked compiler-derived report is the first finite comparison layer for
+# callable signatures and named noncallable declarations. It deliberately
+# preserves every red difference; record byte offsets, archive extraction, and
+# runtime behavior remain separate proof obligations.
+[prototype_layout_matrix]
+id = "generated-x86-prototype-layout-matrix"
+state = "partial-verified"
+contract = "compat/x86_64/header_abi_matrix.toml"
+generated_report = "compat/x86_64/generated/header_abi_matrix/report.json"
+command = "./scripts/dev-x86_64.sh header-abi-matrix"
+required_result = "checked-finite-report"
+profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+pinned_public_header_count = 183
+candidate_public_header_count = 191
+record_count = 1337
+comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 159, mismatch = 1121, oracle-not-applicable = 1 }
+mismatch_fact_counts = { candidate_only_count = 41632, incompatible_count = 22215, reference_only_count = 85941 }
+scope = "Compiler-derived direct-public-include source declaration forms: function signatures with emitted linkage spellings, named typedefs, named record shapes, enum values, variables, and macro replacement forms across all seven C11/C++17 profiles. It records red source-form differences and one pinned-musl C11 strict aio.h oracle-not-applicable row, but does not classify raw spelling differences as ABI differences or prove record byte layouts, anonymous declarations, archive linkage, runtime behavior, family promotion, or public support."
+
 [[language_profile]]
 id = "c11-gnu"
 language = "c"
@@ -1691,11 +1712,11 @@ description = "The compiler-derived 1,337-row matrix records direct consumer-vis
 
 [[abi_facet]]
 id = "callable-prototype-layout"
-state = "planned"
+state = "partial-verified"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
 evidence = ["generated-x86-prototype-layout-matrix"]
-description = "Every retained callable declaration, ABI-bearing record, constant, and feature selector needs an x86 pinned-musl comparison."
+description = "The checked compiler-derived 1,337-row matrix records callable source declaration forms and emitted linkage spellings plus named declaration facts against pinned musl. It does not classify raw spelling differences as ABI differences; record byte layouts, anonymous declarations, full constants/feature semantics, archive linkage, runtime behavior, and closure remain required."
 
 [[abi_facet]]
 id = "callable-linkage-ownership"
@@ -1744,8 +1765,8 @@ description = "The generated provider partition leaves declared-unverified featu
 
 [[linkage_owner]]
 id = "noncallable-header-abi"
-state = "planned"
+state = "partial-verified"
 scope = "public typedefs constants macros records and inline-only header contracts"
 family = "libc.headers-layouts"
 evidence = ["generated-x86-prototype-layout-matrix"]
-description = "Noncallable header ABI still needs independent type, layout, constant, and feature-visibility evidence."
+description = "The checked compiler-derived matrix records named typedef, record shape, enum, variable, and macro replacement source-form differences without classifying them as ABI differences. Byte layouts, anonymous declarations, inline behavior, complete constant semantics, feature visibility, archive linkage, and runtime evidence remain required."

@@ -1,0 +1,49 @@
+# Canonical work package and compiler-derived report contract for the first
+# all-public-header declaration-form comparison layer. The checked report
+# makes remaining prototype and named noncallable source differences finite;
+# it is not a substitute for ABI classification, archive extraction, behavior,
+# or the final header-family promotion aggregate.
+schema = "crabc.x86_64-header-abi-matrix/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6"
+public_headers = "compat/x86_64/public_headers.txt"
+callable_inventory = "compat/x86_64/header_callable_inventory.json"
+generated_report = "compat/x86_64/generated/header_abi_matrix/report.json"
+
+[policy]
+compiler_ast_json = true
+compiler_preprocessor_records = true
+header_text_parsing = false
+direct_public_include_visibility = true
+callable_prototypes = true
+named_noncallable_declarations = true
+record_byte_layouts = false
+archive_linkage = false
+runtime = false
+family_promotion = false
+public_support = false
+
+[work_package]
+target_family = "libc.headers-layouts"
+target_obligations = ["callable-prototype-layout", "noncallable-header-abi"]
+blocker = "The current all-header callable report has names/classes only, so prototype, macro replacement, and named noncallable declaration-form differences are not finite or reviewable."
+prerequisites = ["oracle.musl-toolchain", "libc.errno-tls"]
+dependent_work = ["libc.posix-runtime", "libc.pthread-tls", "libc.text-math-locale-stdio", "libc.c-abi-compat", "sysroot.static-tls", "ldso.dynamic-runtime"]
+baseline_contract = "Pinned musl 1.2.6 public headers, Linux 5.10 UAPI input, the frozen AArch64 capability ledger, and System V AMD64 LP64/x87 ABI."
+source_owners = ["compat/x86_64/header_abi_matrix.toml", "compat/x86_64/header_abi_matrix.py", "compat/x86_64/run_header_abi_matrix.sh", "compat/x86_64/tests/test_header_abi_matrix.py", "compat/x86_64/header_callable_inventory.toml", "compat/x86_64/header_callable_inventory.py", "compat/x86_64/header_callable_inventory.json", "compat/x86_64/public_headers.txt", "compat/x86_64/headers-layouts-foundation.toml", "compat/x86_64/parity.toml", "compat/x86_64/validate_parity_ledger.py", "scripts/dev-x86_64.sh"]
+focused_evidence_command = "./scripts/dev-x86_64.sh header-abi-matrix"
+family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
+product_command = "./scripts/dev-x86_64.sh campaign-static"
+negative_scope = "This matrix records compiler-visible declaration and macro replacement forms only. It does not classify raw spelling differences as ABI differences or prove byte-offset record layouts, archive extraction, selected callable implementation, runtime behavior, installed sysroot closure, family promotion, or public x86 support."
+expected_transition = "callable-prototype-layout and noncallable-header-abi move from planned to partial-verified while libc.headers-layouts remains planned."
+evidence = ["generated-x86-prototype-layout-matrix"]
+
+# Clang's pinned-musl C11 AST pass has this intentional strict-profile source
+# outcome. The candidate still compiles the row, and the matrix records it
+# instead of skipping an input profile. The separate GCC consumer closure
+# retains its own C++ strict applicability record.
+[[oracle_not_applicable]]
+header = "aio.h"
+profile = "c11-strict"
+reason = "Pinned musl leaves struct sigevent incomplete without a POSIX or GNU feature request."

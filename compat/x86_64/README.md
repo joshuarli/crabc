@@ -1690,6 +1690,15 @@ list is only an input to that linkage audit: unlisted public callables remain ow
 `libc.c-abi-compat`, while noncallable header ABI remains owned by
 `libc.headers-layouts`.
 
+`header-abi-matrix` adds a separate checked Clang-derived 1,337-row report for
+function source declaration forms and emitted linkage spellings plus named
+typedefs, record shapes, enum values, variables, and macro replacement forms.
+Its current 1,121 comparable red source-form rows, one
+`aio.h:c11-strict` oracle-not-applicable row, and 56 project-only rows are
+evidence to review—not parity waivers or ABI classifications. It excludes byte
+layouts, anonymous declarations, inline behavior, archive linkage, runtime,
+family promotion, and public x86 support.
+
 The private `installed-header-tree-closure` artifact separately materializes
 the 191 candidate headers into a temporary `usr/include` tree, then resolves
 the same 1,337 empty-TU rows across `c11-gnu`, `cxx17-gnu`, `c11-strict`,
