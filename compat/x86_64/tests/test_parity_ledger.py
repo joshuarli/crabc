@@ -2578,7 +2578,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         quota = next(probe for probe in probes if probe["id"] == "quota")
         assert isinstance(quota, dict)
         self.assertEqual(quota["kind"], "compile-only")
-        self.assertEqual(quota["headers"], ["include/sys/quota.h"])
+        self.assertEqual(
+            quota["headers"], ["include/stddef.h", "include/sys/quota.h"]
+        )
         self.assertEqual(
             quota["sources"],
             [
@@ -3018,7 +3020,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.require_nameser_header_evidence(headers_layouts)
 
-    def test_quota_conversion_macro_gate_stays_header_only(self) -> None:
+    def test_complete_quota_header_gate_stays_header_only(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         evidence = next(
@@ -3029,10 +3031,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(evidence["state"], "required")
         for phrase in (
             "project-first/pinned-musl C/C++",
+            "full pinned-musl quota header",
             "exact unconditional `dbtob`/`btodb`/`fs_to_dq_blocks`/`dqoff`",
-            "LP64 `unsigned long long` `dqoff` result",
+            "quota constants/masks",
+            "legacy `dq_*` aliases",
+            "`dqblk`/`dqinfo` LP64 layouts",
+            "C/C++ `quotactl` declaration",
             "compile-only",
-            "quota conversion macros",
             "quotactl archive/runtime behavior",
             "quota policy/accounting",
             "filesystem/kernel state",
@@ -3324,7 +3329,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 41632, "reference_only": 85941},
+            {"candidate_only": 41326, "reference_only": 85787},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -4445,7 +4450,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "22,215 same-identity source-form differences across 766 rows",
+            "22,208 same-identity source-form differences across 766 rows",
             "14 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):

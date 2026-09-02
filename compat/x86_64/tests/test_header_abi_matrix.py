@@ -342,6 +342,65 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         ):
             self.assertIn(phrase, runner)
 
+    def test_quota_header_has_no_owned_pinned_musl_fact_differences(self) -> None:
+        """Keep quota-header completion distinct from inherited stdint.h differences."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        owned_names = {
+            "_LINUX_QUOTA_VERSION",
+            "MAX_IQ_TIME",
+            "MAX_DQ_TIME",
+            "MAXQUOTAS",
+            "INITQFNAMES",
+            "QUOTAFILENAME",
+            "QUOTAGROUP",
+            "NR_DQHASH",
+            "NR_DQUOTS",
+            "dq_bhardlimit",
+            "dq_bsoftlimit",
+            "dq_curspace",
+            "dq_valid",
+            "dq_ihardlimit",
+            "dq_isoftlimit",
+            "dq_curinodes",
+            "dq_btime",
+            "dq_itime",
+            "IIF_BGRACE",
+            "IIF_IGRACE",
+            "IIF_FLAGS",
+            "IIF_ALL",
+            "dqinfo",
+            "PRJQUOTA",
+            "Q_GETNEXTQUOTA",
+            "QFMT_SHMEM",
+        }
+        profiles = {
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        }
+        rows = [row for row in checked["rows"] if row["header"] == "sys/quota.h"]
+        self.assertEqual({row["profile"] for row in rows}, profiles)
+        for row in rows:
+            difference = row["difference"]
+            differing_names = {
+                fact["name"]
+                for facts in (
+                    difference["candidate_only"],
+                    difference["incompatible"],
+                    difference["reference_only"],
+                )
+                for fact in facts
+            }
+            self.assertFalse(
+                owned_names & differing_names,
+                f"quota-owned facts drifted in {row['profile']}: "
+                f"{sorted(owned_names & differing_names)}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

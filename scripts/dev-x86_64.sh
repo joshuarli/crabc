@@ -221,7 +221,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts plus IPv4/IPv6 and source-filter macros
   nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname/dn_expand/_ns_flagdata/ns_get16/ns_get32/ns_put16 declarations
-  quota-header-abi  verify x86 sys/quota.h conversion macros through C/C++ profiles
+  quota-header-abi  verify the complete x86 sys/quota.h through C/C++ profiles
   endservent-header-abi  verify staged x86 legacy service-terminator C/C++ declaration
   inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts

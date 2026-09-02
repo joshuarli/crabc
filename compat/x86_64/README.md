@@ -1739,7 +1739,7 @@ header cross-product. It compares only named `(kind, name)` declaration and
 macro visibility across all 1,337 rows: 1,107 current identity-mismatch rows,
 173 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
 and 56 project-only rows retain checked candidate fact summaries and digests.
-Its 22,215 same-identity source-form
+Its 22,208 same-identity source-form
 differences across 766 rows—including 14 form-only rows—remain separately
 accounted and are not an ABI-equality claim. This is generic feature-visibility
 evidence only; declaration-form equality, layouts, linkage, runtime, family
@@ -2298,13 +2298,13 @@ packet I/O, sockets, netdb, installed-header completion, family promotion, or
 public x86 support.
 
 `quota-header-abi` is the seven-profile project-first/pinned-musl C/C++
-compile-only `<sys/quota.h>` gate for exactly the unconditional
-`dbtob`/`btodb`/`fs_to_dq_blocks`/`dqoff` macro replacements. Its constant
-expression checks retain their x86 LP64 result types, product-before-division,
-and unsigned-modular `dqoff` arithmetic; the callable-inventory hash ratchets
-the exact replacement spelling. It neither links nor executes a quota probe or
-`quotactl`, and does not select quota policy/accounting, filesystem/kernel
-state, `system.kernel-admin`, installed-header completion, family completion,
+compile-only `<sys/quota.h>` gate for the full pinned-musl quota header:
+unconditional `dbtob`/`btodb`/`fs_to_dq_blocks`/`dqoff` macro replacements,
+quota constants and masks, legacy `dq_*` aliases, `dqblk`/`dqinfo` LP64
+layouts, and the C/C++ `quotactl` declaration. It neither links nor executes a
+quota probe or `quotactl`, and does not select quotactl archive/runtime
+behavior, quota policy/accounting, filesystem/kernel state,
+`system.kernel-admin`, installed-header completion, family completion,
 promotion, or public x86 support.
 
 `inet-address-header-abi` compile-checks project-first and pinned-musl

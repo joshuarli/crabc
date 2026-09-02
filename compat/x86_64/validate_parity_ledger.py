@@ -365,9 +365,9 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 41632,
-        "incompatible_count": 22215,
-        "reference_only_count": 85941,
+        "candidate_only_count": 41326,
+        "incompatible_count": 22208,
+        "reference_only_count": 85787,
     },
     "mismatch_row_count": 1121,
     "pinned_public_header_count": 183,
@@ -381,12 +381,12 @@ EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 41632,
+    "candidate_only_identity_count": 41326,
     "candidate_only_identity_kind_counts": {
         "function": 6835,
-        "macro": 17988,
-        "record": 980,
-        "typedef": 15432,
+        "macro": 17932,
+        "record": 975,
+        "typedef": 15187,
         "variable": 397,
     },
     "candidate_public_header_count": 191,
@@ -404,7 +404,7 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 209423,
+    "matched_identity_count": 209577,
     "mismatch_row_count": 1107,
     "oracle_not_applicable_candidate_fact_count": 243,
     "oracle_not_applicable_row_count": 1,
@@ -414,12 +414,12 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 1964,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 85941,
+    "reference_only_identity_count": 85787,
     "reference_only_identity_kind_counts": {
         "enum": 66,
         "function": 1189,
-        "macro": 82171,
-        "record": 929,
+        "macro": 82024,
+        "record": 922,
         "typedef": 1549,
         "variable": 37,
     },
@@ -430,7 +430,7 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
         "mismatch": 1121,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 22215,
+    "source_form_difference_count": 22208,
     "source_form_difference_row_count": 766,
     "source_form_only_difference_row_count": 14,
 }
@@ -5968,7 +5968,7 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "22,215 same-identity source-form differences across 766 rows",
+        "22,208 same-identity source-form differences across 766 rows",
         "14 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
@@ -7207,7 +7207,7 @@ def require_nameser_header_evidence(family: Mapping[str, Any]) -> None:
 
 
 def require_quota_header_evidence(family: Mapping[str, Any]) -> None:
-    """Keep unit-conversion macros below quota syscall and policy selection."""
+    """Keep the complete quota header below quota syscall and policy selection."""
     evidence = family.get("native_evidence")
     require(
         isinstance(evidence, list),
@@ -7233,10 +7233,13 @@ def require_quota_header_evidence(family: Mapping[str, Any]) -> None:
             for phrase in (
                 "project-first/pinned-musl C/C++",
                 "<sys/quota.h>",
+                "full pinned-musl quota header",
                 "exact unconditional `dbtob`/`btodb`/`fs_to_dq_blocks`/`dqoff`",
-                "LP64 `unsigned long long` `dqoff` result",
+                "quota constants/masks",
+                "legacy `dq_*` aliases",
+                "`dqblk`/`dqinfo` LP64 layouts",
+                "C/C++ `quotactl` declaration",
                 "compile-only",
-                "quota conversion macros",
                 "quotactl archive/runtime behavior",
                 "quota policy/accounting",
                 "filesystem/kernel state",

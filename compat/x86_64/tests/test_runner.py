@@ -1052,8 +1052,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
 
-    def test_quota_conversion_macros_stay_header_only(self) -> None:
-        """Pin musl's quota-unit macros without admitting quota syscall behavior."""
+    def test_quota_header_stays_musl_complete_and_header_only(self) -> None:
+        """Pin musl's complete quota header without admitting quota runtime."""
         header = (ROOT / "include" / "sys" / "quota.h").read_text(
             encoding="utf-8"
         )
@@ -1068,18 +1068,43 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         for required in (
+            "#include <stdint.h>",
+            "#define _LINUX_QUOTA_VERSION 2",
             "#define dbtob(num) ((num) << 10)",
             "#define btodb(num) ((num) >> 10)",
             "#define fs_to_dq_blocks(num, blksize) (((num) * (blksize)) / 1024)",
+            "#define MAX_IQ_TIME 604800",
+            "#define MAX_DQ_TIME 604800",
+            "#define MAXQUOTAS 2",
+            "#define INITQFNAMES { \"user\", \"group\", \"undefined\" };",
+            "#define QUOTAFILENAME \"quota\"",
+            "#define QUOTAGROUP \"staff\"",
+            "#define NR_DQHASH 43",
+            "#define NR_DQUOTS 256",
             "#define dqoff(UID) ((long long)(UID) * sizeof (struct dqblk))",
+            "#define dq_bhardlimit",
+            "#define dq_itime",
+            "#define IIF_ALL",
+            "struct dqinfo",
+            "uint64_t dqi_bgrace;",
+            "uint32_t dqi_valid;",
         ):
             self.assertIn(required, header)
+        for forbidden in (
+            "#include <sys/types.h>",
+            "#define PRJQUOTA",
+            "#define Q_GETNEXTQUOTA",
+            "#define QFMT_SHMEM",
+        ):
+            self.assertNotIn(forbidden, header)
         for macro in ("btodb", "dbtob", "dqoff", "fs_to_dq_blocks"):
             self.assertIn(f"#ifndef {macro}", c_probe)
             self.assertIn(f"#ifndef {macro}", cxx_probe)
             self.assertIn(macro, runner)
         for required in (
             "sizeof(struct dqblk) == 72",
+            "sizeof(struct dqinfo) == 24",
+            "offsetof(struct dqinfo, dqi_valid) == 20",
             "unsigned long long",
             "dbtob(1)), int",
             "btodb(1)), int",
@@ -1087,11 +1112,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fs_to_dq_blocks(3U, 512U)",
             "dqoff(1U)",
             "dqoff(-1)",
+            "INITQFNAMES",
+            "crabc_quota_aliases.dq_bhardlimit",
+            "quotactl_type",
         ):
             self.assertIn(required, c_probe)
             self.assertIn(required, cxx_probe)
-        self.assertNotIn("quotactl", c_probe)
-        self.assertNotIn("quotactl", cxx_probe)
         for required in (
             "compile_profile strict",
             "compile_profile posix",
@@ -1099,7 +1125,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "compile_profile gnu",
             "compile_profile bsd",
             "compile_cxx_profile cxx17-strict",
-            "quota conversion macros",
+            "full musl quota header",
             "does not link or execute `quotactl`",
         ):
             self.assertIn(required, runner)
