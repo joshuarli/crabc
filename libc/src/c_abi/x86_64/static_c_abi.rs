@@ -883,6 +883,8 @@ mod pthread_getconcurrency;
 mod pthread_setconcurrency;
 #[path = "pthread_condattr_pshared.rs"]
 mod pthread_condattr_pshared;
+#[path = "pthread_attr_lifecycle.rs"]
+mod pthread_attr_lifecycle;
 #[path = "pthread_condattr_clock.rs"]
 mod pthread_condattr_clock;
 #[path = "pthread_mutexattr_protocol_query.rs"]

@@ -751,8 +751,10 @@ pthread_cond_destroy
 pthread_cond_init
 pthread_cond_signal
 pthread_cond_wait
+pthread_condattr_destroy
 pthread_condattr_getclock
 pthread_condattr_getpshared
+pthread_condattr_init
 pthread_condattr_setclock
 pthread_condattr_setpshared
 pthread_create
@@ -773,10 +775,12 @@ pthread_mutex_init
 pthread_mutex_lock
 pthread_mutex_trylock
 pthread_mutex_unlock
+pthread_mutexattr_destroy
 pthread_mutexattr_getprotocol
 pthread_mutexattr_getpshared
 pthread_mutexattr_getrobust
 pthread_mutexattr_gettype
+pthread_mutexattr_init
 pthread_mutexattr_settype
 pthread_once
 pthread_rwlock_destroy

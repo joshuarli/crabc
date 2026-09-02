@@ -15947,8 +15947,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -16422,12 +16422,17 @@ def require_static_pthread_private_cond_artifact(family: Mapping[str, Any]) -> N
         "pthread_condattr_setclock",
         "pthread_condattr_getclock",
     }
+    selected_condattr_lifecycle_exports = {
+        "pthread_condattr_init",
+        "pthread_condattr_destroy",
+    }
     require(
         {symbol for symbol in static_exports if symbol.startswith("pthread_cond")}
         == selected_condition_exports
         | selected_condattr_pshared_exports
-        | selected_condattr_clock_exports,
-        "static-c-pthread-cond-private must expose only its five selected condition symbols plus the separate raw condattr pshared and clock pairs",
+        | selected_condattr_clock_exports
+        | selected_condattr_lifecycle_exports,
+        "static-c-pthread-cond-private must expose only its five selected condition symbols plus the separate raw condattr pshared, clock, and lifecycle entries",
     )
     require(
         "run_libc_pthread_cond_private.sh"
@@ -16701,8 +16706,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -17028,8 +17033,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -17399,8 +17404,8 @@ def require_static_pthread_cancel_deferred_artifact(
         "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -69949,8 +69954,8 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-atfork-fork artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -70281,8 +70286,8 @@ def require_static_pthread_affinity_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread-affinity artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -70471,8 +70476,8 @@ def require_static_pthread_cpuclock_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread CPU-clock artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -70664,8 +70669,8 @@ def require_static_pthread_name_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread task-name artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -70869,8 +70874,8 @@ def require_static_pthread_spin_destroy_artifact(
         "libc.pthread-tls must contain exactly one source-closed pthread spin-destroy artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71117,8 +71122,8 @@ def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one pthread attribute artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71375,8 +71380,8 @@ def require_static_pthread_barrierattr_pshared_artifact(
         "libc.pthread-tls must contain exactly one barrierattr pshared artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71562,8 +71567,8 @@ def require_static_pthread_barrier_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-barrier artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71763,8 +71768,8 @@ def require_static_pthread_spin_init_artifact(family: Mapping[str, Any]) -> None
         "libc.pthread-tls must contain exactly one pthread spin-init artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -72005,8 +72010,8 @@ def require_static_thrd_yield_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one direct C11 thrd_yield artifact",
     )
     require(
-        len(artifacts) == 37,
-        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -75619,6 +75624,18 @@ def validate_ledger(
                     "pthread_attr_getschedpolicy",
                     "pthread_attr_setschedparam",
                     "pthread_attr_getschedparam",
+                ),
+            ),
+            (
+                "static-c-pthread-attr-lifecycle",
+                "./scripts/dev-x86_64.sh libc-pthread-attr-lifecycle",
+                "libc/src/c_abi/x86_64/pthread_attr_lifecycle.rs",
+                "compat/x86_64/run_libc_pthread_attr_lifecycle.sh",
+                (
+                    "pthread_mutexattr_init",
+                    "pthread_mutexattr_destroy",
+                    "pthread_condattr_init",
+                    "pthread_condattr_destroy",
                 ),
             ),
             (

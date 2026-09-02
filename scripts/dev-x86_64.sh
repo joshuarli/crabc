@@ -395,6 +395,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-cpuclock  run the static x86 crabc-libc bounded pthread CPU-clock slice
   libc-pthread-name  run the static x86 crabc-libc bounded pthread task-name slice
   libc-pthread-attributes  run the static x86 crabc-libc pthread-attribute metadata slice
+  libc-pthread-attr-lifecycle  run the static x86 crabc-libc mutex/condition attribute lifecycle slice
   libc-pthread-barrierattr-pshared  run the static x86 crabc-libc barrier-attribute pshared record slice
   libc-pthread-barrier  run the static x86 crabc-libc private/shared pthread-barrier slice
   libc-pthread-spin-destroy  run the static x86 crabc-libc private pthread spin-destruction leaf
@@ -4394,6 +4395,10 @@ run_libc_pthread_attr_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_attr.sh
 }
 
+run_libc_pthread_attr_lifecycle_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_attr_lifecycle.sh
+}
+
 run_libc_pthread_barrier_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_barrier.sh
 }
@@ -5155,7 +5160,7 @@ case "$command" in
     libc-pthread-affinity) ;;
     libc-pthread-cpuclock) ;;
     libc-pthread-name) ;;
-    libc-pthread-attributes|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init) ;;
+    libc-pthread-attributes|libc-pthread-attr-lifecycle|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init) ;;
     libc-pthread-spin-destroy) ;;
     libc-pthread-detach) ;;
     libc-thrd-yield) ;;
@@ -5197,6 +5202,7 @@ case "$command" in
     libc-math-exp10f) ;;
     libc-math-sinh) ;;
     libc-pthread-condattr-pshared) ;;
+    libc-pthread-attr-lifecycle) ;;
     libc-pthread-condattr-clock) ;;
     libc-pthread-mutexattr-protocol-query) ;;
     libc-pthread-mutexattr-pshared-query) ;;
@@ -6784,6 +6790,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-attributes takes no arguments"
         ensure_image
         run_libc_pthread_attr_probe
+        ;;
+    libc-pthread-attr-lifecycle)
+        [ "$#" -eq 0 ] || fail "libc-pthread-attr-lifecycle takes no arguments"
+        ensure_image
+        run_libc_pthread_attr_lifecycle_probe
         ;;
     libc-pthread-barrier)
         [ "$#" -eq 0 ] || fail "libc-pthread-barrier takes no arguments"

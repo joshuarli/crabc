@@ -11955,6 +11955,43 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/thread/pthread_spin_init.c: direct zero store and zero return while ignoring pshared. Other spin APIs, process sharing, and lifecycle remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/int function ABI, public four-byte aligned spinlock record layout, C++ C linkage, static archive ownership, and direct static executable purity boundary." }]
 
 [[family.verified_artifact]]
+id = "static-c-pthread-attr-lifecycle"
+description = "Private native x86 static pthread mutex/condition attribute lifecycle artifact inside still-planned `libc.pthread-tls`. Four dependency-free entries expose only `pthread_mutexattr_init`/`destroy` and `pthread_condattr_init`/`destroy` over their separate four-byte, four-byte-aligned public caller-owned records. Pinned musl writes all-zero default representation on each init and returns zero; each destroy returns zero without dereferencing the supplied record because it owns no resource. The fixture starts with nonzero caller words and calls each destroy with an invalid non-null address, proving zeroing and non-observation. This selects no mutex or condition attribute getter/setter, mutex or condition initialization/destruction/operation, process sharing, thread creation, TCB/TLS ownership, synchronization, cancellation, C errno, dynamic/loader TLS, CRT, sysroot, general pthread/TLS behavior or x86-64 parity, family completion, promotion, or public x86 support. In particular, an initialized record does not make the separately selected mutex or condition paths consume attributes."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/pthread_attr_lifecycle.rs",
+  "include/bits/alltypes.h",
+  "include/features.h",
+  "include/pthread.h",
+  "include/stdint.h",
+  "compat/x86_64/pthread-attr-lifecycle.toml",
+  "compat/x86_64/pthread_c11_header_abi_probe.c",
+  "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+  "compat/x86_64/run_pthread_c11_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_pthread_attr_lifecycle_probe.c",
+  "compat/x86_64/libc_pthread_attr_lifecycle_start.S",
+  "compat/x86_64/run_libc_pthread_attr_lifecycle.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 `src/thread/pthread_mutexattr_init.c::pthread_mutexattr_init` and `src/thread/pthread_condattr_init.c::pthread_condattr_init` are `return a->__attr = 0;`; `src/thread/pthread_mutexattr_destroy.c::pthread_mutexattr_destroy` and `src/thread/pthread_condattr_destroy.c::pthread_condattr_destroy` are `return 0;`. The Rust leaf retains that source-specific MIT provenance under COPYRIGHT without importing any attribute setter/getter, mutex, condition, or pthread runtime path.",
+  "SysV AMD64 passes each mutable public attribute pointer in rdi and returns zero in eax. The installed x86 `pthread_mutexattr_t` and `pthread_condattr_t` layouts are each one four-byte, align-four unsigned word at offset zero. Init requires writable aligned caller storage and replaces its complete word with zero; destroy intentionally does not read, write, validate, retain, or require a dereferenceable record.",
+  "The true-static candidate enters through a direct `_start`, calls only the four lifecycle entries, then uses exit=60. It has no PT_TLS segment, errno/bootstrap owner, syscall or helper call in a leaf, allocation, mutex/condition state, thread state, or unowned runtime dependency. It excludes all attribute getter/setter siblings, all mutex/condition operations, and pthread_create.",
+]
+x86_header_prerequisites = [
+  "The fixture preprocesses project pthread.h, stdint.h, bits/alltypes.h, and features.h before both pinned-musl and candidate links. It proves both public four-byte align-four records, their word offsets, and each exact `int (*)(pthread_*attr_t *)` declaration.",
+  "The shared 28-context C/C++ pthread/C11 include-order/profile matrix ratchets all four lifecycle signatures and unmangled C++ references. It is narrow declaration/layout/linkage evidence only, not a mutex/condition or pthread runtime claim.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-attr-lifecycle", scope = "Pinned-musl 1.2.6 project-header C reference plus a dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The shared fixture proves both nonzero four-byte caller records become zero and both destroys return zero without dereferencing invalid non-null addresses. Header/source/archive/final-ELF/disassembly checks require exactly pthread_mutexattr_init/destroy and pthread_condattr_init/destroy, the closed static export surface, C++ C linkage, and no interpreter/DT_NEEDED/unresolved symbol, PT_TLS, errno/bootstrap, syscall, helper call, allocator, mutex/condition/thread state, or ambient runtime. It excludes every attribute getter/setter, mutex/condition initialization/destruction/operation, process sharing, thread creation, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/thread/pthread_mutexattr_init.c, pthread_mutexattr_destroy.c, pthread_condattr_init.c, and pthread_condattr_destroy.c: all-zero caller-record initialization, direct zero status, and destroy argument non-observation. Attribute mutation/query and mutex/condition runtime paths remain deliberately unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 one-pointer/int return ABI, public four-byte aligned record layouts, C++ C linkage, static archive ownership, and direct final-static executable purity boundary." }]
+
+[[family.verified_artifact]]
 id = "static-c-pthread-condattr-pshared"
 description = "Private native x86 static pthread condition-attribute pshared artifact inside still-planned `libc.pthread-tls`. Two dependency-free entries expose only `pthread_condattr_setpshared` and `pthread_condattr_getpshared` over the four-byte, four-byte-aligned public `pthread_condattr_t` word. Pinned musl accepts only private/shared 0/1, replaces only bit 31 while preserving all low thirty-one raw clock-record bits, and reads that raw high bit on get; invalid values preserve the complete word. The fixture deliberately provides caller-owned raw record storage rather than calling an attribute lifecycle function, selecting a condition clock, or calling `pthread_cond_init`. The adjacent selected private-condition initializer continues to reject every non-null attribute, so a shared record bit is not condition initialization, condition waiting, or process-shared condition operation. It excludes init/destroy lifecycle, condition clock operations, another condition attribute, a condition state machine, threads, TCB/TLS ownership, synchronization, cancellation, C errno, dynamic/loader TLS, CRT, sysroot, general pthread/TLS behavior or x86-64 parity, family completion, promotion, or public x86 support."
 source_owners = [

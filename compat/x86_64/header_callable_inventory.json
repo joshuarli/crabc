@@ -683,8 +683,10 @@
         "pthread_cond_init",
         "pthread_cond_signal",
         "pthread_cond_wait",
+        "pthread_condattr_destroy",
         "pthread_condattr_getclock",
         "pthread_condattr_getpshared",
+        "pthread_condattr_init",
         "pthread_condattr_setclock",
         "pthread_condattr_setpshared",
         "pthread_create",
@@ -705,10 +707,12 @@
         "pthread_mutex_lock",
         "pthread_mutex_trylock",
         "pthread_mutex_unlock",
+        "pthread_mutexattr_destroy",
         "pthread_mutexattr_getprotocol",
         "pthread_mutexattr_getpshared",
         "pthread_mutexattr_getrobust",
         "pthread_mutexattr_gettype",
+        "pthread_mutexattr_init",
         "pthread_mutexattr_settype",
         "pthread_once",
         "pthread_rwlock_destroy",
@@ -1356,8 +1360,6 @@
         "process_vm_readv",
         "process_vm_writev",
         "pthread_cond_timedwait",
-        "pthread_condattr_destroy",
-        "pthread_condattr_init",
         "pthread_getattr_default_np",
         "pthread_getattr_np",
         "pthread_getschedparam",
@@ -1365,9 +1367,7 @@
         "pthread_mutex_consistent",
         "pthread_mutex_setprioceiling",
         "pthread_mutex_timedlock",
-        "pthread_mutexattr_destroy",
         "pthread_mutexattr_getprioceiling",
-        "pthread_mutexattr_init",
         "pthread_mutexattr_setprioceiling",
         "pthread_mutexattr_setprotocol",
         "pthread_mutexattr_setpshared",
@@ -424028,8 +424028,8 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "538630712d8d22c61171925fc14ea18a6e5ce8068664437b38b4867315e12c95",
-    "static_c_abi_exports_sha256": "b127505f18ab8405b7e1bbc605215ee790fcbaf36e79b8b64fe2551c21e3af48"
+    "parity_ledger_sha256": "a4b38e3a15c974fa776be326a6bfda0a58c9e8c644cd2ac3cca8360dd13b0ec4",
+    "static_c_abi_exports_sha256": "4b666b6c5d074ab3ee25239f0c7cdd39c65107584dc55fd3bf072e9b40d46755"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -442687,8 +442687,6 @@
       "psiginfo",
       "psignal",
       "pthread_cond_timedwait",
-      "pthread_condattr_destroy",
-      "pthread_condattr_init",
       "pthread_getattr_default_np",
       "pthread_getattr_np",
       "pthread_getschedparam",
@@ -442696,9 +442694,7 @@
       "pthread_mutex_consistent",
       "pthread_mutex_setprioceiling",
       "pthread_mutex_timedlock",
-      "pthread_mutexattr_destroy",
       "pthread_mutexattr_getprioceiling",
-      "pthread_mutexattr_init",
       "pthread_mutexattr_setprioceiling",
       "pthread_mutexattr_setprotocol",
       "pthread_mutexattr_setpshared",
@@ -442858,8 +442854,8 @@
     },
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
-      "default_static": 1092,
-      "unprovided": 374,
+      "default_static": 1096,
+      "unprovided": 370,
       "verified_feature_archives": 47
     },
     "candidate_external_callable_count": 1513,
@@ -442874,7 +442870,7 @@
       "ok": 2617,
       "oracle-not-applicable": 1
     },
-    "static_export_complement_count": 421
+    "static_export_complement_count": 417
   },
   "target": "x86_64-unknown-linux-musl"
 }

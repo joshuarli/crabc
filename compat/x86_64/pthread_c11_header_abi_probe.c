@@ -174,6 +174,8 @@ typedef int (*crabc_pthread_mutex_init_signature)(
 	pthread_mutex_t *, const pthread_mutexattr_t *);
 typedef int (*crabc_pthread_mutex_getprioceiling_signature)(
 	const pthread_mutex_t *, int *);
+typedef int (*crabc_pthread_mutexattr_init_signature)(pthread_mutexattr_t *);
+typedef int (*crabc_pthread_mutexattr_destroy_signature)(pthread_mutexattr_t *);
 typedef int (*crabc_pthread_mutexattr_gettype_signature)(
 	const pthread_mutexattr_t *, int *);
 typedef int (*crabc_pthread_mutexattr_settype_signature)(
@@ -190,6 +192,8 @@ typedef int (*crabc_pthread_mutex_trylock_signature)(pthread_mutex_t *);
 typedef int (*crabc_pthread_mutex_unlock_signature)(pthread_mutex_t *);
 typedef int (*crabc_pthread_cond_init_signature)(
 	pthread_cond_t *, const pthread_condattr_t *);
+typedef int (*crabc_pthread_condattr_init_signature)(pthread_condattr_t *);
+typedef int (*crabc_pthread_condattr_destroy_signature)(pthread_condattr_t *);
 typedef int (*crabc_pthread_cond_destroy_signature)(pthread_cond_t *);
 typedef int (*crabc_pthread_cond_wait_signature)(pthread_cond_t *, pthread_mutex_t *);
 typedef int (*crabc_pthread_cond_signal_signature)(pthread_cond_t *);
@@ -325,6 +329,10 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_init),
 	crabc_pthread_mutex_init_signature), "pthread_mutex_init signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_getprioceiling),
 	crabc_pthread_mutex_getprioceiling_signature), "pthread_mutex_getprioceiling signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_init),
+	crabc_pthread_mutexattr_init_signature), "pthread_mutexattr_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_destroy),
+	crabc_pthread_mutexattr_destroy_signature), "pthread_mutexattr_destroy signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_gettype),
 	crabc_pthread_mutexattr_gettype_signature), "pthread_mutexattr_gettype signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_settype),
@@ -345,6 +353,10 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_unlock),
 	crabc_pthread_mutex_unlock_signature), "pthread_mutex_unlock signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_init),
 	crabc_pthread_cond_init_signature), "pthread_cond_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_condattr_init),
+	crabc_pthread_condattr_init_signature), "pthread_condattr_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_condattr_destroy),
+	crabc_pthread_condattr_destroy_signature), "pthread_condattr_destroy signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_destroy),
 	crabc_pthread_cond_destroy_signature), "pthread_cond_destroy signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_wait),

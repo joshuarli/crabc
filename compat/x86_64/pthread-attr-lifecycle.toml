@@ -1,0 +1,63 @@
+schema = "crabc.x86_64-provider-package/v1"
+id = "static-c-pthread-attr-lifecycle"
+target = "x86_64-unknown-linux-musl"
+family = "libc.pthread-tls"
+capability = "stateless pthread mutex/condition attribute lifecycle records"
+verified_slice = [
+  "pthread_mutexattr_init",
+  "pthread_mutexattr_destroy",
+  "pthread_condattr_init",
+  "pthread_condattr_destroy",
+]
+state = "implemented-and-verified"
+blocker = "None; the default static x86 archive now provides the four direct lifecycle entries."
+musl_source_mapping = [
+  "src/thread/pthread_mutexattr_init.c::pthread_mutexattr_init",
+  "src/thread/pthread_mutexattr_destroy.c::pthread_mutexattr_destroy",
+  "src/thread/pthread_condattr_init.c::pthread_condattr_init",
+  "src/thread/pthread_condattr_destroy.c::pthread_condattr_destroy",
+]
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/pthread_attr_lifecycle.rs",
+  "include/bits/alltypes.h",
+  "include/features.h",
+  "include/pthread.h",
+  "include/stdint.h",
+  "compat/x86_64/pthread_c11_header_abi_probe.c",
+  "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+  "compat/x86_64/run_pthread_c11_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/header_callable_inventory.json",
+  "compat/x86_64/libc_pthread_attr_lifecycle_probe.c",
+  "compat/x86_64/libc_pthread_attr_lifecycle_start.S",
+  "compat/x86_64/run_libc_pthread_attr_lifecycle.sh",
+  "compat/x86_64/parity.toml",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/run_header_callable_provider_linkage_audit.sh",
+  "scripts/dev-x86_64.sh",
+]
+prerequisites = [
+  "Pinned musl 1.2.6 oracle",
+  "project pthread.h x86 public four-byte attribute layouts",
+  "default static crabc-libc archive closure",
+]
+dependents = [
+  "pthread mutexattr raw record query/setter leaves",
+  "pthread condattr raw record query/setter leaves",
+]
+focused_command = "./scripts/dev-x86_64.sh libc-pthread-attr-lifecycle"
+family_command = "./scripts/dev-x86_64.sh pthread-c11-header-abi"
+product_command = "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
+evidence_targets = [
+  "C/C++ public-header layout and C-linkage matrix",
+  "pinned-musl versus freestanding static lifecycle fixture",
+  "closed default static export ratchet",
+  "derived header-callable inventory and provider-linkage audit",
+  "x86 parity ledger validator",
+]
+negative_scope = "No mutex or condition initialization, locking, waiting, signaling, destruction, attribute setters/getters, thread creation, TCB/TLS ownership, or pthread runtime behavior."
+expected_inventory_transition = "pthread_mutexattr_init, pthread_mutexattr_destroy, pthread_condattr_init, and pthread_condattr_destroy move from external header callables to default-static archive providers while remaining in planned libc.pthread-tls."

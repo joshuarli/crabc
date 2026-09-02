@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 361)
+        self.assertEqual(report["verified_artifact_count"], 362)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -15317,7 +15317,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 37)
+        self.assertEqual(len(artifacts), 38)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -15345,6 +15345,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-name",
                 "static-c-pthread-spin-destroy",
                 "static-c-pthread-attributes",
+                "static-c-pthread-attr-lifecycle",
                 "static-c-pthread-barrierattr-pshared",
                 "static-c-pthread-barrier",
                 "static-c-pthread-spin-init",
@@ -15384,6 +15385,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         name = by_id["static-c-pthread-name"]
         spin_destroy = by_id["static-c-pthread-spin-destroy"]
         attributes = by_id["static-c-pthread-attributes"]
+        attr_lifecycle = by_id["static-c-pthread-attr-lifecycle"]
         barrierattr_pshared = by_id["static-c-pthread-barrierattr-pshared"]
         barrier = by_id["static-c-pthread-barrier"]
         spin_init = by_id["static-c-pthread-spin-init"]
@@ -15692,6 +15694,39 @@ class X86ParityLedgerTests(unittest.TestCase):
             "GNU defaults, affinity, live-thread inspection",
         ):
             self.assertIn(phrase, attribute_scope)
+        self.assertEqual(
+            attr_lifecycle["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-attr-lifecycle",
+        )
+        self.assertEqual(
+            {entry["kind"] for entry in attr_lifecycle["oracle"]},
+            {"c-posix", "elf-abi"},
+        )
+        for phrase in (
+            "Four dependency-free entries",
+            "`pthread_mutexattr_init`/`destroy`",
+            "`pthread_condattr_init`/`destroy`",
+            "four-byte, four-byte-aligned public caller-owned records",
+            "writes all-zero default representation",
+            "destroy returns zero without dereferencing",
+            "invalid non-null address",
+            "does not make the separately selected mutex or condition paths consume attributes",
+            "mutex or condition initialization/destruction/operation",
+            "thread creation, TCB/TLS ownership, synchronization, cancellation",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, attr_lifecycle["description"])
+        lifecycle_scope = attr_lifecycle["native_evidence"][0]["scope"]
+        for phrase in (
+            "both nonzero four-byte caller records become zero",
+            "invalid non-null addresses",
+            "exactly pthread_mutexattr_init/destroy and pthread_condattr_init/destroy",
+            "C++ C linkage",
+            "PT_TLS, errno/bootstrap, syscall, helper call, allocator",
+            "mutex/condition/thread state",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, lifecycle_scope)
         self.assertEqual(
             barrierattr_pshared["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared",
@@ -30489,6 +30524,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             and entry["native_evidence"]
         }
         expected = {
+            "static-c-pthread-attr-lifecycle": "./scripts/dev-x86_64.sh libc-pthread-attr-lifecycle",
             "static-c-pthread-condattr-pshared": "./scripts/dev-x86_64.sh libc-pthread-condattr-pshared",
             "static-c-pthread-condattr-clock": "./scripts/dev-x86_64.sh libc-pthread-condattr-clock",
             "static-c-pthread-mutexattr-robust-query": "./scripts/dev-x86_64.sh libc-pthread-mutexattr-robust-query",

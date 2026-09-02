@@ -156,6 +156,8 @@ using crabc_pthread_mutex_init_signature = int (*)(
 	pthread_mutex_t *, const pthread_mutexattr_t *);
 using crabc_pthread_mutex_getprioceiling_signature = int (*)(
 	const pthread_mutex_t *, int *);
+using crabc_pthread_mutexattr_init_signature = int (*)(pthread_mutexattr_t *);
+using crabc_pthread_mutexattr_destroy_signature = int (*)(pthread_mutexattr_t *);
 using crabc_pthread_mutexattr_gettype_signature = int (*)(
 	const pthread_mutexattr_t *, int *);
 using crabc_pthread_mutexattr_settype_signature = int (*)(
@@ -172,6 +174,8 @@ using crabc_pthread_mutex_trylock_signature = int (*)(pthread_mutex_t *);
 using crabc_pthread_mutex_unlock_signature = int (*)(pthread_mutex_t *);
 using crabc_pthread_cond_init_signature = int (*)(
 	pthread_cond_t *, const pthread_condattr_t *);
+using crabc_pthread_condattr_init_signature = int (*)(pthread_condattr_t *);
+using crabc_pthread_condattr_destroy_signature = int (*)(pthread_condattr_t *);
 using crabc_pthread_cond_destroy_signature = int (*)(pthread_cond_t *);
 using crabc_pthread_cond_wait_signature = int (*)(pthread_cond_t *, pthread_mutex_t *);
 using crabc_pthread_cond_signal_signature = int (*)(pthread_cond_t *);
@@ -307,6 +311,10 @@ static_assert(__is_same(decltype(&pthread_mutex_init),
 	crabc_pthread_mutex_init_signature), "pthread_mutex_init signature");
 static_assert(__is_same(decltype(&pthread_mutex_getprioceiling),
 	crabc_pthread_mutex_getprioceiling_signature), "pthread_mutex_getprioceiling signature");
+static_assert(__is_same(decltype(&pthread_mutexattr_init),
+	crabc_pthread_mutexattr_init_signature), "pthread_mutexattr_init signature");
+static_assert(__is_same(decltype(&pthread_mutexattr_destroy),
+	crabc_pthread_mutexattr_destroy_signature), "pthread_mutexattr_destroy signature");
 static_assert(__is_same(decltype(&pthread_mutexattr_gettype),
 	crabc_pthread_mutexattr_gettype_signature), "pthread_mutexattr_gettype signature");
 static_assert(__is_same(decltype(&pthread_mutexattr_settype),
@@ -327,6 +335,10 @@ static_assert(__is_same(decltype(&pthread_mutex_unlock),
 	crabc_pthread_mutex_unlock_signature), "pthread_mutex_unlock signature");
 static_assert(__is_same(decltype(&pthread_cond_init),
 	crabc_pthread_cond_init_signature), "pthread_cond_init signature");
+static_assert(__is_same(decltype(&pthread_condattr_init),
+	crabc_pthread_condattr_init_signature), "pthread_condattr_init signature");
+static_assert(__is_same(decltype(&pthread_condattr_destroy),
+	crabc_pthread_condattr_destroy_signature), "pthread_condattr_destroy signature");
 static_assert(__is_same(decltype(&pthread_cond_destroy),
 	crabc_pthread_cond_destroy_signature), "pthread_cond_destroy signature");
 static_assert(__is_same(decltype(&pthread_cond_wait),
@@ -507,6 +519,10 @@ static crabc_pthread_mutex_init_signature const crabc_force_pthread_mutex_init
 	__attribute__((used)) = &pthread_mutex_init;
 static crabc_pthread_mutex_getprioceiling_signature const crabc_force_pthread_mutex_getprioceiling
 	__attribute__((used)) = &pthread_mutex_getprioceiling;
+static crabc_pthread_mutexattr_init_signature const crabc_force_pthread_mutexattr_init
+	__attribute__((used)) = &pthread_mutexattr_init;
+static crabc_pthread_mutexattr_destroy_signature const crabc_force_pthread_mutexattr_destroy
+	__attribute__((used)) = &pthread_mutexattr_destroy;
 static crabc_pthread_mutexattr_gettype_signature const crabc_force_pthread_mutexattr_gettype
 	__attribute__((used)) = &pthread_mutexattr_gettype;
 static crabc_pthread_mutexattr_settype_signature const crabc_force_pthread_mutexattr_settype
@@ -527,6 +543,10 @@ static crabc_pthread_mutex_unlock_signature const crabc_force_pthread_mutex_unlo
 	__attribute__((used)) = &pthread_mutex_unlock;
 static crabc_pthread_cond_init_signature const crabc_force_pthread_cond_init
 	__attribute__((used)) = &pthread_cond_init;
+static crabc_pthread_condattr_init_signature const crabc_force_pthread_condattr_init
+	__attribute__((used)) = &pthread_condattr_init;
+static crabc_pthread_condattr_destroy_signature const crabc_force_pthread_condattr_destroy
+	__attribute__((used)) = &pthread_condattr_destroy;
 static crabc_pthread_cond_destroy_signature const crabc_force_pthread_cond_destroy
 	__attribute__((used)) = &pthread_cond_destroy;
 static crabc_pthread_cond_wait_signature const crabc_force_pthread_cond_wait
