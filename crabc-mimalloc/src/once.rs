@@ -24,8 +24,11 @@
 //! the same completion transition as a safe Rust fallback, so safe callers
 //! cannot accidentally leave the lock retained forever.
 //!
-//! This module only implements enter/release coordination. It does not invoke
-//! an initializer callback, recover a dead owner, or provide fork repair.
+//! This module only implements enter/release coordination. Its one explicit
+//! integrating-runtime extension is a documented pre-body cancellation used
+//! when a Rust lifecycle preflight rejects before the pinned C once body can
+//! start; it is not an upstream mimalloc transition. It does not invoke an
+//! initializer callback, recover a dead owner, or provide fork repair.
 
 use core::num::NonZeroUsize;
 
@@ -104,30 +107,49 @@ impl AllocatorOnce {
         &self,
         current_thread: OnceThreadId,
     ) -> Result<Option<AllocatorOnceCompletion<'_>>> {
-        let observed = word_load_acquire(&self.tid);
-        if observed == COMPLETE {
-            return Ok(None);
-        }
-        if observed == current_thread.get() {
-            return Ok(None);
-        }
+        loop {
+            let observed = word_load_acquire(&self.tid);
+            if observed == COMPLETE {
+                return Ok(None);
+            }
+            if observed == current_thread.get() {
+                return Ok(None);
+            }
 
-        // This guard stays inside the completion token on a successful CAS,
-        // exactly retaining the source lock across the initializer.
-        let lock = self.lock.lock()?;
-        let mut expected = UNSTARTED;
-        if word_cas_strong_acq_rel(&self.tid, &mut expected, current_thread.get()) {
-            Ok(Some(AllocatorOnceCompletion {
-                once: self,
-                lock: Some(lock),
-            }))
-        } else {
-            // Once we acquire the source lock, a failed 0 -> current-id CAS
-            // means an initializer retained and released it first. Propagate
-            // the private unlock result instead of hiding the boundary error.
+            // This guard stays inside the completion token on a successful
+            // CAS, exactly retaining the source lock across the initializer.
+            let lock = self.lock.lock()?;
+            let mut expected = UNSTARTED;
+            if word_cas_strong_acq_rel(&self.tid, &mut expected, current_thread.get()) {
+                return Ok(Some(AllocatorOnceCompletion {
+                    once: self,
+                    lock: Some(lock),
+                }));
+            }
+
+            // A normal source release stores COMPLETE before it unlocks, so
+            // that remains the only ordinary failed-CAS result. The narrow
+            // Rust pre-body cancellation keeps its owner identity through
+            // unlock so same-thread reentry stays nonblocking, then restores
+            // UNSTARTED immediately afterward. A waiter that acquires in
+            // that handoff interval retries instead of treating the old owner
+            // as completed.
+            let retry_pre_body_cancellation = expected != COMPLETE;
             lock.unlock()?;
-            Ok(None)
+            if retry_pre_body_cancellation {
+                core::hint::spin_loop();
+                continue;
+            }
+            return Ok(None);
         }
+    }
+
+    /// Reports whether a distinct caller reached this once gate's contended
+    /// private-lock state. This exists only for deterministic race tests.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_is_contended(&self) -> bool {
+        self.lock.test_is_contended()
     }
 }
 
@@ -140,6 +162,20 @@ impl AllocatorOnceCompletion<'_> {
     /// Release transition and possible wake.
     pub(crate) fn complete(mut self) -> Result<()> {
         self.complete_inner()
+    }
+
+    /// Cancels a claim before its initializer body starts and reopens the
+    /// once state for a later caller.
+    ///
+    /// # Safety
+    ///
+    /// The caller must not have performed, published, or retained any part
+    /// of the guarded action. It may be used only for an allocation-free,
+    /// callback-free preflight rejection before the source once body;
+    /// mimalloc's source protocol itself has no fallible pre-body step to
+    /// roll back.
+    pub(crate) unsafe fn cancel_before_body(mut self) -> Result<()> {
+        self.cancel_before_body_inner()
     }
 
     #[inline]
@@ -157,6 +193,25 @@ impl AllocatorOnceCompletion<'_> {
         // `PrivateLockGuard::unlock` makes the private-futex error boundary
         // observable. Its atomic unlock has already occurred on an error.
         lock.unlock()
+    }
+
+    #[inline]
+    fn cancel_before_body_inner(&mut self) -> Result<()> {
+        let Some(lock) = self.lock.take() else {
+            return Ok(());
+        };
+
+        let initializing = word_load_acquire(&self.once.tid) > COMPLETE;
+        debug_assert!(initializing, "a cancellation token owns an initializer state");
+        // Keep the source owner identity until after unlocking so a recursive
+        // entry on this thread cannot block on its still-held nonrecursive
+        // private lock. `AllocatorOnce::enter` recognizes the resulting
+        // unlock-before-UNSTARTED handoff and retries a distinct waiter.
+        let released = lock.unlock();
+        if initializing {
+            word_store_release(&self.once.tid, UNSTARTED);
+        }
+        released
     }
 }
 
@@ -179,7 +234,7 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc, Barrier};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     static STATIC_ONCE: AllocatorOnce = AllocatorOnce::new();
 
@@ -253,6 +308,75 @@ mod tests {
                 .is_none(),
             "drop publishes completion rather than leaving another caller blocked"
         );
+    }
+
+    #[test]
+    fn cancelled_pre_body_claim_reopens_once_for_a_later_initializer() {
+        let once = AllocatorOnce::new();
+        let claim = once
+            .enter(thread_id(2))
+            .expect("the initial pre-body claim acquires the private lock")
+            .expect("the initial pre-body claim owns initialization");
+
+        // SAFETY: this regression has not performed an initializer action;
+        // it models only the integrating runtime's rejected preflight.
+        unsafe {
+            claim
+                .cancel_before_body()
+                .expect("a pre-body cancellation reopens the private once state");
+        }
+
+        let retry = once
+            .enter(thread_id(3))
+            .expect("a reopened once object accepts a later initializer")
+            .expect("the later initializer owns the reopened once state");
+        retry
+            .complete()
+            .expect("the retry completes the private once state");
+    }
+
+    #[test]
+    fn cancelled_pre_body_claim_handoffs_a_waiter_to_the_reopened_once() {
+        let once = Arc::new(AllocatorOnce::new());
+        let claim = once
+            .enter(thread_id(2))
+            .expect("the initial pre-body claim acquires the private lock")
+            .expect("the initial pre-body claim owns initialization");
+        let waiter_once = Arc::clone(&once);
+        let (waiter_sender, waiter_receiver) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let retry = waiter_once
+                .enter(thread_id(3))
+                .expect("the cancellation handoff keeps the private lock valid")
+                .expect("the waiter retries into the reopened once state");
+            retry
+                .complete()
+                .expect("the waiter completes its reopened once claim");
+            waiter_sender
+                .send(())
+                .expect("the cancellation witness remains live");
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !once.test_is_contended() {
+            assert!(
+                Instant::now() < deadline,
+                "the waiter reaches the retained private once lock before cancellation"
+            );
+            thread::yield_now();
+        }
+
+        // SAFETY: this regression has not performed an initializer action;
+        // it models only the integrating runtime's rejected preflight.
+        unsafe {
+            claim
+                .cancel_before_body()
+                .expect("the pre-body cancellation wakes a retrying waiter");
+        }
+        waiter_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the waiter observes the reopened once state");
+        waiter.join().expect("the reopened waiter completes");
     }
 
     #[test]

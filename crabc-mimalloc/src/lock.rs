@@ -71,6 +71,15 @@ impl PrivateLock {
         self.state.store(LOCKED, Ordering::Relaxed);
     }
 
+    /// Reports whether an acquiring caller has reached the contended lock
+    /// state. This is an observation-only race-test hook: production callers
+    /// must treat lock acquisition as opaque.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_is_contended(&self) -> bool {
+        self.state.load(Ordering::Acquire) == CONTENDED
+    }
+
     /// Acquires the lock, blocking when another thread holds it.
     ///
     /// A successful acquire is an Acquire operation. The dropping guard's
