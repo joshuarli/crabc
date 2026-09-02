@@ -210,8 +210,8 @@ def validate_dynamic_product_contract() -> dict[str, Any]:
 
 def validate_routine_c_abi_matrix() -> dict[str, Any]:
     """Run the matrix's checked-generation contract and return its report."""
-    document = c_abi_matrix.load_toml(c_abi_matrix.MATRIX_PATH)
-    outputs = c_abi_matrix.build_outputs(document)
+    document, sources = c_abi_matrix.load_matrix()
+    outputs = c_abi_matrix.build_outputs(document, sources)
     # Keep this equivalent to the public ``--check`` command.  The report
     # should fail closed if a generated routine probe or its membership report
     # diverges from the approved matrix source.

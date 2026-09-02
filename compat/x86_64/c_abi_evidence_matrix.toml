@@ -1,9 +1,10 @@
-# Routine native x86 C ABI evidence is declared here before a new leaf grows
-# its own header probes, start object, runner wiring, and ledger boilerplate.
+# The shared root owns policy and reusable templates.  Independently editable
+# family records live in the declared fragment directory; the generator merges
+# them in lexical filename order and fails closed on source or ownership drift.
 #
-# This is deliberately a forward-looking matrix.  The two seed rows reuse
+# This remains deliberately forward-looking.  The seed fragment reuses two
 # existing, structurally identical no-argument leaves to prove the template;
-# they do not rewrite their historical evidence or advance either capability.
+# it does not rewrite their historical evidence or advance either capability.
 schema = "crabc.x86_64-c-abi-evidence-matrix/v1"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -24,56 +25,5 @@ static_entry = "direct-call-exit"
 oracle_candidate = "existing-focused-runner"
 export_check = "static-c-abi-export-ratchet"
 
-[[family]]
-id = "libc.posix-runtime"
-aggregate_command = "./scripts/dev-x86_64.sh routine-c-abi-matrix libc.posix-runtime"
-
-[[row]]
-id = "getpagesize-noarg-scalar"
-symbols = ["getpagesize"]
-data_objects = []
-owner_capability = "system.kernel-admin"
-owner_family = "libc.posix-runtime"
-completion_obligation = "Exercise the routine no-argument scalar C ABI template without claiming broad system-configuration or family completion."
-header_profiles = ["c11-bsd", "c11-gnu", "cxx17-bsd", "cxx17-gnu"]
-headers = ["unistd.h"]
-c_signature_class = "int (void) non-variadic function pointer"
-cxx_signature_class = "extern-C int (void) function pointer"
-c_pointer_type = "int (*)(void)"
-cxx_pointer_type = "int (*)(void)"
-binding = "strong"
-visibility = "default"
-aliases = []
-expected_exports = ["getpagesize"]
-template = "noarg-scalar-static-v1"
-oracle_route = "pinned-musl-c-posix"
-expected_behavior_class = "fixed-x86-page-size-no-errno-no-tls"
-header_runner = "compat/x86_64/run_getpagesize_header_abi.sh"
-focused_runner = "compat/x86_64/run_libc_getpagesize.sh"
-focused_command = "./scripts/dev-x86_64.sh libc-getpagesize"
-family_aggregate = "libc.posix-runtime"
-
-[[row]]
-id = "gethostid-noarg-scalar"
-symbols = ["gethostid"]
-data_objects = []
-owner_capability = "system.kernel-admin"
-owner_family = "libc.posix-runtime"
-completion_obligation = "Exercise the routine no-argument scalar C ABI template without claiming host-identity policy, broad kernel administration, or family completion."
-header_profiles = ["c11-bsd", "c11-gnu", "c11-xopen-700", "cxx17-bsd", "cxx17-gnu", "cxx17-xopen-700"]
-headers = ["unistd.h"]
-c_signature_class = "long (void) non-variadic function pointer"
-cxx_signature_class = "extern-C long (void) function pointer"
-c_pointer_type = "long (*)(void)"
-cxx_pointer_type = "long (*)(void)"
-binding = "strong"
-visibility = "default"
-aliases = []
-expected_exports = ["gethostid"]
-template = "noarg-scalar-static-v1"
-oracle_route = "pinned-musl-c-posix"
-expected_behavior_class = "fixed-zero-host-id-no-errno-no-tls"
-header_runner = "compat/x86_64/run_gethostid_header_abi.sh"
-focused_runner = "compat/x86_64/run_libc_gethostid.sh"
-focused_command = "./scripts/dev-x86_64.sh libc-gethostid"
-family_aggregate = "libc.posix-runtime"
+[fragments]
+directory = "compat/x86_64/c_abi_evidence_matrix/families"

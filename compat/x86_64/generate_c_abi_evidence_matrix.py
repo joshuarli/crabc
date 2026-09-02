@@ -16,6 +16,7 @@ import json
 import re
 import subprocess
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -27,6 +28,7 @@ CAPABILITY_PATH = ROOT / "compat" / "crabc-rs" / "coverage.toml"
 STATIC_EXPORTS_PATH = ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
 GENERATED_DIRECTORY = Path("compat/x86_64/generated/c_abi_evidence_matrix")
 SCHEMA = "crabc.x86_64-c-abi-evidence-matrix/v1"
+FRAGMENT_SCHEMA = "crabc.x86_64-c-abi-evidence-matrix-family/v1"
 REPORT_SCHEMA = "crabc.x86_64-c-abi-evidence-matrix-report/v1"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
@@ -52,9 +54,25 @@ class MatrixError(ValueError):
     """The routine C ABI matrix is not a complete, unambiguous contract."""
 
 
+@dataclass(frozen=True)
+class MatrixSources:
+    """Checked root and family-fragment inputs for one generated matrix view."""
+
+    root: dict[str, str]
+    fragments: tuple[dict[str, str], ...]
+    sha256: str
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise MatrixError(message)
+
+
+def display_path(path: Path, repository_root: Path = ROOT) -> str:
+    try:
+        return path.relative_to(repository_root).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def load_toml(path: Path) -> dict[str, Any]:
@@ -62,8 +80,8 @@ def load_toml(path: Path) -> dict[str, Any]:
         with path.open("rb") as stream:
             document = tomllib.load(stream)
     except (OSError, tomllib.TOMLDecodeError) as error:
-        raise MatrixError(f"cannot load {path.relative_to(ROOT)}: {error}") from error
-    require(isinstance(document, dict), f"{path.relative_to(ROOT)} must contain a TOML table")
+        raise MatrixError(f"cannot load {display_path(path)}: {error}") from error
+    require(isinstance(document, dict), f"{display_path(path)} must contain a TOML table")
     return document
 
 
@@ -86,6 +104,162 @@ def project_path(value: object, location: str) -> str:
     require(not candidate.is_absolute() and ".." not in candidate.parts, f"{location} escapes the repository")
     require((ROOT / candidate).is_file(), f"{location} does not name a tracked file: {path}")
     return path
+
+
+def repository_path(
+    value: object,
+    location: str,
+    *,
+    repository_root: Path,
+) -> Path:
+    """Resolve one repository-relative matrix source path without symlink escape."""
+    text = checked_string(value, location)
+    relative = Path(text)
+    require(not relative.is_absolute() and ".." not in relative.parts, f"{location} escapes the repository")
+    current = repository_root
+    for part in relative.parts:
+        current /= part
+        require(not current.is_symlink(), f"{location} must not traverse a symlink: {text}")
+    try:
+        current.resolve().relative_to(repository_root.resolve())
+    except ValueError as error:
+        raise MatrixError(f"{location} escapes the repository: {text}") from error
+    return current
+
+
+def source_record(path: Path, *, repository_root: Path) -> tuple[dict[str, str], bytes]:
+    """Return one reportable source record and its exact input bytes."""
+    require(path.is_file() and not path.is_symlink(), f"matrix source is not a regular file: {display_path(path, repository_root)}")
+    try:
+        relative = path.relative_to(repository_root).as_posix()
+    except ValueError as error:
+        raise MatrixError(f"matrix source escapes the repository: {path}") from error
+    try:
+        content = path.read_bytes()
+    except OSError as error:
+        raise MatrixError(f"cannot read matrix source {relative}: {error}") from error
+    return {"path": relative, "sha256": hashlib.sha256(content).hexdigest()}, content
+
+
+def source_digest(records: list[tuple[dict[str, str], bytes]]) -> str:
+    """Hash all ordered source paths and bytes, not only the shared root TOML."""
+    digest = hashlib.sha256()
+    for record, content in records:
+        encoded_path = record["path"].encode("utf-8")
+        digest.update(len(encoded_path).to_bytes(8, "big"))
+        digest.update(encoded_path)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()
+
+
+def load_matrix(
+    matrix_path: Path = MATRIX_PATH,
+    *,
+    repository_root: Path = ROOT,
+) -> tuple[dict[str, Any], MatrixSources]:
+    """Load shared policy plus independently editable per-family routine rows.
+
+    The root TOML owns matrix-wide policy and templates.  Every family and row
+    belongs to exactly one lexically ordered, non-symlink fragment beneath its
+    declared directory.  The returned document preserves the pre-fragment
+    ``family`` and ``row`` shape for the existing semantic validator.
+    """
+    root_document = load_toml(matrix_path)
+    expected_root_keys = {"schema", "target", "platform", "oracle", "policy", "template", "fragments"}
+    require(
+        set(root_document) == expected_root_keys,
+        "matrix root must contain only shared policy, templates, and fragment configuration",
+    )
+    require(root_document.get("schema") == SCHEMA, "matrix schema changed")
+    fragments_configuration = root_document.get("fragments")
+    require(isinstance(fragments_configuration, Mapping), "matrix fragment configuration is missing")
+    require(set(fragments_configuration) == {"directory"}, "matrix fragment configuration drifted")
+    fragment_directory = repository_path(
+        fragments_configuration.get("directory"),
+        "matrix.fragments.directory",
+        repository_root=repository_root,
+    )
+    require(
+        fragment_directory.is_dir() and not fragment_directory.is_symlink(),
+        "matrix fragment directory is not a regular directory",
+    )
+
+    fragment_paths = sorted(fragment_directory.iterdir(), key=lambda path: path.name)
+    require(fragment_paths, "matrix fragment directory has no family fragments")
+    for path in fragment_paths:
+        require(path.suffix == ".toml", f"matrix fragment directory contains a non-TOML entry: {display_path(path, repository_root)}")
+        require(path.is_file() and not path.is_symlink(), f"matrix fragment is not a regular file: {display_path(path, repository_root)}")
+
+    families: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    family_identifiers: set[str] = set()
+    row_identifiers: set[str] = set()
+    source_inputs: list[tuple[dict[str, str], bytes]] = [
+        source_record(matrix_path, repository_root=repository_root)
+    ]
+    fragment_records: list[dict[str, str]] = []
+    for path in fragment_paths:
+        source, content = source_record(path, repository_root=repository_root)
+        source_inputs.append((source, content))
+        fragment_records.append(source)
+        fragment = load_toml(path)
+        require(
+            set(fragment) == {"schema", "family", "row"},
+            f"matrix fragment {source['path']} has unsupported top-level fields",
+        )
+        require(fragment.get("schema") == FRAGMENT_SCHEMA, f"matrix fragment {source['path']} schema changed")
+        family = fragment.get("family")
+        require(isinstance(family, Mapping), f"matrix fragment {source['path']}.family is invalid")
+        require(
+            set(family) == {"id", "aggregate_command"},
+            f"matrix fragment {source['path']}.family fields drifted",
+        )
+        family_identifier = checked_string(family.get("id"), f"matrix fragment {source['path']}.family.id")
+        require(
+            not Path(family_identifier).is_absolute()
+            and "/" not in family_identifier
+            and "\\" not in family_identifier
+            and family_identifier not in {".", ".."},
+            f"matrix fragment {source['path']}.family.id is not a file-safe family identifier",
+        )
+        require(
+            path.stem == family_identifier,
+            f"matrix fragment filename must equal family id: {source['path']}",
+        )
+        require(
+            family_identifier not in family_identifiers,
+            f"matrix family {family_identifier} is duplicated",
+        )
+        family_identifiers.add(family_identifier)
+        fragment_rows = fragment.get("row")
+        require(
+            isinstance(fragment_rows, list) and fragment_rows,
+            f"matrix fragment {source['path']} has no routine rows",
+        )
+        for index, row in enumerate(fragment_rows):
+            location = f"matrix fragment {source['path']}.row[{index}]"
+            require(isinstance(row, Mapping), f"{location} is invalid")
+            row_identifier = checked_string(row.get("id"), f"{location}.id")
+            require(IDENTIFIER.fullmatch(row_identifier) is not None, f"{location}.id is not a stable identifier")
+            require(row_identifier not in row_identifiers, f"matrix row {row_identifier} is duplicated")
+            row_identifiers.add(row_identifier)
+            require(
+                checked_string(row.get("owner_family"), f"{location}.owner_family") == family_identifier,
+                f"{location}.owner_family must equal fragment family {family_identifier}",
+            )
+            rows.append(dict(row))
+        families.append(dict(family))
+
+    document = dict(root_document)
+    document["family"] = families
+    document["row"] = rows
+    sources = MatrixSources(
+        root=source_inputs[0][0],
+        fragments=tuple(fragment_records),
+        sha256=source_digest(source_inputs),
+    )
+    return document, sources
 
 
 def parity_ownership() -> tuple[dict[str, str], set[str]]:
@@ -289,7 +463,7 @@ def c_probe(row: Mapping[str, Any]) -> str:
     header = row["headers"][0]
     signature = f"crabc_{identifier}_signature"
     function = f"crabc_{identifier}_function"
-    return f"""/* Generated from c_abi_evidence_matrix.toml; do not edit. */
+    return f"""/* Generated from c_abi_evidence_matrix.toml and family fragments; do not edit. */
 #include <{header}>
 
 typedef {named_function_pointer(str(row['c_pointer_type']), signature)};
@@ -308,7 +482,7 @@ def cxx_probe(row: Mapping[str, Any]) -> str:
     identifier = normalized_identifier(str(row["id"]))
     symbol = row["symbols"][0]
     header = row["headers"][0]
-    return f"""/* Generated from c_abi_evidence_matrix.toml; do not edit. */
+    return f"""/* Generated from c_abi_evidence_matrix.toml and family fragments; do not edit. */
 #include <{header}>
 
 using crabc_{identifier}_signature = {row['cxx_pointer_type']};
@@ -325,7 +499,7 @@ int crabc_{identifier}_prototype_probe_cpp()
 
 def static_entry(row: Mapping[str, Any]) -> str:
     symbol = row["symbols"][0]
-    return f"""# Generated from c_abi_evidence_matrix.toml; do not edit.
+    return f"""# Generated from c_abi_evidence_matrix.toml and family fragments; do not edit.
 .text
 .globl _start
 .type _start,@function
@@ -340,7 +514,7 @@ _start:
 
 def runner(row: Mapping[str, Any]) -> str:
     return f"""#!/usr/bin/env bash
-# Generated from c_abi_evidence_matrix.toml; do not edit.
+# Generated from c_abi_evidence_matrix.toml and family fragments; do not edit.
 # The focused runner owns the pinned-musl oracle/candidate build-and-run and
 # static export check; the checked matrix family aggregate executes this wrapper.
 set -euo pipefail
@@ -375,13 +549,19 @@ def generated_row_outputs(row: Mapping[str, Any]) -> dict[str, str]:
     return outputs
 
 
-def generated_report(document: Mapping[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+def generated_report(
+    document: Mapping[str, Any],
+    rows: list[dict[str, Any]],
+    sources: MatrixSources,
+) -> dict[str, Any]:
     families = document["family"]
     assert isinstance(families, list)
     return {
         "schema": REPORT_SCHEMA,
         "matrix_schema": SCHEMA,
-        "matrix_sha256": hashlib.sha256(MATRIX_PATH.read_bytes()).hexdigest(),
+        "matrix_sha256": sources.sha256,
+        "matrix_source": sources.root,
+        "source_fragments": list(sources.fragments),
         "target": TARGET,
         "platform": PLATFORM,
         "families": [
@@ -421,10 +601,13 @@ def generated_report(document: Mapping[str, Any], rows: list[dict[str, Any]]) ->
     }
 
 
-def build_outputs(document: Mapping[str, Any]) -> dict[Path, str]:
+def build_outputs(
+    document: Mapping[str, Any],
+    sources: MatrixSources,
+) -> dict[Path, str]:
     rows = validate_matrix(document)
     outputs: dict[Path, str] = {}
-    report = generated_report(document, rows)
+    report = generated_report(document, rows, sources)
     outputs[GENERATED_DIRECTORY / "report.json"] = json.dumps(report, indent=2, sort_keys=True) + "\n"
     for row in rows:
         prefix = GENERATED_DIRECTORY / row["id"]
@@ -465,6 +648,7 @@ def check_outputs(outputs: Mapping[Path, str], output_root: Path) -> None:
 def checked_generated_report(
     outputs: Mapping[Path, str],
     output_root: Path,
+    sources: MatrixSources,
 ) -> dict[str, Any]:
     """Load the checked registry after proving it exactly matches matrix source."""
     report_relative = GENERATED_DIRECTORY / "report.json"
@@ -482,8 +666,16 @@ def checked_generated_report(
         "checked generated routine matrix report does not match matrix source",
     )
     require(
-        report.get("matrix_sha256") == hashlib.sha256(MATRIX_PATH.read_bytes()).hexdigest(),
+        report.get("matrix_sha256") == sources.sha256,
         "checked generated routine matrix report matrix digest drifted",
+    )
+    require(
+        report.get("matrix_source") == sources.root,
+        "checked generated routine matrix report root source drifted",
+    )
+    require(
+        report.get("source_fragments") == list(sources.fragments),
+        "checked generated routine matrix report fragment sources drifted",
     )
     return report
 
@@ -529,6 +721,7 @@ def generated_runner_path(
 
 def run_family(
     document: Mapping[str, Any],
+    sources: MatrixSources,
     output_root: Path,
     family_identifier: str,
     *,
@@ -536,9 +729,9 @@ def run_family(
 ) -> int:
     """Execute one validated family in checked generated-row order."""
     if outputs is None:
-        outputs = build_outputs(document)
+        outputs = build_outputs(document, sources)
     check_outputs(outputs, output_root)
-    report = checked_generated_report(outputs, output_root)
+    report = checked_generated_report(outputs, output_root, sources)
     family_identifier = checked_string(family_identifier, "matrix family identifier")
     families = report.get("families")
     rows = report.get("rows")
@@ -592,13 +785,13 @@ def main() -> int:
     )
     parser.add_argument("--check", action="store_true", help="check checked-in generated outputs (default)")
     arguments = parser.parse_args()
-    document = load_toml(MATRIX_PATH)
-    outputs = build_outputs(document)
+    document, sources = load_matrix()
+    outputs = build_outputs(document, sources)
     if arguments.write:
         write_outputs(outputs, ROOT)
     check_outputs(outputs, ROOT)
     if arguments.run_family is not None:
-        result = run_family(document, ROOT, arguments.run_family, outputs=outputs)
+        result = run_family(document, sources, ROOT, arguments.run_family, outputs=outputs)
         if result != 0:
             return result
     print(f"x86 routine C ABI evidence matrix: PASS ({len(outputs) - 1} generated routine artifacts; {len(document['row'])} rows)")

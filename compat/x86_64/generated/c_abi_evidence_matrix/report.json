@@ -10,7 +10,11 @@
     }
   ],
   "matrix_schema": "crabc.x86_64-c-abi-evidence-matrix/v1",
-  "matrix_sha256": "f5dc399f1261eea8a79fd8c6414788edf7c6b195344788a081d7e6edf1a581d6",
+  "matrix_sha256": "29f66519e4575af0bcc2ed9087f67a2507ab8a867b75c9cf3017ead01cb8bd7e",
+  "matrix_source": {
+    "path": "compat/x86_64/c_abi_evidence_matrix.toml",
+    "sha256": "057469e97e4639e3225c647e08d6492859fa84d39fb83a26a79e5c7875b991a9"
+  },
   "platform": "Linux/x86-64 little-endian",
   "rows": [
     {
@@ -141,5 +145,11 @@
     }
   ],
   "schema": "crabc.x86_64-c-abi-evidence-matrix-report/v1",
+  "source_fragments": [
+    {
+      "path": "compat/x86_64/c_abi_evidence_matrix/families/libc.posix-runtime.toml",
+      "sha256": "40819ffb4471722b74dce9d25cceea42fa447aee50401a0486c0dd2788fee3cc"
+    }
+  ],
   "target": "x86_64-unknown-linux-musl"
 }

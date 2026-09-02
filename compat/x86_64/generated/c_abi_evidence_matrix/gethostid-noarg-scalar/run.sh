@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generated from c_abi_evidence_matrix.toml; do not edit.
+# Generated from c_abi_evidence_matrix.toml and family fragments; do not edit.
 # The focused runner owns the pinned-musl oracle/candidate build-and-run and
 # static export check; the checked matrix family aggregate executes this wrapper.
 set -euo pipefail

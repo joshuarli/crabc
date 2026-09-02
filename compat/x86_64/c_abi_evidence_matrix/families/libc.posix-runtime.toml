@@ -1,0 +1,58 @@
+# This family-owned fragment declares routine C ABI rows for the POSIX runtime.
+# The shared root owns policy/templates; `generate_c_abi_evidence_matrix.py`
+# validates this file's filename, ownership, and lexical merge position.
+schema = "crabc.x86_64-c-abi-evidence-matrix-family/v1"
+
+[family]
+id = "libc.posix-runtime"
+aggregate_command = "./scripts/dev-x86_64.sh routine-c-abi-matrix libc.posix-runtime"
+
+[[row]]
+id = "getpagesize-noarg-scalar"
+symbols = ["getpagesize"]
+data_objects = []
+owner_capability = "system.kernel-admin"
+owner_family = "libc.posix-runtime"
+completion_obligation = "Exercise the routine no-argument scalar C ABI template without claiming broad system-configuration or family completion."
+header_profiles = ["c11-bsd", "c11-gnu", "cxx17-bsd", "cxx17-gnu"]
+headers = ["unistd.h"]
+c_signature_class = "int (void) non-variadic function pointer"
+cxx_signature_class = "extern-C int (void) function pointer"
+c_pointer_type = "int (*)(void)"
+cxx_pointer_type = "int (*)(void)"
+binding = "strong"
+visibility = "default"
+aliases = []
+expected_exports = ["getpagesize"]
+template = "noarg-scalar-static-v1"
+oracle_route = "pinned-musl-c-posix"
+expected_behavior_class = "fixed-x86-page-size-no-errno-no-tls"
+header_runner = "compat/x86_64/run_getpagesize_header_abi.sh"
+focused_runner = "compat/x86_64/run_libc_getpagesize.sh"
+focused_command = "./scripts/dev-x86_64.sh libc-getpagesize"
+family_aggregate = "libc.posix-runtime"
+
+[[row]]
+id = "gethostid-noarg-scalar"
+symbols = ["gethostid"]
+data_objects = []
+owner_capability = "system.kernel-admin"
+owner_family = "libc.posix-runtime"
+completion_obligation = "Exercise the routine no-argument scalar C ABI template without claiming host-identity policy, broad kernel administration, or family completion."
+header_profiles = ["c11-bsd", "c11-gnu", "c11-xopen-700", "cxx17-bsd", "cxx17-gnu", "cxx17-xopen-700"]
+headers = ["unistd.h"]
+c_signature_class = "long (void) non-variadic function pointer"
+cxx_signature_class = "extern-C long (void) function pointer"
+c_pointer_type = "long (*)(void)"
+cxx_pointer_type = "long (*)(void)"
+binding = "strong"
+visibility = "default"
+aliases = []
+expected_exports = ["gethostid"]
+template = "noarg-scalar-static-v1"
+oracle_route = "pinned-musl-c-posix"
+expected_behavior_class = "fixed-zero-host-id-no-errno-no-tls"
+header_runner = "compat/x86_64/run_gethostid_header_abi.sh"
+focused_runner = "compat/x86_64/run_libc_gethostid.sh"
+focused_command = "./scripts/dev-x86_64.sh libc-gethostid"
+family_aggregate = "libc.posix-runtime"
