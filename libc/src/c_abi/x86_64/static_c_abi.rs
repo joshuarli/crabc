@@ -308,6 +308,8 @@ mod ffs;
 mod random_entropy;
 #[path = "rand_r.rs"]
 mod rand_r;
+#[path = "lrand48.rs"]
+mod lrand48;
 #[path = "fenv.rs"]
 mod fenv;
 #[path = "math_complex.rs"]

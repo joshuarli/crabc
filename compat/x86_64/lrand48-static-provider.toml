@@ -1,0 +1,21 @@
+# Linux/x86-64 static C legacy rand48 work package.
+schema = "crabc.x86_64-lrand48-static-provider/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+
+[work_package]
+target_family = "libc.posix-runtime"
+target_capability = "random.state"
+target_verified_slice = "static-c-lrand48"
+blocker = "Resolved by this selected artifact: the nine unconditional <lrand48.h> legacy random declarations had no one-owner x86 static closure despite a compact pinned-musl state machine."
+musl_source_mapping = ["src/prng/__seed48.c::__seed48", "src/prng/__rand48_step.c::__rand48_step", "src/prng/drand48.c::{drand48,erand48}", "src/prng/lrand48.c::{lrand48,nrand48}", "src/prng/mrand48.c::{mrand48,jrand48}", "src/prng/lcong48.c::lcong48", "src/prng/seed48.c::seed48", "src/prng/srand48.c::srand48"]
+prerequisites = ["oracle.musl-toolchain", "libc.headers-layouts"]
+dependent_work = ["random.state family completion", "thread-safe random-state contract", "x86 static product qualification"]
+source_owners = ["compat/x86_64/lrand48-static-provider.toml", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/lrand48.rs", "include/lrand48.h", "compat/x86_64/lrand48_header_abi_probe.c", "compat/x86_64/lrand48_header_abi_probe.cpp", "compat/x86_64/libc_lrand48_probe.c", "compat/x86_64/libc_lrand48_start.S", "compat/x86_64/run_libc_lrand48.sh", "compat/x86_64/static_c_abi_exports.txt", "compat/x86_64/parity.toml", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/aarch64_parity_inventory.json", "scripts/dev-x86_64.sh"]
+focused_evidence_command = "./scripts/dev-x86_64.sh libc-lrand48"
+family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.posix-runtime"
+product_command = "./scripts/dev-x86_64.sh campaign-static"
+negative_scope = "This package owns exactly drand48, erand48, jrand48, lcong48, lrand48, mrand48, nrand48, seed48, and srand48. It excludes rand/rand_r/srand, BSD random APIs, entropy, cryptographic PRNGs, synchronization, errno, TLS, allocation, syscalls, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+expected_transition = "One verified_artifact is added to planned libc.posix-runtime. The generated inventory increments only that family’s verified_artifact_count and selected_static_export_count by nine; no capability, family, product, promotion, or public-support state changes."
+evidence = ["pinned-musl/project <lrand48.h> C/C++ declaration and linkage proof", "pinned-musl versus true-static state and result differential", "one-provider archive/ELF export and dependency closure", "parity-ledger, derived inventory, and callable-provider linkage validation"]

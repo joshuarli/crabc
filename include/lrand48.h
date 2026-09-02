@@ -1,3 +1,7 @@
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 long lrand48(void);
 void srand48(long);
 long mrand48(void);
@@ -7,3 +11,7 @@ unsigned short *seed48(unsigned short [3]);
 double drand48(void);
 double erand48(unsigned short [3]);
 void lcong48(unsigned short [7]);
+
+#ifdef __cplusplus
+}
+#endif

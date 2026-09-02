@@ -75728,6 +75728,13 @@ def validate_ledger(
                 ("rand_r",),
             ),
             (
+                "static-c-lrand48",
+                "./scripts/dev-x86_64.sh libc-lrand48",
+                "libc/src/c_abi/x86_64/lrand48.rs",
+                "compat/x86_64/run_libc_lrand48.sh",
+                ("drand48", "erand48", "jrand48", "lcong48", "lrand48", "mrand48", "nrand48", "seed48", "srand48"),
+            ),
+            (
                 "static-c-sched-get-priority-max",
                 "./scripts/dev-x86_64.sh libc-sched-get-priority-max",
                 "libc/src/c_abi/x86_64/sched_get_priority_max.rs",

@@ -253,6 +253,7 @@ dlsym
 dn_expand
 dn_skipname
 dngettext
+drand48
 drem
 dremf
 dup
@@ -271,6 +272,7 @@ epoll_create1
 epoll_ctl
 epoll_pwait
 epoll_wait
+erand48
 erf
 erfc
 erfcf
@@ -543,12 +545,14 @@ j1
 j1f
 jn
 jnf
+jrand48
 kill
 killpg
 l64a
 labs
 lchmod
 lchown
+lcong48
 ldexp
 ldexpf
 ldexpl
@@ -589,6 +593,7 @@ logbl
 logf
 logl
 longjmp
+lrand48
 lremovexattr
 lrint
 lrintf
@@ -635,6 +640,7 @@ modff
 modfl
 mprotect
 mq_setattr
+mrand48
 msgctl
 msgget
 msgrcv
@@ -666,6 +672,7 @@ ngettext
 nice
 nl_langinfo
 nl_langinfo_l
+nrand48
 ns_get16
 ns_get32
 ns_put16
@@ -873,6 +880,7 @@ sched_setparam
 sched_setscheduler
 sched_yield
 secure_getenv
+seed48
 seekdir
 select
 sem_destroy
@@ -965,6 +973,7 @@ sprintf
 sqrt
 sqrtf
 sqrtl
+srand48
 sscanf
 stat
 statfs

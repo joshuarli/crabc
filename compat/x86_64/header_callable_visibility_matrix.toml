@@ -100,13 +100,13 @@ observed_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c1
 retained_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 c_surface = "callable-declarations"
 cxx_surface = "callable-declarations"
-cxx_linkage = "cxx-default"
+cxx_linkage = "extern-c"
 canonical_headers = ["stdlib.h"]
 canonical_visibility = "stdlib.h gates the lrand48 family to X/Open, GNU, and BSD forms; this standalone path is currently unconditional."
 declared_symbols = ["drand48", "erand48", "jrand48", "lcong48", "lrand48", "mrand48", "nrand48", "seed48", "srand48"]
 capability_owner = "random.state"
 x86_family = "libc.posix-runtime"
-provider_state = "unprovided"
+provider_state = "default-static"
 evidence = ["include/lrand48.h", "include/stdlib.h", "compat/crabc-rs/coverage.toml#random.state"]
 removal_requires_abi_decision = true
 

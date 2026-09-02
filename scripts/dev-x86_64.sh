@@ -2386,6 +2386,7 @@ general facade admission, or C ABI support claim.
   libc-pthread-mutexattr-type-query  run the static x86 crabc-libc mutex-attribute type-bit query slice
   libc-pthread-mutexattr-type-setter  run the static x86 crabc-libc mutex-attribute type-bit setter slice
   libc-pthread-setconcurrency  run the static x86 crabc-libc stateless pthread concurrency-status slice
+  libc-lrand48  run the static x86 crabc-libc legacy rand48 provider slice
   libc-rand-r  run the static x86 crabc-libc caller-state rand_r slice
 EOF
 }
@@ -3024,6 +3025,10 @@ run_libc_stateful_byte_strings() {
 
 run_libc_rand_r() {
     run_in_container bash /workspace/compat/x86_64/run_libc_rand_r.sh
+}
+
+run_libc_lrand48() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_lrand48.sh
 }
 
 run_libc_allocator_runtime() {
@@ -5212,7 +5217,7 @@ case "$command" in
     libc-pthread-mutex-prioceiling-query) ;;
     libc-pthread-getconcurrency) ;;
     libc-pthread-setconcurrency) ;;
-    libc-rand-r) ;;
+    libc-rand-r|libc-lrand48) ;;
 
     *)
         usage >&2
@@ -8039,6 +8044,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-rand-r takes no arguments"
         ensure_image
         run_libc_rand_r
+        ;;
+    libc-lrand48)
+        [ "$#" -eq 0 ] || fail "libc-lrand48 takes no arguments"
+        ensure_image
+        run_libc_lrand48
         ;;
     libc-network-byte-order)
         [ "$#" -eq 0 ] || fail "libc-network-byte-order takes no arguments"
