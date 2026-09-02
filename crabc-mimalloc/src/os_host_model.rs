@@ -9,6 +9,7 @@
 //! observations; tests must not infer any of those properties from it.
 
 use core::cell::UnsafeCell;
+use core::fmt;
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -275,6 +276,51 @@ enum HostSlot {
     Small(usize),
 }
 
+/// One failed aligned-map attempt together with any still-live host-model map.
+///
+/// The Miri instrument does not model the native overmapping branch, but it
+/// must retain a direct candidate when its explicit cleanup release fails so
+/// callers exercise the same ownership contract as the Linux boundary.
+#[must_use = "a retained aligned-map mapping must move into an explicit owner"]
+pub(crate) struct AlignedMappingFailure {
+    error: Errno,
+    mapping: Option<Mapping>,
+}
+
+impl AlignedMappingFailure {
+    #[inline]
+    fn without_mapping(error: Errno) -> Self {
+        Self {
+            error,
+            mapping: None,
+        }
+    }
+
+    #[inline]
+    fn with_mapping(error: Errno, mapping: Mapping) -> Self {
+        Self {
+            error,
+            mapping: Some(mapping),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn error(&self) -> Errno { self.error }
+
+    #[inline]
+    pub(crate) fn into_mapping(self) -> Option<Mapping> { self.mapping }
+}
+
+impl fmt::Debug for AlignedMappingFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AlignedMappingFailure")
+            .field("error", &self.error)
+            .field("retains_mapping", &self.mapping.is_some())
+            .finish()
+    }
+}
+
 /// One bounded static-region mapping with an explicit, non-RAII release edge.
 ///
 /// The logical accessibility mask tracks the production transitions so tests
@@ -345,18 +391,21 @@ impl Mapping {
         length: usize,
         alignment: usize,
         access: MapAccess,
-    ) -> Result<Self> {
+    ) -> core::result::Result<Self, AlignedMappingFailure> {
         let page_size = config.page_size().bytes();
         if alignment < page_size || !alignment.is_power_of_two() {
-            return Err(Errno::INVAL);
+            return Err(AlignedMappingFailure::without_mapping(Errno::INVAL));
         }
-        let mapping = Self::map_for_allocator(config, length, access)?;
+        let mapping = Self::map_for_allocator(config, length, access)
+            .map_err(AlignedMappingFailure::without_mapping)?;
         if mapping.address.addr() % alignment == 0 {
             Ok(mapping)
         } else {
             let mut mapping = mapping;
-            mapping.unmap()?;
-            Err(Errno::NOMEM)
+            match mapping.unmap() {
+                Ok(()) => Err(AlignedMappingFailure::without_mapping(Errno::NOMEM)),
+                Err(error) => Err(AlignedMappingFailure::with_mapping(error, mapping)),
+            }
         }
     }
 

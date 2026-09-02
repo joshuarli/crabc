@@ -2097,8 +2097,81 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(summary["milestone"]["status"], "partial")
         self.assertEqual(
             [component["id"] for component in summary["components"] if component["checks"]],
-            ["metadata", "page-map"],
+            ["vm-primitives", "metadata", "page-map"],
         )
+        vm_primitives = next(
+            component for component in summary["components"] if component["id"] == "vm-primitives"
+        )
+        self.assertEqual(
+            vm_primitives["checks"],
+            [
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "aligned-map-direct-cleanup-owner",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os::tests::aligned_mapping_retains_the_direct_candidate_when_its_"
+                        "cleanup_fails"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "aligned-map-prefix-cleanup-owner",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os::tests::aligned_mapping_retains_the_untrimmed_overmap_when_prefix_"
+                        "release_fails"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "aligned-map-suffix-cleanup-owner",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os::tests::aligned_mapping_retains_only_the_live_suffix_when_suffix_"
+                        "release_fails"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "aligned-map-complete-trim-sequence",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os::tests::forced_aligned_mapping_exercises_all_three_release_edges_"
+                        "before_returning_the_exact_range"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "aligned-map-os-page-claim-owner",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_"
+                        "claim_owner"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "aligned-map-metadata-owner",
+                    "kind": "rust-unit",
+                    "target": (
+                        "meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_"
+                        "before_publication"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "aligned-map-process-arena-owner",
+                    "kind": "rust-unit",
+                    "target": (
+                        "process_arena::tests::explicit_os_reservation_retains_an_aligned_map_"
+                        "cleanup_failure_before_setup"
+                    ),
+                },
+            ],
+        )
+        self.assertEqual(vm_primitives["completion_status"], "partial")
+        self.assertTrue(vm_primitives["remaining_conditions"])
         metadata = next(component for component in summary["components"] if component["id"] == "metadata")
         self.assertEqual(
             metadata["checks"],

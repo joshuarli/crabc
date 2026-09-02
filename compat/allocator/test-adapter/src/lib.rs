@@ -32,7 +32,7 @@ mod enabled {
 
     use crabc_mimalloc::{
         TestAllocatorContext, TestContextAllocationError, TestContextFreeError,
-        TestContextInitError, TestContextPointerError, TestContextShutdownError,
+        TestContextInitFailure, TestContextPointerError, TestContextShutdownError,
     };
 
     type CInt = i32;
@@ -48,6 +48,12 @@ mod enabled {
     const SHUTTING_DOWN_STATE: usize = 2;
 
     static CONTEXT: AtomicPtr<TestAllocatorContext> = AtomicPtr::new(ptr::null_mut());
+    // A failed constructor can own a private PageMap and/or aligned arena
+    // mapping even though no usable context was published. Keep that exact
+    // retryable owner separate from `CONTEXT`: the latter may stay null until
+    // cleanup succeeds and a wholly new context can be constructed.
+    static INITIALIZATION_FAILURE: AtomicPtr<TestContextInitFailure> =
+        AtomicPtr::new(ptr::null_mut());
 
     unsafe extern "C" {
         fn __errno_location() -> *mut CInt;
@@ -96,6 +102,20 @@ mod enabled {
     #[inline]
     fn valid_posix_alignment(alignment: usize) -> bool {
         alignment >= core::mem::size_of::<usize>() && valid_engine_alignment(alignment)
+    }
+
+    #[inline]
+    fn retain_initialization_failure(failure: TestContextInitFailure) {
+        let raw = Box::into_raw(Box::new(failure));
+        if INITIALIZATION_FAILURE
+            .compare_exchange(ptr::null_mut(), raw, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            // The adapter's serialized-C contract makes a second retained
+            // failure impossible. Do not drop either non-RAII VM owner on an
+            // invariant violation; fail-stop preserves the terminal state.
+            std::process::abort();
+        }
     }
 
     /// Returns the exclusively owned active context under the exported C
@@ -192,20 +212,33 @@ mod enabled {
             return preserve_errno(saved_errno, EBUSY);
         }
 
+        let retained = INITIALIZATION_FAILURE.swap(ptr::null_mut(), Ordering::AcqRel);
+        if !retained.is_null() {
+            // SAFETY: `INITIALIZATION_FAILURE` receives only a unique
+            // `Box::into_raw` value while `CONTEXT` is null. The successful
+            // transition to the initialization sentinel above gives this C
+            // caller the sole retry right under the adapter contract.
+            let retained = unsafe { Box::from_raw(retained) };
+            match retained.retry_cleanup() {
+                Ok(()) => {}
+                Err(failure) => {
+                    retain_initialization_failure(failure);
+                    CONTEXT.store(ptr::null_mut(), Ordering::Release);
+                    return preserve_errno(saved_errno, EAGAIN);
+                }
+            }
+        }
+
         // This context owns the engine's exact allocation count. The adapter
         // records no parallel count or ownership table.
         let context = match TestAllocatorContext::new() {
             Ok(context) => Box::new(context),
-            Err(
-                TestContextInitError::PageSizeUnavailable
-                | TestContextInitError::InvalidPageSize
-                | TestContextInitError::PageMapInitialization
-                | TestContextInitError::ArenaMapping
-                | TestContextInitError::ArenaManagement
-                | TestContextInitError::ArenaView
-                | TestContextInitError::ThreadIdentity
-                | TestContextInitError::Bootstrap,
-            ) => {
+            Err(failure) => {
+                if failure.has_pending_cleanup() {
+                    retain_initialization_failure(failure);
+                    CONTEXT.store(ptr::null_mut(), Ordering::Release);
+                    return preserve_errno(saved_errno, EAGAIN);
+                }
                 CONTEXT.store(ptr::null_mut(), Ordering::Release);
                 return preserve_errno(saved_errno, ENOMEM);
             }
@@ -231,7 +264,14 @@ mod enabled {
         let saved_errno = errno_value();
         let raw = CONTEXT.load(Ordering::Acquire);
         if raw.is_null() {
-            return preserve_errno(saved_errno, EINVAL);
+            return preserve_errno(
+                saved_errno,
+                if INITIALIZATION_FAILURE.load(Ordering::Acquire).is_null() {
+                    EINVAL
+                } else {
+                    EAGAIN
+                },
+            );
         }
         if is_transition_state(raw) {
             return preserve_errno(saved_errno, EBUSY);

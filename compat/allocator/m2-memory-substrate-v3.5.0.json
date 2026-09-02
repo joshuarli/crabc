@@ -1,11 +1,54 @@
 {
   "components": [
     {
-      "checks": [],
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-direct-cleanup-owner",
+          "kind": "rust-unit",
+          "target": "os::tests::aligned_mapping_retains_the_direct_candidate_when_its_cleanup_fails"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-prefix-cleanup-owner",
+          "kind": "rust-unit",
+          "target": "os::tests::aligned_mapping_retains_the_untrimmed_overmap_when_prefix_release_fails"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-suffix-cleanup-owner",
+          "kind": "rust-unit",
+          "target": "os::tests::aligned_mapping_retains_only_the_live_suffix_when_suffix_release_fails"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-complete-trim-sequence",
+          "kind": "rust-unit",
+          "target": "os::tests::forced_aligned_mapping_exercises_all_three_release_edges_before_returning_the_exact_range"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-os-page-claim-owner",
+          "kind": "rust-unit",
+          "target": "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-metadata-owner",
+          "kind": "rust-unit",
+          "target": "meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_before_publication"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-process-arena-owner",
+          "kind": "rust-unit",
+          "target": "process_arena::tests::explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup"
+        }
+      ],
       "completion_status": "partial",
       "id": "vm-primitives",
       "remaining_conditions": [
-        "complete the Linux/AArch64 reserve, commit, decommit, purge, protect, unmap, reuse, huge-page, hint, overmap, and NUMA substrate with fault-injection evidence"
+        "complete the remaining Linux/AArch64 reserve, commit, decommit, purge, protect, unmap, reuse, huge-page, hint, NUMA, and aligned-overmap substrate with fault-injection evidence beyond the selected direct/prefix/suffix cleanup-owner slice"
       ],
       "source_units": [
         "include/mimalloc/prim.h",
@@ -224,6 +267,7 @@
     "nonclaims": [
       "the selected PageMap success differential compares source-relative transitions only, records header-layout and root-owner differences, and does not cover PageMap extension or release fault injection",
       "the separate PageMap cold-init differential records the C static-empty-root/later-success behavior and the Rust absent-root/typed-poison result as an intentionally accepted bounded safety divergence; it does not claim a common cold lookup, public C ABI behavior, or full process-initialization parity",
+      "the selected aligned-overmap cleanup-owner tests prove Rust non-RAII ownership after direct or partial release failure; they do not claim C retry semantics, full aligned-allocation policy, or complete VM fault parity",
       "this gate does not claim a production allocator backend or any later allocator milestone",
       "this gate does not claim non-AArch64 support"
     ],

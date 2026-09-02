@@ -100,7 +100,8 @@ mod types;
 #[cfg(feature = "test-adapter")]
 pub use test_context::{
     TestAllocatorContext, TestContextAllocationError, TestContextFreeError,
-    TestContextInitError, TestContextPointerError, TestContextShutdownError,
+    TestContextInitError, TestContextInitFailure, TestContextPointerError,
+    TestContextShutdownError,
 };
 
 // This is deliberately a Rust-only, documentation-hidden friend boundary for

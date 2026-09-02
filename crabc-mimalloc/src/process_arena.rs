@@ -443,11 +443,30 @@ impl ProcessSharedArenaStorage {
             access,
         ) {
             Ok(mapping) => mapping,
-            Err(error) => {
-                self.state.store(COLD, Ordering::Release);
-                return ProcessSharedArenaReservationAttempt::Rejected(
-                    ProcessSharedArenaReserveError::Mapping(error),
-                );
+            Err(failure) => {
+                let error = failure.error();
+                return match failure.into_mapping() {
+                    None => {
+                        self.state.store(COLD, Ordering::Release);
+                        ProcessSharedArenaReservationAttempt::Rejected(
+                            ProcessSharedArenaReserveError::Mapping(error),
+                        )
+                    }
+                    Some(mapping) => {
+                        // An aligned-map cleanup edge failed after this final
+                        // slot was reserved. Retain the exact live range and
+                        // make the source sidecar terminal instead of
+                        // reopening COLD for an overlapping retry.
+                        // SAFETY: INITIALIZING is private to this held lock,
+                        // no arena was published, and this final slot remains
+                        // uninitialized on the map-failure path.
+                        unsafe { self.write_retained_mapping(mapping) };
+                        self.state.store(RETAINED, Ordering::Release);
+                        ProcessSharedArenaReservationAttempt::Retained(
+                            ProcessSharedArenaReserveError::Mapping(error),
+                        )
+                    }
+                };
             }
         };
         let candidate = match ProcessArenaCandidate::from_pair_and_mapping(pair, &mapping) {
@@ -1809,6 +1828,43 @@ mod tests {
             })
         ));
         assert_eq!(fault.observed(), 0, "the retained reservation never loses its mapping to a retry");
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup() {
+        let mut config = memory_config();
+        config.test_force_full_aligned_map_trim();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            2,
+            Errno::NOMEM,
+        ));
+
+        assert!(matches!(
+            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved),
+            Err(ProcessSharedArenaReserveFailure::Retained {
+                error: ProcessSharedArenaReserveError::Mapping(Errno::NOMEM),
+            })
+        ));
+        assert_eq!(storage.test_state(), RETAINED);
+        assert_eq!(storage.registry.count(), 0);
+
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(matches!(
+            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved),
+            Err(ProcessSharedArenaReserveFailure::Retained {
+                error: ProcessSharedArenaReserveError::Retained,
+            })
+        ));
+        assert_eq!(
+            fault.observed(),
+            0,
+            "the retained aligned-map owner prevents an overlapping reservation retry"
+        );
     }
 
     fn take_returned_mapping(

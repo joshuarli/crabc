@@ -427,6 +427,39 @@ registry/subprocess ownership.
   safety strengthenings over C's void/best-effort release boundary, not
   source-equivalent retry claims.
 
+### `CRABC-MI-ALIGNED-OVERMAP-CLEANUP-OWNER` — accepted private VM-substrate safety boundary
+
+- **Upstream/Rust:** pinned `src/prim/unix/prim.c` aligned anonymous-map
+  path and `src/os.c` callers, represented by
+  `os::Mapping::map_aligned_for_allocator`, `AlignedMappingFailure`, and the
+  typed owners in `os_page`, `meta`, `process_arena`, and the test adapter's
+  unpublished `TestContextInitFailure` boundary.
+- **Category:** Linux/AArch64 private M2 VM-substrate failure evidence. It
+  has no public C ABI effect and is not a C/Rust allocation differential.
+- **Difference:** the pinned C path treats its direct-candidate release and
+  prefix/suffix partial frees as void, best-effort cleanup. Rust's non-RAII
+  `Mapping` cannot be allowed to disappear on a failed cleanup edge:
+  `AlignedMappingFailure` transfers the exact live direct mapping, untrimmed
+  overmap, or prefix-trimmed aligned suffix. Every receiving path either
+  explicitly retries release or makes its final owner terminal; `Mapping` has
+  no implicit `Drop` unmap. This is a deliberate Rust ownership-safety
+  strengthening, not a claim that C supplies retry semantics.
+- **Evidence:**
+  `os::tests::{aligned_mapping_retains_the_direct_candidate_when_its_cleanup_fails,aligned_mapping_retains_the_untrimmed_overmap_when_prefix_release_fails,aligned_mapping_retains_only_the_live_suffix_when_suffix_release_fails,forced_aligned_mapping_exercises_all_three_release_edges_before_returning_the_exact_range}`
+  cover every native cleanup edge and a successful complete trim. The M2
+  manifest additionally selects
+  `os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner`,
+  `meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_before_publication`,
+  and
+  `process_arena::tests::explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup`.
+  `test_context::tests::initialization_failure_retains_then_retries_the_aligned_map_and_page_map_owners`
+  is supplemental test-adapter evidence for the paired private-owner retry.
+- **Decision/removal:** accepted for the selected cleanup-owner slice. It
+  does not close VM primitives, aligned allocation policy, the complete OS
+  allocation lifecycle, or the M2 fault matrix. Revisit only with a source
+  mapping, a typed owner for every new cleanup branch, and native failure
+  evidence.
+
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 
 - **Upstream/Rust:** `src/arena.c:341-406,525-569,1573-1611,1676-1791,1794-1912`,

@@ -1508,7 +1508,20 @@ impl MetaAllocator {
             MapAccess::Committed,
         ) {
             Ok(mapping) => mapping,
-            Err(_) => return self.cleanup_page_map_after_failed_init(),
+            Err(failure) => match failure.into_mapping() {
+                None => return self.cleanup_page_map_after_failed_init(),
+                Some(mapping) => {
+                    // The aligned-map cleanup failed after this metadata
+                    // owner had already formed its private PageMap. Both
+                    // final slots are now the exact terminal owners; never
+                    // destroy the PageMap and then forget the live arena map.
+                    // SAFETY: `entry` owns initialization, COLD excludes all
+                    // readers, and this mapping slot is still uninitialized.
+                    unsafe { (*this.mapping.get()).write(mapping) };
+                    this.status.store(FAILED, Ordering::Release);
+                    return Err(MetaError::InitializationRetained);
+                }
+            },
         };
         // SAFETY: same COLD/lock proof as the page-map slot above.
         unsafe { (*this.mapping.get()).write(mapping) };
@@ -2162,6 +2175,36 @@ mod tests {
             allocator.zalloc(config(), 8),
             Err(MetaError::InitializationRetained)
         ));
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn aligned_map_prefix_cleanup_failure_retains_metadata_before_publication() {
+        let allocator = static_allocator();
+        let mut selected_config = config();
+        selected_config.test_force_full_aligned_map_trim();
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            2,
+            Errno::NOMEM,
+        ));
+
+        assert!(matches!(
+            allocator.zalloc(selected_config, 8),
+            Err(MetaError::InitializationRetained)
+        ));
+        assert_eq!(allocator.status.load(Ordering::Acquire), FAILED);
+
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(matches!(
+            allocator.zalloc(selected_config, 8),
+            Err(MetaError::InitializationRetained)
+        ));
+        assert_eq!(
+            fault.observed(),
+            0,
+            "the terminal metadata owner never opens a retry that could overlap its retained map"
+        );
     }
 
     #[test]

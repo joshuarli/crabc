@@ -343,13 +343,13 @@ impl PageMap {
             )
         };
         let access = if commit_all { MapAccess::Committed } else { MapAccess::Reserved };
-        let mapping = Mapping::map_aligned_for_allocator(
-            config,
-            extra_reserve_size,
-            config.page_size().bytes(),
-            access,
-        )
-        .map_err(PageMapInitializationError::failed)?;
+        // Linux anonymous `mmap` returns a base-page-aligned address. The
+        // source passes this same base-page alignment to its aligned helper,
+        // whose direct-map branch therefore already satisfies the request.
+        // Keep the exact direct primitive here: no overmap cleanup owner can
+        // arise from a statically page-aligned PageMap extent.
+        let mapping = Mapping::map_for_allocator(config, extra_reserve_size, access)
+            .map_err(PageMapInitializationError::failed)?;
         let base = match mapping.base() {
             Ok(base) => base,
             Err(error) => {
@@ -531,10 +531,11 @@ impl PageMap {
         } else {
             #[cfg(any(test, feature = "native-runtime-test-audit"))]
             self.submap_allocations.fetch_add(1, Ordering::Relaxed);
-            let mut candidate = Mapping::map_aligned_for_allocator(
+            // See `PageMap::initialize`: the requested alignment is exactly
+            // the Linux base-page guarantee of this direct anonymous mapping.
+            let mut candidate = Mapping::map_for_allocator(
                 self.config,
                 PAGE_MAP_SUB_SIZE,
-                self.config.page_size().bytes(),
                 MapAccess::Committed,
             )?;
             let candidate_base = candidate.base()?.cast::<PageEntry>();

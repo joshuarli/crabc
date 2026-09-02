@@ -2379,8 +2379,8 @@ advance this AArch64 allocator ledger.
 | --- | --- | --- |
 | M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. A clean native `./scripts/dev.sh allocator --quick` exited 0 at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is inventory/skeleton completion only, not engine parity. |
 | M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. A clean native `./scripts/dev.sh allocator-m1` exited 0 at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`, with all six components complete and no unmet IDs. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`, a clean native `./scripts/dev.sh allocator-m2` exited 3 as designed: its selected PageMap component is complete, while VM primitives, metadata, bitmaps, arenas, initialization, fault injection, and allocator recursion remain partial. The ten PageMap checks cover source-private C/Rust success and failed-first-init differentials, bootstrap/lazy/release ownership failures, private-lock publication, and the process-owner terminal boundary. C's static empty-root/null-lookup/later-success result versus Rust's absent-root/typed-poison result is an explicitly accepted bounded safety divergence: C's sentinel is not a safe live-map continuation, and this does not claim public C ABI or full process-lifecycle parity. |
-| M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri; forced `cfg(miri)` is smoke evidence, not a Miri pass. |
+| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`, a clean native `./scripts/dev.sh allocator-m2` exited 3 as designed: its selected PageMap component is complete, while VM primitives, metadata, bitmaps, arenas, initialization, fault injection, and allocator recursion remain partial. The ten PageMap checks cover source-private C/Rust success and failed-first-init differentials, bootstrap/lazy/release ownership failures, private-lock publication, and the process-owner terminal boundary. The current contract additionally selects seven native direct/prefix/suffix aligned-overmap cleanup-owner checks under still-partial VM primitives. C's static empty-root/null-lookup/later-success result versus Rust's absent-root/typed-poison result is an explicitly accepted bounded safety divergence: C's sentinel is not a safe live-map continuation, and this does not claim public C ABI or full process-lifecycle parity. |
+| M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri. A forced `cfg(miri)` smoke is currently unavailable because `os_host_model.rs` lacks the existing NUMA/identity/entropy and `Mapping::page_size` APIs its callers require; the same ten compile errors existed at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is an M3 host-model limitation, not M2 evidence or a regression introduced by the aligned-overmap slice. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
 | M6–M7 | not started | Blocked behind the allocator foundations and M5. |
@@ -2498,6 +2498,29 @@ above, these checks close the selected M2 PageMap component. They do not close
 general process lifecycle, public C ABI behavior, concurrent map lifetime, or
 allocator integration.
 
+The selected VM-primitives evidence is deliberately narrower than M2 closure.
+`Mapping::map_aligned_for_allocator` now preserves an exact non-RAII owner
+through each native cleanup edge: a failed direct-candidate unmap retains that
+direct map, a failed prefix trim retains the full overmap, and a failed suffix
+trim retains the already prefix-trimmed aligned range plus its live suffix.
+`AlignedMappingFailure` transfers that owner to the caller. `OsAlignedPageClaim`
+retains it as a claim, `MetaAllocator` stores it beside its already-private
+PageMap before terminal failure, and `ProcessSharedArenaStorage` stores it in
+its final sidecar before terminal retention. The test adapter additionally
+uses `TestContextInitFailure` to retain an unpublished PageMap together with a
+failed aligned arena map until reverse-order cleanup succeeds. PageMap itself
+uses the direct primitive because its requested alignment is exactly Linux's
+base-page mmap guarantee, so no aligned-overmap cleanup owner can arise there.
+
+The M2 manifest selects four direct `os` tests plus the `os_page`, `meta`, and
+`process_arena` propagation tests. They use a native-only forcing seam solely
+to make direct, prefix, and suffix cleanup deterministic; production retains
+the pinned `length + alignment` overmap request. Pinned C's partial frees are
+void/best-effort, so retaining the typed Rust owner is a safety strengthening,
+not retry-parity or complete aligned-allocation evidence. Reserve, commit,
+decommit, purge, protect, reuse, huge-page, hint, NUMA, remaining overmap
+policy, and the wider failure matrix still keep VM primitives partial.
+
 The record deliberately does not equate source representations that are not
 the same: the pinned C header contains the Linux/musl `pthread_mutex_t`, while
 the `#![no_std]` Rust header contains `PrivateLock`; its header-dependent
@@ -2554,6 +2577,11 @@ regression. `page-map` is now `complete` with no remaining condition. The
 report's unmet component IDs are exactly `vm-primitives`, `metadata`,
 `bitmaps`, `arenas`, `initialization`, `fault-injection`, and
 `allocator-recursion`; M2 itself remains partial.
+
+The aligned-overmap cleanup-owner checks are a checked-in extension of that
+partial VM-primitives contract. They require a clean-current native M2 report
+before they become current runtime evidence; even then they do not alter the
+seven unmet M2 component IDs or authorize advancement to M3.
 
 ## Active boundary and priority rule
 

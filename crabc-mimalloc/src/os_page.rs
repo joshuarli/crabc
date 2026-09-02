@@ -357,18 +357,27 @@ impl OsAlignedPageClaim {
                     Errno::INVAL,
                 ))
             })?;
-        let mut mapping = Mapping::map_aligned_for_allocator(
+        let mut mapping = match Mapping::map_aligned_for_allocator(
             config,
             layout.mapping_length(),
             PAGE_META_ALIGNMENT,
             MapAccess::Reserved,
-        )
-        .map_err(|error| {
-            OsAlignedPageAllocationFailure::released(OsAlignedPageError::new(
-                OsAlignedPageFailureStage::Map,
-                error,
-            ))
-        })?;
+        ) {
+            Ok(mapping) => mapping,
+            Err(failure) => {
+                let error = OsAlignedPageError::new(
+                    OsAlignedPageFailureStage::Map,
+                    failure.error(),
+                );
+                return match failure.into_mapping() {
+                    None => Err(OsAlignedPageAllocationFailure::released(error)),
+                    Some(mapping) => Err(OsAlignedPageAllocationFailure::with_claim(
+                        error,
+                        Self { mapping, layout },
+                    )),
+                };
+            }
+        };
 
         if let Err(error) = mapping.commit(0, layout.metadata_commit_size()) {
             let failure = OsAlignedPageError::with_cleanup(
@@ -853,6 +862,42 @@ mod tests {
         match owner {
             OsAlignedPageOwner::Claim(claim) => assert!(matches!(claim.release(), Ok(()))),
             OsAlignedPageOwner::Published(_) => panic!("unpublished release changed owner kind"),
+        }
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner() {
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            2,
+            Errno::NOMEM,
+        ));
+        let mut config = config(4 * KIB);
+        config.test_force_full_aligned_map_trim();
+
+        let failure = match OsAlignedPageClaim::allocate(config, 4 * KIB, 128 * KIB) {
+            Ok(claim) => {
+                let _ = claim.release();
+                panic!("the forced aligned-map prefix release must fail")
+            }
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::Map);
+        assert_eq!(failure.error().operation(), Errno::NOMEM);
+        assert_eq!(failure.error().cleanup(), None);
+        let owner = failure
+            .into_owner()
+            .expect("a failed alignment trim retains the unpublished OS claim");
+
+        fault.set(fault::Plan::disabled());
+        match owner {
+            OsAlignedPageOwner::Claim(claim) => {
+                assert!(matches!(claim.release(), Ok(())), "the exact retained overmap retries")
+            }
+            OsAlignedPageOwner::Published(_) => {
+                panic!("an unpublished alignment failure cannot publish an OS page")
+            }
         }
     }
 
