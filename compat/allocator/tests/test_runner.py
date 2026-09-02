@@ -1523,6 +1523,50 @@ CRABC_MI_M1_RAW_TRACE_END
         ):
             RUNNER.compare_m1_compiler_tls_trace(trace, trace)
 
+    def test_m1_compiler_tls_same_tld_trace_schema_is_fixed_and_source_shaped(self) -> None:
+        expected = dict(RUNNER.M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_VALUES)
+        self.assertEqual(RUNNER.M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_COUNT, 40)
+        self.assertEqual(
+            len(RUNNER.M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_KEYS),
+            RUNNER.M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_COUNT,
+        )
+        RUNNER.validate_m1_compiler_tls_same_tld_trace(expected, source="test")
+        self.assertEqual(
+            RUNNER.compare_m1_compiler_tls_same_tld_trace(expected, expected),
+            {"compared_value_count": 40, "status": "matched"},
+        )
+        output = "\n".join(
+            (
+                "CRABC_MI_M1_TLS_SAME_TLD_TRACE_BEGIN",
+                *(f"{key}={value}" for key, value in expected.items()),
+                "CRABC_MI_M1_TLS_SAME_TLD_TRACE_END",
+            )
+        )
+        self.assertEqual(RUNNER.parse_m1_compiler_tls_same_tld_trace(output), expected)
+        missing = dict(expected)
+        missing.pop("m1.tls.same_tld.detach.aux_heap_list_empty")
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError,
+            r"fixed 40-key fixture schema.*m1\.tls\.same_tld\.detach\.aux_heap_list_empty",
+        ):
+            RUNNER.validate_m1_compiler_tls_same_tld_trace(missing, source="test")
+        wrong_order = dict(expected)
+        wrong_order["m1.tls.same_tld.final.dynamic_refcount"] = 2
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError,
+            r"value mismatches: m1\.tls\.same_tld\.final\.dynamic_refcount \(expected=1, observed=2\)",
+        ):
+            RUNNER.validate_m1_compiler_tls_same_tld_trace(wrong_order, source="test")
+
+    def test_m1_compiler_tls_same_tld_trace_parser_rejects_raw_addresses(self) -> None:
+        output = """
+CRABC_MI_M1_TLS_SAME_TLD_TRACE_BEGIN
+m1.tls.same_tld.entry.cached_address=12345
+CRABC_MI_M1_TLS_SAME_TLD_TRACE_END
+"""
+        with self.assertRaisesRegex(RUNNER.HarnessError, "raw address field"):
+            RUNNER.parse_m1_compiler_tls_same_tld_trace(output)
+
     def test_fundamental_trace_same_run_marker_cannot_claim_comparison(self) -> None:
         status = RUNNER.pending_fundamental_trace_comparison()
         self.assertEqual(status["status"], "pending")

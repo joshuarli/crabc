@@ -192,7 +192,7 @@ Commands:
   sysroot-smoke <archive>
                       smoke-test one packaged sysroot archive without rebuilding it
   lua [options]       build Lua 5.4 through the owned crabc sysroot
-  allocator --quick|--full|--churn|--soak
+  allocator --quick|--full|--churn|--soak|--tls-terminal-prototype
                       build/check the pinned mimalloc v3.5.0 C-oracle baseline
   allocator-m1        run the current-commit M1 foundations evidence gate
   allocator-upstream [options]
@@ -682,6 +682,12 @@ case "$command" in
                 # witnesses and a longer watchdog. It is lifecycle stability
                 # evidence, not a general allocator pass.
                 run_allocator_evidence --soak
+                ;;
+            --tls-terminal-prototype)
+                # This is an explicit source-only feasibility probe for the
+                # remaining same-TLD terminal boundary. It does not alter the
+                # M1 acceptance report or select a libc allocator backend.
+                run_allocator_evidence --m1-tls-terminal-prototype
                 ;;
             *)
                 usage >&2

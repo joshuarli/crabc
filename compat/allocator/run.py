@@ -174,6 +174,11 @@ M1_FOUNDATIONS_REPORT = REPORT_ROOT / "m1-foundations-latest.json"
 M1_FOUNDATIONS_CARGO_TARGET = ARTIFACT_ROOT / "m1-foundations/cargo-target"
 M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/raw-primitive-trace"
 M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/compiler-tls-trace"
+# This is deliberately not M1 acceptance evidence. It is the source-only C
+# producer for the selected same-TLD terminal trace.
+M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "m1-foundations/compiler-tls-same-tld-trace"
+)
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -775,6 +780,15 @@ M1_RAW_PRIMITIVE_ORACLE_SOURCES = tuple(
 # the former suppresses `src/prim/prim.c` automatic process attach.
 M1_COMPILER_TLS_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/threadlocal.c"
+)
+
+# The same-TLD terminal trace includes the pinned `src/init.c` into its dedicated
+# probe translation unit so the probe can call the source-private static
+# `mi_thread_theaps_done` body. Keep the ordinary source list otherwise
+# normal, including `threadlocal.c`; omitting only `init.c` keeps every C
+# definition singular.
+M1_COMPILER_TLS_SAME_TLD_TRACE_ORACLE_SOURCES = tuple(
+    item for item in ORACLE_SOURCES if item != "src/init.c"
 )
 
 # The reviewed M4 and M5 adapters are intentionally partial adaptations, not a
@@ -2412,6 +2426,330 @@ int main(void) {
 """
 
 
+# This source-internal C fixture reaches the file-static terminal
+# body in the pinned `src/init.c` itself. The preprocessor wrappers are not
+# substitute implementations: each records one address-free observation and
+# immediately calls the original C function. Recording is disabled throughout
+# setup, so only calls made by the selected static body contribute events.
+#
+# The setup deliberately makes the ordinary default and cached Theaps distinct
+# members of one TLD list. It uses the pinned source-private Heap/Theap setup
+# primitives so A is allocated through the detached metadata Theap rather than
+# D; the probe asserts both selected theaps are page-free before the source
+# terminal routine and records their post-collection state. The fixture then
+# calls the exact file-static body directly from the included pinned source.
+# It is a feasibility probe, not M1 acceptance evidence and not a general
+# claim about outer `mi_thread_done`, pthread, or process teardown routes.
+M1_COMPILER_TLS_SAME_TLD_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+#include <mimalloc/prim.h>
+#include <mimalloc/prim-tls.h>
+
+static bool fixture_recording = false;
+static size_t fixture_order = 0;
+static size_t fixture_collect_count = 0;
+static size_t fixture_collect_default_post_page_count = 0;
+static size_t fixture_collect_cached_post_page_count = 0;
+static size_t fixture_collect_default_ordinal = 0;
+static size_t fixture_collect_cached_ordinal = 0;
+static size_t fixture_default_order = 0;
+static size_t fixture_default_is_empty = 0;
+static size_t fixture_default_cached_is_aux = 0;
+static size_t fixture_default_member_count = 0;
+static size_t fixture_default_aux_refcount = 0;
+static size_t fixture_cached_order = 0;
+static size_t fixture_cached_default_is_empty = 0;
+static size_t fixture_cached_is_empty = 0;
+static size_t fixture_cached_member_count = 0;
+static size_t fixture_cached_aux_refcount = 0;
+static size_t fixture_detach_order = 0;
+static size_t fixture_detach_default_and_cached_empty = 0;
+static size_t fixture_detach_default_heap_is_null = 0;
+static size_t fixture_detach_cached_heap_is_null = 0;
+static size_t fixture_detach_main_default_detached = 0;
+static size_t fixture_detach_aux_heap_list_empty = 0;
+static size_t fixture_detach_member_count = 0;
+static size_t fixture_final_dynamic_ordinal = 0;
+static size_t fixture_final_static_ordinal = 0;
+static size_t fixture_decref_dynamic_pre_refcount = 0;
+static size_t fixture_final_dynamic_tld_is_null = 0;
+static size_t fixture_final_dynamic_links_null = 0;
+static size_t fixture_final_dynamic_subproc_nonnull = 0;
+static size_t fixture_final_static_tld_is_null = 0;
+static size_t fixture_final_static_links_null = 0;
+
+static mi_theap_t* fixture_default_before = NULL;
+static mi_theap_t* fixture_cached_before = NULL;
+static mi_tld_t* fixture_tld_before = NULL;
+static mi_heap_t* fixture_main_heap_before = NULL;
+static mi_heap_t fixture_aux_heap = mi_init_struct_zero;
+
+static size_t fixture_tld_theap_count(const mi_tld_t* tld) {
+  size_t count = 0;
+  for (const mi_theap_t* theap = tld->theaps; theap != NULL; theap = theap->tnext) {
+    count++;
+  }
+  return count;
+}
+
+static bool fixture_heap_has_exact_theap(const mi_heap_t* heap, const mi_theap_t* target) {
+  return heap->theaps == target && target->hprev == NULL && target->hnext == NULL &&
+         mi_atomic_load_ptr_relaxed(mi_heap_t, &target->heap) == heap;
+}
+
+static bool fixture_theap_links_are_null(const mi_theap_t* theap) {
+  return theap->tnext == NULL && theap->tprev == NULL &&
+         theap->hnext == NULL && theap->hprev == NULL;
+}
+
+static void fixture_collect_abandon(mi_theap_t* theap) {
+  if (fixture_recording) {
+    fixture_order++;
+    fixture_collect_count++;
+    if (theap == fixture_default_before) {
+      fixture_collect_default_ordinal = fixture_order;
+    }
+    if (theap == fixture_cached_before) {
+      fixture_collect_cached_ordinal = fixture_order;
+    }
+  }
+  _mi_theap_collect_abandon(theap);
+  if (fixture_recording && theap == fixture_default_before) {
+    fixture_collect_default_post_page_count = theap->page_count;
+  }
+  if (fixture_recording && theap == fixture_cached_before) {
+    fixture_collect_cached_post_page_count = theap->page_count;
+  }
+}
+
+static void fixture_default_set(mi_theap_t* theap) {
+  if (fixture_recording) {
+    fixture_default_order = ++fixture_order;
+  }
+  _mi_theap_default_set(theap);
+  if (fixture_recording) {
+    fixture_default_is_empty = (_mi_theap_default() == (mi_theap_t*)&_mi_theap_empty);
+    fixture_default_cached_is_aux = (_mi_theap_cached() == fixture_cached_before);
+    fixture_default_member_count = fixture_tld_theap_count(fixture_tld_before);
+    fixture_default_aux_refcount = mi_atomic_load_relaxed(&fixture_cached_before->refcount);
+  }
+}
+
+static void fixture_cached_set(mi_theap_t* theap) {
+  if (fixture_recording) {
+    fixture_cached_order = ++fixture_order;
+  }
+  _mi_theap_cached_set(theap);
+  if (fixture_recording) {
+    fixture_cached_default_is_empty = (_mi_theap_default() == (mi_theap_t*)&_mi_theap_empty);
+    fixture_cached_is_empty = (_mi_theap_cached() == (mi_theap_t*)&_mi_theap_empty);
+    fixture_cached_member_count = fixture_tld_theap_count(fixture_tld_before);
+    fixture_cached_aux_refcount = mi_atomic_load_relaxed(&fixture_cached_before->refcount);
+  }
+}
+
+static void fixture_tld_detach_theaps(mi_tld_t* tld) {
+  if (fixture_recording) {
+    fixture_detach_order = ++fixture_order;
+  }
+  _mi_tld_detach_theaps(tld);
+  if (fixture_recording) {
+    fixture_detach_default_and_cached_empty =
+        (_mi_theap_default() == (mi_theap_t*)&_mi_theap_empty &&
+         _mi_theap_cached() == (mi_theap_t*)&_mi_theap_empty);
+    fixture_detach_default_heap_is_null =
+        (mi_atomic_load_ptr_relaxed(mi_heap_t, &fixture_default_before->heap) == NULL);
+    fixture_detach_cached_heap_is_null =
+        (mi_atomic_load_ptr_relaxed(mi_heap_t, &fixture_cached_before->heap) == NULL);
+    fixture_detach_main_default_detached = fixture_detach_default_heap_is_null;
+    fixture_detach_aux_heap_list_empty = (fixture_aux_heap.theaps == NULL);
+    fixture_detach_member_count = fixture_tld_theap_count(tld);
+  }
+}
+
+static void fixture_theap_decref(mi_theap_t* theap) {
+  if (fixture_recording) {
+    fixture_order++;
+    if (theap == fixture_cached_before) {
+      fixture_final_dynamic_ordinal = fixture_order;
+      fixture_decref_dynamic_pre_refcount = mi_atomic_load_relaxed(&theap->refcount);
+      fixture_final_dynamic_tld_is_null = (theap->tld == NULL);
+      fixture_final_dynamic_links_null = fixture_theap_links_are_null(theap);
+      fixture_final_dynamic_subproc_nonnull =
+          (mi_atomic_load_ptr_relaxed(mi_subproc_t, &theap->subproc) != NULL);
+    }
+    if (theap == fixture_default_before) {
+      fixture_final_static_ordinal = fixture_order;
+      fixture_final_static_tld_is_null = (theap->tld == NULL);
+      fixture_final_static_links_null = fixture_theap_links_are_null(theap);
+    }
+  }
+  _mi_theap_decref(theap);
+}
+
+// Resolve through `-I <pinned-source>/src`. These aliases apply only while
+// the actual pinned `init.c` is preprocessed. The wrapper definitions above
+// were parsed before the aliases and therefore call the unmodified external
+// source functions.
+#define _mi_theap_collect_abandon fixture_collect_abandon
+#define _mi_theap_default_set fixture_default_set
+#define _mi_theap_cached_set fixture_cached_set
+#define _mi_tld_detach_theaps fixture_tld_detach_theaps
+#define _mi_theap_decref fixture_theap_decref
+#include "init.c"
+#undef _mi_theap_collect_abandon
+#undef _mi_theap_default_set
+#undef _mi_theap_cached_set
+#undef _mi_tld_detach_theaps
+#undef _mi_theap_decref
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+static void fixture_exit(int status) {
+  (void)fflush(stdout);
+  (void)fflush(stderr);
+  _Exit(status);
+}
+
+int main(void) {
+  mi_process_init();
+  fixture_default_before = _mi_theap_default();
+  if (fixture_default_before == NULL) fixture_exit(10);
+  fixture_tld_before = fixture_default_before->tld;
+  if (fixture_tld_before == NULL) fixture_exit(11);
+  fixture_main_heap_before = _mi_subproc_heap_main(fixture_tld_before->subproc);
+  if (fixture_main_heap_before == NULL) fixture_exit(12);
+  const mi_thread_local_t aux_key = _mi_thread_local_create();
+  if (aux_key == 0) fixture_exit(13);
+  _mi_heap_init(&fixture_aux_heap, aux_key, fixture_tld_before->subproc, 0);
+  fixture_cached_before = _mi_heap_theap_get_or_init(&fixture_aux_heap);
+  if (fixture_cached_before == NULL) fixture_exit(14);
+  if (fixture_default_before == fixture_cached_before) fixture_exit(15);
+  if (fixture_cached_before->tld != fixture_tld_before) fixture_exit(16);
+  const size_t pre_list_count = fixture_tld_theap_count(fixture_tld_before);
+  const bool pre_same_tld = (fixture_cached_before->tld == fixture_tld_before);
+  const size_t pre_cached_refcount = mi_atomic_load_relaxed(&fixture_cached_before->refcount);
+  const bool pre_default_is_main = (_mi_theap_default() == fixture_default_before);
+  const bool pre_cached_is_aux = (_mi_theap_cached() == fixture_cached_before);
+  // This intentionally means `D.heap == main`, not that D is the only main
+  // Heap member: source-private metadata Theaps may also remain linked there.
+  const bool pre_main_heap_contains_default =
+      (mi_atomic_load_ptr_relaxed(mi_heap_t, &fixture_default_before->heap) == fixture_main_heap_before);
+  const bool pre_aux_heap_contains_aux = fixture_heap_has_exact_theap(
+      &fixture_aux_heap, fixture_cached_before);
+  const bool pre_list_is_cached_then_default =
+      (fixture_tld_before->theaps == fixture_cached_before &&
+       fixture_cached_before->tprev == NULL &&
+       fixture_cached_before->tnext == fixture_default_before &&
+       fixture_default_before->tprev == fixture_cached_before &&
+       fixture_default_before->tnext == NULL);
+  const bool pre_default_is_static =
+      (fixture_default_before->memid.memkind == MI_MEM_STATIC);
+  const bool pre_cached_is_malloc =
+      (fixture_cached_before->memid.memkind == MI_MEM_MALLOC);
+  const bool pre_aux_heap_uses_aux_key = (fixture_aux_heap.theap == aux_key);
+  const bool pre_aux_key_points_to_cached =
+      ((mi_theap_t*)_mi_thread_local_get(aux_key) == fixture_cached_before);
+  if (!pre_default_is_main || !pre_cached_is_aux || !pre_same_tld ||
+      !pre_main_heap_contains_default || !pre_aux_heap_contains_aux ||
+      !pre_list_is_cached_then_default || !pre_default_is_static ||
+      !pre_cached_is_malloc || !pre_aux_heap_uses_aux_key ||
+      !pre_aux_key_points_to_cached || pre_list_count != 2 || pre_cached_refcount != 2) {
+    fixture_exit(17);
+  }
+  if (fixture_default_before->page_count != 0 || fixture_cached_before->page_count != 0) {
+    fixture_exit(18);
+  }
+
+  fixture_recording = true;
+  // This exact file-static body is compiled from the included pinned
+  // `src/init.c` below. Deliberately exclude outer mi_thread_done work such
+  // as regular TLS, fast-root, statistics, and TLD destruction.
+  mi_thread_theaps_done(fixture_tld_before);
+  fixture_recording = false;
+
+  const bool default_empty = (_mi_theap_default() == (mi_theap_t*)&_mi_theap_empty);
+  const bool cached_empty = (_mi_theap_cached() == (mi_theap_t*)&_mi_theap_empty);
+  const bool list_empty = (fixture_tld_before->theaps == NULL);
+  const bool default_detached =
+      (mi_atomic_load_ptr_relaxed(mi_heap_t, &fixture_default_before->heap) == NULL &&
+       fixture_default_before->tld == NULL);
+  const bool order_is_source_shaped =
+      (fixture_collect_count == 2 &&
+       fixture_collect_cached_ordinal == 1 &&
+       fixture_collect_default_ordinal == 2 &&
+       fixture_collect_default_post_page_count == 0 &&
+       fixture_collect_cached_post_page_count == 0 &&
+       fixture_default_order == 3 && fixture_default_is_empty &&
+       fixture_default_cached_is_aux && fixture_default_member_count == 2 &&
+       fixture_default_aux_refcount == 2 &&
+       fixture_cached_order == 4 && fixture_cached_default_is_empty &&
+       fixture_cached_is_empty && fixture_cached_member_count == 2 &&
+       fixture_cached_aux_refcount == 1 &&
+       fixture_detach_order == 5 && fixture_detach_default_and_cached_empty &&
+       fixture_detach_default_heap_is_null && fixture_detach_cached_heap_is_null &&
+       fixture_detach_main_default_detached && fixture_detach_aux_heap_list_empty &&
+       fixture_detach_member_count == 2 &&
+       fixture_final_dynamic_ordinal == 6 && fixture_final_static_ordinal == 7 &&
+       fixture_decref_dynamic_pre_refcount == 1 && fixture_final_dynamic_tld_is_null &&
+       fixture_final_dynamic_links_null && fixture_final_dynamic_subproc_nonnull &&
+       fixture_final_static_tld_is_null && fixture_final_static_links_null);
+
+  puts("CRABC_MI_M1_TLS_SAME_TLD_TRACE_BEGIN");
+  U("m1.tls.same_tld.entry.default_is_main", pre_default_is_main);
+  U("m1.tls.same_tld.entry.cached_is_aux", pre_cached_is_aux);
+  U("m1.tls.same_tld.entry.same_tld", pre_same_tld);
+  U("m1.tls.same_tld.entry.member_count", pre_list_count);
+  U("m1.tls.same_tld.entry.main_heap_contains_default", pre_main_heap_contains_default);
+  U("m1.tls.same_tld.entry.aux_heap_contains_aux", pre_aux_heap_contains_aux);
+  U("m1.tls.same_tld.entry.aux_refcount", pre_cached_refcount);
+  U("m1.tls.same_tld.collect.call_count", fixture_collect_count);
+  U("m1.tls.same_tld.collect.aux_first", fixture_collect_cached_ordinal == 1);
+  U("m1.tls.same_tld.collect.main_second", fixture_collect_default_ordinal == 2);
+  U("m1.tls.same_tld.collect.after.default_page_count", fixture_collect_default_post_page_count);
+  U("m1.tls.same_tld.collect.after.aux_page_count", fixture_collect_cached_post_page_count);
+  U("m1.tls.same_tld.default.ordinal", fixture_default_order);
+  U("m1.tls.same_tld.default.default_is_empty", fixture_default_is_empty);
+  U("m1.tls.same_tld.default.cached_is_aux", fixture_default_cached_is_aux);
+  U("m1.tls.same_tld.default.member_count", fixture_default_member_count);
+  U("m1.tls.same_tld.default.aux_refcount", fixture_default_aux_refcount);
+  U("m1.tls.same_tld.cached.ordinal", fixture_cached_order);
+  U("m1.tls.same_tld.cached.default_is_empty", fixture_cached_default_is_empty);
+  U("m1.tls.same_tld.cached.cached_is_empty", fixture_cached_is_empty);
+  U("m1.tls.same_tld.cached.member_count", fixture_cached_member_count);
+  U("m1.tls.same_tld.cached.aux_refcount", fixture_cached_aux_refcount);
+  U("m1.tls.same_tld.detach.ordinal", fixture_detach_order);
+  U("m1.tls.same_tld.detach.default_and_cached_empty", fixture_detach_default_and_cached_empty);
+  U("m1.tls.same_tld.detach.default_heap_is_null", fixture_detach_default_heap_is_null);
+  U("m1.tls.same_tld.detach.aux_heap_is_null", fixture_detach_cached_heap_is_null);
+  U("m1.tls.same_tld.detach.main_default_detached", fixture_detach_main_default_detached);
+  U("m1.tls.same_tld.detach.aux_heap_list_empty", fixture_detach_aux_heap_list_empty);
+  U("m1.tls.same_tld.detach.member_count", fixture_detach_member_count);
+  U("m1.tls.same_tld.final.dynamic_ordinal", fixture_final_dynamic_ordinal);
+  U("m1.tls.same_tld.final.static_ordinal", fixture_final_static_ordinal);
+  U("m1.tls.same_tld.final.dynamic_refcount", fixture_decref_dynamic_pre_refcount);
+  U("m1.tls.same_tld.final.dynamic_tld_is_null", fixture_final_dynamic_tld_is_null);
+  U("m1.tls.same_tld.final.dynamic_links_null", fixture_final_dynamic_links_null);
+  U("m1.tls.same_tld.final.dynamic_subproc_nonnull", fixture_final_dynamic_subproc_nonnull);
+  U("m1.tls.same_tld.final.tld_list_empty", list_empty);
+  U("m1.tls.same_tld.final.static_tld_is_null", fixture_final_static_tld_is_null);
+  U("m1.tls.same_tld.final.static_links_null", fixture_final_static_links_null);
+  U("m1.tls.same_tld.return.default_is_empty", default_empty);
+  U("m1.tls.same_tld.return.cached_is_empty", cached_empty);
+  puts("CRABC_MI_M1_TLS_SAME_TLD_TRACE_END");
+  fixture_exit(
+      default_empty && cached_empty && list_empty && default_detached && order_is_source_shaped ? 0 : 19);
+}
+"""
+
+
 # This schema freezes the selected direct C/Rust fundamental trace. Comparing
 # only the two observed maps would allow a synchronized deletion to silently
 # shrink the recorded contract. The 51-field base is shared, while the 24-field
@@ -2630,6 +2968,59 @@ M1_COMPILER_TLS_TRACE_EXPECTED_KEYS = frozenset(
     | M1_COMPILER_TLS_TRANSITION_TRACE_EXPECTED_KEYS
 )
 M1_COMPILER_TLS_TRACE_EXPECTED_COUNT = 32
+
+
+# This fixed C/Rust trace describes only one source-internal, page-free
+# `D -> A` setup: static main default D and Malloc-backed cached A share one
+# TLD, then the direct included pinned `mi_thread_theaps_done(D.tld)` body
+# executes. It does not claim outer `mi_thread_done`, public `mi_heap_new`,
+# general allocator, pthread, or process-destruction lifecycle parity.
+M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_VALUES = {
+    "m1.tls.same_tld.entry.default_is_main": 1,
+    "m1.tls.same_tld.entry.cached_is_aux": 1,
+    "m1.tls.same_tld.entry.same_tld": 1,
+    "m1.tls.same_tld.entry.member_count": 2,
+    "m1.tls.same_tld.entry.main_heap_contains_default": 1,
+    "m1.tls.same_tld.entry.aux_heap_contains_aux": 1,
+    "m1.tls.same_tld.entry.aux_refcount": 2,
+    "m1.tls.same_tld.collect.call_count": 2,
+    "m1.tls.same_tld.collect.aux_first": 1,
+    "m1.tls.same_tld.collect.main_second": 1,
+    "m1.tls.same_tld.collect.after.default_page_count": 0,
+    "m1.tls.same_tld.collect.after.aux_page_count": 0,
+    "m1.tls.same_tld.default.ordinal": 3,
+    "m1.tls.same_tld.default.default_is_empty": 1,
+    "m1.tls.same_tld.default.cached_is_aux": 1,
+    "m1.tls.same_tld.default.member_count": 2,
+    "m1.tls.same_tld.default.aux_refcount": 2,
+    "m1.tls.same_tld.cached.ordinal": 4,
+    "m1.tls.same_tld.cached.default_is_empty": 1,
+    "m1.tls.same_tld.cached.cached_is_empty": 1,
+    "m1.tls.same_tld.cached.member_count": 2,
+    "m1.tls.same_tld.cached.aux_refcount": 1,
+    "m1.tls.same_tld.detach.ordinal": 5,
+    "m1.tls.same_tld.detach.default_and_cached_empty": 1,
+    "m1.tls.same_tld.detach.default_heap_is_null": 1,
+    "m1.tls.same_tld.detach.aux_heap_is_null": 1,
+    "m1.tls.same_tld.detach.main_default_detached": 1,
+    "m1.tls.same_tld.detach.aux_heap_list_empty": 1,
+    "m1.tls.same_tld.detach.member_count": 2,
+    "m1.tls.same_tld.final.dynamic_ordinal": 6,
+    "m1.tls.same_tld.final.static_ordinal": 7,
+    "m1.tls.same_tld.final.dynamic_refcount": 1,
+    "m1.tls.same_tld.final.dynamic_tld_is_null": 1,
+    "m1.tls.same_tld.final.dynamic_links_null": 1,
+    "m1.tls.same_tld.final.dynamic_subproc_nonnull": 1,
+    "m1.tls.same_tld.final.tld_list_empty": 1,
+    "m1.tls.same_tld.final.static_tld_is_null": 1,
+    "m1.tls.same_tld.final.static_links_null": 1,
+    "m1.tls.same_tld.return.default_is_empty": 1,
+    "m1.tls.same_tld.return.cached_is_empty": 1,
+}
+M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_KEYS = frozenset(
+    M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_VALUES
+)
+M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_COUNT = 40
 
 
 class HarnessError(RuntimeError):
@@ -9074,6 +9465,17 @@ def parse_m1_compiler_tls_transition_trace(output: str) -> dict[str, int]:
     )
 
 
+def parse_m1_compiler_tls_same_tld_trace(output: str) -> dict[str, int]:
+    """Parse the fixed source-internal same-TLD terminal trace."""
+
+    return parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M1_TLS_SAME_TLD_TRACE_BEGIN",
+        end="CRABC_MI_M1_TLS_SAME_TLD_TRACE_END",
+        description="M1 compiler-TLS same-TLD terminal trace",
+    )
+
+
 def parse_m1_compiler_tls_trace(output: str) -> dict[str, int]:
     """Parse the full Rust compiler-TLS record emitted by one focused test."""
 
@@ -9469,6 +9871,42 @@ def validate_m1_compiler_tls_full_trace(trace: Mapping[str, int], *, source: str
     )
 
 
+def validate_m1_compiler_tls_same_tld_trace(trace: Mapping[str, int], *, source: str) -> None:
+    """Require the fixed source-internal setup and terminal call order.
+
+    The expected values intentionally describe only the page-free `D -> A`
+    fixture: two same-TLD Theaps, their selected source-call order, and the
+    observable postconditions. They do not generalize to allocator teardown
+    in a normal application or to outer `mi_thread_done` work.
+    """
+
+    expected = M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_VALUES
+    if len(expected) != M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_COUNT:
+        raise HarnessError("internal M1 compiler-TLS same-TLD trace schema has an unexpected key count")
+    observed = set(trace)
+    expected_keys = M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_KEYS
+    missing = sorted(expected_keys.difference(observed))
+    unexpected = sorted(observed.difference(expected_keys))
+    mismatches = [
+        f"{key} (expected={expected[key]}, observed={trace[key]})"
+        for key in sorted(expected_keys.intersection(observed))
+        if trace[key] != expected[key]
+    ]
+    if missing or unexpected or mismatches:
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        if mismatches:
+            problems.append("value mismatches: " + ", ".join(mismatches))
+        raise HarnessError(
+            f"{source} M1 compiler-TLS same-TLD trace does not match the fixed "
+            f"{M1_COMPILER_TLS_SAME_TLD_TRACE_EXPECTED_COUNT}-key fixture schema: "
+            + "; ".join(problems)
+        )
+
+
 def merge_m1_compiler_tls_trace(
     image_trace: Mapping[str, int], transition_trace: Mapping[str, int], *, source: str
 ) -> dict[str, int]:
@@ -9508,6 +9946,34 @@ def compare_m1_compiler_tls_trace(
     if problems:
         raise HarnessError(
             "Rust M1 compiler-TLS trace differs from pinned C: " + "; ".join(problems)
+        )
+    return {"compared_value_count": len(rust_trace), "status": "matched"}
+
+
+def compare_m1_compiler_tls_same_tld_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require the selected source-internal terminal records to match exactly."""
+
+    validate_m1_compiler_tls_same_tld_trace(c_trace, source="pinned C")
+    validate_m1_compiler_tls_same_tld_trace(rust_trace, source="Rust")
+    missing_from_c = sorted(set(rust_trace).difference(c_trace))
+    missing_from_rust = sorted(set(c_trace).difference(rust_trace))
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in sorted(set(c_trace).intersection(rust_trace))
+        if c_trace[key] != rust_trace[key]
+    ]
+    problems: list[str] = []
+    if missing_from_c:
+        problems.append("missing from C oracle: " + ", ".join(missing_from_c))
+    if missing_from_rust:
+        problems.append("missing from Rust port: " + ", ".join(missing_from_rust))
+    if mismatches:
+        problems.append("value mismatches: " + ", ".join(mismatches))
+    if problems:
+        raise HarnessError(
+            "Rust M1 compiler-TLS same-TLD trace differs from pinned C: " + "; ".join(problems)
         )
     return {"compared_value_count": len(rust_trace), "status": "matched"}
 
@@ -10171,6 +10637,110 @@ def build_m1_compiler_tls_trace(
             ),
         ),
         "transition": transition,
+    }
+
+
+def build_m1_compiler_tls_same_tld_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build one source-internal page-free same-TLD C trace.
+
+    This is intentionally kept outside `build_m1_compiler_tls_trace` and the
+    M1 report: the C producer itself makes no C/Rust comparison. A static
+    auxiliary Heap is initialized through the ordinary regular-key setup and
+    `_mi_heap_theap_get_or_init`, without public `mi_heap_new`, so the main
+    static default D and Malloc-backed cached A start page-free in one TLD.
+    The dedicated probe includes `src/init.c` and directly invokes its exact
+    file-static `mi_thread_theaps_done` body; the ordinary source list omits
+    only `init.c` to preserve one-definition C linkage.
+    """
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m1-compiler-tls-same-tld-trace-probe.c"
+    trace_binary = profile_dir / "m1-compiler-tls-same-tld-trace-probe"
+    trace_source.write_text(M1_COMPILER_TLS_SAME_TLD_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M1_COMPILER_TLS_SAME_TLD_TRACE_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M1 compiler-TLS same-TLD trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M1 compiler-TLS same-TLD trace execution")
+    record = parse_m1_compiler_tls_same_tld_trace(str(run["stdout"]))
+    validate_m1_compiler_tls_same_tld_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "scope": (
+            "source-internal page-free C fixture: static auxiliary Heap regular-key setup plus "
+            "one main static default Theap D and one Malloc-backed cached Theap A in one TLD; "
+            "direct included init.c:mi_thread_theaps_done(D.tld) body; _Exit avoids teardown of "
+            "the synthetic static auxiliary Heap; no Rust comparison or general lifecycle claim"
+        ),
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim-tls.h",
+                "src/init.c",
+                "src/theap.c",
+                "src/heap.c",
+                "src/threadlocal.c",
+                "src/prim/prim-tls.c",
+                "src/prim/prim.c",
+                "src/prim/unix/prim.c",
+            ),
+        ),
+    }
+
+
+def run_m1_compiler_tls_terminal_prototype(*, offline: bool) -> dict[str, Any]:
+    """Build and run the isolated pinned-C terminal feasibility probe.
+
+    This intentionally has no report path and is not called by `--m1`: it is
+    an explicit development witness for deciding whether the remaining
+    source boundary can be represented, rather than status-bearing evidence.
+    """
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    pin = load_pin()
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m1-compiler-tls-same-tld-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m1_compiler_tls_same_tld_trace(
+            compiler,
+            source,
+            M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+    return {
+        "c_oracle": c_oracle,
+        "scope": (
+            "explicit source-only feasibility probe; it does not alter M1, M2+, "
+            "or public allocator lifecycle completion status"
+        ),
+        "status": "passed",
+        "target": {"architecture": platform.machine(), "system": platform.system()},
     }
 
 
@@ -13499,6 +14069,11 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="run the current-commit finite M1 foundations evidence gate",
     )
+    mode.add_argument(
+        "--m1-tls-terminal-prototype",
+        action="store_true",
+        help="run the source-only pinned-C same-TLD terminal feasibility probe",
+    )
     mode.add_argument("--full", action="store_true", help="run the audited Milestone 5 full-lane report")
     mode.add_argument(
         "--churn",
@@ -13548,13 +14123,14 @@ def parse_arguments() -> argparse.Namespace:
         )
     )
     arguments = parser.parse_args()
-    if not any((arguments.quick, arguments.m1, arguments.full, arguments.churn, arguments.soak, arguments.native_shadow_stress, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
-        parser.error("choose --quick, --m1, --full, --churn, --soak, --native-shadow-stress, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
+    if not any((arguments.quick, arguments.m1, arguments.m1_tls_terminal_prototype, arguments.full, arguments.churn, arguments.soak, arguments.native_shadow_stress, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
+        parser.error("choose --quick, --m1, --m1-tls-terminal-prototype, --full, --churn, --soak, --native-shadow-stress, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
     if arguments.generate_contracts or arguments.snapshot_ratchet:
-        if arguments.quick or arguments.m1 or arguments.full or arguments.churn or arguments.soak or arguments.native_shadow_stress or arguments.perf_smoke or arguments.perf_full:
+        if arguments.quick or arguments.m1 or arguments.m1_tls_terminal_prototype or arguments.full or arguments.churn or arguments.soak or arguments.native_shadow_stress or arguments.perf_smoke or arguments.perf_full:
             parser.error("contract generation/snapshot cannot be combined with a gate mode")
     if arguments.architecture == "x86_64" and (
         arguments.m1
+        or arguments.m1_tls_terminal_prototype
         or arguments.full
         or arguments.perf_smoke
         or arguments.perf_full
@@ -13605,6 +14181,9 @@ def main() -> int:
             print(M1_FOUNDATIONS_REPORT)
             if report["milestone"]["status"] != "complete":
                 raise MilestoneUnavailable(m1_foundations_unmet_message(report))
+            return 0
+        if arguments.m1_tls_terminal_prototype:
+            print(json.dumps(run_m1_compiler_tls_terminal_prototype(offline=arguments.offline), sort_keys=True))
             return 0
         if arguments.soak:
             run_runtime_ticket_zero_soak(
