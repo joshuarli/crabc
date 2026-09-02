@@ -2764,6 +2764,23 @@ signal masks, waits, delivery policy, timer-family completion, pthread policy,
 libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh ualarm-header-abi` and
+`./scripts/dev-x86_64.sh libc-ualarm` are the paired private opt-in
+`x86-ualarm` `static-c-ualarm` evidence inside planned `libc.posix-runtime`.
+The project-first/pinned-musl C11/C++17 `<unistd.h>` matrix proves only
+`unsigned int ualarm(unsigned int, unsigned int)`: GNU/BSD/XOPEN<700 exposes
+the declaration with unmangled C++ linkage, while default, strict, POSIX, and
+XOPEN=700 hide it. The feature archive maps only musl 1.2.6
+`src/unistd/ualarm.c` and the x86 LP64 direct branch of
+`src/signal/setitimer.c`; valid microsecond `ITIMER_REAL` replacement and
+return behavior run through pinned musl and a `-nostdlib -static` candidate,
+while the one-million-microsecond error checks `EINVAL` and preserved timer
+state without inspecting musl's indeterminate failure return. `x86-ualarm`
+adds exactly `ualarm` only to its feature archive; the default selected-static
+archive and `static_c_abi_exports.txt` remain unchanged. This adds no
+capability, family completion, promotion, timer/signal policy, or public x86
+support claim.
+
 `./scripts/dev-x86_64.sh libc-usleep` is a separate private `static-c-usleep`
 artifact inside planned `libc.posix-runtime`. Its one-symbol pinned-musl and
 freestanding-static C proof maps only musl 1.2.6 `src/unistd/usleep.c`: an

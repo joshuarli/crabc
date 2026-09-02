@@ -287,6 +287,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/signal_realtime_min.rs"),
     Path("libc/src/c_abi/x86_64/sched_getscheduler.rs"),
     Path("libc/src/c_abi/x86_64/signal_alarm.rs"),
+    # This exact timer adapter is feature-gated; admitting its source path
+    # preserves the frozen default static archive rather than widening it.
+    Path("libc/src/c_abi/x86_64/signal_ualarm.rs"),
     Path("libc/src/c_abi/x86_64/signal_pending.rs"),
     Path("libc/src/c_abi/x86_64/signal_set_mutation.rs"),
     Path("libc/src/c_abi/x86_64/signal_execution.rs"),
@@ -4265,6 +4268,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "sched_getscheduler.rs"]',
         '#[path = "sched_setscheduler.rs"]',
         '#[path = "signal_alarm.rs"]',
+        '#[path = "signal_ualarm.rs"]',
         '#[path = "signal_pending.rs"]',
         '#[path = "signal_set_mutation.rs"]',
         '#[path = "signal_execution.rs"]',
@@ -5772,6 +5776,52 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/signal_alarm.rs: selected static "
                 f"historical alarm boundary must not select {forbidden!r}"
+            )
+
+    signal_ualarm_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_ualarm.rs"
+    )
+    signal_ualarm_text = signal_ualarm_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `ualarm` C boundary",
+        "src/unistd/ualarm.c",
+        "src/signal/setitimer.c",
+        "raw_syscall::SYS_SETITIMER",
+        "raw_syscall::syscall3(",
+        "c_status(result)",
+        "zero-initialized old record",
+        "c_uint::MAX",
+    ):
+        if required not in signal_ualarm_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_ualarm.rs: opt-in historical "
+                f"ualarm boundary is missing {required!r}"
+            )
+    signal_ualarm_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            signal_ualarm_text,
+        )
+    )
+    if signal_ualarm_exports != {"ualarm"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_ualarm.rs: opt-in artifact "
+            "must export only ualarm"
+        )
+    for forbidden in (
+        'pub extern "C" fn setitimer',
+        'pub extern "C" fn getitimer',
+        'pub extern "C" fn alarm',
+        "sigaction",
+        "sigprocmask",
+        "sigtimedwait",
+        "timerfd",
+        "pthread_",
+    ):
+        if forbidden in signal_ualarm_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_ualarm.rs: opt-in historical "
+                f"ualarm boundary must not select {forbidden!r}"
             )
 
     signal_pending_source = (

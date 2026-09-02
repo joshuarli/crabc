@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "c28b9a454270d4715a215616e6ba4bec02d423e4ce85890d56cd2e4ffc25b157",
+    "callable_inventory_sha256": "b376a2dcf082a4ceec1508eeb56a71552b079087c306b842234e44d1e91ccebe",
     "matrix_contract_sha256": "b1fe98dc96929908506ee6895eaebe129549e072fe237ba1076501677512668a",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -43753,7 +43753,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 188,
+      "candidate_callable_count": 189,
       "candidate_only": [
         {
           "classification": "external",
@@ -43903,14 +43903,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/procfs.h",
-      "matched_callable_count": 152,
+      "matched_callable_count": 153,
       "profile": "c11-gnu",
       "reference_callable_count": 174,
       "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        },
         {
           "classification": "inline",
           "name": "__bswap16"
@@ -43999,7 +43995,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 188,
+      "candidate_callable_count": 189,
       "candidate_only": [
         {
           "classification": "external",
@@ -44149,14 +44145,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/procfs.h",
-      "matched_callable_count": 152,
+      "matched_callable_count": 153,
       "profile": "cxx17-gnu",
       "reference_callable_count": 174,
       "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        },
         {
           "classification": "inline",
           "name": "__bswap16"
@@ -44612,7 +44604,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 176,
+      "candidate_callable_count": 177,
       "candidate_only": [
         {
           "classification": "external",
@@ -44762,15 +44754,11 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/procfs.h",
-      "matched_callable_count": 140,
+      "matched_callable_count": 141,
       "profile": "c11-bsd",
       "reference_callable_count": 162,
       "reference_only": [
         {
-          "classification": "external",
-          "name": "ualarm"
-        },
-        {
           "classification": "inline",
           "name": "__bswap16"
         },
@@ -44858,7 +44846,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 188,
+      "candidate_callable_count": 189,
       "candidate_only": [
         {
           "classification": "external",
@@ -45008,14 +44996,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/procfs.h",
-      "matched_callable_count": 152,
+      "matched_callable_count": 153,
       "profile": "cxx17-strict",
       "reference_callable_count": 174,
       "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        },
         {
           "classification": "inline",
           "name": "__bswap16"
@@ -45573,7 +45557,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 136,
+      "candidate_callable_count": 137,
       "candidate_only": [
         {
           "classification": "external",
@@ -45643,19 +45627,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/reg.h",
-      "matched_callable_count": 120,
+      "matched_callable_count": 121,
       "profile": "c11-gnu",
       "reference_callable_count": 121,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 136,
+      "candidate_callable_count": 137,
       "candidate_only": [
         {
           "classification": "external",
@@ -45725,15 +45704,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/reg.h",
-      "matched_callable_count": 120,
+      "matched_callable_count": 121,
       "profile": "cxx17-gnu",
       "reference_callable_count": 121,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -45968,7 +45942,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 126,
+      "candidate_callable_count": 127,
       "candidate_only": [
         {
           "classification": "external",
@@ -46038,19 +46012,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/reg.h",
-      "matched_callable_count": 110,
+      "matched_callable_count": 111,
       "profile": "c11-bsd",
       "reference_callable_count": 111,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 136,
+      "candidate_callable_count": 137,
       "candidate_only": [
         {
           "classification": "external",
@@ -46120,15 +46089,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/reg.h",
-      "matched_callable_count": 120,
+      "matched_callable_count": 121,
       "profile": "cxx17-strict",
       "reference_callable_count": 121,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -47918,7 +47882,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 138,
+      "candidate_callable_count": 139,
       "candidate_only": [
         {
           "classification": "external",
@@ -47992,19 +47956,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/sendfile.h",
-      "matched_callable_count": 121,
+      "matched_callable_count": 122,
       "profile": "c11-gnu",
       "reference_callable_count": 122,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 138,
+      "candidate_callable_count": 139,
       "candidate_only": [
         {
           "classification": "external",
@@ -48078,15 +48037,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/sendfile.h",
-      "matched_callable_count": 121,
+      "matched_callable_count": 122,
       "profile": "cxx17-gnu",
       "reference_callable_count": 122,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -48333,7 +48287,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 128,
+      "candidate_callable_count": 129,
       "candidate_only": [
         {
           "classification": "external",
@@ -48407,19 +48361,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/sendfile.h",
-      "matched_callable_count": 111,
+      "matched_callable_count": 112,
       "profile": "c11-bsd",
       "reference_callable_count": 112,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 138,
+      "candidate_callable_count": 139,
       "candidate_only": [
         {
           "classification": "external",
@@ -48493,15 +48442,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/sendfile.h",
-      "matched_callable_count": 121,
+      "matched_callable_count": 122,
       "profile": "cxx17-strict",
       "reference_callable_count": 122,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -55491,7 +55435,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 136,
+      "candidate_callable_count": 137,
       "candidate_only": [
         {
           "classification": "external",
@@ -55521,19 +55465,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/user.h",
-      "matched_callable_count": 130,
+      "matched_callable_count": 131,
       "profile": "c11-gnu",
       "reference_callable_count": 131,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 136,
+      "candidate_callable_count": 137,
       "candidate_only": [
         {
           "classification": "external",
@@ -55563,15 +55502,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/user.h",
-      "matched_callable_count": 130,
+      "matched_callable_count": 131,
       "profile": "cxx17-gnu",
       "reference_callable_count": 131,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -55686,7 +55620,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 126,
+      "candidate_callable_count": 127,
       "candidate_only": [
         {
           "classification": "external",
@@ -55716,19 +55650,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/user.h",
-      "matched_callable_count": 120,
+      "matched_callable_count": 121,
       "profile": "c11-bsd",
       "reference_callable_count": 121,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 136,
+      "candidate_callable_count": 137,
       "candidate_only": [
         {
           "classification": "external",
@@ -55758,15 +55687,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/user.h",
-      "matched_callable_count": 130,
+      "matched_callable_count": 131,
       "profile": "cxx17-strict",
       "reference_callable_count": 131,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -57884,7 +57808,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 136,
+      "candidate_callable_count": 137,
       "candidate_only": [
         {
           "classification": "external",
@@ -57954,19 +57878,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "unistd.h",
-      "matched_callable_count": 120,
+      "matched_callable_count": 121,
       "profile": "c11-gnu",
       "reference_callable_count": 121,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 136,
+      "candidate_callable_count": 137,
       "candidate_only": [
         {
           "classification": "external",
@@ -58036,15 +57955,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "unistd.h",
-      "matched_callable_count": 120,
+      "matched_callable_count": 121,
       "profile": "cxx17-gnu",
       "reference_callable_count": 121,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -58279,7 +58193,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 126,
+      "candidate_callable_count": 127,
       "candidate_only": [
         {
           "classification": "external",
@@ -58349,19 +58263,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "unistd.h",
-      "matched_callable_count": 110,
+      "matched_callable_count": 111,
       "profile": "c11-bsd",
       "reference_callable_count": 111,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 136,
+      "candidate_callable_count": 137,
       "candidate_only": [
         {
           "classification": "external",
@@ -58431,15 +58340,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "unistd.h",
-      "matched_callable_count": 120,
+      "matched_callable_count": 121,
       "profile": "cxx17-strict",
       "reference_callable_count": 121,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ualarm"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -62296,7 +62200,7 @@
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
-    "matched_callable_count": 32128,
+    "matched_callable_count": 32148,
     "mismatch_row_count": 560,
     "oracle_not_applicable_candidate_visible_callable_count": 39,
     "oracle_not_applicable_row_count": 1,
@@ -62306,7 +62210,7 @@
     "project_only_callable_count": 414,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_callable_count": 2564,
+    "reference_only_callable_count": 2544,
     "row_count": 1337
   },
   "target": "x86_64-unknown-linux-musl"

@@ -2495,7 +2495,7 @@ def require_header_callable_visibility_matrix(
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
-            "matched_callable_count": 32128,
+            "matched_callable_count": 32148,
             "mismatch_row_count": 560,
             "oracle_not_applicable_candidate_visible_callable_count": 39,
             "oracle_not_applicable_row_count": 1,
@@ -2505,7 +2505,7 @@ def require_header_callable_visibility_matrix(
             "project_only_callable_count": 414,
             "project_only_header_count": 8,
             "project_only_row_count": 56,
-            "reference_only_callable_count": 2564,
+            "reference_only_callable_count": 2544,
             "row_count": 1337,
         },
         "callable visibility matrix finite baseline drifted",
@@ -32064,6 +32064,252 @@ def require_alarm_artifact(family: Mapping[str, Any]) -> None:
         ),
         "static-c-alarm evidence must retain its exact bounded timer regression",
     )
+
+
+def require_ualarm_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the feature-only microsecond timer adapter out of default closure."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ualarm"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-ualarm artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-ualarm must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-ualarm must remain a private artifact without capabilities",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-ualarm needs a description")
+    for phrase in (
+        "opt-in selected-static-archive one-symbol historical microsecond interval-timer adapter artifact",
+        "planned `libc.posix-runtime`",
+        "`x86-ualarm` feature archive exposes exactly `ualarm`",
+        "frozen default `static_c_abi_exports.txt` archive deliberately remains closed",
+        "`src/unistd/ualarm.c`",
+        "`src/signal/setitimer.c`",
+        "zero-second `ITIMER_REAL`",
+        "old `tv_sec * 1000000 + tv_usec`",
+        "uninitialized on a rejected `1000000` microsecond field",
+        "`UINT_MAX` safe fallback",
+        "seven-profile project-first/pinned-musl C/C++ unistd-header matrix",
+        "X/Open 700 hide it",
+        "GNU, BSD, and X/Open 600 expose it",
+        "does not complete public `setitimer`, `alarm`, `getitimer`",
+        "signal/timer-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-ualarm description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-ualarm.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_ualarm.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/stddef.h",
+        "include/unistd.h",
+        "include/sys/time.h",
+        "include/sys/select.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/ualarm_header_abi_probe.c",
+        "compat/x86_64/ualarm_header_abi_probe.cpp",
+        "compat/x86_64/run_ualarm_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ualarm_probe.c",
+        "compat/x86_64/libc_ualarm_start.S",
+        "compat/x86_64/run_libc_ualarm.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_feature_archive_roster.py",
+        "compat/x86_64/tests/test_ualarm.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-ualarm source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-ualarm.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "unsigned int ualarm(unsigned int, unsigned int)" in item
+            and "edi and esi" in item
+            and "eax" in item
+            and "setitimer=38" in item
+            and "ITIMER_REAL=0" in item
+            and "32-byte align-8 itimerval" in item
+            for item in prerequisites
+        ),
+        "static-c-ualarm must retain its exact x86 syscall and record ABI",
+    )
+    require(
+        any(
+            "src/unistd/ualarm.c" in item
+            and "src/signal/setitimer.c" in item
+            and "time_t and long are both eight bytes" in item
+            and "uninitialized" in item
+            and "UINT_MAX" in item
+            and "AArch64 C ABI safe fallback" in item
+            for item in prerequisites
+        ),
+        "static-c-ualarm must retain its pinned-musl invalid-return boundary",
+    )
+    require(
+        any(
+            "valid one-shot and periodic" in item
+            and "stale ERANGE" in item
+            and "1000000 tv_usec" in item
+            and "EINVAL plus unchanged timer state only" in item
+            and "Static Initial TLS v1" in item
+            and "does not claim CRT" in item
+            for item in prerequisites
+        ),
+        "static-c-ualarm must retain its isolated static differential",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-ualarm.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "seven-profile C/C++ unistd-header matrix" in item
+            and "unsigned int ualarm(unsigned int, unsigned int)" in item
+            and "-U_GNU_SOURCE" in item
+            and "X/Open 700 hide it" in item
+            and "GNU, BSD, and X/Open 600 expose it" in item
+            for item in headers
+        ),
+        "static-c-ualarm must retain its exact C/C++ feature-test header gate",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "ualarm" not in static_exports,
+        "static-c-ualarm must remain outside the frozen default static export roster",
+    )
+    static_root = (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '#[cfg(feature = "x86-ualarm")]\n#[path = "signal_ualarm.rs"]\nmod signal_ualarm;'
+        in static_root,
+        "x86 static C ABI must compose ualarm only through its opt-in feature",
+    )
+    source = (ROOT / "libc/src/c_abi/x86_64/signal_ualarm.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "src/unistd/ualarm.c",
+        "src/signal/setitimer.c",
+        "raw_syscall::SYS_SETITIMER",
+        "zero-initialized old record",
+        "c_uint::MAX",
+        'pub extern "C" fn ualarm(value: c_uint, interval: c_uint) -> c_uint',
+    ):
+        require(snippet in source, f"ualarm leaf omits {snippet}")
+    for forbidden in (
+        'pub extern "C" fn setitimer',
+        'pub extern "C" fn getitimer',
+        'pub extern "C" fn alarm',
+        "sigaction",
+        "sigprocmask",
+        "timerfd",
+        "pthread_",
+    ):
+        require(forbidden not in source, f"ualarm leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat/x86_64/run_libc_ualarm.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "x86-ualarm",
+        "ualarm.lo",
+        "static_c_abi_exports.txt",
+        "assert_feature_delta",
+        '--features "$FEATURE"',
+        "-nostdlib -static",
+        "R_X86_64_TPOFF",
+        "assert_named_syscall ualarm 26",
+    ):
+        require(snippet in runner, f"ualarm runner omits {snippet}")
+    dispatch = (ROOT / "scripts/dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("ualarm-header-abi)", "libc-ualarm)"):
+        require(snippet in dispatch, f"ualarm dispatcher omits {snippet}")
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-ualarm needs oracle records")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/unistd/ualarm.c" in entry["role"]
+            and "src/signal/setitimer.c" in entry["role"]
+            and "uninitialized it_old" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-ualarm must retain its pinned-musl valid-input oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "setitimer=38" in entry["role"]
+            and "canonical tv_usec validation" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-ualarm must retain its Linux timer-record oracle",
+    )
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-ualarm needs native evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-ualarm"},
+        "static-c-ualarm must use the closed libc-ualarm command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-ualarm evidence needs a scope")
+    for phrase in (
+        "feature archive delta is exactly ualarm",
+        "default static export roster excludes it",
+        "-nostdlib -static",
+        "public setitimer/alarm/getitimer",
+        "ualarm's setitimer=38 syscall",
+        "invalid 1000000 field EINVAL-and-unchanged-state boundary",
+        "does not complete a signal or timer family, promote any capability, or claim public x86 support",
+    ):
+        require(phrase in scope, f"static-c-ualarm evidence omits {phrase}")
 
 
 def require_sigset_mutation_artifact(family: Mapping[str, Any]) -> None:
@@ -72198,6 +72444,7 @@ def validate_ledger(
     require_sched_setscheduler_artifact(by_id["libc.posix-runtime"])
     require_sched_getaffinity_artifact(by_id["libc.posix-runtime"])
     require_alarm_artifact(by_id["libc.posix-runtime"])
+    require_ualarm_artifact(by_id["libc.posix-runtime"])
     require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])

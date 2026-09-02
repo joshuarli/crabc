@@ -237,6 +237,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sched-getscheduler  run the static x86 musl-ENOSYS scheduler observation slice
   libc-sched-rr-interval  run the opt-in static x86 scheduler-interval observation slice
   libc-alarm  run the static x86 crabc-libc historical SIGALRM timer slice
+  ualarm-header-abi  run the x86 musl/project ualarm C/C++ declaration matrix
+  libc-ualarm  run the opt-in static x86 crabc-libc ualarm timer slice
   usleep-header-abi  run the x86 musl/project usleep C/C++ declaration matrix
   libc-usleep  run the static x86 crabc-libc usleep nanosleep-adapter slice
   basename-header-abi  run the x86 musl/project basename C/C++ declaration matrix
@@ -3125,6 +3127,14 @@ run_libc_alarm_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_alarm.sh
 }
 
+run_ualarm_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_ualarm_header_abi.sh
+}
+
+run_libc_ualarm_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_ualarm.sh
+}
+
 run_usleep_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_usleep_header_abi.sh
 }
@@ -4927,7 +4937,7 @@ case "$command" in
     psignal-header-abi|libc-psignal|libc-process-signal) ;;
     h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime) ;;
     legacy-misc-header-abi|libc-legacy-misc) ;;
-    usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
+    ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
     sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
@@ -7679,6 +7689,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-alarm takes no arguments"
         ensure_image
         run_libc_alarm_probe
+        ;;
+    ualarm-header-abi)
+        [ "$#" -eq 0 ] || fail "ualarm-header-abi takes no arguments"
+        ensure_image
+        run_ualarm_header_abi
+        ;;
+    libc-ualarm)
+        [ "$#" -eq 0 ] || fail "libc-ualarm takes no arguments"
+        ensure_image
+        run_libc_ualarm_probe
         ;;
     usleep-header-abi)
         [ "$#" -eq 0 ] || fail "usleep-header-abi takes no arguments"

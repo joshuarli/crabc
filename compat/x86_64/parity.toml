@@ -5529,6 +5529,60 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-ualarm"
+description = "Private native x86 opt-in selected-static-archive one-symbol historical microsecond interval-timer adapter artifact inside planned `libc.posix-runtime`. Only the `x86-ualarm` feature archive exposes exactly `ualarm`; the frozen default `static_c_abi_exports.txt` archive deliberately remains closed. Its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/unistd/ualarm.c` calls the direct x86 LP64 branch in `src/signal/setitimer.c`: `time_t` and `long` are both eight bytes, so it installs zero-second `ITIMER_REAL` value and interval fields directly from its unsigned microsecond arguments and returns old `tv_sec * 1000000 + tv_usec` with C unsigned wrapping. Musl leaves the old record uninitialized on a rejected `1000000` microsecond field, so its failure return is not a usable oracle; the zero-initialized Rust record preserves ordinary `EINVAL` and unchanged timer state, then returns the deliberate `UINT_MAX` safe fallback already used by the active AArch64 C ABI. The seven-profile project-first/pinned-musl C/C++ unistd-header matrix proves exact GNU/BSD/X/Open-before-700 visibility and retained unmangled C++ linkage: default strict, POSIX, and X/Open 700 hide it, while GNU, BSD, and X/Open 600 expose it. This private feature leaf does not complete public `setitimer`, `alarm`, `getitimer`, signal installation/actions, masks, waits, delivery policy, POSIX timers, timer descriptors, pthread policy, CRT, dynamic TLS lifecycle, loader, sysroot, signal/timer-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/signal_ualarm.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/stddef.h",
+  "include/unistd.h",
+  "include/sys/time.h",
+  "include/sys/select.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/ualarm_header_abi_probe.c",
+  "compat/x86_64/ualarm_header_abi_probe.cpp",
+  "compat/x86_64/run_ualarm_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_ualarm_probe.c",
+  "compat/x86_64/libc_ualarm_start.S",
+  "compat/x86_64/run_libc_ualarm.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_feature_archive_roster.py",
+  "compat/x86_64/tests/test_ualarm.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes unsigned int ualarm(unsigned int, unsigned int)'s two four-byte arguments in edi and esi and receives its unsigned four-byte result in eax. Linux x86-64 setitimer=38 receives ITIMER_REAL=0 in rdi plus 32-byte align-8 itimerval new/old records in rsi/rdx; each timeval is two signed eight-byte longs at offsets 0 and 8, and the value timeval begins at offset 16.",
+  "Pinned musl 1.2.6 `src/unistd/ualarm.c` is the complete MIT wrapper mapping over the x86 LP64 direct branch in `src/signal/setitimer.c`: time_t and long are both eight bytes, its zero-second tv_usec fields take the unsigned value and interval directly, and its return is old.it_value.tv_sec*1000000 + old.it_value.tv_usec. Musl leaves it_old uninitialized on a setitimer failure, so the invalid 1000000 tv_usec return cannot be compared; this Rust leaf zero-initializes old and deliberately returns UINT_MAX after ordinary errno translation, matching the active AArch64 C ABI safe fallback.",
+  "The common pinned-musl/candidate C body proves a clean zero timer, valid one-shot and periodic microsecond installation, returned prior remaining microseconds, stale ERANGE on success, and an invalid 1000000 tv_usec field through EINVAL plus unchanged timer state only. Its start delegates only archive Static Initial TLS v1 bootstrap required for errno observation; it does not claim CRT, general TLS lifecycle, signal handlers, masks, waits, or delivery.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl seven-profile C/C++ unistd-header matrix proves exact `unsigned int ualarm(unsigned int, unsigned int)` type and retained unmangled C++ linkage with -U_GNU_SOURCE. Default strict C/C++, POSIX, and X/Open 700 hide it; GNU, BSD, and X/Open 600 expose it. The static fixture preprocesses project errno.h, stddef.h, unistd.h, sys/time.h, sys/select.h, sys/syscall.h, bits/alltypes.h, and bits/syscall.h. This is a bounded historical feature-test declaration and opt-in static linkage proof, not installed-header, timer-family, signal-runtime, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ualarm", scope = "Pinned-musl 1.2.6 project-header C reference plus a seven-profile GNU/BSD/X/Open C/C++ unistd-header matrix and a true opt-in `x86-ualarm` x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate proves the feature archive delta is exactly ualarm while the default static export roster excludes it; checks project-header provenance and exact crate-owned C-object ownership separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, public setitimer/alarm/getitimer, handlers/actions, signal masks, waits, delivery policy, POSIX timers, timer descriptors, pthreads, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus ualarm's setitimer=38 syscall; and executes valid one-shot/periodic/prior-return/stale-errno observations plus the invalid 1000000 field EINVAL-and-unchanged-state boundary without comparing musl's indeterminate failure return. It does not complete a signal or timer family, promote any capability, or claim public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, feature-test declaration, and valid-input behavior oracle for src/unistd/ualarm.c plus the x86 LP64 direct branch of src/signal/setitimer.c: zero-second microsecond ITIMER_REAL fields and old tv_sec*1000000 + tv_usec return. Its uninitialized it_old makes the invalid-field return deliberately non-oracular." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "setitimer=38 register ABI, ITIMER_REAL selector, timeval/itimerval record layout, canonical tv_usec validation, and process-global timer state observed by the fixture." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "Unsigned-int two-argument C/C++ linkage, feature archive delta, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-sigset-mutation"
 description = "Private native x86 selected-static-archive three-symbol POSIX signal-set mutation artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sigaddset`, `sigdelset`, and `sigfillset`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Musl's x86 `_NSIG=65` and eight-byte unsigned-long layout make `SST_SIZE=1`: `sigfillset` writes only `0xfffffffc7fffffff`, while `sigaddset`/`sigdelset` modify only the first public word and leave all fifteen public tail words caller-resident. Add/delete return `-1` plus `EINVAL` before dereferencing for 0, musl-reserved 32 through 34, or 65; success returns zero with stale errno. The shared C GNU/POSIX gate and paired C++17 POSIX/GNU feature matrix retain exact pointer signatures and unmangled C linkage. This pure mutation leaf is disjoint from handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthread policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, signal-family completion, promotion, and public x86 support."
 source_owners = [
@@ -18877,6 +18931,18 @@ dispatch_command = "libc-h-errno"
 baseline_features = []
 enabled_features = ["x86-h-errno"]
 additive_callables = ["__h_errno_location"]
+replacement_callables = []
+aliases = []
+
+[[feature_archive]]
+id = "x86-ualarm"
+state = "verified"
+evidence_record = "static-c-ualarm"
+runner = "compat/x86_64/run_libc_ualarm.sh"
+dispatch_command = "libc-ualarm"
+baseline_features = []
+enabled_features = ["x86-ualarm"]
+additive_callables = ["ualarm"]
 replacement_callables = []
 aliases = []
 

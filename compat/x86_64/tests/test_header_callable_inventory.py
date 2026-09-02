@@ -246,6 +246,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             verified["x86-h-errno"],
             {"__h_errno_location"},
         )
+        self.assertEqual(verified["x86-ualarm"], {"ualarm"})
         self.assertEqual(
             planned["x86-resolver-runtime"],
             {

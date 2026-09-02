@@ -373,6 +373,12 @@ mod signal_realtime_max;
 mod signal_realtime_min;
 #[path = "signal_alarm.rs"]
 mod signal_alarm;
+// This historical microsecond interval-timer adapter mutates process-global
+// ITIMER_REAL state. Keep its one-symbol C ABI evidence opt-in so the frozen
+// default archive remains distinct from this private timer leaf.
+#[cfg(feature = "x86-ualarm")]
+#[path = "signal_ualarm.rs"]
+mod signal_ualarm;
 #[path = "signal_pending.rs"]
 mod signal_pending;
 #[path = "signal_set_mutation.rs"]

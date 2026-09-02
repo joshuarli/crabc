@@ -1435,7 +1435,7 @@
       "capability_count": 9,
       "contract_state": "selected-private",
       "id": "libc.posix-runtime",
-      "verified_artifact_count": 160,
+      "verified_artifact_count": 161,
       "verified_slice_count": 6
     },
     {
@@ -2529,6 +2529,10 @@
     },
     {
       "family": "libc.posix-runtime",
+      "id": "static-c-ualarm"
+    },
+    {
+      "family": "libc.posix-runtime",
       "id": "static-c-ulimit"
     },
     {
@@ -3076,7 +3080,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "bf64ea537867d9907281641a647a17fd5b23e2f048467e28a05156ea9bd1ea6b",
+    "x86_parity_ledger": "1d6ca1812a0f661b2dd9a2c307db70ae68fc0e798096df2546d5ea6cb878d3b5",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "4bae318653f77305fe753238496833793609417c453b2cebbf225b7a665f43e8"
   },

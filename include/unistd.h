@@ -357,6 +357,7 @@ unsigned int sleep(unsigned int);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE) \
  || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE+0 < 700)
 int usleep(unsigned int);
+unsigned int ualarm(unsigned int, unsigned int);
 #endif
 
 int pipe(int *);

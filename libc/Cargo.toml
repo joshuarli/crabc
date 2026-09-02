@@ -45,6 +45,10 @@ x86-allocator-observability = ["x86-allocator-runtime"]
 # the selected bootstrapped-main and selected-pthread-worker status slots;
 # it does not select resolver configuration, DNS, netdb, or a general TCB.
 x86-h-errno = []
+# Pinned musl's historical microsecond ITIMER_REAL adapter is independently
+# evidenced. Keep it opt-in so the frozen default archive does not silently
+# acquire process-global timer mutation or imply signal/timer-family closure.
+x86-ualarm = []
 # Private Linux/x86-64 resolver-runtime evidence. The C ABI state owner uses
 # the separately evidenced h_errno state owner plus the existing stateless
 # no_std DNS transport, but remains opt-in until this bounded package has its

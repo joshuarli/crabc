@@ -331,6 +331,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
 ./scripts/dev-x86_64.sh getpagesize-header-abi
+./scripts/dev-x86_64.sh ualarm-header-abi
 ./scripts/dev-x86_64.sh usleep-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
@@ -459,6 +460,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-process-signal
 ./scripts/dev-x86_64.sh libc-sched-getscheduler
 ./scripts/dev-x86_64.sh libc-alarm
+./scripts/dev-x86_64.sh libc-ualarm
 ./scripts/dev-x86_64.sh libc-usleep
 ./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset
 ./scripts/dev-x86_64.sh libc-static-tls-v1
@@ -2144,6 +2146,13 @@ C++ linkage while proving default, strict, POSIX, and XOPEN hiding. It is
 header-only evidence; it does not select general page-size discovery,
 `sysconf`/path configuration behavior, archive linkage, C runtime, or public
 x86 support.
+
+`ualarm-header-abi` is a separate project-first/pinned-musl C11/C++17
+`<unistd.h>` declaration matrix for only `unsigned int ualarm(unsigned int,
+unsigned int)`. It proves GNU/BSD/XOPEN<700 visibility with unmangled C++
+linkage while default, strict, POSIX, and XOPEN=700 correctly hide the opt-in
+declaration. It is header-only evidence; it does not select `ITIMER_REAL`
+state, signals, archive linkage, C runtime, or public x86 support.
 
 `usleep-header-abi` is a separate project-first/pinned-musl C11/C++17
 `<unistd.h>` declaration matrix for only `int usleep(unsigned int)`. It proves
@@ -3870,6 +3879,25 @@ C++ linkage. It exposes neither public `setitimer` nor `ualarm` and does not
 select handlers/actions, signal masks, waits, delivery policy, POSIX timers,
 timer descriptors, pthread policy, signal/timer-family completion, AArch64
 parity, promotion, or public x86 support.
+
+`ualarm-header-abi` and `libc-ualarm` are a separate private opt-in
+`x86-ualarm` `static-c-ualarm` `verified_artifact` within planned
+`libc.posix-runtime`. The former proves the exact
+`unsigned int ualarm(unsigned int, unsigned int)` GNU/BSD/XOPEN<700 C/C++
+declaration partition; the latter runs one project-header C body through
+pinned musl 1.2.6 and then through a true `-nostdlib -static` archive built
+with `--features x86-ualarm`. It maps only musl's `src/unistd/ualarm.c` and
+the x86 LP64 direct branch of `src/signal/setitimer.c`: zero-second
+`ITIMER_REAL` fields carry the requested microseconds, valid calls return the
+old remaining interval with C unsigned wrapping, and the
+one-million-microsecond field is `EINVAL` without changing the prior timer.
+The Rust leaf's zero-initialized old record deliberately returns `UINT_MAX` on
+that error rather than using musl's indeterminate failure return. Only the
+feature archive adds `ualarm`; the unfeatured static archive and
+`static_c_abi_exports.txt` remain unchanged. This artifact carries no
+capability or family promotion and does not select timer/signal policy,
+`alarm`/`getitimer`/`setitimer`, libc.so, CRT, loader, sysroot, or public x86
+support.
 
 `libc-usleep` is a separate `static-c-usleep` `verified_artifact` within
 planned `libc.posix-runtime`. Its one-symbol project-header C body first runs
@@ -7222,7 +7250,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sigisemptyset`, `libc-sigandset-sigorset`, `libc-sigpending`, and
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-sched-getscheduler`,
 `libc-sigaddset-sigdelset-sigfillset`,
-`libc-sigrtmax`, `libc-sigrtmin`, `libc-alarm`, `libc-usleep`,
+`libc-sigrtmax`, `libc-sigrtmin`, `libc-alarm`, `libc-ualarm`, `libc-usleep`,
 `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
