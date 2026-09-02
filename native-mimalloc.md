@@ -2373,7 +2373,7 @@ advance this AArch64 allocator ledger.
 | Milestone | Status | Evidence and remaining closure condition |
 | --- | --- | --- |
 | M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. `./scripts/dev.sh allocator --quick` passes on Linux/AArch64. This is inventory/skeleton completion only, not engine parity. |
-| M1 — pure foundations | partial | Selected configuration, arithmetic, atomics, provenance, random, and bootstrap slices are verified. The authoritative map still marks `include/mimalloc/types.h`, `prim.h`, `prim-tls.h`, and `internal.h` partial, so types and the primitive layer are not closed. |
+| M1 — pure foundations | partial | The finite `allocator-m1` report at `fec84761e9fbdb29c32d8f492ca6c9cfa08a015b` is clean and current for that checkpoint: all 20 focused checks passed; 461 shared release C/Rust layout values matched; compiler-TLS codegen passed; and all eight empty-page/empty-Theap `MI_MEMID_STATIC` fields matched. It intentionally exits 3 because its six named components remain partial. That bounded image evidence does not close `src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h`. |
 | M2 — memory substrate | partial | Selected metadata, bitmap, PageMap, arena, initialization, and fault paths exist, but their source units remain partial; no full substrate, fault, and no-recursion closure record exists. |
 | M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri; forced `cfg(miri)` is smoke evidence, not a Miri pass. |
 | M4 — fundamental operations | bounded direct-engine evidence | The selected 33-test M4 C adapter and its required operation records pass, but this is a one-thread private adapter over the still-partial M1–M3 substrate. It is not a closed production/general milestone. |
@@ -2386,6 +2386,24 @@ advance this AArch64 allocator ledger.
 
 Evidence from an ancestor is historical supporting evidence, not a pass for
 this checkpoint.
+
+## M1 checkpoint at `fec84761`
+
+`./scripts/dev.sh allocator-m1` wrote
+`.work/reports/allocator/m1-foundations-latest.json` for the clean unchanged
+`fec84761e9fbdb29c32d8f492ca6c9cfa08a015b` source tree. Its exit status was
+the contract's intentional `3`, not a harness failure: every focused test
+passed, and the selected configuration (4), bootstrap (8), provenance (7),
+and random (6) C/Rust layout keys matched. Raw primitives and compiler TLS
+have no layout-key claim in this checkpoint.
+
+M1 remains partial until the contract closes all six components:
+`configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`,
+`provenance-and-represented-layouts`, `random-image`,
+`linux-raw-primitives`, and `compiler-tls-roots`. In particular, the new
+`MI_MEMID_STATIC` comparison covers only the immutable empty-page and
+empty-Theap images; it is not a whole-`src/init.c` or mutable detached-TLD
+claim.
 
 ## Active boundary and priority rule
 
