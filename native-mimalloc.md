@@ -2378,8 +2378,8 @@ advance this AArch64 allocator ledger.
 | Milestone | Status | Evidence and remaining closure condition |
 | --- | --- | --- |
 | M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. A clean native `./scripts/dev.sh allocator --quick` exited 0 at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is inventory/skeleton completion only, not engine parity. |
-| M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. A clean native `./scripts/dev.sh allocator-m1` exited 0 at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`, with all six components complete and no unmet IDs. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `9ddae0bcc4bd82146d71c95c10425c1330fa6e78`, a clean detached native `./scripts/dev.sh allocator-m2` ran all 25 selected checks with source unchanged; its defined exit is 3 because the seven remaining components are unmet. PageMap is complete. VM primitives has eight passing checks, including direct/prefix/suffix aligned-overmap cleanup ownership and reset-advice retry snapshot control flow; metadata has two selected checks: its paired cleanup owner and source-static detached-image binding/first-demand identity-and-retry; arenas has two selected delayed-purge checks: source-64-bit-field callback grouping and frozen-Linux default-decommit-error consumption; initialization has three selected checks: the detached first-head field image, fail-closed invalid-input refusal, and static-metadata-before-global-PageMap failure order. Those four categories remain partial, as do bitmaps, fault injection, and allocator recursion. The ten PageMap checks cover source-private C/Rust success and failed-first-init differentials, bootstrap/lazy/release ownership failures, private-lock publication, and the process-owner terminal boundary. C's static empty-root/null-lookup/later-success result versus Rust's absent-root/typed-poison result is an explicitly accepted bounded safety divergence: C's sentinel is not a safe live-map continuation, and this does not claim public C ABI or full process-lifecycle parity. The metadata checks do not claim Rust's bounded private direct-OS backing matches C's normal `_mi_meta_zalloc` backing route. |
+| M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. Its latest clean native revalidation, at `2b289b1f8ae10543dfc57ddda0b49b08789be400`, exited 0 with all six components complete and no unmet IDs. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
+| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `62ad1307d5b3686cc8654aefa4d9748ebcacc667`, a clean detached native `./scripts/dev.sh allocator-m2` ran all 26 selected checks with source unchanged; its defined exit is 3 because the seven remaining components are unmet. PageMap is complete. VM primitives has eight passing checks, including direct/prefix/suffix aligned-overmap cleanup ownership and reset-advice retry snapshot control flow; metadata has three selected checks: its paired cleanup owner, source-static detached-image binding/first-demand identity-and-retry, and one later-TLD direct-Malloc capability lifetime. That latter real-caller witness proves ticket-zero teardown retains no metadata capability, an injected post-ready direct-zeroed failure consumes its sequence without a capability or live lease, and one retry's typed subprocess-attached/no-theap Malloc capability releases through its recorded owner. Arenas has two selected delayed-purge checks: source-64-bit-field callback grouping and frozen-Linux default-decommit-error consumption; initialization has three selected checks: the detached first-head field image, fail-closed invalid-input refusal, and static-metadata-before-global-PageMap failure order. Those four categories remain partial, as do bitmaps, fault injection, and allocator recursion. The ten PageMap checks cover source-private C/Rust success and failed-first-init differentials, bootstrap/lazy/release ownership failures, private-lock publication, and the process-owner terminal boundary. C's static empty-root/null-lookup/later-success result versus Rust's absent-root/typed-poison result is an explicitly accepted bounded safety divergence: C's sentinel is not a safe live-map continuation, and this does not claim public C ABI or full process-lifecycle parity. The metadata checks do not claim Rust's bounded private direct-OS backing matches C's normal `_mi_meta_zalloc` backing route, generic `_mi_meta_free` dispatch, or full `mi_tld_init`/`mi_tld_free` list and lock behavior. |
 | M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri. A forced `cfg(miri)` smoke is currently unavailable because `os_host_model.rs` lacks the existing NUMA/identity/entropy and `Mapping::page_size` APIs its callers require; the same ten compile errors existed at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is an M3 host-model limitation, not M2 evidence or a regression introduced by the aligned-overmap slice. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
@@ -2431,15 +2431,15 @@ six-component milestone described above.
 The M1 gate was rerun again from a clean detached native checkout at
 `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`: it exited 0 and produced that
 checkout's `m1-foundations-latest.json` with all six components complete and
-no unmet component IDs. This is the current M1 runtime evidence recorded by
-this ledger; it remains only the bounded six-component milestone described
+no unmet component IDs. That report is an earlier recorded M1 revalidation;
+M1 remains only the bounded six-component milestone described
 above.
 
 The M1 gate was rerun once more from a clean detached native checkout at
 `2b289b1f8ae10543dfc57ddda0b49b08789be400`: it exited 0 and its
 `m1-foundations-latest.json` attests the source was clean before and after
 execution, with all six bounded components complete and no unmet component
-IDs. This is the current revalidation after the detached first-head
+IDs. This is the latest recorded revalidation after the detached first-head
 random/cookie M2 slice; it does not broaden M1 beyond its six-component
 contract.
 
@@ -2457,8 +2457,8 @@ control and transition fields for initial partial commitment, lazy extension
 across two submaps, one two-slice unregister, final-boundary rollback, and an
 absent root after destruction.
 
-The current selected set contains 25 native checks: eight VM-primitives
-checks, two metadata checks, ten PageMap checks, two arena checks, and three
+The current selected set contains 26 native checks: eight VM-primitives
+checks, three metadata checks, ten PageMap checks, two arena checks, and three
 initialization checks. `page-map` is complete within this M2 contract; the
 other seven required components remain partial under their explicit remaining
 conditions.
@@ -2592,6 +2592,17 @@ carries no release token, and Arena release remains outside this dispatcher
 until a token can retain and validate its registry/subprocess identity. Huge,
 remap, sanitizer-tracking, integration, and allocator-recursion coverage
 remain M2 conditions.
+
+The selected later-TLD direct-Malloc check connects that exact Malloc lifetime
+to one real caller without broadening the metadata route: ticket-zero static
+storage tears down with no `MetaAllocation`; one injected post-ready
+direct-zeroed later request consumes its source sequence without a capability
+or live-count lease; and its sequence-two retry is a typed
+subprocess-attached/no-theap Malloc TLD whose teardown returns the capability
+count to zero while retaining high-water one. It is not normal C
+`_mi_meta_zalloc` backing parity, generic `_mi_meta_free` dispatch, complete
+`mi_tld_init`/`mi_tld_free` list or lock behavior, or arbitrary-thread/ticket
+coverage.
 
 The two detached-metadata initialization witnesses observe the image before it
 can issue a session or acquire private backing. For only the bounded
@@ -2742,6 +2753,23 @@ parity. The command exited 3 as designed; its unmet IDs remain exactly
 `fault-injection`, and `allocator-recursion`. This advances neither M2
 completion nor M3 or any later milestone.
 
+At `62ad1307d5b3686cc8654aefa4d9748ebcacc667`, a clean detached native
+checkout reran `./scripts/dev.sh allocator-m2` after adding the selected
+later-TLD direct-Malloc capability-lifetime check. Its
+`m2-memory-substrate-latest.json` attests a clean source tree before and after
+execution, unchanged during the run, with 26 passing selected checks: eight
+VM-primitives checks, three metadata checks, all ten PageMap checks, two arena
+checks, and three initialization checks. The added real-caller witness proves
+only ticket-zero's no-capability teardown, one injected post-ready direct-
+zeroed failure that consumes its later sequence without a capability or live
+lease, and one typed subprocess-attached/no-theap Malloc retry through exact-
+owner teardown. It does not claim normal C `_mi_meta_zalloc` backing, generic
+`_mi_meta_free` dispatch, or full TLD/list/lock lifecycle parity. The command
+exited 3 as designed; its unmet IDs remain exactly `vm-primitives`,
+`metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and
+`allocator-recursion`. M2 remains partial and does not advance M3 or any later
+milestone.
+
 ## Active boundary and priority rule
 
 The integrated owner-local mapped-abandoned medium reclaim slice is a narrowly
@@ -2750,9 +2778,10 @@ shadow, or promotion claim. Keep its source map, regression, and exact test
 result, but do not use it to advance M5.
 
 M0 and M1 are closed predecessors. M2 is now the current closure gate; its
-current clean native evidence has 25 selected checks, its selected PageMap
+current clean native evidence has 26 selected checks, its selected PageMap
 component is complete, and the other seven required components remain partial
-(including the selected-but-incomplete arena and initialization components).
+(including the selected-but-incomplete metadata, arena, and initialization
+components).
 Do not advance M3, M4, or later milestones until
 M2 has its own complete current-commit contract and evidence. The narrowly
 scoped M5 work around the bounded process-once envelope does not advance M5.
