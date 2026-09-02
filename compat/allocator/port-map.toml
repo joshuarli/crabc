@@ -1143,6 +1143,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "include/mimalloc/internal.h"
+name = "pointer-alignment-predicate"
+source_region = "_mi_is_aligned: zero means no alignment constraint; otherwise the pointer address is divisible by the requested alignment"
+rust_module = "crabc_mimalloc::provenance"
+rust_item = "Address::is_aligned_to"
+intentional_difference = "Address intentionally retains only an integer address and never reconstructs a pointer. The zero-alignment predicate remains separate from arithmetic alignment constructors, which reject zero before division."
+tests = ["crabc-mimalloc/src/provenance.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/init.c"
 name = "mi_page_empty-and-MI_PAGE_QUEUES_EMPTY"
 source_region = "immutable empty page and all 75 default page-queue initializers"

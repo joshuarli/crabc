@@ -6,7 +6,8 @@
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/types.h`:
 // `mi_memkind_is_os`, `mi_memkind_needs_no_free`, and `mi_memid_*`; plus
-// `include/mimalloc/internal.h:_mi_memid_create*` and `_mi_memid_size`.
+// `include/mimalloc/internal.h:_mi_memid_create*`, `_mi_memid_size`, and
+// `_mi_is_aligned`.
 // `Address` is a Rust language-boundary value type: it retains only an address
 // number and never reconstructs a pointer, so a future pointer-bearing path
 // must retain an appropriate provenance-bearing pointer separately.
@@ -44,6 +45,12 @@ impl Address {
 
     #[inline]
     pub(crate) const fn is_aligned_to(self, alignment: usize) -> bool {
+        // `_mi_is_aligned` treats zero as an unconstrained alignment. Keep
+        // that predicate separate from `align_down`, whose division contract
+        // deliberately rejects zero.
+        if alignment == 0 {
+            return true;
+        }
         match invariants::align_down(self.0, alignment) {
             Some(aligned) => aligned == self.0,
             None => false,
@@ -162,6 +169,10 @@ mod tests {
     #[test]
     fn address_alignment_keeps_provenance_out_of_integer_operations() {
         let address = Address::new(0x1234_5678);
+        // Pinned `internal.h:_mi_is_aligned` treats a zero alignment as no
+        // constraint. This is distinct from the alignment-producing helpers,
+        // which reject zero before division.
+        assert!(address.is_aligned_to(0));
         assert!(address.is_aligned_to(8));
         assert!(!address.is_aligned_to(16));
         assert_eq!(address.checked_add(8), Some(Address::new(0x1234_5680)));

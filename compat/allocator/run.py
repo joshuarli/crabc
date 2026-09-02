@@ -1097,9 +1097,11 @@ int main(void) {
 
   // M1 scalar vector: every operand is representable before rounding, so this
   // proves the source calculation rather than C's unsigned-overflow behavior.
-  // In particular, the two 24-byte records take internal.h's generic
+  // In particular, zero has its source-specific no-constraint meaning for
+  // `_mi_is_aligned`, while the two 24-byte records take internal.h's generic
   // non-power-of-two division paths.
   U("m1.scalar.is_power_of_two.zero", _mi_is_power_of_two(0));
+  U("m1.scalar.is_aligned.zero", _mi_is_aligned((const void*)(uintptr_t)0x12345678, 0));
   U("m1.scalar.align_down.generic.101_by_24", _mi_align_down(101, 24));
   U("m1.scalar.align_up.generic.101_by_24", _mi_align_up(101, 24));
   U("m1.scalar.divide_up.17_by_6", _mi_divide_up(17, 6));

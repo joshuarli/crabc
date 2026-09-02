@@ -21,6 +21,11 @@
           "expected_passed_test_count": 1,
           "id": "generic-alignment",
           "target": "invariants::tests::non_power_of_two_alignment_follows_the_pinned_generic_division_path"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "pointer-alignment-zero",
+          "target": "provenance::tests::address_alignment_keeps_provenance_out_of_integer_operations"
         }
       ],
       "completion_status": "partial",
@@ -31,6 +36,7 @@
         "config.ARENA_SLICE_SIZE",
         "config.PAGE_MAP_SHIFT",
         "m1.scalar.is_power_of_two.zero",
+        "m1.scalar.is_aligned.zero",
         "m1.scalar.align_down.generic.101_by_24",
         "m1.scalar.align_up.generic.101_by_24",
         "m1.scalar.divide_up.17_by_6",
@@ -127,6 +133,16 @@
         {
           "kind": "item",
           "name": "alignment-division-and-slice-invariants",
+          "required_statuses": [
+            "implemented",
+            "unit_verified",
+            "differential_verified"
+          ],
+          "upstream": "include/mimalloc/internal.h"
+        },
+        {
+          "kind": "item",
+          "name": "pointer-alignment-predicate",
           "required_statuses": [
             "implemented",
             "unit_verified",

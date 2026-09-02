@@ -4562,6 +4562,10 @@ mod tests {
             crate::invariants::is_power_of_two(0) as usize
         );
         record!(
+            "m1.scalar.is_aligned.zero",
+            crate::provenance::Address::new(0x1234_5678).is_aligned_to(0) as usize
+        );
+        record!(
             "m1.scalar.align_down.generic.101_by_24",
             crate::invariants::align_down(101, 24)
                 .expect("selected M1 scalar vector is representable")

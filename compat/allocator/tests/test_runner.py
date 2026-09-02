@@ -1904,6 +1904,7 @@ class ContractTests(unittest.TestCase):
                 "config.ARENA_SLICE_SIZE",
                 "config.PAGE_MAP_SHIFT",
                 "m1.scalar.is_power_of_two.zero",
+                "m1.scalar.is_aligned.zero",
                 "m1.scalar.align_down.generic.101_by_24",
                 "m1.scalar.align_up.generic.101_by_24",
                 "m1.scalar.divide_up.17_by_6",
@@ -1917,9 +1918,26 @@ class ContractTests(unittest.TestCase):
             [check["id"] for check in configuration_and_arithmetic["checks"]],
         )
         self.assertIn(
+            "pointer-alignment-zero",
+            [check["id"] for check in configuration_and_arithmetic["checks"]],
+        )
+        self.assertIn(
             {
                 "kind": "item",
                 "name": "alignment-division-and-slice-invariants",
+                "required_statuses": [
+                    "implemented",
+                    "unit_verified",
+                    "differential_verified",
+                ],
+                "upstream": "include/mimalloc/internal.h",
+            },
+            configuration_and_arithmetic["source_map_records"],
+        )
+        self.assertIn(
+            {
+                "kind": "item",
+                "name": "pointer-alignment-predicate",
                 "required_statuses": [
                     "implemented",
                     "unit_verified",
