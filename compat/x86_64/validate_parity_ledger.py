@@ -6179,7 +6179,7 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "no-feature default static archive",
         "isolated exact Cargo requests",
         "ordinary archive extraction",
-        "1,072 current default-static",
+        "1,073 current default-static",
         "47 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
