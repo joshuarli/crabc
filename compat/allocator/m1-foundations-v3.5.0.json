@@ -16,6 +16,11 @@
           "expected_passed_test_count": 1,
           "id": "alignment-and-slice-invariants",
           "target": "invariants::tests::division_and_word_counts_do_not_wrap"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "generic-alignment",
+          "target": "invariants::tests::non_power_of_two_alignment_follows_the_pinned_generic_division_path"
         }
       ],
       "completion_status": "partial",
@@ -24,10 +29,16 @@
         "config.WORD_SIZE",
         "config.MAX_ALIGN_SIZE",
         "config.ARENA_SLICE_SIZE",
-        "config.PAGE_MAP_SHIFT"
+        "config.PAGE_MAP_SHIFT",
+        "m1.scalar.is_power_of_two.zero",
+        "m1.scalar.align_down.generic.101_by_24",
+        "m1.scalar.align_up.generic.101_by_24",
+        "m1.scalar.divide_up.17_by_6",
+        "m1.scalar.wsize_from_size.17",
+        "m1.scalar.slice_count.one_past_slice",
+        "m1.scalar.size_of_slices.3"
       ],
       "remaining_conditions": [
-        "Bind the selected arithmetic edge cases to a reviewed pinned-C vector record rather than only Rust assertions.",
         "Review every M1-relevant configuration conditional in the pinned source before changing this component to complete."
       ],
       "source_map_records": [
@@ -118,7 +129,8 @@
           "name": "alignment-division-and-slice-invariants",
           "required_statuses": [
             "implemented",
-            "unit_verified"
+            "unit_verified",
+            "differential_verified"
           ],
           "upstream": "include/mimalloc/internal.h"
         }

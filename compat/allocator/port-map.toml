@@ -1115,15 +1115,15 @@ performance_qualified = false
 [[item]]
 upstream = "include/mimalloc/internal.h"
 name = "alignment-division-and-slice-invariants"
-source_region = "_mi_align_up, _mi_align_down, _mi_divide_up, _mi_wsize_from_size, mi_slice_count_of_size, mi_size_of_slices"
+source_region = "_mi_is_power_of_two, _mi_align_up, _mi_align_down, _mi_divide_up, _mi_wsize_from_size, mi_slice_count_of_size, mi_size_of_slices"
 rust_module = "crabc_mimalloc::invariants"
-rust_item = "align_up/align_down/divide_up/word_count/slice_count_of_size/size_of_slices"
-intentional_difference = "Caller assertions and representational overflow are explicit Option results."
-tests = ["crabc-mimalloc/src/invariants.rs"]
+rust_item = "is_power_of_two/align_up/align_down/divide_up/word_count/slice_count_of_size/size_of_slices"
+intentional_difference = "The source fast path remains bit-masked for power-of-two alignments and its generic division path now covers every other nonzero alignment. Source `_mi_is_power_of_two(0)` remains true; the distinct alignment-validity boundary rejects zero. Caller assertions and representational overflow are explicit Option results."
+tests = ["crabc-mimalloc/src/invariants.rs", "crabc-mimalloc/src/provenance.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 

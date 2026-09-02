@@ -5,8 +5,9 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/internal.h`:
-// `_mi_align_up`, `_mi_align_down`, `_mi_divide_up`, `_mi_wsize_from_size`,
-// `mi_slice_count_of_size`, and `mi_size_of_slices`. The Rust forms make the
+// `_mi_is_power_of_two`, `_mi_align_up`, `_mi_align_down`, `_mi_divide_up`,
+// `_mi_wsize_from_size`, `mi_slice_count_of_size`, and `mi_size_of_slices`.
+// The Rust forms make the
 // upstream caller preconditions explicit with `Option`; no overflow wrapping
 // or invalid-alignment fallback is hidden at this boundary.
 
@@ -14,24 +15,39 @@ use crate::config::{ARENA_SLICE_SIZE, WORD_SIZE};
 
 #[inline]
 pub(crate) const fn is_power_of_two(value: usize) -> bool {
-    value != 0 && (value & (value - 1)) == 0
+    // Pinned `_mi_is_power_of_two` deliberately treats zero as a power of
+    // two. Callers that model an alignment boundary reject zero separately,
+    // just as `mi_alignment_is_valid` does in the source.
+    (value & value.wrapping_sub(1)) == 0
 }
 
 #[inline]
 pub(crate) const fn align_down(value: usize, alignment: usize) -> Option<usize> {
-    if !is_power_of_two(alignment) {
+    if alignment == 0 {
         return None;
     }
-    Some(value & !(alignment - 1))
+    let mask = alignment - 1;
+    if (alignment & mask) == 0 {
+        Some(value & !mask)
+    } else {
+        // `_mi_align_down` uses this generic path for every nonzero,
+        // non-power-of-two alignment.
+        Some((value / alignment) * alignment)
+    }
 }
 
 #[inline]
 pub(crate) const fn align_up(value: usize, alignment: usize) -> Option<usize> {
-    if !is_power_of_two(alignment) {
+    if alignment == 0 {
         return None;
     }
-    match value.checked_add(alignment - 1) {
-        Some(aligned) => Some(aligned & !(alignment - 1)),
+    let mask = alignment - 1;
+    match value.checked_add(mask) {
+        Some(aligned) if (alignment & mask) == 0 => Some(aligned & !mask),
+        // The product cannot overflow: `(aligned / alignment) * alignment`
+        // is at most `aligned`, which was just checked above. This is the
+        // generic division path in pinned `_mi_align_up`.
+        Some(aligned) => Some((aligned / alignment) * alignment),
         None => None,
     }
 }
@@ -74,8 +90,25 @@ mod tests {
             assert_eq!(align_up(0x12345, alignment), Some((0x12345 + alignment - 1) & !(alignment - 1)));
         }
         assert_eq!(align_down(9, 0), None);
-        assert_eq!(align_up(9, 3), None);
+        assert_eq!(align_up(9, 0), None);
         assert_eq!(align_up(usize::MAX, 2), None);
+    }
+
+    #[test]
+    fn non_power_of_two_alignment_follows_the_pinned_generic_division_path() {
+        // `internal.h` first takes the power-of-two fast path, then uses
+        // division for every other nonzero alignment. These values exercise
+        // that second path rather than treating a valid source input as an
+        // unsupported Rust boundary.
+        assert_eq!(align_down(101, 24), Some(96));
+        assert_eq!(align_up(101, 24), Some(120));
+        assert_eq!(align_down(17, 6), Some(12));
+        assert_eq!(align_up(17, 6), Some(18));
+
+        // This is deliberately distinct from alignment validity: source
+        // `_mi_is_power_of_two(0)` is true, while
+        // `mi_alignment_is_valid(0)` rejects the input at its own boundary.
+        assert!(is_power_of_two(0));
     }
 
     #[test]

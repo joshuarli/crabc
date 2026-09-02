@@ -1857,6 +1857,44 @@ class ContractTests(unittest.TestCase):
             "test_threads": 1,
             "timeout_seconds": 300,
         })
+        configuration_and_arithmetic = next(
+            component
+            for component in summary["components"]
+            if component["id"] == "configuration-and-arithmetic"
+        )
+        self.assertEqual(
+            configuration_and_arithmetic["layout_keys"],
+            [
+                "config.WORD_SIZE",
+                "config.MAX_ALIGN_SIZE",
+                "config.ARENA_SLICE_SIZE",
+                "config.PAGE_MAP_SHIFT",
+                "m1.scalar.is_power_of_two.zero",
+                "m1.scalar.align_down.generic.101_by_24",
+                "m1.scalar.align_up.generic.101_by_24",
+                "m1.scalar.divide_up.17_by_6",
+                "m1.scalar.wsize_from_size.17",
+                "m1.scalar.slice_count.one_past_slice",
+                "m1.scalar.size_of_slices.3",
+            ],
+        )
+        self.assertIn(
+            "generic-alignment",
+            [check["id"] for check in configuration_and_arithmetic["checks"]],
+        )
+        self.assertIn(
+            {
+                "kind": "item",
+                "name": "alignment-division-and-slice-invariants",
+                "required_statuses": [
+                    "implemented",
+                    "unit_verified",
+                    "differential_verified",
+                ],
+                "upstream": "include/mimalloc/internal.h",
+            },
+            configuration_and_arithmetic["source_map_records"],
+        )
         random_image = next(
             component
             for component in summary["components"]

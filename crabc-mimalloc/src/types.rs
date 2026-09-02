@@ -4466,6 +4466,45 @@ mod tests {
         record!("MI_LARGE_MAX_OBJ_SIZE", crate::config::LARGE_MAX_OBJ_SIZE);
         record!("MI_MAX_ARENAS", crate::config::MAX_ARENAS);
 
+        // Keep the selected scalar M1 vector in the release C/Rust record,
+        // rather than relying on a Rust-only assertion. The operands are
+        // intentionally representable before rounding: `Option::None` still
+        // represents the separate explicit Rust overflow boundary.
+        record!(
+            "m1.scalar.is_power_of_two.zero",
+            crate::invariants::is_power_of_two(0) as usize
+        );
+        record!(
+            "m1.scalar.align_down.generic.101_by_24",
+            crate::invariants::align_down(101, 24)
+                .expect("selected M1 scalar vector is representable")
+        );
+        record!(
+            "m1.scalar.align_up.generic.101_by_24",
+            crate::invariants::align_up(101, 24)
+                .expect("selected M1 scalar vector is representable")
+        );
+        record!(
+            "m1.scalar.divide_up.17_by_6",
+            crate::invariants::divide_up(17, 6)
+                .expect("selected M1 scalar vector is representable")
+        );
+        record!(
+            "m1.scalar.wsize_from_size.17",
+            crate::invariants::word_count(17)
+                .expect("selected M1 scalar vector is representable")
+        );
+        record!(
+            "m1.scalar.slice_count.one_past_slice",
+            crate::invariants::slice_count_of_size(crate::config::ARENA_SLICE_SIZE + 1)
+                .expect("selected M1 scalar vector is representable")
+        );
+        record!(
+            "m1.scalar.size_of_slices.3",
+            crate::invariants::size_of_slices(3)
+                .expect("selected M1 scalar vector is representable")
+        );
+
         // Keep one machine record for every source-derived production
         // constant in `config.rs`; the runner compares these values directly
         // with the pinned v3.5.0 C expressions in `LAYOUT_PROBE`.

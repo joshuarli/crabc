@@ -963,7 +963,10 @@ producer does not close a whole source unit or promote any allocator backend.
 The bootstrap component compares the actual pinned `MI_MEMID_STATIC` empty-page
 and empty-Theap memory-ID flags against the release C oracle; this is evidence
 for those two immutable images only, not a general `src/init.c` completion
-claim.
+claim. The configuration-and-arithmetic component also compares a compact
+representable scalar vector, including `_mi_is_power_of_two(0)`, generic
+non-power-of-two `_mi_align_up`/`_mi_align_down`, division, word rounding, and
+slice conversion; it makes no claim about C unsigned-overflow behavior.
 
 `allocator --full` extends that gate by building and auditing the standalone
 static and shared test adapter, including its exact 16-symbol export boundary,

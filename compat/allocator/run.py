@@ -984,6 +984,18 @@ int main(void) {
   U("MI_LARGE_MAX_OBJ_SIZE", MI_LARGE_MAX_OBJ_SIZE);
   U("MI_MAX_ARENAS", MI_MAX_ARENAS);
 
+  // M1 scalar vector: every operand is representable before rounding, so this
+  // proves the source calculation rather than C's unsigned-overflow behavior.
+  // In particular, the two 24-byte records take internal.h's generic
+  // non-power-of-two division paths.
+  U("m1.scalar.is_power_of_two.zero", _mi_is_power_of_two(0));
+  U("m1.scalar.align_down.generic.101_by_24", _mi_align_down(101, 24));
+  U("m1.scalar.align_up.generic.101_by_24", _mi_align_up(101, 24));
+  U("m1.scalar.divide_up.17_by_6", _mi_divide_up(17, 6));
+  U("m1.scalar.wsize_from_size.17", _mi_wsize_from_size(17));
+  U("m1.scalar.slice_count.one_past_slice", mi_slice_count_of_size(MI_ARENA_SLICE_SIZE + 1));
+  U("m1.scalar.size_of_slices.3", mi_size_of_slices(3));
+
   // `config.*` is the complete source-derived production-constant record
   // for the frozen Rust profile.  Expressions intentionally use the pinned
   // v3.5.0 macro names (or the exact unset-option-to-zero expression below),

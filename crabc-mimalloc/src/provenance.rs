@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(address.checked_add(8), Some(Address::new(0x1234_5680)));
         assert_eq!(Address::new(usize::MAX).checked_add(1), None);
         assert_eq!(address.align_down(64), Some(Address::new(0x1234_5640)));
-        assert_eq!(address.align_down(48), None);
+        assert_eq!(address.align_down(48), Some(Address::new(0x1234_5660)));
     }
 
     #[test]
