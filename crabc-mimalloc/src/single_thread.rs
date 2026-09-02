@@ -2284,6 +2284,11 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
     // image. Keep this private owner terminal rather than treating it as an
     // ordinary fresh-page/OOM miss.
     page_commit_poison: bool,
+    // Counts explicit outer forced-retirement attempts for the one selector
+    // regression that must prove C's internal false-mode retry never reaches
+    // `allocate_generic_with_retry`'s distinct forced-collection policy.
+    #[cfg(test)]
+    forced_collect_retired_call_count: usize,
     // The one-shot hook fails before remote detachment, so tests alone can
     // clear the retained record and complete fixture cleanup. No production
     // recovery exists because a real failure can have ambiguous ownership.
@@ -7650,6 +7655,8 @@ impl<'bootstrap, 'arena, 'map>
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
+            forced_collect_retired_call_count: 0,
+            #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
             page_release_after_page_map_unregister_failure_once: false,
@@ -7687,6 +7694,8 @@ impl<'bootstrap, 'arena, 'map>
             pending_os_release: None,
             collection_poison: None,
             page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
@@ -7726,6 +7735,8 @@ impl<'attach, 'heap, 'arena, 'map>
             pending_os_release: None,
             collection_poison: None,
             page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
@@ -8071,6 +8082,8 @@ impl<'arena, 'map, Session: MainStaticTheapPageSession>
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
+            forced_collect_retired_call_count: 0,
+            #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
             page_release_after_page_map_unregister_failure_once: false,
@@ -8118,6 +8131,8 @@ impl<'attachment, 'main, 'arena, 'map>
             pending_os_release: None,
             collection_poison: None,
             page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
@@ -8309,6 +8324,8 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
             pending_os_release: None,
             collection_poison: None,
             page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
@@ -34955,6 +34972,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             collection_poison: state.collection_poison,
             page_commit_poison: state.page_commit_poison,
             #[cfg(test)]
+            // A typed session conversion is not part of the selector retry;
+            // keep this test-only observation local to one engine instance.
+            forced_collect_retired_call_count: 0,
+            #[cfg(test)]
             page_free_collect_failure_once: state.page_free_collect_failure_once,
             #[cfg(test)]
             // Test injection is never armed across a typed session conversion;
@@ -36923,6 +36944,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// producer may race the detach or later queue transition through only
     /// its atomics; owner local fields and links use raw disjoint projections.
     pub(crate) fn collect_retired(&mut self, force: bool) -> bool {
+        #[cfg(test)]
+        if force {
+            self.forced_collect_retired_call_count += 1;
+        }
         if self.is_collection_poisoned() {
             return false;
         }
@@ -37185,6 +37210,16 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             self.retain_page_collect_poison(page, retained_error, None);
         }
         error
+    }
+
+    /// Observes forced-retirement entry for the selected mapped-medium retry
+    /// regression. The counter increments before any force-mode early return,
+    /// so zero proves that the production allocation path stayed inside the
+    /// source's bounded false-mode finder retry.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_forced_collect_retired_call_count(&self) -> usize {
+        self.forced_collect_retired_call_count
     }
 
     #[cfg(test)]
@@ -38986,6 +39021,8 @@ impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
             pending_os_release: None,
             collection_poison: None,
             page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]

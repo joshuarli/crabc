@@ -2437,6 +2437,14 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
         self.engine.queue_count(bin)
     }
 
+    /// Exposes only the test-local forced-retirement counter so the selected
+    /// commit-failure retry can prove it never left the false-mode finder.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_forced_collect_retired_call_count(&self) -> usize {
+        self.engine.test_forced_collect_retired_call_count()
+    }
+
     #[inline]
     pub(crate) fn allocate_aligned(
         &mut self,
@@ -8713,7 +8721,7 @@ mod tests {
                         })
                         .expect("the selector's reabandon/retry stays a usable B operation")
                         .expect("B reclaims and extends A's exact source page after one commit miss");
-                    let (reclaimed_page, target_queue_count) = target_owner
+                    let (reclaimed_page, target_queue_count, forced_collection_count) = target_owner
                         .with_local_allocator(&mut target, |allocator| {
                             (
                                 NonNull::new(
@@ -8723,6 +8731,7 @@ mod tests {
                                 )
                                 .expect("B's allocation remains PageMap-published"),
                                 allocator.test_queue_count(bin),
+                                allocator.test_forced_collect_retired_call_count(),
                             )
                         })
                         .expect("B's short post-retry observation remains usable");
@@ -8730,6 +8739,11 @@ mod tests {
                         fault.observed(),
                         2,
                         "ordinal-one injection fails the first direct commit and the bounded false retry performs exactly one successful second commit"
+                    );
+                    assert_eq!(
+                        forced_collection_count,
+                        0,
+                        "the actual reabandon path recurses through the false-mode finder without entering allocate_generic_with_retry's forced collection"
                     );
                     fault.set(fault::Plan::disabled());
                     assert_eq!(

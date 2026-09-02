@@ -2614,7 +2614,7 @@ performance_qualified = false
 [[item]]
 upstream = "src/arena.c"
 name = "owner-local-selected-static-main-medium-mapped-abandoned-reclaim"
-source_region = "src/arena.c:655-778 mi_arena_try_claim_abandoned and mi_arenas_page_try_find_abandoned; src/page.c:276-340 _mi_theap_page_reclaim and mi_page_fresh_alloc; src/page.c:630-706 mi_page_extend_free; src/page.c:855-863 _mi_page_abandon followed by one false-mode first_try retry; and src/page-queue.c:204-243,306-332 queue-tail insertion"
+source_region = "src/arena.c:655-778 mi_arena_try_claim_abandoned and mi_arenas_page_try_find_abandoned; src/page.c:276-289 _mi_theap_page_reclaim; src/page.c:291-304 _mi_page_abandon; src/page.c:307-326 mi_page_fresh_alloc including its final failed-extension abandon call; src/page.c:630-706 mi_page_extend_free; src/page.c:855-863 one false-mode recursive mi_page_queue_find_free_ex retry; and src/page-queue.c:204-243,306-332 queue-tail insertion"
 rust_module = "crabc_mimalloc::main_heap_page, crabc_mimalloc::single_thread, crabc_mimalloc::abandoned, crabc_mimalloc::arena, crabc_mimalloc::process_arena, crabc_mimalloc::process_page_map, and crabc_mimalloc::types"
 implementation_scope = "private selected native-shadow ordinary later-main allocation; default-off audit witnesses"
 rust_item = "MainHeapThreadOwnerLocalPageEngine's OwnerLocalMappedAbandonedClaimSelector; OwnerLocalMainHeapPageSession::with_owner_local_mapped_abandoned_claim_source; PageAllocatorEngine::{reclaim_selected_mapped_medium_before_fresh,reclaim_selected_mapped_medium_with_source,reclaim_selected_mapped_medium_with_source_map,release_span_with_page_map}; MainArenaMappedAbandonedPage; abandoned::try_adopt_retained; and ProcessPageArenaLease::try_with_mapped_abandoned_claim"
