@@ -109,7 +109,8 @@
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
 //! artifact, one bounded pathname-mutation/lifecycle artifact, one distinct
-//! caller-buffered descriptor-relative readlinkat leaf, one distinct
+//! caller-supplied-directory mkdirat leaf, one distinct caller-buffered
+//! descriptor-relative readlinkat leaf, one distinct
 //! caller-supplied-directory hard-link linkat leaf, one GNU renameat2 leaf
 //! that preserves musl's zero/nonzero syscall routing, and one bounded
 //! no-follow pathname-ownership lchown leaf, one caller-owned mntent
@@ -580,6 +581,8 @@ mod mktemp;
 mod lchmod_unsupported;
 #[path = "mkfifo.rs"]
 mod mkfifo;
+#[path = "mkdirat.rs"]
+mod mkdirat;
 #[path = "mkfifoat.rs"]
 mod mkfifoat;
 #[path = "extended_attributes.rs"]

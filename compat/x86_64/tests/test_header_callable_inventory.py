@@ -223,6 +223,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             report = json.load(stream)
 
         partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
         verified = {
             provider["id"]: set(provider["members"])
             for provider in partition["verified_feature_archives"]
@@ -233,6 +234,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         }
         unprovided = set(partition["unprovided"]["members"])
 
+        self.assertIn("mkdirat", default_static)
+        self.assertNotIn("mkdirat", unprovided)
         self.assertEqual(
             verified["x86-filesystem-traversal"],
             {"ftw", "nftw"},

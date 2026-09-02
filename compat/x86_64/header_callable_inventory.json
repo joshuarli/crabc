@@ -550,6 +550,7 @@
         "memset",
         "mincore",
         "mkdir",
+        "mkdirat",
         "mkfifo",
         "mkfifoat",
         "mktemp",
@@ -1273,7 +1274,6 @@
         "mbrtoc16",
         "mbrtoc32",
         "mbsnrtowcs",
-        "mkdirat",
         "mkdtemp",
         "mknod",
         "mknodat",
@@ -424021,8 +424021,8 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "9291db0da238d53896a9c94d344de3bd932216097ede40436c91632b55dd7eb4",
-    "static_c_abi_exports_sha256": "4bae318653f77305fe753238496833793609417c453b2cebbf225b7a665f43e8"
+    "parity_ledger_sha256": "9acf049bd9d1cb635b7e2208da5000e911b739498202c3c8ab40e07db4e1699b",
+    "static_c_abi_exports_sha256": "339175ad79847dc7862c789bc46fca78fab49e6b214304b6a17b871c27b06cd4"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -442636,7 +442636,6 @@
       "mbrtoc32",
       "mbsnrtowcs",
       "memalign",
-      "mkdirat",
       "mkdtemp",
       "mknod",
       "mknodat",
@@ -442894,8 +442893,8 @@
     },
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
-      "default_static": 1048,
-      "unprovided": 417,
+      "default_static": 1049,
+      "unprovided": 416,
       "verified_feature_archives": 47
     },
     "candidate_external_callable_count": 1512,
@@ -442910,7 +442909,7 @@
       "ok": 2617,
       "oracle-not-applicable": 1
     },
-    "static_export_complement_count": 464
+    "static_export_complement_count": 463
   },
   "target": "x86_64-unknown-linux-musl"
 }

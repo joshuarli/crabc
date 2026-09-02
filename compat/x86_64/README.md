@@ -357,6 +357,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh xattr-header-abi
 ./scripts/dev-x86_64.sh pathname-lifecycle-header-abi
 ./scripts/dev-x86_64.sh mkfifo-header-abi
+./scripts/dev-x86_64.sh mkdirat-header-abi
 ./scripts/dev-x86_64.sh mkfifoat-header-abi
 ./scripts/dev-x86_64.sh readlinkat-header-abi
 ./scripts/dev-x86_64.sh linkat-header-abi
@@ -598,6 +599,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-event-descriptors
 ./scripts/dev-x86_64.sh libc-pathname-lifecycle
 ./scripts/dev-x86_64.sh libc-mkfifo
+./scripts/dev-x86_64.sh libc-mkdirat
 ./scripts/dev-x86_64.sh libc-mkfifoat
 ./scripts/dev-x86_64.sh libc-readlinkat
 ./scripts/dev-x86_64.sh libc-linkat
@@ -1555,6 +1557,22 @@ observable, while stale errno on success, duplicate `EEXIST`, and null-path
 allocation, locale/terminal/environment/process state, family promotion, or
 public x86 support.
 
+`mkdirat-header-abi` is a distinct eight-profile C11/C++17 project-header/
+pinned-musl matrix for unconditional `mkdirat(int, const char *, mode_t)`, x86
+LP64 `int`/`mode_t`, directory-mode constants, `SYS_mkdirat=258`, and unmangled
+C++ linkage. Its paired `libc-mkdirat` private `static-c-mkdirat` artifact runs
+a project-header C fixture first through pinned musl 1.2.6 and then through a
+`-nostdlib -static` candidate. It selects only musl's direct
+caller-supplied-dirfd Linux x86-64 `mkdirat=258` body. Raw setup opens one
+fixture-owned directory and compares 0750/0000 selected modes with one raw
+0710 directory while preserving stale errno on success; it also checks
+duplicate `EEXIST`, invalid-dirfd `EBADF`, null-path `EFAULT`, and missing-parent
+`ENOENT` under a child-local shell `umask 000`. It neither chooses `AT_FDCWD`
+nor selects `mkdir`, `mkfifo`, `mkfifoat`, `mknod`, `mknodat`, other pathname
+operations, C umask/CWD/pathname/permission policy, directory streams,
+allocation, locale/terminal/environment/process state, family promotion, or
+public x86 support.
+
 `mkfifoat-header-abi` is a distinct eight-profile C11/C++17 project-header/
 pinned-musl matrix for unconditional `mkfifoat(int, const char *, mode_t)`, x86
 LP64 `int`/`mode_t`, FIFO mode constants, and unmangled C++ linkage. Its paired
@@ -1698,11 +1716,11 @@ callables remain owned by planned `libc.c-abi-compat`, while noncallable header
 ABI remains owned by `libc.headers-layouts`.
 
 `header-callable-provider-linkage-audit` separately uses the checked inventory
-to ordinarily extract the 1,048 current default-static and 47 verified
+to ordinarily extract the 1,049 current default-static and 47 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 417-name unprovided complement remains explicit:
+selection and behavior. Its 416-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 
@@ -7359,6 +7377,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-event-descriptors`,
 `libc-pathname-lifecycle`,
 `libc-mkfifo`,
+`libc-mkdirat`,
 `libc-mkfifoat`,
 `libc-readlinkat`,
 `libc-linkat`,

@@ -1491,7 +1491,7 @@ id = "libc.headers-layouts"
 order = 60
 depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
-description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. The checked declaration/macro identity matrix derives generic feature visibility from that compiler-generated source-form report: it records 1,107 current comparable identity-mismatch rows and 173 matched rows, while the one aio.h oracle-not-applicable row and 56 project-only rows retain checked candidate fact summaries and digests; 22,215 same-identity source-form differences remain separately accounted. The compiler-derived callable inventory now partitions every declared external among the default archive, verified feature archives, declared unverified feature profiles, and no-provider work. A selected-provider audit ordinarily extracts all 1,048 current default-static and 47 verified feature-provider members through isolated exact Cargo profiles, while retaining the 417-name unprovided complement and full callable closure as red work. Its all-header matrix records direct callable name/class visibility differences and the eight project-only current surfaces without treating either as prototype, noncallable ABI, linkage, or runtime parity. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Declaration-form equality, record byte layouts, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
+description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. The checked declaration/macro identity matrix derives generic feature visibility from that compiler-generated source-form report: it records 1,107 current comparable identity-mismatch rows and 173 matched rows, while the one aio.h oracle-not-applicable row and 56 project-only rows retain checked candidate fact summaries and digests; 22,215 same-identity source-form differences remain separately accounted. The compiler-derived callable inventory now partitions every declared external among the default archive, verified feature archives, declared unverified feature profiles, and no-provider work. A selected-provider audit ordinarily extracts all 1,049 current default-static and 47 verified feature-provider members through isolated exact Cargo profiles, while retaining the 416-name unprovided complement and full callable closure as red work. Its all-header matrix records direct callable name/class visibility differences and the eight project-only current surfaces without treating either as prototype, noncallable ABI, linkage, or runtime parity. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Declaration-form equality, record byte layouts, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
 aarch64_gates = ["abi-probe", "build", "test"]
 source_owners = [
   "docker/Dockerfile.x86_64",
@@ -2086,7 +2086,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-h
 
 [[family.verified_artifact]]
 id = "selected-header-callable-provider-linkage-audit"
-description = "Private native x86 selected header-callable provider linkage artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived candidate callable inventory, builds the no-feature default static archive plus every verified feature archive in isolated exact Cargo requests, and uses ordinary archive extraction to prove all 1,048 current default-static and 47 verified feature-provider callable members. It checks each declared replacement symbol is extractable from both baseline and enabled archives, while dedicated environment and resolver evidence retains replacement-provider selection and behavior; it proves weak same-address aliases without making hidden resolver targets public. The named `x86-crypt-allocator-composition` profile is deliberately topology-only: the audit builds only its named composition and delegates its intentionally rejected direct manual pair plus allocator-provider proof to its dedicated runner. The finite 417-name unprovided complement remains explicit, so this is not full callable closure, behavior replacement proof, header-family promotion, runtime completion, or public x86 support."
+description = "Private native x86 selected header-callable provider linkage artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived candidate callable inventory, builds the no-feature default static archive plus every verified feature archive in isolated exact Cargo requests, and uses ordinary archive extraction to prove all 1,049 current default-static and 47 verified feature-provider callable members. It checks each declared replacement symbol is extractable from both baseline and enabled archives, while dedicated environment and resolver evidence retains replacement-provider selection and behavior; it proves weak same-address aliases without making hidden resolver targets public. The named `x86-crypt-allocator-composition` profile is deliberately topology-only: the audit builds only its named composition and delegates its intentionally rejected direct manual pair plus allocator-provider proof to its dedicated runner. The finite 416-name unprovided complement remains explicit, so this is not full callable closure, behavior replacement proof, header-family promotion, runtime completion, or public x86 support."
 source_owners = [
   "compat/x86_64/feature_archive_roster.py",
   "compat/x86_64/header_callable_inventory.toml",
@@ -8474,6 +8474,63 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, declaration, and behavior oracle for include/sys/stat.h plus src/stat/mkfifo.c; its one-line mkfifo body supplies mode|S_IFIFO then delegates mknod(path, ..., 0). The direct Linux mknodat closure is an intentional private implementation boundary, not a wider mknod-family claim." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "mknodat=259 rdi/rsi/rdx/r10, AT_FDCWD, FIFO inode creation, umask application, newfstatat/unlinkat fixture observation, and raw errno contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pathname/mode_t/int C calling convention, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-mkdirat"
+description = "Private native x86 selected-static-archive `mkdirat` leaf inside still-planned `libc.posix-runtime`. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `mkdirat(int, const char *, mode_t)`: musl's direct caller-supplied-dirfd spelling reaches Linux x86-64 `mkdirat=258`. The fixture's child-local shell umask 000 makes requested directory modes observable inside a raw-created fixture directory, preserves stale errno on successful 0750/0000 creation, compares one raw 0710 directory, and checks duplicate `EEXIST`, bad-dirfd `EBADF`, null-path `EFAULT`, and missing-parent `ENOENT`; raw mkdirat/openat/newfstatat/unlinkat/close only set up, observe, and clean fixture-owned entries. It does not select `mkdir`, `mkfifo`, `mkfifoat`, `mknod`, `mknodat`, `linkat`, `symlinkat`, `unlinkat`, `renameat`, directory streams, a wider filesystem/pathname or permission policy, an `AT_FDCWD`/CWD/pathname policy, C umask, allocation, locale, terminal/environment/process state, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/mkdirat.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/sys/stat.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/stat.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/mkdirat_header_abi_probe.c",
+  "compat/x86_64/mkdirat_header_abi_probe.cpp",
+  "compat/x86_64/run_mkdirat_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_mkdirat_probe.c",
+  "compat/x86_64/libc_mkdirat_start.S",
+  "compat/x86_64/run_libc_mkdirat.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI passes mkdirat's signed four-byte dirfd, pathname pointer, and unsigned four-byte mode_t in rdi/rsi/rdx and returns signed int in eax. The private Linux x86-64 mkdirat=258 request receives that caller-supplied dirfd, pathname, and mode word in rdi/rsi/rdx; only raw -4095 through -1 results publish the selected initial-TLS errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/stat/mkdirat.c exactly: `mkdirat` returns `syscall(SYS_mkdirat, fd, path, mode)`. The static leaf preserves that direct Linux 5.10 closure while deliberately exporting neither mkdir nor another pathname-creation entry or wider filesystem policy.",
+  "The native runner sets only its reference/candidate child shell umask to 000. Raw mkdirat/openat obtains a fixture-owned directory fd, raw newfstatat compares selected 0750/0000 and raw 0710 directory modes relative to that fd, and raw unlinkat/close cleans the fixture. The candidate does not choose AT_FDCWD, call or select C umask, mutate CWD, normalize pathnames, or own permission policy; duplicate EEXIST, invalid-dirfd EBADF, null-path EFAULT, and missing-parent ENOENT remain kernel results.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup delegates to the archive Static Initial TLS v1 bootstrap without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The eight-profile C11/C++17 project-first/pinned-musl sys/stat.h, sys/syscall.h, and sys/types.h matrix proves unconditional `mkdirat(int, const char *, mode_t)`, x86 LP64 signed int dirfd and unsigned four-byte mode_t spellings, S_IFMT/S_IFDIR permission constants, `SYS_mkdirat=258`, and unmangled C++ linkage. This is declaration evidence for one caller-supplied-dirfd leaf, not mkdir/pathname-family, installed-header, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-mkdirat", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 `-nostdlib -static` crabc-libc candidate. The gate runs the eight-profile mkdirat C/C++ header matrix, ratchets the exact crate-owned archive export, rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies, proves direct initial-TLS errno, disassembles direct mkdirat=258 with rdi/rsi/rdx, and runs descriptor-relative 0750/0000 mode, raw-0710 comparator, stale-errno success, duplicate EEXIST, bad-dirfd EBADF, null-path EFAULT, and missing-parent ENOENT checks under a child-local shell umask 000. It does not select mkdir, mkfifo/mkfifoat/mknod/mknodat, linkat/symlinkat/unlinkat/renameat, directory streams, C umask or AT_FDCWD/CWD/pathname/permission policy, allocation, locale, terminal/environment/process state, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional include/sys/stat.h declaration, and behavior oracle for src/stat/mkdirat.c: its one-line body returns syscall(SYS_mkdirat, fd, path, mode). The direct Linux mkdirat closure is an intentional private implementation boundary, not mkdir or wider pathname-creation policy." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "mkdirat=258 rdi/rsi/rdx, caller-supplied directory-fd relative directory creation, umask application, raw mkdirat/openat/newfstatat/unlinkat/close fixture setup and observation, and raw errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 dirfd/pathname/mode_t/int C calling convention, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
 ]
 
 [[family.verified_artifact]]

@@ -2493,6 +2493,23 @@ and null-path `EFAULT` are checked. It does not select the broader
 device-node or C-umask policy, pathname/CWD policy, locale/process state,
 filesystem-family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh mkdirat-header-abi` is a distinct eight-profile
+C11/C++17 project-header/pinned-musl declaration gate for unconditional
+`mkdirat(int, const char *, mode_t)`, x86 LP64 `int`/`mode_t`, directory mode
+constants, `SYS_mkdirat=258`, and unmangled C++ linkage. Its paired private
+`./scripts/dev-x86_64.sh libc-mkdirat` artifact runs one project-header C
+fixture through pinned musl 1.2.6 and a true `-nostdlib -static` archive
+candidate. It implements only musl's caller-supplied-dirfd direct Linux
+x86-64 `mkdirat=258` body; raw setup opens one fixture-owned directory and
+compares selected 0750/0000 modes with a raw 0710 directory while preserving
+stale errno on success, duplicate `EEXIST`, invalid-dirfd `EBADF`, null-path
+`EFAULT`, and missing-parent `ENOENT`. The child-local shell `umask 000` only
+makes requested modes observable. It neither chooses `AT_FDCWD` nor selects
+`mkdir`, `mkfifo`, `mkfifoat`, `mknod`, `mknodat`, other pathname operations,
+C-umask/CWD/pathname/permission policy, directory streams, allocation,
+locale/process state, filesystem-family completion, promotion, or public x86
+support.
+
 `./scripts/dev-x86_64.sh mkfifoat-header-abi` is a distinct eight-profile
 C11/C++17 project-header/pinned-musl declaration gate for unconditional
 `mkfifoat(int, const char *, mode_t)`, x86 LP64 `int`/`mode_t`, FIFO mode

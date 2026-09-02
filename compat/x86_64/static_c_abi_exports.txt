@@ -611,6 +611,7 @@ memrchr
 memset
 mincore
 mkdir
+mkdirat
 mkfifo
 mkfifoat
 mktemp

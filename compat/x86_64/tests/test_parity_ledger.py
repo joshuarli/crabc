@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 355)
+        self.assertEqual(report["verified_artifact_count"], 356)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -3356,11 +3356,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1512)
-        self.assertEqual(provider_audit["default_static_callable_count"], 1048)
+        self.assertEqual(provider_audit["default_static_callable_count"], 1049)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 417)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 416)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -22197,6 +22197,198 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
             ledger.validate_ledger(data)
 
+    def test_mkdirat_artifact_keeps_its_caller_supplied_dirfd_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mkdirat"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/mkdirat.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/errno.h",
+            "include/fcntl.h",
+            "include/stdint.h",
+            "include/sys/stat.h",
+            "include/sys/syscall.h",
+            "include/sys/types.h",
+            "include/unistd.h",
+            "compat/x86_64/mkdirat_header_abi_probe.c",
+            "compat/x86_64/mkdirat_header_abi_probe.cpp",
+            "compat/x86_64/run_mkdirat_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_mkdirat_probe.c",
+            "compat/x86_64/libc_mkdirat_start.S",
+            "compat/x86_64/run_libc_mkdirat.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "selected-static-archive `mkdirat`",
+            "still-planned `libc.posix-runtime`",
+            "pinned musl 1.2.6",
+            "`-nostdlib -static`",
+            "caller-supplied-dirfd",
+            "mkdirat=258",
+            "0750/0000",
+            "raw 0710",
+            "EEXIST",
+            "EBADF",
+            "EFAULT",
+            "ENOENT",
+            "`mkdir`",
+            "mkfifo",
+            "mkfifoat",
+            "mknod",
+            "mknodat",
+            "AT_FDCWD",
+            "C umask",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-mkdirat"},
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "mkdirat=258" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in ("caller-supplied dirfd", "rdi/rsi/rdx", "mode_t", "-4095"):
+            self.assertIn(phrase, syscall_abi)
+        source_mapping = next(item for item in prerequisites if "src/stat/mkdirat.c" in item)
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "syscall(SYS_mkdirat, fd, path, mode)",
+            "Linux 5.10",
+            "neither mkdir nor another pathname-creation entry",
+        ):
+            self.assertIn(phrase, source_mapping)
+        mode_proof = next(item for item in prerequisites if "Raw mkdirat/openat" in item)
+        assert isinstance(mode_proof, str)
+        for phrase in (
+            "shell umask to 000",
+            "0750/0000",
+            "raw 0710",
+            "AT_FDCWD",
+            "C umask",
+            "EEXIST",
+            "EBADF",
+            "EFAULT",
+            "ENOENT",
+        ):
+            self.assertIn(phrase, mode_proof)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "eight-profile",
+            "sys/stat.h",
+            "sys/syscall.h",
+            "sys/types.h",
+            "mkdirat(int, const char *, mode_t)",
+            "SYS_mkdirat=258",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("mkdirat", exports)
+
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mkdirat.rs"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "src/stat/mkdirat.c",
+            "fn mkdirat",
+            "raw_syscall::SYS_MKDIRAT",
+            "raw_syscall::syscall3(",
+            "c_status(result)",
+            "mkdirat=258",
+        ):
+            self.assertIn(snippet, implementation)
+        for forbidden in (
+            "const AT_FDCWD",
+            "fn mkdir(",
+            "fn mkfifo(",
+            "fn mkfifoat(",
+            "fn mknod(",
+            "fn mknodat(",
+            "crabc_core",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_mkdirat_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "MUSL_ROOT=/opt/musl-1.2.6",
+            "EXPECTED_PROFILE_COUNT=8",
+            "sys/stat.h",
+            "sys/syscall.h",
+            "sys/types.h",
+            "mkdirat",
+            "unmangled",
+        ):
+            self.assertIn(snippet, header_runner)
+        probe = (ROOT / "compat" / "x86_64" / "libc_mkdirat_probe.c").read_text(
+            encoding="utf-8"
+        )
+        for snippet in (
+            "SYS_mkdirat == 258",
+            "S_ISDIR",
+            "EEXIST",
+            "EBADF",
+            "EFAULT",
+            "ENOENT",
+            "CRABC_MKDIRAT_FREESTANDING",
+        ):
+            self.assertIn(snippet, probe)
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_mkdirat.sh").read_text(
+            encoding="utf-8"
+        )
+        for snippet in (
+            "run_musl_oracle.sh",
+            "run_mkdirat_header_abi.sh",
+            "-nostdlib -static",
+            "mkdirat=258",
+            "umask 000",
+            "mkdirat candidate unexpectedly pulls independently selected pathname entry",
+        ):
+            self.assertIn(snippet, runner)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mkdirat"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(index for index, item in enumerate(prerequisites) if "mkdirat=258" in item)
+        prerequisites[index] = prerequisites[index].replace("mkdirat=258", "mkdirat=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
+            ledger.validate_ledger(data)
+
     def test_mkfifoat_artifact_keeps_its_caller_supplied_dirfd_boundary(self) -> None:
         data = self.data()
         family = self.family(data, "libc.posix-runtime")
@@ -24867,7 +25059,6 @@ class X86ParityLedgerTests(unittest.TestCase):
         for symbol in (
             "chroot",
             "fchmodat",
-            "mkdirat",
             "realpath",
             "renameat",
             "scandir",

@@ -237,7 +237,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         posix_runtime = next(
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
-        self.assertEqual(posix_runtime["verified_artifact_count"], 161)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 162)
         self.assertEqual(posix_runtime["verified_slice_count"], 6)
         resolver = next(
             row for row in report["families"] if row["id"] == "libc.resolver"
@@ -256,7 +256,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            355,
+            356,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -272,6 +272,10 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-ualarm"},
+            report["selected_private_artifacts"],
+        )
+        self.assertIn(
+            {"family": "libc.posix-runtime", "id": "static-c-mkdirat"},
             report["selected_private_artifacts"],
         )
         self.assertIn(
@@ -343,7 +347,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
         self.assertEqual(posix_runtime["contract_state"], "selected-private")
-        self.assertEqual(posix_runtime["verified_artifact_count"], 161)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 162)
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-sleep"},
             report["selected_private_artifacts"],

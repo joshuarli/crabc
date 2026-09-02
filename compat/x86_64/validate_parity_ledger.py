@@ -1676,7 +1676,6 @@ ULIMIT_SYMBOLS = ("ulimit",)
 PATHNAME_LIFECYCLE_UNSELECTED_SYMBOLS = (
     "chroot",
     "fchmodat",
-    "mkdirat",
     "realpath",
     "renameat",
     "scandir",
@@ -3117,11 +3116,11 @@ def validate_header_layout_foundation_manifest(
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1512,
-            "default_static_callable_count": 1048,
+            "default_static_callable_count": 1049,
             "verified_feature_callable_count": 47,
             "verified_feature_profile_count": 21,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 417,
+            "unprovided_callable_count": 416,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -6094,12 +6093,12 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "no-feature default static archive",
         "isolated exact Cargo requests",
         "ordinary archive extraction",
-        "1,048 current default-static",
+        "1,049 current default-static",
         "47 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "417-name unprovided complement",
+        "416-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -34679,6 +34678,284 @@ def require_mkfifoat_artifact(family: Mapping[str, Any]) -> None:
         "mkfifoat candidate exports an unselected special-node entry",
     ):
         require(snippet in runner, f"mkfifoat runner omits {snippet}")
+
+
+def require_mkdirat_artifact(family: Mapping[str, Any]) -> None:
+    """Keep direct caller-supplied-dirfd directory creation out of pathname policy."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-mkdirat"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-mkdirat artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-mkdirat must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive `mkdirat`",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "caller-supplied-dirfd",
+        "mkdirat=258",
+        "child-local shell umask 000",
+        "0750/0000",
+        "raw 0710",
+        "stale errno",
+        "EEXIST",
+        "EBADF",
+        "EFAULT",
+        "ENOENT",
+        "`mkdir`",
+        "mkfifo",
+        "mkfifoat",
+        "mknod",
+        "mknodat",
+        "AT_FDCWD",
+        "C umask",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-mkdirat description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-mkdirat.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/mkdirat.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/sys/stat.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/mkdirat_header_abi_probe.c",
+        "compat/x86_64/mkdirat_header_abi_probe.cpp",
+        "compat/x86_64/run_mkdirat_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_mkdirat_probe.c",
+        "compat/x86_64/libc_mkdirat_start.S",
+        "compat/x86_64/run_libc_mkdirat.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-mkdirat source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-mkdirat.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "mkdirat=258" in item
+            and "caller-supplied dirfd" in item
+            and "rdi/rsi/rdx" in item
+            and "mode_t" in item
+            and "-4095" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-mkdirat must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "src/stat/mkdirat.c" in item
+            and "syscall(SYS_mkdirat, fd, path, mode)" in item
+            and "Linux 5.10" in item
+            and "neither mkdir nor another pathname-creation entry" in item
+            for item in prerequisites
+        ),
+        "static-c-mkdirat must record its pinned-musl direct mapping",
+    )
+    require(
+        any(
+            "shell umask to 000" in item
+            and "Raw mkdirat/openat" in item
+            and "0750/0000" in item
+            and "raw 0710" in item
+            and "AT_FDCWD" in item
+            and "C umask" in item
+            and "EEXIST" in item
+            and "EBADF" in item
+            and "EFAULT" in item
+            and "ENOENT" in item
+            for item in prerequisites
+        ),
+        "static-c-mkdirat must record its descriptor-relative mode and errno proof",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-mkdirat must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-mkdirat.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "sys/stat.h" in item
+            and "sys/syscall.h" in item
+            and "sys/types.h" in item
+            and "mkdirat(int, const char *, mode_t)" in item
+            and "SYS_mkdirat=258" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-mkdirat must retain its exact project-header ABI boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require("mkdirat" in static_exports, "static-c-mkdirat must export mkdirat")
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "mkdirat.rs"]\nmod mkdirat;' in static_root,
+        "x86 static C ABI must compose the mkdirat leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mkdirat.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stat/mkdirat.c",
+        "fn mkdirat",
+        "raw_syscall::SYS_MKDIRAT",
+        "raw_syscall::syscall3(",
+        "i64::from(directory_descriptor)",
+        "c_status(result)",
+        "mkdirat=258",
+    ):
+        require(snippet in implementation, f"mkdirat leaf omits {snippet}")
+    for forbidden in (
+        "const AT_FDCWD",
+        "fn mkdir(",
+        "fn mkfifo(",
+        "fn mkfifoat(",
+        "fn mknod(",
+        "fn mknodat(",
+        "crabc_core",
+        "mimalloc",
+        "alloc::",
+    ):
+        require(
+            forbidden not in implementation,
+            f"mkdirat leaf unexpectedly contains {forbidden}",
+        )
+    syscall_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "pub(crate) const SYS_MKDIRAT: i64 = 258;" in syscall_source,
+        "x86 syscall table must retain mkdirat=258",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "include/sys/stat.h" in entry["role"]
+            and "src/stat/mkdirat.c" in entry["role"]
+            and "syscall(SYS_mkdirat, fd, path, mode)" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-mkdirat must retain its pinned-musl mkdirat source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-mkdirat"},
+        "static-c-mkdirat must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static`",
+                "eight-profile",
+                "mkdirat=258",
+                "rdi/rsi/rdx",
+                "0750/0000",
+                "raw-0710",
+                "stale-errno success",
+                "EEXIST",
+                "EBADF",
+                "EFAULT",
+                "ENOENT",
+                "shell umask 000",
+                "mkfifo/mkfifoat/mknod/mknodat",
+                "AT_FDCWD/CWD/pathname/permission policy",
+                "public x86 support",
+            )
+        ),
+        "static-c-mkdirat evidence must retain its exact static directory regression",
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_mkdirat_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=8",
+        "sys/stat.h",
+        "sys/syscall.h",
+        "sys/types.h",
+        "mkdirat",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"mkdirat header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_mkdirat.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_mkdirat_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "mkdirat=258",
+        "umask 000",
+        "CRABC_MKDIRAT_FREESTANDING",
+        "mkdirat candidate unexpectedly pulls independently selected pathname entry",
+    ):
+        require(snippet in runner, f"mkdirat runner omits {snippet}")
 
 
 def require_fcntl_status_control_artifact(family: Mapping[str, Any]) -> None:
@@ -74039,6 +74316,7 @@ def validate_ledger(
     require_lchmod_unsupported_slice(by_id["libc.posix-runtime"])
     require_mkfifo_artifact(by_id["libc.posix-runtime"])
     require_mkfifoat_artifact(by_id["libc.posix-runtime"])
+    require_mkdirat_artifact(by_id["libc.posix-runtime"])
     require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])
