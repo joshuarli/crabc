@@ -2379,7 +2379,7 @@ advance this AArch64 allocator ledger.
 | --- | --- | --- |
 | M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. A clean native `./scripts/dev.sh allocator --quick` exited 0 at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is inventory/skeleton completion only, not engine parity. |
 | M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. A clean native `./scripts/dev.sh allocator-m1` exited 0 at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`, with all six components complete and no unmet IDs. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `1698ee9e9ef88894d2d68fcf2a0a806868f5a547`, a clean detached native `./scripts/dev.sh allocator-m2` ran all 19 selected checks with source unchanged; its defined exit is 3 because the seven remaining components are unmet. PageMap is complete; VM primitives has eight passing checks, including direct/prefix/suffix aligned-overmap cleanup ownership and reset-advice retry snapshot control flow, but remains partial; metadata, bitmaps, arenas, initialization, fault injection, and allocator recursion also remain partial. The ten PageMap checks cover source-private C/Rust success and failed-first-init differentials, bootstrap/lazy/release ownership failures, private-lock publication, and the process-owner terminal boundary. C's static empty-root/null-lookup/later-success result versus Rust's absent-root/typed-poison result is an explicitly accepted bounded safety divergence: C's sentinel is not a safe live-map continuation, and this does not claim public C ABI or full process-lifecycle parity. |
+| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `0d153612edb33699d0235ccb69eb359f6802e9a8`, a clean detached native `./scripts/dev.sh allocator-m2` ran all 20 selected checks with source unchanged; its defined exit is 3 because the seven remaining components are unmet. PageMap is complete. VM primitives has eight passing checks, including direct/prefix/suffix aligned-overmap cleanup ownership and reset-advice retry snapshot control flow; metadata has one selected cleanup-owner check; and arenas has one selected source-64-bit-field delayed-purge check. Those three categories remain partial, as do bitmaps, initialization, fault injection, and allocator recursion. The ten PageMap checks cover source-private C/Rust success and failed-first-init differentials, bootstrap/lazy/release ownership failures, private-lock publication, and the process-owner terminal boundary. C's static empty-root/null-lookup/later-success result versus Rust's absent-root/typed-poison result is an explicitly accepted bounded safety divergence: C's sentinel is not a safe live-map continuation, and this does not claim public C ABI or full process-lifecycle parity. |
 | M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri. A forced `cfg(miri)` smoke is currently unavailable because `os_host_model.rs` lacks the existing NUMA/identity/entropy and `Mapping::page_size` APIs its callers require; the same ten compile errors existed at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is an M3 host-model limitation, not M2 evidence or a regression introduced by the aligned-overmap slice. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
@@ -2521,6 +2521,18 @@ not retry-parity or complete aligned-allocation evidence. Reserve, commit,
 decommit, purge, protect, reuse, huge-page, hint, NUMA, remaining overmap
 policy, and the wider failure matrix still keep VM primitives partial.
 
+The selected `arenas` evidence is deliberately narrower than arena closure.
+With the frozen default `minslices == 1`, its unpinned external-arena fixture
+holds the legal `[9, 63)` prefix, releases `[63, 65)`, and forces collection.
+Pinned `mi_arena_try_purge` reaches the generic
+`_mi_bitmap_forall_setc_rangesn` visitor, so that boundary-spanning run invokes
+the decommit hook twice, once for each source 64-bit bitmap field, while the
+Rust test proves the free bits are restored and the purge bits cleared. This
+proves only default one-slice delayed-purge callback grouping; configurable
+purge policy, general visitor completion, registry-wide collection, concurrent
+arenas, and arena lifecycle remain unclaimed. Thus `arenas` and M2 remain
+partial.
+
 The manifest additionally selects
 `os::tests::reset_retries_the_initial_advice_after_a_concurrent_global_fallback`.
 Pinned `src/prim/unix/prim.c:_mi_prim_reset` takes one Relaxed snapshot of its
@@ -2619,6 +2631,16 @@ regression described above. The report remains partial for exactly
 `fault-injection`, and `allocator-recursion`; it does not advance M3 or any
 later milestone.
 
+At `0d153612edb33699d0235ccb69eb359f6802e9a8`, a clean detached native
+checkout reran `./scripts/dev.sh allocator-m2` after the arena field-boundary
+fix. Its report attests an unchanged clean source before and after execution,
+with 20 passing selected checks: eight VM-primitives checks, one metadata
+check, all ten PageMap checks, and the one arena default delayed-purge
+64-bit-field boundary check. The command exited 3 as designed; its unmet IDs
+remain exactly `vm-primitives`, `metadata`, `bitmaps`, `arenas`,
+`initialization`, `fault-injection`, and `allocator-recursion`. This adds
+bounded arena evidence only and does not advance M3 or any later milestone.
+
 ## Active boundary and priority rule
 
 The integrated owner-local mapped-abandoned medium reclaim slice is a narrowly
@@ -2627,8 +2649,9 @@ shadow, or promotion claim. Keep its source map, regression, and exact test
 result, but do not use it to advance M5.
 
 M0 and M1 are closed predecessors. M2 is now the current closure gate; its
-selected PageMap component is complete, but its seven other required
-components remain partial. Do not advance M3, M4, or later milestones until
+selected PageMap component is complete, while the other seven required
+components remain partial (including the selected-but-incomplete arena
+component). Do not advance M3, M4, or later milestones until
 M2 has its own complete current-commit contract and evidence. The narrowly
 scoped M5 work around the bounded process-once envelope does not advance M5.
 Existing M3/M4 bounded evidence remains regression evidence, not permission to
