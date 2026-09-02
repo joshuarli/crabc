@@ -2097,7 +2097,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(summary["milestone"]["status"], "partial")
         self.assertEqual(
             [component["id"] for component in summary["components"] if component["checks"]],
-            ["vm-primitives", "metadata", "page-map", "arenas", "initialization"],
+            ["vm-primitives", "metadata", "bitmaps", "page-map", "arenas", "initialization"],
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2241,6 +2241,20 @@ class ContractTests(unittest.TestCase):
                 },
             ],
         )
+        bitmaps = next(component for component in summary["components"] if component["id"] == "bitmaps")
+        self.assertEqual(
+            bitmaps["checks"],
+            [
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "c-rust-bitmap-abandoned-claim-differential",
+                    "kind": "c-rust-bitmap-abandoned-claim-differential",
+                    "target": "bitmap::tests::emit_m2_bitmap_abandoned_claim_c_rust_trace",
+                }
+            ],
+        )
+        self.assertEqual(bitmaps["completion_status"], "partial")
+        self.assertTrue(bitmaps["remaining_conditions"])
         page_map = next(component for component in summary["components"] if component["id"] == "page-map")
         self.assertEqual(page_map["completion_status"], "complete")
         self.assertEqual(len(page_map["checks"]), 10)
@@ -2524,6 +2538,56 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.page_map.cold.init_body_attempt_count"] = 2
         with self.assertRaisesRegex(RUNNER.HarnessError, "replayed"):
             RUNNER.compare_m2_page_map_cold_init_trace(c_trace, rust_trace)
+
+    @staticmethod
+    def _m2_bitmap_abandoned_claim_trace() -> dict[str, int]:
+        return {
+            "m2.bitmap.control.bfield_bits": 64,
+            "m2.bitmap.control.bchunk_bits": 512,
+            "m2.bitmap.control.thread_sequence": 5,
+            "m2.bitmap.control.selected_index": 17,
+            "m2.bitmap.layout.byte_size": 192,
+            "m2.bitmap.setup.chunk_count": 1,
+            "m2.bitmap.setup.initial_set_transitioned": 1,
+            "m2.bitmap.reject.returned_claimed": 0,
+            "m2.bitmap.reject.callback_count": 1,
+            "m2.bitmap.reject.callback_index": 17,
+            "m2.bitmap.reject.bit_restored": 1,
+            "m2.bitmap.reject.chunkmap_retained": 1,
+            "m2.bitmap.accept.returned_claimed": 1,
+            "m2.bitmap.accept.callback_count": 1,
+            "m2.bitmap.accept.callback_index": 17,
+            "m2.bitmap.accept.claimed_index": 17,
+            "m2.bitmap.accept.bit_cleared": 1,
+            "m2.bitmap.accept.chunkmap_retained": 1,
+            "m2.bitmap.drain.returned_claimed": 0,
+            "m2.bitmap.drain.callback_count": 0,
+            "m2.bitmap.drain.chunkmap_cleared": 1,
+        }
+
+    def test_m2_bitmap_abandoned_claim_trace_requires_the_full_selected_transition(self) -> None:
+        c_trace = self._m2_bitmap_abandoned_claim_trace()
+        output = "CRABC_MI_M2_BITMAP_ABANDONED_CLAIM_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_BITMAP_ABANDONED_CLAIM_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_bitmap_abandoned_claim_trace(output, source="pinned C")
+        RUNNER.validate_m2_bitmap_abandoned_claim_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_bitmap_abandoned_claim_trace()
+        RUNNER.validate_m2_bitmap_abandoned_claim_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_bitmap_abandoned_claim_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_BITMAP_ABANDONED_CLAIM_TRACE_KEYS),
+        )
+
+    def test_m2_bitmap_abandoned_claim_trace_rejects_a_missing_stale_map_repair(self) -> None:
+        c_trace = self._m2_bitmap_abandoned_claim_trace()
+        rust_trace = self._m2_bitmap_abandoned_claim_trace()
+        rust_trace["m2.bitmap.drain.chunkmap_cleared"] = 0
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_bitmap_abandoned_claim_trace(c_trace, rust_trace)
 
     def test_m2_parser_is_native_only_and_mutually_exclusive(self) -> None:
         with mock.patch.object(sys, "argv", ["run.py", "--m2"]):

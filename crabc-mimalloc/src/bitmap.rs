@@ -16,11 +16,15 @@
 // arithmetic, atomic set/clear, rollback, set-run selection, scalar relaxed
 // chunk observations, caller-owned bitmap initialization, range operations,
 // and conservative chunkmap maintenance), `src/bitmap.c:109-129,920-928,
-// 1297-1380,1425-1432` (the abandoned-page single-bit claim visitor and
-// clear-once-set reader quiescence), plus `src/bitmap.c:1583-1784,
+// 1024-1042,1297-1380,1425-1432` (the abandoned-page single-bit claim
+// visitor, its conservative-map repair, and clear-once-set reader quiescence),
+// plus `src/bitmap.c:1583-1784,
 // 1794-1997` (binned initialization, size bins, two-level claims, and exact
 // multi-chunk rollback). This slice intentionally excludes general visitors,
-// callbacks, and statistics-counter integration. The allocator-owned dynamic
+// callbacks, and statistics-counter integration. The one-chunk M2 C/Rust
+// trace below covers only reject/restore, accepted-claim, and stale-map repair
+// for that abandoned-page visitor; it is not general callback parity. The
+// allocator-owned dynamic
 // TLS registry projects its typed metadata capability only transiently through
 // the ordinary lowest-bit claim path below; it does not add a general bitmap
 // metadata ownership API.
@@ -2539,6 +2543,121 @@ mod tests {
         assert_eq!(second_search, Some(17));
         assert_eq!(calls.get(), 2);
         assert_eq!(bitmap.is_clear_range(17, 1), Some(true));
+    }
+
+    /// Emits the address-free Rust half of the selected `mi_bitmap_try_find_and_claim`
+    /// differential. The one-chunk image rejects its only source-snapshot
+    /// candidate with `keep_set`, so the visitor must restore both the bit and
+    /// conservative chunk-map state before the next traversal can claim that
+    /// same bit. This proves neither general bitmap visitation nor the
+    /// concurrent `clear_once_set` protocol.
+    #[test]
+    fn emit_m2_bitmap_abandoned_claim_c_rust_trace() {
+        extern crate std;
+
+        use core::cell::Cell;
+
+        const THREAD_SEQUENCE: usize = 5;
+        const SELECTED_INDEX: usize = 17;
+
+        let layout = BitmapLayout::for_bit_count(BCHUNK_BITS).unwrap();
+        let mut storage = BitmapTestStorage::uninit();
+        let bitmap = unsafe {
+            BitmapView::initialize(
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+
+        let initial_set_transitioned = matches!(
+            bitmap.set_range(SELECTED_INDEX, 1),
+            Some(transition) if transition.all_transitioned()
+        );
+        let callback_count = Cell::new(0usize);
+        let reject_callback_index = Cell::new(usize::MAX);
+        let rejected = bitmap.try_find_and_claim_abandoned(THREAD_SEQUENCE, |slice_index| {
+            assert_eq!(callback_count.get(), 0);
+            callback_count.set(1);
+            reject_callback_index.set(slice_index);
+            AbandonedBitmapClaim::KeepSet
+        });
+        let rejected_returned_claimed = rejected.is_some();
+        let reject_callback_count = callback_count.get();
+        let rejected_bit_restored = bitmap.is_set_range(SELECTED_INDEX, 1) == Some(true);
+        let rejected_chunkmap_retained = bitmap.chunkmap().is_set_run(0, 1);
+
+        let accept_callback_index = Cell::new(usize::MAX);
+        let accepted = bitmap.try_find_and_claim_abandoned(THREAD_SEQUENCE, |slice_index| {
+            assert_eq!(callback_count.get(), 1);
+            callback_count.set(2);
+            accept_callback_index.set(slice_index);
+            AbandonedBitmapClaim::Claimed
+        });
+        let accepted_returned_claimed = accepted.is_some();
+        let accepted_claimed_index = accepted.unwrap_or(usize::MAX);
+        let accept_callback_count = callback_count.get() - reject_callback_count;
+        let accepted_bit_cleared = bitmap.is_clear_range(SELECTED_INDEX, 1) == Some(true);
+        let accepted_chunkmap_retained = bitmap.chunkmap().is_set_run(0, 1);
+
+        // A successful bit claim intentionally leaves the conservative map
+        // set. The next source snapshot finds the drained chunk, invokes no
+        // ownership callback, and repairs that stale map bit.
+        let drained = bitmap.try_find_and_claim_abandoned(THREAD_SEQUENCE, |_| {
+            panic!("a drained bitmap chunk must not invoke the ownership callback")
+        });
+        let drained_returned_claimed = drained.is_some();
+        let drained_callback_count = callback_count.get()
+            - reject_callback_count
+            - accept_callback_count;
+        let drained_chunkmap_cleared = bitmap.chunkmap().is_clear_run(0, 1);
+
+        assert!(initial_set_transitioned);
+        assert!(!rejected_returned_claimed);
+        assert_eq!(reject_callback_count, 1);
+        assert_eq!(reject_callback_index.get(), SELECTED_INDEX);
+        assert!(rejected_bit_restored);
+        assert!(rejected_chunkmap_retained);
+        assert!(accepted_returned_claimed);
+        assert_eq!(accept_callback_count, 1);
+        assert_eq!(accept_callback_index.get(), SELECTED_INDEX);
+        assert_eq!(accepted_claimed_index, SELECTED_INDEX);
+        assert!(accepted_bit_cleared);
+        assert!(accepted_chunkmap_retained);
+        assert!(!drained_returned_claimed);
+        assert_eq!(drained_callback_count, 0);
+        assert!(drained_chunkmap_cleared);
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+        std::println!("CRABC_MI_M2_BITMAP_ABANDONED_CLAIM_TRACE_BEGIN");
+        emit!("m2.bitmap.control.bfield_bits", BFIELD_BITS);
+        emit!("m2.bitmap.control.bchunk_bits", BCHUNK_BITS);
+        emit!("m2.bitmap.control.thread_sequence", THREAD_SEQUENCE);
+        emit!("m2.bitmap.control.selected_index", SELECTED_INDEX);
+        emit!("m2.bitmap.layout.byte_size", layout.byte_size());
+        emit!("m2.bitmap.setup.chunk_count", layout.chunk_count());
+        emit!("m2.bitmap.setup.initial_set_transitioned", initial_set_transitioned);
+        emit!("m2.bitmap.reject.returned_claimed", rejected_returned_claimed);
+        emit!("m2.bitmap.reject.callback_count", reject_callback_count);
+        emit!("m2.bitmap.reject.callback_index", reject_callback_index.get());
+        emit!("m2.bitmap.reject.bit_restored", rejected_bit_restored);
+        emit!("m2.bitmap.reject.chunkmap_retained", rejected_chunkmap_retained);
+        emit!("m2.bitmap.accept.returned_claimed", accepted_returned_claimed);
+        emit!("m2.bitmap.accept.callback_count", accept_callback_count);
+        emit!("m2.bitmap.accept.callback_index", accept_callback_index.get());
+        emit!("m2.bitmap.accept.claimed_index", accepted_claimed_index);
+        emit!("m2.bitmap.accept.bit_cleared", accepted_bit_cleared);
+        emit!("m2.bitmap.accept.chunkmap_retained", accepted_chunkmap_retained);
+        emit!("m2.bitmap.drain.returned_claimed", drained_returned_claimed);
+        emit!("m2.bitmap.drain.callback_count", drained_callback_count);
+        emit!("m2.bitmap.drain.chunkmap_cleared", drained_chunkmap_cleared);
+        std::println!("CRABC_MI_M2_BITMAP_ABANDONED_CLAIM_TRACE_END");
     }
 
     #[test]

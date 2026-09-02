@@ -187,6 +187,9 @@ M2_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-v3.5.0.json
 M2_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "m2-memory-substrate-latest.json"
 M2_MEMORY_SUBSTRATE_CARGO_TARGET = ARTIFACT_ROOT / "m2-memory-substrate/cargo-target"
 M2_PAGE_MAP_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m2-memory-substrate/page-map-trace"
+M2_BITMAP_ABANDONED_CLAIM_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "m2-memory-substrate/bitmap-abandoned-claim-trace"
+)
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -329,6 +332,34 @@ M2_PAGE_MAP_COLD_INIT_MATCHED_KEYS = (
     "m2.page_map.cold.first_init_failed",
     "m2.page_map.cold.dynamic_root_unpublished",
     "m2.page_map.cold.init_body_attempt_count",
+)
+# This one-chunk record fixes the narrow abandoned-page visitor boundary: a
+# rejected ownership callback restores the candidate and conservative map, a
+# later successful callback drains the bit but retains that map, and one more
+# search repairs the stale map without calling an ownership callback. It is not
+# a general bitmap, arena, or clear-once-set concurrency contract.
+M2_BITMAP_ABANDONED_CLAIM_TRACE_KEYS = (
+    "m2.bitmap.control.bfield_bits",
+    "m2.bitmap.control.bchunk_bits",
+    "m2.bitmap.control.thread_sequence",
+    "m2.bitmap.control.selected_index",
+    "m2.bitmap.layout.byte_size",
+    "m2.bitmap.setup.chunk_count",
+    "m2.bitmap.setup.initial_set_transitioned",
+    "m2.bitmap.reject.returned_claimed",
+    "m2.bitmap.reject.callback_count",
+    "m2.bitmap.reject.callback_index",
+    "m2.bitmap.reject.bit_restored",
+    "m2.bitmap.reject.chunkmap_retained",
+    "m2.bitmap.accept.returned_claimed",
+    "m2.bitmap.accept.callback_count",
+    "m2.bitmap.accept.callback_index",
+    "m2.bitmap.accept.claimed_index",
+    "m2.bitmap.accept.bit_cleared",
+    "m2.bitmap.accept.chunkmap_retained",
+    "m2.bitmap.drain.returned_claimed",
+    "m2.bitmap.drain.callback_count",
+    "m2.bitmap.drain.chunkmap_cleared",
 )
 M1_FOUNDATIONS_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
@@ -2653,6 +2684,139 @@ int main(void) {
   U("m2.page_map.cold.null_lookup_returns_null", null_lookup_returns_null);
   U("m2.page_map.cold.cold_lookup_route_unavailable", false);
   puts("CRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_END");
+  return 0;
+}
+"""
+
+
+# This fixture includes only the selected pinned `src/bitmap.c` body. Its
+# one-chunk static image never invokes allocator initialization or any arena
+# callback state; linker section collection deliberately discards the other
+# bitmap implementation paths. The trace therefore compares the exact
+# source-private reject/restore, claim, and stale-conservative-map repair
+# transitions without pretending to exercise full arena abandonment.
+M2_BITMAP_ABANDONED_CLAIM_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "bitmap.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+enum {
+  m2_bitmap_thread_sequence = 5,
+  m2_bitmap_selected_index = 17,
+};
+
+static mi_bitmap_t m2_bitmap_image;
+static size_t m2_bitmap_callback_count;
+static size_t m2_bitmap_reject_index;
+static size_t m2_bitmap_accept_index;
+static size_t m2_bitmap_drain_callback_count;
+
+static bool m2_bitmap_reject(
+    size_t slice_index, mi_arena_t* arena, bool* keep_set)
+{
+  if (arena != NULL || keep_set == NULL) return false;
+  m2_bitmap_callback_count++;
+  m2_bitmap_reject_index = slice_index;
+  *keep_set = true;
+  return false;
+}
+
+static bool m2_bitmap_accept(
+    size_t slice_index, mi_arena_t* arena, bool* keep_set)
+{
+  if (arena != NULL || keep_set == NULL) return false;
+  m2_bitmap_callback_count++;
+  m2_bitmap_accept_index = slice_index;
+  *keep_set = false;
+  return true;
+}
+
+static bool m2_bitmap_drain_callback(
+    size_t slice_index, mi_arena_t* arena, bool* keep_set)
+{
+  MI_UNUSED(slice_index);
+  if (arena != NULL || keep_set == NULL) return false;
+  m2_bitmap_drain_callback_count++;
+  *keep_set = true;
+  return false;
+}
+
+int main(void) {
+  const size_t byte_size = mi_bitmap_init(
+      &m2_bitmap_image, MI_BCHUNK_BITS, true);
+  const size_t chunk_count = mi_bitmap_chunk_count(&m2_bitmap_image);
+  const bool initial_set_transitioned =
+      mi_bitmap_set(&m2_bitmap_image, m2_bitmap_selected_index);
+
+  size_t rejected_index = SIZE_MAX;
+  const bool rejected_returned_claimed = mi_bitmap_try_find_and_claim(
+      &m2_bitmap_image, m2_bitmap_thread_sequence, &rejected_index, &m2_bitmap_reject, NULL);
+  const bool rejected_bit_restored = mi_bitmap_is_set(
+      &m2_bitmap_image, m2_bitmap_selected_index);
+  const bool rejected_chunkmap_retained = mi_bchunk_is_xsetN(
+      MI_BIT_SET, &m2_bitmap_image.chunkmap, 0, 1);
+  const size_t reject_callback_count = m2_bitmap_callback_count;
+
+  size_t accepted_index = SIZE_MAX;
+  const bool accepted_returned_claimed = mi_bitmap_try_find_and_claim(
+      &m2_bitmap_image, m2_bitmap_thread_sequence, &accepted_index, &m2_bitmap_accept, NULL);
+  const bool accepted_bit_cleared = mi_bitmap_is_clear(
+      &m2_bitmap_image, m2_bitmap_selected_index);
+  const bool accepted_chunkmap_retained = mi_bchunk_is_xsetN(
+      MI_BIT_SET, &m2_bitmap_image.chunkmap, 0, 1);
+  const size_t accept_callback_count =
+      m2_bitmap_callback_count - reject_callback_count;
+
+  size_t drained_index = SIZE_MAX;
+  const bool drained_returned_claimed = mi_bitmap_try_find_and_claim(
+      &m2_bitmap_image, m2_bitmap_thread_sequence, &drained_index, &m2_bitmap_drain_callback, NULL);
+  const bool drained_chunkmap_cleared = mi_bchunk_is_xsetN(
+      MI_BIT_CLEAR, &m2_bitmap_image.chunkmap, 0, 1);
+
+  const bool all_relations =
+      byte_size == sizeof(m2_bitmap_image) && chunk_count == 1 &&
+      initial_set_transitioned &&
+      !rejected_returned_claimed && rejected_index == SIZE_MAX &&
+      reject_callback_count == 1 &&
+      m2_bitmap_reject_index == m2_bitmap_selected_index &&
+      rejected_bit_restored && rejected_chunkmap_retained &&
+      accepted_returned_claimed &&
+      accept_callback_count == 1 &&
+      m2_bitmap_accept_index == m2_bitmap_selected_index &&
+      accepted_index == m2_bitmap_selected_index &&
+      accepted_bit_cleared && accepted_chunkmap_retained &&
+      !drained_returned_claimed && drained_index == SIZE_MAX &&
+      m2_bitmap_drain_callback_count == 0 && drained_chunkmap_cleared;
+  if (!all_relations) return 10;
+
+  puts("CRABC_MI_M2_BITMAP_ABANDONED_CLAIM_TRACE_BEGIN");
+  U("m2.bitmap.control.bfield_bits", MI_BFIELD_BITS);
+  U("m2.bitmap.control.bchunk_bits", MI_BCHUNK_BITS);
+  U("m2.bitmap.control.thread_sequence", m2_bitmap_thread_sequence);
+  U("m2.bitmap.control.selected_index", m2_bitmap_selected_index);
+  U("m2.bitmap.layout.byte_size", byte_size);
+  U("m2.bitmap.setup.chunk_count", chunk_count);
+  U("m2.bitmap.setup.initial_set_transitioned", initial_set_transitioned);
+  U("m2.bitmap.reject.returned_claimed", rejected_returned_claimed);
+  U("m2.bitmap.reject.callback_count", reject_callback_count);
+  U("m2.bitmap.reject.callback_index", m2_bitmap_reject_index);
+  U("m2.bitmap.reject.bit_restored", rejected_bit_restored);
+  U("m2.bitmap.reject.chunkmap_retained", rejected_chunkmap_retained);
+  U("m2.bitmap.accept.returned_claimed", accepted_returned_claimed);
+  U("m2.bitmap.accept.callback_count", accept_callback_count);
+  U("m2.bitmap.accept.callback_index", m2_bitmap_accept_index);
+  U("m2.bitmap.accept.claimed_index", accepted_index);
+  U("m2.bitmap.accept.bit_cleared", accepted_bit_cleared);
+  U("m2.bitmap.accept.chunkmap_retained", accepted_chunkmap_retained);
+  U("m2.bitmap.drain.returned_claimed", drained_returned_claimed);
+  U("m2.bitmap.drain.callback_count", m2_bitmap_drain_callback_count);
+  U("m2.bitmap.drain.chunkmap_cleared", drained_chunkmap_cleared);
+  puts("CRABC_MI_M2_BITMAP_ABANDONED_CLAIM_TRACE_END");
   return 0;
 }
 """
@@ -5351,6 +5515,7 @@ def validate_m2_memory_substrate_contract(
                 not in {
                     "rust-unit",
                     "rust-page-map-success-trace",
+                    "c-rust-bitmap-abandoned-claim-differential",
                     "c-rust-page-map-success-differential",
                     "c-rust-page-map-cold-init-differential",
                 }
@@ -5469,6 +5634,75 @@ def m2_memory_substrate_check_command(
     command.extend(("--locked", "--lib", str(check["target"])))
     command.extend(("--", f"--test-threads={execution['test_threads']}", "--nocapture"))
     return command
+
+
+def run_m2_bitmap_abandoned_claim_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the selected pinned-C/Rust abandoned-page bitmap visitor."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-bitmap-claim-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_bitmap_abandoned_claim_trace(
+            compiler,
+            source,
+            M2_BITMAP_ABANDONED_CLAIM_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "bitmap::tests::emit_m2_bitmap_abandoned_claim_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 bitmap abandoned-claim trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_bitmap_abandoned_claim_trace(rust_output, source="Rust")
+    validate_m2_bitmap_abandoned_claim_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 bitmap abandoned-claim trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_bitmap_abandoned_claim_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "one pinned-C/Rust one-chunk source-snapshot abandoned-page bitmap claim: "
+            "a rejected keep-set callback restores bit 17 and its conservative map, a "
+            "later accepting callback clears the bit but retains the conservative map, and "
+            "a drained probe invokes no callback while repairing that stale map bit. This "
+            "does not cover keep-set-false rejection, multi-chunk or tseq distribution, "
+            "arena/subprocess ownership, races, clear-once-set, visitors, statistics, "
+            "binned bitmaps, or flexible-array allocation ownership."
+        ),
+        "status": comparison["status"],
+    }
 
 
 def run_m2_page_map_differential(
@@ -5616,6 +5850,26 @@ def run_m2_memory_substrate_checks(
     records: list[dict[str, Any]] = []
     for component in summary["components"]:
         for check in component["checks"]:
+            if check["kind"] == "c-rust-bitmap-abandoned-claim-differential":
+                differential = run_m2_bitmap_abandoned_claim_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
             if check["kind"] == "c-rust-page-map-success-differential":
                 differential = run_m2_page_map_differential(
                     pin,
@@ -10899,6 +11153,98 @@ def compare_m2_page_map_cold_init_trace(
     }
 
 
+def parse_m2_bitmap_abandoned_claim_trace(output: str, *, source: str) -> dict[str, int]:
+    """Parse the fixed source-snapshot abandoned-bitmap claim record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_BITMAP_ABANDONED_CLAIM_TRACE_BEGIN",
+        end="CRABC_MI_M2_BITMAP_ABANDONED_CLAIM_TRACE_END",
+        description=f"{source} M2 bitmap abandoned-claim trace",
+    )
+    if set(trace) != set(M2_BITMAP_ABANDONED_CLAIM_TRACE_KEYS):
+        missing = sorted(set(M2_BITMAP_ABANDONED_CLAIM_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_BITMAP_ABANDONED_CLAIM_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 bitmap abandoned-claim trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_bitmap_abandoned_claim_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Require the selected C/Rust bitmap visitor facts before comparison."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown M2 bitmap abandoned-claim trace source: {source}")
+    if set(trace) != set(M2_BITMAP_ABANDONED_CLAIM_TRACE_KEYS):
+        raise HarnessError(f"{source} M2 bitmap abandoned-claim trace keys differ from the fixed contract")
+    for key in M2_BITMAP_ABANDONED_CLAIM_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} M2 bitmap abandoned-claim trace field is not an integer: {key}"
+            )
+
+    expected = {
+        "m2.bitmap.control.bfield_bits": 64,
+        "m2.bitmap.control.bchunk_bits": 512,
+        "m2.bitmap.control.thread_sequence": 5,
+        "m2.bitmap.control.selected_index": 17,
+        "m2.bitmap.layout.byte_size": 192,
+        "m2.bitmap.setup.chunk_count": 1,
+        "m2.bitmap.setup.initial_set_transitioned": 1,
+        "m2.bitmap.reject.returned_claimed": 0,
+        "m2.bitmap.reject.callback_count": 1,
+        "m2.bitmap.reject.callback_index": 17,
+        "m2.bitmap.reject.bit_restored": 1,
+        "m2.bitmap.reject.chunkmap_retained": 1,
+        "m2.bitmap.accept.returned_claimed": 1,
+        "m2.bitmap.accept.callback_count": 1,
+        "m2.bitmap.accept.callback_index": 17,
+        "m2.bitmap.accept.claimed_index": 17,
+        "m2.bitmap.accept.bit_cleared": 1,
+        "m2.bitmap.accept.chunkmap_retained": 1,
+        "m2.bitmap.drain.returned_claimed": 0,
+        "m2.bitmap.drain.callback_count": 0,
+        "m2.bitmap.drain.chunkmap_cleared": 1,
+    }
+    for key, value in expected.items():
+        if trace[key] != value:
+            raise HarnessError(
+                f"{source} M2 bitmap abandoned-claim trace contains an unmet relation: {key}"
+            )
+
+
+def compare_m2_bitmap_abandoned_claim_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require exact equality for the selected address-free bitmap transition."""
+
+    validate_m2_bitmap_abandoned_claim_trace(c_trace, source="pinned C")
+    validate_m2_bitmap_abandoned_claim_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_BITMAP_ABANDONED_CLAIM_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 bitmap abandoned-claim trace differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(M2_BITMAP_ABANDONED_CLAIM_TRACE_KEYS),
+        "status": "matched",
+    }
+
+
 def parse_rust_test_count(output: str) -> int:
     matches = re.findall(
         r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
@@ -11950,6 +12296,65 @@ def build_m1_raw_primitive_trace(
                 "src/os.c",
                 "src/prim/prim.c",
                 "src/prim/unix/prim.c",
+            ),
+        ),
+    }
+
+
+def build_m2_bitmap_abandoned_claim_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the selected source-private one-chunk bitmap claim producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-bitmap-abandoned-claim-trace-probe.c"
+    trace_binary = profile_dir / "m2-bitmap-abandoned-claim-trace-probe"
+    trace_source.write_text(M2_BITMAP_ABANDONED_CLAIM_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        "-ffunction-sections",
+        "-fdata-sections",
+        str(trace_source),
+        "-Wl,--gc-sections",
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 bitmap abandoned-claim trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 bitmap abandoned-claim trace execution")
+    record = parse_m2_bitmap_abandoned_claim_trace(str(run["stdout"]), source="pinned C")
+    validate_m2_bitmap_abandoned_claim_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc.h",
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/bits.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "include/mimalloc/types.h",
+                "src/bitmap.h",
+                "src/bitmap.c",
             ),
         ),
     }
