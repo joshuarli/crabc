@@ -2166,7 +2166,12 @@ impl<'arena> ArenaView<'arena> {
             }
             None => match unsafe { os::decommit_arena_range(page_size, start, size) } {
                 Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) | Ok(None) => false,
-                Err(_) => return self.restore_failed_purge(slice_index, slice_count),
+                // In the frozen Linux release profile, `_mi_prim_decommit`
+                // sets `needs_recommit = false` after its MADV_DONTNEED
+                // attempt even when that advisory reports an error. The
+                // source reports the error but consumes this purge work, with
+                // the live mapping still accessible and committed.
+                Err(_) => false,
             },
         };
         if (needs_recommit || !all_committed)

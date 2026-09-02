@@ -172,15 +172,23 @@
           "id": "arena-purge-source-bfield-boundary",
           "kind": "rust-unit",
           "target": "arena::tests::scheduled_purge_splits_a_run_at_each_source_bitmap_field_boundary"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-purge-decommit-error-consumption",
+          "kind": "rust-unit",
+          "target": "single_thread::tests::forced_unpinned_arena_decommit_failure_consumes_source_purge_work"
         }
       ],
       "completion_status": "partial",
       "id": "arenas",
       "remaining_conditions": [
-        "complete multi-arena search, claim, release, purge scheduling, and reuse semantics with ownership checks beyond the selected default one-slice delayed-purge 64-bit bitmap-field callback grouping"
+        "complete multi-arena search, claim, release, purge scheduling, and reuse semantics with ownership checks beyond the selected default one-slice delayed-purge 64-bit bitmap-field callback grouping and frozen-Linux default-decommit-error consumption"
       ],
       "source_units": [
         "src/arena.c",
+        "src/os.c",
+        "src/prim/unix/prim.c",
         "include/mimalloc/internal.h"
       ]
     },
@@ -282,7 +290,7 @@
       "the separate PageMap cold-init differential records the C static-empty-root/later-success behavior and the Rust absent-root/typed-poison result as an intentionally accepted bounded safety divergence; it does not claim a common cold lookup, public C ABI behavior, or full process-initialization parity",
       "the selected aligned-overmap cleanup-owner tests prove Rust non-RAII ownership after direct or partial release failure; they do not claim C retry semantics, full aligned-allocation policy, or complete VM fault parity",
       "the selected reset-advice regression proves only the private source snapshot/retry control flow with a deterministic advisory mock; it does not claim a live-kernel EAGAIN frequency or complete purge fault parity",
-      "the selected arena-purge regression proves only default one-slice delayed-purge callback splitting at a source 64-bit bitmap-field boundary; it does not claim general visitor behavior, configurable purge policy, registry-wide collection, concurrent arena use, or arena lifecycle parity",
+      "the selected arena-purge regressions prove only default one-slice delayed-purge callback splitting at a source 64-bit bitmap-field boundary and frozen-Linux default-decommit-error consumption; they do not claim general visitor behavior, configurable purge policy, general purge fault parity, registry-wide collection, concurrent arena use, or arena lifecycle parity",
       "this gate does not claim a production allocator backend or any later allocator milestone",
       "this gate does not claim non-AArch64 support"
     ],

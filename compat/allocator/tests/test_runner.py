@@ -2324,6 +2324,15 @@ class ContractTests(unittest.TestCase):
                         "arena::tests::scheduled_purge_splits_a_run_at_each_source_bitmap_"
                         "field_boundary"
                     ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "arena-purge-decommit-error-consumption",
+                    "kind": "rust-unit",
+                    "target": (
+                        "single_thread::tests::forced_unpinned_arena_decommit_failure_"
+                        "consumes_source_purge_work"
+                    ),
                 }
             ],
         )

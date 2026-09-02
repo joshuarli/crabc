@@ -595,8 +595,10 @@ exact allocation-free owner for later collection or allocation-boundary retry.
 For unpinned external arenas, slice release now schedules the pinned default
 four-second purge delay before reuse. Forced collection owns the free-bitmap
 range while applying the source `purge_decommits=1` non-owning decommit; pinned
-backing skips the path, decommit failure restores availability plus immediate
-retry state, and only the external owner may unmap the complete mapping.
+backing skips the path, and a frozen-Linux default-decommit advisory error
+leaves the mapping accessible and committed while restoring availability and
+consuming the already-cleared purge work. Only the external owner may unmap
+the complete mapping.
 This is bounded engine evidence, not an exported production allocator. The
 feature-only libc shadow described above is an explicit test lane, not a
 general libc integration: general thread teardown, general remote-free

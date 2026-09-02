@@ -40397,7 +40397,7 @@ mod tests {
     }
 
     #[test]
-    fn forced_unpinned_arena_decommit_failure_keeps_retry_state_and_external_mapping() {
+    fn forced_unpinned_arena_decommit_failure_consumes_source_purge_work() {
         let fault = fault::install(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
         with_unpinned_mapping_allocator(|allocator, mapping| {
             let block = allocator.allocate(37, false).unwrap();
@@ -40413,10 +40413,11 @@ mod tests {
             // SAFETY: `block` is the single current allocation in this test.
             unsafe { allocator.free(block).unwrap() };
 
-            // Forced page retirement schedules then claims the exact free
-            // slice. The injected default `purge_decommits=1` failure must
-            // restore availability but retain the retry bit for collection.
-            assert!(!allocator.collect_retired(true));
+            // `mi_arena_try_purge` clears the scheduled bit before its
+            // visitor. In the frozen Linux profile a failed MADV_DONTNEED is
+            // reported but still leaves `needs_recommit` false, so the source
+            // restores availability and consumes this purge work.
+            assert!(allocator.collect_retired(true));
             let arena_memory = unsafe { allocator.page_map.checked_lookup(block.as_ptr()) };
             assert!(arena_memory.is_null());
             assert_eq!(
@@ -40426,30 +40427,24 @@ mod tests {
                 Some(true),
             );
             assert_eq!(
-                unsafe { allocator.arena.slices_purge() }
+                unsafe { allocator.arena.slices_committed() }
                     .unwrap()
                     .is_set_range(slice_index, 1),
                 Some(true),
             );
-            assert!(mapping.base().is_ok(), "arena purge must not unmap external backing");
-
-            // A completed failed purge no longer owns this range, so a fresh
-            // page may claim it. The stale retry bit stays scheduled until the
-            // next free/collection transition safely owns the range again.
-            let retry = allocator.allocate(37, false).unwrap();
-            // SAFETY: `retry` is a distinct current allocation from this test
-            // allocator and is returned exactly once.
-            unsafe { allocator.free(retry).unwrap() };
-            assert!(allocator.collect_retired(true));
             assert_eq!(
                 unsafe { allocator.arena.slices_purge() }
                     .unwrap()
                     .is_clear_range(slice_index, 1),
                 Some(true),
             );
-            assert!(mapping.base().is_ok(), "only context teardown may unmap backing");
+            assert_eq!(
+                allocator.arena.arena().purge_expire.load(Ordering::Acquire),
+                0,
+            );
+            assert!(mapping.base().is_ok(), "arena purge must not unmap external backing");
         });
-        assert!(fault.observed() >= 1);
+        assert_eq!(fault.observed(), 1);
     }
 
     #[test]
