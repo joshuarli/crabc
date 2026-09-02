@@ -2409,10 +2409,10 @@ performance_qualified = false
 [[item]]
 upstream = "src/theap.c"
 name = "default-theap-prefix-and-exclusive-pinned-bootstrap"
-source_region = "mi_heap_t/mi_tld_t prefixes, mi_theap_t through memid, empty bootstrap images, _mi_theap_init publication predicate, direct queues, page accounting, and retired-bin bounds"
+source_region = "mi_heap_t/mi_tld_t prefixes, mi_theap_t through memid, empty bootstrap images, mi_heap_main_init_once's detached metadata-Theap _mi_memid_create(MI_MEM_STATIC) input (src/init.c:184-205), _mi_theap_init's saved/restored memid and frozen option image (src/theap.c:228-249), the normal page_reclaim_on_free = 0 default (src/options.c:161-162), direct queues, page accounting, and retired-bin bounds"
 rust_module = "crabc_mimalloc::types and crabc_mimalloc::bootstrap"
-rust_item = "Heap/ThreadLocalData/Theap prefixes and ExclusiveTheapBootstrap/ExclusiveTheapSession with explicit live or detached source owner"
-intentional_difference = "Caller pinning plus an explicit validated live thread identity replace TLS installation. The process metadata owner retains the source detached identity and requires external private-lock serialization. The bounded theap is non-abandoning; omitted structure tails and global/process lifecycle are not claimed."
+rust_item = "Heap/ThreadLocalData/Theap prefixes, Theap::set_detached_main_metadata_static_memid/bind_exclusive_owner/allows_page_reclaim, and ExclusiveTheapBootstrap::bind_detached_for_main_subprocess/ExclusiveTheapSession with explicit live or detached source owner"
+intentional_difference = "Caller pinning plus an explicit validated live thread identity replace TLS installation. Before first metadata demand, the detached process-main Theap preserves only source init.c's kind-only static MemoryId (zero union and flags) and the frozen normal page-reclaim option image; the process metadata owner retains the source detached identity and requires external private-lock serialization. The bounded theap is non-abandoning. This does not claim complete _mi_theap_init state, mutable option processing, random/cookie initialization, TLD/Heap intrusive-list relations, publication through the actual main Heap/subprocess, or global/process lifecycle."
 tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/bootstrap.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true

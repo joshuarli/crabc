@@ -49,10 +49,14 @@ while the selected Linux/AArch64 thread identity reads `TPIDR_EL0` directly. A
 process-static private metadata owner now ports selected detached-Malloc paths
 in `src/subproc.c:19-88`: process startup binds its static detached
 Heap/TLD/Theap image before global PageMap publication, without mapping private
-backing or touching compiler-TLS roots. A first valid metadata request then
-forms the bounded private direct-OS PageMap/external-arena backing and issues
-its one detached session. That private first-demand route is not claimed to
-match pinned C's normal `_mi_meta_zalloc` backing route. The owner uses a
+backing or touching compiler-TLS roots. Before that first demand, the detached
+Theap preserves only `mi_process_theap_meta`'s kind-only
+`_mi_memid_create(MI_MEM_STATIC)` provenance and the frozen normal enabled
+`page_reclaim_on_free` image; this is not a complete `_mi_theap_init` or
+mutable-options claim. A first valid metadata request then forms the bounded
+private direct-OS PageMap/external-arena backing and issues its one detached
+session. That private first-demand route is not claimed to match pinned C's
+normal `_mi_meta_zalloc` backing route. The owner uses a
 must-use owner-bound capability for source-ordered replacement and serialized
 cross-thread release; its detached image and its later pre-publication-bound
 registry/published arena name the same deliberately bounded process-main

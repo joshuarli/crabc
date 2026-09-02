@@ -271,6 +271,8 @@ registry/subprocess ownership.
   `process_init::ProcessMainInitializationStorage`, `once::AllocatorOnce`,
   `main_theap::MainStaticHeapFoundation`,
   `meta::MetaAllocator::prepare_for_main_subprocess`,
+  `bootstrap::ExclusiveTheapBootstrap::bind_detached_for_main_subprocess`,
+  `types::Theap::set_detached_main_metadata_static_memid`,
   `process_page_map::ProcessPageMapStorage`, and the
   `subproc::MainStaticBootstrapSelection` selector.
 - **Category:** crate-private source-order startup boundary. It has no C ABI
@@ -279,14 +281,20 @@ registry/subprocess ownership.
   Heap, static detached metadata-image binding without backing, global PageMap,
   then ticket-zero TLD/Theap/default/fast roots—but accepts a frozen
   `MemoryConfig` instead of running source option/OS initialization. C forms
-  `mi_process_theap_meta` during main-heap initialization and takes metadata
-  backing only on demand. Rust likewise binds its pinned detached image before
-  the global PageMap, but a first valid Rust metadata request forms a private
-  direct-OS PageMap/external-arena backing rather than claiming C's normal
-  `_mi_meta_zalloc` backing route. It exposes only immutable ready witnesses,
-  does not reserve the process-shared arena, initialize pthread or TLS keys,
-  route allocations/frees, coordinate general concurrent startup, or
-  destroy/restart the process. Identity-capable bounded `initialize` callers
+  `mi_process_theap_meta` during main-heap initialization, gives it
+  `_mi_memid_create(MI_MEM_STATIC)`, preserves that kind-only zero-union/flag
+  image through `_mi_theap_init`, and takes metadata backing only on demand.
+  Rust likewise binds its pinned detached image before the global PageMap and
+  preserves those kind-only provenance fields plus the frozen normal
+  `page_reclaim_on_free = 0` result (`allow_page_reclaim = true`) before first
+  demand. It does not claim the rest of `_mi_theap_init`, mutable option/OS
+  processing, random/cookie state, TLD/Heap list relations, actual-main-Heap
+  identity, or `subproc_main->theap_meta` publication. A first valid Rust
+  metadata request forms a private direct-OS PageMap/external-arena backing
+  rather than claiming C's normal `_mi_meta_zalloc` backing route. It exposes
+  only immutable ready witnesses, does not reserve the process-shared arena,
+  initialize pthread or TLS keys, route allocations/frees, coordinate general
+  concurrent startup, or destroy/restart the process. Identity-capable bounded `initialize` callers
   do hold the source-shaped once gate through terminal publication and private
   lock release; recursive owner entry returns the typed `Initializing` refusal
   without executing a source body, while a foreign caller waits. The Rust-only
@@ -296,6 +304,10 @@ registry/subprocess ownership.
   retained rather than replaying a partial static image. C's static empty
   PageMap root remains absent.
 - **Evidence:**
+  `bootstrap::tests::detached_binding_initializes_the_static_image_before_issuing_its_one_session`
+  proves the selected pre-demand detached metadata-Theap kind-only static
+  provenance (including zero union) and frozen normal enabled page-reclaim
+  image before it can issue a session or acquire backing.
   `process_init::tests::process_main_initialization_orders_heap_metadata_map_then_ticket_zero_roots`
   proves the successful source order, bound-but-unbacked metadata, default-
   then-fast roots, and no automatic process-shared arena reservation.
@@ -316,11 +328,12 @@ registry/subprocess ownership.
   `main_theap::tests::static_heap_foundation_precedes_ticket_zero_tld_theap_and_tls_roots`
   and `subproc::tests::selected_static_bootstrap_cannot_issue_ticket_zero_before_heap_foundation`
   prove the two prerequisite boundaries.
-- **Decision/removal:** accepted until source options/OS and TLS-key/local
-  stages, the C empty-root policy, concurrent/general thread and map startup,
-  automatic arena policy, routing, shutdown, and fork repair have their own
-  proved owners. It does not authorize treating this coordinator as a complete
-  process initializer or public allocator startup API.
+- **Decision/removal:** accepted until complete source `_mi_theap_init`,
+  source options/OS and TLS-key/local stages, the C empty-root policy,
+  concurrent/general thread and map startup, automatic arena policy, routing,
+  shutdown, and fork repair have their own proved owners. It does not authorize
+  treating this coordinator as a complete process initializer or public
+  allocator startup API.
 
 ### `CRABC-MI-PROCESS-PAGE-MAP-COLD-ROOT` — accepted bounded cold-root safety divergence
 

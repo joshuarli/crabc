@@ -203,6 +203,12 @@
       "checks": [
         {
           "expected_passed_test_count": 1,
+          "id": "detached-metadata-theap-kind-only-provenance-and-page-reclaim-image",
+          "kind": "rust-unit",
+          "target": "bootstrap::tests::detached_binding_initializes_the_static_image_before_issuing_its_one_session"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "process-init-static-metadata-binding-before-global-page-map",
           "kind": "rust-unit",
           "target": "process_init::tests::process_main_binds_metadata_before_global_page_map_failure"
@@ -211,11 +217,14 @@
       "completion_status": "partial",
       "id": "initialization",
       "remaining_conditions": [
-        "complete source-order process, OS, options, TLS, arena, publication, and shutdown initialization semantics beyond the selected static detached-metadata image/global-PageMap ordering"
+        "complete source-order process, OS, options, TLS, arena, publication, and shutdown initialization semantics beyond the selected detached-metadata Theap kind-only provenance/frozen normal option image and static detached-metadata image/global-PageMap ordering"
       ],
       "source_units": [
         "src/init.c",
+        "src/theap.c",
+        "src/options.c",
         "include/mimalloc/internal.h",
+        "include/mimalloc/types.h",
         "src/os.c",
         "src/subproc.c"
       ]
@@ -306,7 +315,7 @@
       "the selected aligned-overmap cleanup-owner tests prove Rust non-RAII ownership after direct or partial release failure; they do not claim C retry semantics, full aligned-allocation policy, or complete VM fault parity",
       "the selected reset-advice regression proves only the private source snapshot/retry control flow with a deterministic advisory mock; it does not claim a live-kernel EAGAIN frequency or complete purge fault parity",
       "the selected arena-purge regressions prove only default one-slice delayed-purge callback splitting at a source 64-bit bitmap-field boundary and frozen-Linux default-decommit-error consumption; they do not claim general visitor behavior, configurable purge policy, general purge fault parity, registry-wide collection, concurrent arena use, or arena lifecycle parity",
-      "the selected detached-metadata checks prove only that Rust binds its static detached metadata image before global PageMap publication and defers its private PageMap/external-arena backing to the first valid metadata request; they do not compare that private backing route with pinned C's normal _mi_meta_zalloc backing or establish complete metadata, initialization, or fault-injection parity",
+        "the selected detached-metadata checks prove only that Rust binds its static detached metadata image before global PageMap publication, preserves the detached Theap's kind-only static provenance and frozen normal enabled page-reclaim field before first demand, and defers its private PageMap/external-arena backing to the first valid metadata request; they do not compare that private backing route with pinned C's normal _mi_meta_zalloc backing or establish complete _mi_theap_init, metadata, initialization, mutable-options, or fault-injection parity",
       "this gate does not claim a production allocator backend or any later allocator milestone",
       "this gate does not claim non-AArch64 support"
     ],

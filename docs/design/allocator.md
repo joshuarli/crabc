@@ -49,11 +49,13 @@ process-main identity. Its generic metadata branch remains no-theap, while
 heap/default-Theap attachment and publishes its compiler-TLS default then fast
 roots. `process_init.rs` now owns one deliberately bounded source-order
 transition: it reserves the static ticket-zero branch, initializes the static
-Heap, binds the static detached metadata image without private backing,
-publishes the distinct global PageMap, and only then attaches the static
-TLD/Theap roots. The first valid metadata request later forms this bounded
-port's private PageMap/external-arena backing; it does not claim the pinned
-C normal metadata-backing route. Its selector prevents a generic
+Heap, binds the static detached metadata image with only its source kind-only
+`MI_MEM_STATIC` provenance and frozen normal enabled page-reclaim field, but
+without private backing, publishes the distinct global PageMap, and only then
+attaches the static TLD/Theap roots. The first valid metadata request later
+forms this bounded port's private PageMap/external-arena backing; it does not
+claim the pinned C normal metadata-backing route or complete `_mi_theap_init`
+state. Its selector prevents a generic
 TLD constructor from consuming ticket zero while that transition is active or
 retained. `ProcessMainReadyLease` is an immutable process-root witness; it
 does not expose map mutation, a shared arena, metadata's private map/arena, or

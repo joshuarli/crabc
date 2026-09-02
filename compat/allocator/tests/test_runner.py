@@ -2329,6 +2329,15 @@ class ContractTests(unittest.TestCase):
             [
                 {
                     "expected_passed_test_count": 1,
+                    "id": "detached-metadata-theap-kind-only-provenance-and-page-reclaim-image",
+                    "kind": "rust-unit",
+                    "target": (
+                        "bootstrap::tests::detached_binding_initializes_the_static_image_"
+                        "before_issuing_its_one_session"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
                     "id": "process-init-static-metadata-binding-before-global-page-map",
                     "kind": "rust-unit",
                     "target": (
