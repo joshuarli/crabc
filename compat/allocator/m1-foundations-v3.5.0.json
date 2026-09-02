@@ -902,9 +902,14 @@
           "expected_passed_test_count": 1,
           "id": "numa-count-path",
           "target": "os::tests::linux_numa_node_count_path_matches_source_sysfs_entries"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "raw-primitive-c-rust-trace",
+          "target": "os::tests::emit_m1_raw_c_rust_trace"
         }
       ],
-      "completion_status": "partial",
+      "completion_status": "complete",
       "id": "linux-raw-primitives",
       "layout_keys": [],
       "prim_h_declaration_inventory": [
@@ -1016,7 +1021,7 @@
         {
           "classification": "m1-raw-boundary",
           "name": "_mi_prim_thread_is_in_threadpool",
-          "record_id": "current-thread-unattached-tld-metadata-lifecycle"
+          "record_id": "linux-false-threadpool-observation"
         },
         {
           "classification": "m1-raw-boundary",
@@ -1024,17 +1029,15 @@
           "record_id": "linux-direct-process-thread-and-entropy-observations"
         }
       ],
-      "remaining_conditions": [
-        "Close C/Rust differential evidence for the selected immutable configuration, normal mapping, direct clock/NUMA/yield/getrandom, and false-threadpool paths; their current source-map witnesses are implemented/unit-verified only.",
-        "Keep the checked prim.h declaration inventory source-ordered and linked only to a current raw-boundary witness or an explicit later-milestone exclusion. The mapping-fault-boundary check is crabc test instrumentation, not a prim.h declaration witness."
-      ],
+      "remaining_conditions": [],
       "source_map_records": [
         {
           "kind": "item",
           "name": "mi_os_mem_config-and-good-allocation-size",
           "required_statuses": [
             "implemented",
-            "unit_verified"
+            "unit_verified",
+            "differential_verified"
           ],
           "upstream": "src/os.c"
         },
@@ -1043,7 +1046,8 @@
           "name": "linux-regular-map-memory-transitions",
           "required_statuses": [
             "implemented",
-            "unit_verified"
+            "unit_verified",
+            "differential_verified"
           ],
           "upstream": "src/prim/unix/prim.c"
         },
@@ -1052,7 +1056,8 @@
           "name": "linux-direct-process-thread-and-entropy-observations",
           "required_statuses": [
             "implemented",
-            "unit_verified"
+            "unit_verified",
+            "differential_verified"
           ],
           "upstream": "src/prim/unix/prim.c"
         },
@@ -1061,18 +1066,20 @@
           "name": "linux-raw-numa-node-count-observation",
           "required_statuses": [
             "implemented",
-            "unit_verified"
+            "unit_verified",
+            "differential_verified"
           ],
           "upstream": "src/prim/unix/prim.c"
         },
         {
           "kind": "item",
-          "name": "current-thread-unattached-tld-metadata-lifecycle",
+          "name": "linux-false-threadpool-observation",
           "required_statuses": [
             "implemented",
-            "unit_verified"
+            "unit_verified",
+            "differential_verified"
           ],
-          "upstream": "src/init.c"
+          "upstream": "src/prim/unix/prim.c"
         }
       ]
     },
@@ -1103,7 +1110,7 @@
       "id": "compiler-tls-roots",
       "layout_keys": [],
       "remaining_conditions": [
-        "Define the finite M1 compiler-TLS image subset and bind every field and reset path to pinned source before this component can complete.",
+        "Default/cached terminal-root reset is owned by src/init.c:mi_thread_theaps_done (377-421), while cached-root publication and paired refcount changes are owned by src/prim/prim-tls.c:_mi_theap_cached_set (211-229). No finite pinned-C/Rust trace binds those combined boundaries, so this component remains partial.",
         "The later process/thread lifecycle, page-bearing TLS attachment, and public runtime integration stay explicitly outside this M1 component."
       ],
       "source_map_records": [
@@ -1268,9 +1275,10 @@
     {
       "disposition": "deferred-to-m5",
       "id": "whole-prim-tls-lifecycle",
-      "reason": "The compiler-TLS codegen image does not prove general cached-root switching, process/thread teardown, page-bearing attachment, or public allocator/runtime integration.",
+      "reason": "The compiler-TLS codegen image does not prove src/init.c:mi_thread_theaps_done terminal default/cached reset together with src/prim/prim-tls.c:_mi_theap_cached_set paired refcount transitions, general cached-root switching, process/thread teardown, page-bearing attachment, or public allocator/runtime integration.",
       "upstream_paths": [
         "include/mimalloc/prim-tls.h",
+        "src/init.c",
         "src/prim/prim-tls.c",
         "src/prim/unix/prim-tls.c"
       ]
@@ -1295,6 +1303,7 @@
   "format": 1,
   "global_evidence": [
     "release-c-rust-layout",
+    "raw-primitive-c-rust-trace",
     "compiler-tls-codegen",
     "production-dependency-graph"
   ],

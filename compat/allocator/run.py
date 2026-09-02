@@ -172,6 +172,7 @@ RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 M1_FOUNDATIONS_CONTRACT = ALLOCATOR_ROOT / "m1-foundations-v3.5.0.json"
 M1_FOUNDATIONS_REPORT = REPORT_ROOT / "m1-foundations-latest.json"
 M1_FOUNDATIONS_CARGO_TARGET = ARTIFACT_ROOT / "m1-foundations/cargo-target"
+M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/raw-primitive-trace"
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -213,6 +214,7 @@ M1_FOUNDATIONS_COMPONENT_IDS = (
 )
 M1_FOUNDATIONS_GLOBAL_EVIDENCE = (
     "release-c-rust-layout",
+    "raw-primitive-c-rust-trace",
     "compiler-tls-codegen",
     "production-dependency-graph",
 )
@@ -754,6 +756,14 @@ ORACLE_SOURCES = (
     "src/threadlocal.c",
     "src/prim/prim.c",
     "src/prim/prim-tls.c",
+)
+
+# The M1 raw fixture includes the pinned `src/os.c` into its own translation
+# unit so it can observe the source-private immutable configuration record.
+# The ordinary source list must omit that one file to keep every C definition
+# singular; `src/prim/prim.c` continues to own the Unix primitive inclusion.
+M1_RAW_PRIMITIVE_ORACLE_SOURCES = tuple(
+    item for item in ORACLE_SOURCES if item != "src/os.c"
 )
 
 # The reviewed M4 and M5 adapters are intentionally partial adaptations, not a
@@ -2145,6 +2155,121 @@ int main(void) {
 """
 
 
+# This fixture is deliberately not a host-model test.  It compiles the pinned
+# C `src/os.c` directly into the probe translation unit, so the fixed record
+# below observes its otherwise-private `mi_os_mem_config` state as well as the
+# selected Unix primitive calls.  `build_m1_raw_primitive_trace` omits the
+# standalone `src/os.c` object from `ORACLE_SOURCES` for this one executable.
+#
+# The record names only normal Linux/AArch64 success paths selected by M1:
+# immutable configuration, allocation-size/large-page predicates, one regular
+# no-hint/non-large mapping transition sequence, direct observations, and the
+# source's constant false threadpool result.  It intentionally has no raw
+# addresses, random bytes, exact clocks, errno/error paths, allocation hints,
+# huge/THP options, or C fallback branches.
+M1_RAW_PRIMITIVE_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+#include <mimalloc/prim.h>
+
+// Resolved through `-I <pinned-source>/src`.  This makes the source-private
+// configuration image observable without editing the pinned archive.
+#include "os.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+int main(void) {
+  // `_mi_os_init` is the source owner of the immutable record below. Calling
+  // it directly prevents constructor/link ordering from becoming evidence.
+  _mi_os_init();
+
+  const size_t page = mi_os_mem_config.page_size;
+  bool is_large = true;
+  bool is_zero = false;
+  void* address = NULL;
+  if (_mi_prim_alloc(NULL, page, page, false, false, &is_large, &is_zero, &address) != 0
+      || address == NULL) {
+    return 10;
+  }
+  bool commit_zero = true;
+  if (_mi_prim_commit(address, page, &commit_zero) != 0) return 11;
+  bool needs_recommit = true;
+  if (_mi_prim_decommit(address, page, &needs_recommit) != 0) return 12;
+  if (_mi_prim_reset(address, page) != 0) return 13;
+  if (_mi_prim_protect(address, page, true) != 0) return 14;
+  if (_mi_prim_protect(address, page, false) != 0) return 15;
+  if (_mi_prim_free(address, page) != 0) return 16;
+
+  const mi_msecs_t clock_before = _mi_prim_clock_now();
+  _mi_prim_thread_yield();
+  const mi_msecs_t clock_after = _mi_prim_clock_now();
+  uint8_t entropy[16] = { 0 };
+  const bool entropy_zero = _mi_prim_random_buf(entropy, 0);
+  const bool entropy_sixteen = _mi_prim_random_buf(entropy, sizeof(entropy));
+  const size_t numa_count = _mi_prim_numa_node_count();
+  const size_t numa_current = _mi_prim_numa_node();
+
+  puts("CRABC_MI_M1_RAW_TRACE_BEGIN");
+  U("m1.raw.config.page_size", mi_os_mem_config.page_size);
+  U("m1.raw.config.large_page_size", mi_os_mem_config.large_page_size);
+  U("m1.raw.config.alloc_granularity", mi_os_mem_config.alloc_granularity);
+  U("m1.raw.config.physical_memory_in_kib", mi_os_mem_config.physical_memory_in_kib);
+  U("m1.raw.config.virtual_address_bits", mi_os_mem_config.virtual_address_bits);
+  U("m1.raw.config.has_overcommit", mi_os_mem_config.has_overcommit);
+  U("m1.raw.config.has_partial_free", mi_os_mem_config.has_partial_free);
+  U("m1.raw.config.has_virtual_reserve", mi_os_mem_config.has_virtual_reserve);
+  U("m1.raw.config.has_transparent_huge_pages", mi_os_mem_config.has_transparent_huge_pages);
+
+  U("m1.raw.good_alloc_size.zero", _mi_os_good_alloc_size(0));
+  U("m1.raw.good_alloc_size.one", _mi_os_good_alloc_size(1));
+  U("m1.raw.good_alloc_size.512k_minus_one", _mi_os_good_alloc_size(512*MI_KiB - 1));
+  U("m1.raw.good_alloc_size.512k", _mi_os_good_alloc_size(512*MI_KiB));
+  U("m1.raw.good_alloc_size.512k_plus_one", _mi_os_good_alloc_size(512*MI_KiB + 1));
+  U("m1.raw.good_alloc_size.2m_minus_one", _mi_os_good_alloc_size(2*MI_MiB - 1));
+  U("m1.raw.good_alloc_size.2m", _mi_os_good_alloc_size(2*MI_MiB));
+  U("m1.raw.good_alloc_size.2m_plus_one", _mi_os_good_alloc_size(2*MI_MiB + 1));
+  U("m1.raw.good_alloc_size.8m_minus_one", _mi_os_good_alloc_size(8*MI_MiB - 1));
+  U("m1.raw.good_alloc_size.8m", _mi_os_good_alloc_size(8*MI_MiB));
+  U("m1.raw.good_alloc_size.8m_plus_one", _mi_os_good_alloc_size(8*MI_MiB + 1));
+  U("m1.raw.good_alloc_size.32m_minus_one", _mi_os_good_alloc_size(32*MI_MiB - 1));
+  U("m1.raw.good_alloc_size.32m", _mi_os_good_alloc_size(32*MI_MiB));
+  U("m1.raw.good_alloc_size.32m_plus_one", _mi_os_good_alloc_size(32*MI_MiB + 1));
+  U("m1.raw.good_alloc_size.size_max", _mi_os_good_alloc_size(SIZE_MAX));
+  U("m1.raw.can_use_large_page.aligned", _mi_os_canuse_large_page(2*MI_MiB, 2*MI_MiB));
+  U("m1.raw.can_use_large_page.page_aligned_only", _mi_os_canuse_large_page(2*MI_MiB, page));
+
+  U("m1.raw.map.request.no_hint", 1);
+  U("m1.raw.map.request.allow_large", 0);
+  U("m1.raw.map.reserved.success", 1);
+  U("m1.raw.map.reserved.is_large", is_large);
+  U("m1.raw.map.reserved.is_zero", is_zero);
+  U("m1.raw.map.reserved.initially_committed", 0);
+  U("m1.raw.map.commit.success", 1);
+  U("m1.raw.map.commit.is_zero", commit_zero);
+  U("m1.raw.map.decommit.success", 1);
+  U("m1.raw.map.decommit.needs_recommit", needs_recommit);
+  U("m1.raw.map.reset.success", 1);
+  U("m1.raw.map.protect.success", 1);
+  U("m1.raw.map.unprotect.success", 1);
+  U("m1.raw.map.free.success", 1);
+
+  U("m1.raw.numa.count", numa_count);
+  U("m1.raw.numa.current_lt_count", numa_current < numa_count);
+  U("m1.raw.clock.monotonic_after_yield", clock_after >= clock_before);
+  U("m1.raw.yield.success", 1);
+  U("m1.raw.entropy.zero_success", entropy_zero);
+  U("m1.raw.entropy.sixteen_success", entropy_sixteen);
+  U("m1.raw.threadpool.false", !_mi_prim_thread_is_in_threadpool());
+  puts("CRABC_MI_M1_RAW_TRACE_END");
+  return 0;
+}
+"""
+
+
 # This schema freezes the selected direct C/Rust fundamental trace. Comparing
 # only the two observed maps would allow a synchronized deletion to silently
 # shrink the recorded contract. The 51-field base is shared, while the 24-field
@@ -2247,6 +2372,70 @@ def fundamental_trace_schema(architecture: str) -> tuple[frozenset[str], int]:
     if architecture == "x86_64":
         return FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS, FUNDAMENTAL_TRACE_X86_64_EXPECTED_COUNT
     raise HarnessError(f"unsupported fundamental trace architecture: {architecture}")
+
+
+# This source-order-independent schema fixes the finite raw M1 witness.  A C
+# and Rust probe cannot jointly remove a case without this separate inventory
+# failing first.  The selected values are all source-relative facts; addresses,
+# random bytes, and timestamps are intentionally not evidence fields.
+M1_RAW_PRIMITIVE_TRACE_EXPECTED_KEYS = frozenset(
+    {
+        "m1.raw.config.page_size",
+        "m1.raw.config.large_page_size",
+        "m1.raw.config.alloc_granularity",
+        "m1.raw.config.physical_memory_in_kib",
+        "m1.raw.config.virtual_address_bits",
+        "m1.raw.config.has_overcommit",
+        "m1.raw.config.has_partial_free",
+        "m1.raw.config.has_virtual_reserve",
+        "m1.raw.config.has_transparent_huge_pages",
+        "m1.raw.good_alloc_size.zero",
+        "m1.raw.good_alloc_size.one",
+        "m1.raw.good_alloc_size.512k_minus_one",
+        "m1.raw.good_alloc_size.512k",
+        "m1.raw.good_alloc_size.512k_plus_one",
+        "m1.raw.good_alloc_size.2m_minus_one",
+        "m1.raw.good_alloc_size.2m",
+        "m1.raw.good_alloc_size.2m_plus_one",
+        "m1.raw.good_alloc_size.8m_minus_one",
+        "m1.raw.good_alloc_size.8m",
+        "m1.raw.good_alloc_size.8m_plus_one",
+        "m1.raw.good_alloc_size.32m_minus_one",
+        "m1.raw.good_alloc_size.32m",
+        "m1.raw.good_alloc_size.32m_plus_one",
+        "m1.raw.good_alloc_size.size_max",
+        "m1.raw.can_use_large_page.aligned",
+        "m1.raw.can_use_large_page.page_aligned_only",
+        "m1.raw.map.request.no_hint",
+        "m1.raw.map.request.allow_large",
+        "m1.raw.map.reserved.success",
+        "m1.raw.map.reserved.is_large",
+        "m1.raw.map.reserved.is_zero",
+        "m1.raw.map.reserved.initially_committed",
+        "m1.raw.map.commit.success",
+        "m1.raw.map.commit.is_zero",
+        "m1.raw.map.decommit.success",
+        "m1.raw.map.decommit.needs_recommit",
+        "m1.raw.map.reset.success",
+        "m1.raw.map.protect.success",
+        "m1.raw.map.unprotect.success",
+        "m1.raw.map.free.success",
+        "m1.raw.numa.count",
+        "m1.raw.numa.current_lt_count",
+        "m1.raw.clock.monotonic_after_yield",
+        "m1.raw.yield.success",
+        "m1.raw.entropy.zero_success",
+        "m1.raw.entropy.sixteen_success",
+        "m1.raw.threadpool.false",
+    }
+)
+M1_RAW_PRIMITIVE_TRACE_EXPECTED_COUNT = 47
+# This is a scalar width, not an address-bearing observation. Keep the one
+# exception explicit at the raw M1 boundary so the shared parser still rejects
+# address fields in every other trace.
+M1_RAW_PRIMITIVE_ADDRESS_LIKE_SCALAR_KEYS = frozenset(
+    {"m1.raw.config.virtual_address_bits"}
+)
 
 
 class HarnessError(RuntimeError):
@@ -4536,6 +4725,76 @@ def run_m1_foundations_checks(summary: Mapping[str, Any]) -> list[dict[str, Any]
     return records
 
 
+def run_m1_raw_primitive_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the finite raw M1 record against a freshly extracted C oracle.
+
+    The C and Rust executions are separate processes by design.  Their record
+    compares only stable source-relative values, so no process address, random
+    byte sequence, or timestamp is treated as differential evidence.
+    """
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m1-raw-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m1_raw_primitive_trace(
+            compiler,
+            source,
+            M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "os::tests::emit_m1_raw_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M1 raw-primitive trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m1_raw_primitive_trace(rust_output)
+    validate_m1_raw_primitive_trace_schema(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M1 raw-primitive trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m1_raw_primitive_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "pinned C src/os.c and selected Unix primitive normal-success paths only; "
+            "no addresses, random bytes, exact clocks, errno/fallback branches, options, "
+            "hints, huge/THP routes, or allocator lifecycle integration"
+        ),
+        "status": comparison["status"],
+    }
+
+
 def m1_foundations_layout_evidence(
     components: Sequence[Mapping[str, Any]],
     c_layout: Mapping[str, int],
@@ -4615,6 +4874,7 @@ def m1_foundations_report(
     summary: Mapping[str, Any],
     source_attestation: Mapping[str, Any],
     shared_oracle: Mapping[str, Any],
+    raw_primitive_differential: Mapping[str, Any],
     focused_checks: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Render a current-commit M1 evidence report without changing its status."""
@@ -4652,6 +4912,21 @@ def m1_foundations_report(
         raise HarnessError("M1 foundations compiler-TLS codegen evidence did not pass")
     if not isinstance(dependency_graph, Mapping):
         raise HarnessError("M1 foundations production dependency evidence is absent")
+    if (
+        not isinstance(raw_primitive_differential, Mapping)
+        or raw_primitive_differential.get("status") != "matched"
+    ):
+        raise HarnessError("M1 foundations raw C/Rust differential evidence did not match")
+    raw_comparison = raw_primitive_differential.get("comparison")
+    raw_c_oracle = raw_primitive_differential.get("c_oracle")
+    raw_rust = raw_primitive_differential.get("rust")
+    if (
+        not isinstance(raw_comparison, Mapping)
+        or raw_comparison.get("status") != "matched"
+        or not isinstance(raw_c_oracle, Mapping)
+        or not isinstance(raw_rust, Mapping)
+    ):
+        raise HarnessError("M1 foundations raw C/Rust differential record is invalid")
 
     checks_by_component: dict[str, list[dict[str, Any]]] = {
         component["id"]: [] for component in summary["components"]
@@ -4672,10 +4947,14 @@ def m1_foundations_report(
                 f"M1 foundations component {component_id} lacks an executed focused check"
             )
         layout = layout_evidence[component_id]
+        raw_trace_matched = (
+            component_id != "linux-raw-primitives" or raw_comparison["status"] == "matched"
+        )
         complete = (
             component["completion_status"] == "complete"
             and not component["remaining_conditions"]
             and layout["status"] in {"matched", "not-applicable"}
+            and raw_trace_matched
         )
         if not complete:
             incomplete_components.append(component_id)
@@ -4696,6 +4975,10 @@ def m1_foundations_report(
             report_component["prim_h_declaration_inventory"] = list(
                 component["prim_h_declaration_inventory"]
             )
+            report_component["c_rust_differential"] = {
+                "compared_value_count": raw_comparison.get("compared_value_count"),
+                "status": raw_comparison["status"],
+            }
         components.append(report_component)
 
     milestone_complete = (
@@ -4724,6 +5007,13 @@ def m1_foundations_report(
             },
             "production_dependency_graph": {
                 "status": "recorded",
+            },
+            "raw_primitive_c_rust_trace": {
+                "c_source_files": raw_c_oracle.get("source_files"),
+                "compared_value_count": raw_comparison.get("compared_value_count"),
+                "rust_passed_test_count": raw_rust.get("passed_test_count"),
+                "scope": raw_primitive_differential.get("scope"),
+                "status": raw_comparison["status"],
             },
             "release_c_rust_layout": {
                 "c_layout_key_count": len(c_layout),
@@ -4769,6 +5059,11 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
         architecture="aarch64",
         write_report=False,
     )
+    raw_primitive_differential = run_m1_raw_primitive_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+    )
     focused_checks = run_m1_foundations_checks(summary)
     source_after = m1_foundations_source_state()
     report = m1_foundations_report(
@@ -4777,6 +5072,7 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
         summary=summary,
         source_attestation=m1_foundations_source_attestation(source_before, source_after),
         shared_oracle=shared_oracle,
+        raw_primitive_differential=raw_primitive_differential,
         focused_checks=focused_checks,
     )
     write_json(M1_FOUNDATIONS_REPORT, report)
@@ -8386,7 +8682,12 @@ def parse_small_trace(output: str) -> dict[str, int]:
 
 
 def parse_address_independent_trace(
-    output: str, *, begin: str, end: str, description: str
+    output: str,
+    *,
+    begin: str,
+    end: str,
+    description: str,
+    allowed_address_like_scalar_keys: frozenset[str] = frozenset(),
 ) -> dict[str, int]:
     """Parse one marked trace and reject address-bearing machine fields.
 
@@ -8394,6 +8695,8 @@ def parse_address_independent_trace(
     runs.  A future Rust probe must therefore emit only logical identifiers,
     booleans, sizes, and content fingerprints under the same marker schema;
     raw allocation addresses are neither stable evidence nor an allowed field.
+    A caller may name a fixed, scalar-only lexical exception such as an
+    address-space bit width; that does not permit a pointer observation.
     """
 
     if output.count(begin) != 1 or output.count(end) != 1:
@@ -8410,7 +8713,8 @@ def parse_address_independent_trace(
         (
             key
             for key in values
-            if re.search(r"(?:^|[._-])(?:addr(?:ess)?|ptr|pointer)(?:$|[._-])", key)
+            if key not in allowed_address_like_scalar_keys
+            and re.search(r"(?:^|[._-])(?:addr(?:ess)?|ptr|pointer)(?:$|[._-])", key)
         ),
         None,
     )
@@ -8427,6 +8731,18 @@ def parse_fundamental_trace(output: str) -> dict[str, int]:
         begin="CRABC_MI_FUNDAMENTAL_TRACE_BEGIN",
         end="CRABC_MI_FUNDAMENTAL_TRACE_END",
         description="fundamental-operation trace",
+    )
+
+
+def parse_m1_raw_primitive_trace(output: str) -> dict[str, int]:
+    """Parse the fixed, address-free pinned-C/Rust raw M1 record."""
+
+    return parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M1_RAW_TRACE_BEGIN",
+        end="CRABC_MI_M1_RAW_TRACE_END",
+        description="M1 raw-primitive trace",
+        allowed_address_like_scalar_keys=M1_RAW_PRIMITIVE_ADDRESS_LIKE_SCALAR_KEYS,
     )
 
 
@@ -8704,6 +9020,55 @@ def compare_fundamental_trace(
         raise HarnessError(
             "Rust fundamental-operation trace differs from pinned release C: "
             + "; ".join(problems)
+        )
+    return {"compared_value_count": len(rust_trace), "status": "matched"}
+
+
+def validate_m1_raw_primitive_trace_schema(trace: Mapping[str, int], *, source: str) -> None:
+    """Refuse a narrowed or widened raw M1 record from either implementation."""
+
+    if len(M1_RAW_PRIMITIVE_TRACE_EXPECTED_KEYS) != M1_RAW_PRIMITIVE_TRACE_EXPECTED_COUNT:
+        raise HarnessError("internal M1 raw-primitive trace schema has an unexpected key count")
+    observed = set(trace)
+    missing = sorted(M1_RAW_PRIMITIVE_TRACE_EXPECTED_KEYS.difference(observed))
+    unexpected = sorted(observed.difference(M1_RAW_PRIMITIVE_TRACE_EXPECTED_KEYS))
+    if missing or unexpected:
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M1 raw-primitive trace does not match the fixed "
+            f"{M1_RAW_PRIMITIVE_TRACE_EXPECTED_COUNT}-key schema: "
+            + "; ".join(problems)
+        )
+
+
+def compare_m1_raw_primitive_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require the selected source paths to agree without comparing host noise."""
+
+    validate_m1_raw_primitive_trace_schema(c_trace, source="pinned C")
+    validate_m1_raw_primitive_trace_schema(rust_trace, source="Rust")
+    missing_from_c = sorted(set(rust_trace).difference(c_trace))
+    missing_from_rust = sorted(set(c_trace).difference(rust_trace))
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in sorted(set(c_trace).intersection(rust_trace))
+        if c_trace[key] != rust_trace[key]
+    ]
+    problems: list[str] = []
+    if missing_from_c:
+        problems.append("missing from C oracle: " + ", ".join(missing_from_c))
+    if missing_from_rust:
+        problems.append("missing from Rust port: " + ", ".join(missing_from_rust))
+    if mismatches:
+        problems.append("value mismatches: " + ", ".join(mismatches))
+    if problems:
+        raise HarnessError(
+            "Rust M1 raw-primitive trace differs from pinned C: " + "; ".join(problems)
         )
     return {"compared_value_count": len(rust_trace), "status": "matched"}
 
@@ -9211,6 +9576,65 @@ def build_fundamental_trace(
         "command": command,
         "record": record,
         "architecture": architecture,
+    }
+
+
+def build_m1_raw_primitive_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Run the finite raw M1 slice against source-private pinned C state.
+
+    `M1_RAW_PRIMITIVE_TRACE_PROBE` includes the archive's `src/os.c` so its
+    static configuration record is observed directly.  The compilation list
+    replaces, rather than duplicates, that source file.  This is intentionally
+    a dedicated C oracle executable, not a Rust host-model test or a probe of
+    the workspace's old C integration.
+    """
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m1-raw-primitive-trace-probe.c"
+    trace_binary = profile_dir / "m1-raw-primitive-trace-probe"
+    trace_source.write_text(M1_RAW_PRIMITIVE_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M1_RAW_PRIMITIVE_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M1 raw-primitive trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M1 raw-primitive trace execution")
+    record = parse_m1_raw_primitive_trace(str(run["stdout"]))
+    validate_m1_raw_primitive_trace_schema(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc/prim.h",
+                "src/os.c",
+                "src/prim/prim.c",
+                "src/prim/unix/prim.c",
+            ),
+        ),
     }
 
 

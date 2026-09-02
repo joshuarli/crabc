@@ -8,21 +8,21 @@
   "api_total_item_count": 336,
   "configuration_profile_count": 5,
   "format": 1,
-  "m1_foundations_contract_sha256": "756fb4ad8198ddb6c37dbf0d4bf7d426cdc0a021c83fdf35cf0b1d098c6dd88e",
+  "m1_foundations_contract_sha256": "4fea39f8ceaa5bc0824dedda7d154b26895795ecf4d11b0bc63549255115c617",
   "native_shadow_stress_contract_sha256": "cdef617f743ccd7c26283a3ce22ce17c43d6ae79b3873ac400a54fb1749139c8",
   "native_shadow_stress_fixture_count": 1,
   "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
   "port_map_counts": {
-    "differential_verified": 23,
+    "differential_verified": 28,
     "exported": 4,
-    "implemented": 155,
-    "item_count": 151,
+    "implemented": 156,
+    "item_count": 152,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 155
+    "unit_verified": 156
   },
-  "port_map_sha256": "771f34486b17dbc6700c7cf5edcae3e8403035f15f5401275243c076898005bb",
+  "port_map_sha256": "50ec933bc47ba19172172869bbc993205c9c8e70559c17b7abc6cd62c16c94e1",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_atomic_do_once-callsite-disposition-ledger": [
       "implemented",
@@ -358,7 +358,8 @@
     ],
     "item:src/os.c:mi_os_mem_config-and-good-allocation-size": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/os.c:mi_os_page_align_areax": [
       "implemented",
@@ -441,15 +442,23 @@
     ],
     "item:src/prim/unix/prim.c:linux-direct-process-thread-and-entropy-observations": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/prim/unix/prim.c:linux-false-threadpool-observation": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/prim/unix/prim.c:linux-raw-numa-node-count-observation": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/prim/unix/prim.c:linux-regular-map-memory-transitions": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/random.c:original-chacha-context-state-and-output-contract": [
       "implemented",

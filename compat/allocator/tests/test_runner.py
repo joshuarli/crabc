@@ -1469,6 +1469,42 @@ CRABC_MI_FUNDAMENTAL_TRACE_END
         with self.assertRaisesRegex(RUNNER.HarnessError, "raw address"):
             RUNNER.parse_fundamental_trace(hexadecimal)
 
+    def test_m1_raw_trace_allows_only_its_declared_address_like_scalar(self) -> None:
+        scalar = """
+CRABC_MI_M1_RAW_TRACE_BEGIN
+m1.raw.config.virtual_address_bits=48
+CRABC_MI_M1_RAW_TRACE_END
+"""
+        self.assertEqual(
+            RUNNER.parse_m1_raw_primitive_trace(scalar),
+            {"m1.raw.config.virtual_address_bits": 48},
+        )
+        address = """
+CRABC_MI_M1_RAW_TRACE_BEGIN
+m1.raw.map.address=12345
+CRABC_MI_M1_RAW_TRACE_END
+"""
+        with self.assertRaisesRegex(RUNNER.HarnessError, "raw address field"):
+            RUNNER.parse_m1_raw_primitive_trace(address)
+
+    def test_m1_raw_trace_schema_requires_every_selected_source_fact(self) -> None:
+        self.assertEqual(RUNNER.M1_RAW_PRIMITIVE_TRACE_EXPECTED_COUNT, 47)
+        self.assertEqual(
+            len(RUNNER.M1_RAW_PRIMITIVE_TRACE_EXPECTED_KEYS),
+            RUNNER.M1_RAW_PRIMITIVE_TRACE_EXPECTED_COUNT,
+        )
+        trace = {key: 1 for key in RUNNER.M1_RAW_PRIMITIVE_TRACE_EXPECTED_KEYS}
+        self.assertEqual(
+            RUNNER.compare_m1_raw_primitive_trace(trace, trace),
+            {"compared_value_count": 47, "status": "matched"},
+        )
+        trace.pop("m1.raw.threadpool.false")
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError,
+            r"fixed 47-key schema.*m1\.raw\.threadpool\.false",
+        ):
+            RUNNER.compare_m1_raw_primitive_trace(trace, trace)
+
     def test_fundamental_trace_same_run_marker_cannot_claim_comparison(self) -> None:
         status = RUNNER.pending_fundamental_trace_comparison()
         self.assertEqual(status["status"], "pending")
@@ -2272,9 +2308,31 @@ class ContractTests(unittest.TestCase):
                 "linux-regular-map-memory-transitions",
                 "linux-direct-process-thread-and-entropy-observations",
                 "linux-raw-numa-node-count-observation",
-                "current-thread-unattached-tld-metadata-lifecycle",
+                "linux-false-threadpool-observation",
             ],
         )
+        self.assertEqual(raw_primitives["completion_status"], "complete")
+        self.assertEqual(raw_primitives["remaining_conditions"], [])
+        self.assertIn(
+            "raw-primitive-c-rust-trace",
+            [check["id"] for check in raw_primitives["checks"]],
+        )
+        self.assertTrue(
+            all(
+                record["required_statuses"]
+                == ["implemented", "unit_verified", "differential_verified"]
+                for record in raw_primitives["source_map_records"]
+            )
+        )
+        self.assertEqual(
+            next(
+                declaration["record_id"]
+                for declaration in raw_primitives["prim_h_declaration_inventory"]
+                if declaration["name"] == "_mi_prim_thread_is_in_threadpool"
+            ),
+            "linux-false-threadpool-observation",
+        )
+        self.assertEqual(contract["global_evidence"], list(RUNNER.M1_FOUNDATIONS_GLOBAL_EVIDENCE))
         self.assertIn(
             "random-reinit-process-hook",
             [exclusion["id"] for exclusion in summary["exclusions"]],
@@ -2565,6 +2623,13 @@ class ContractTests(unittest.TestCase):
                     "layout": {key: 1 for key in keys},
                 },
             },
+            raw_primitive_differential={
+                "c_oracle": {"source_files": []},
+                "comparison": {"compared_value_count": 47, "status": "matched"},
+                "rust": {"passed_test_count": 1},
+                "scope": "selected raw M1 source paths",
+                "status": "matched",
+            },
             focused_checks=focused_checks,
         )
 
@@ -2582,6 +2647,16 @@ class ContractTests(unittest.TestCase):
             RUNNER.m1_foundations_unmet_message(report).split(";", 1)[0],
             "M1 foundations remain partial for "
             + ", ".join(expected_unmet),
+        )
+        raw_component = next(
+            component
+            for component in report["components"]
+            if component["id"] == "linux-raw-primitives"
+        )
+        self.assertEqual(raw_component["status"], "complete")
+        self.assertEqual(
+            raw_component["c_rust_differential"],
+            {"compared_value_count": 47, "status": "matched"},
         )
 
     def test_native_owner_exit_lifecycle_contract_covers_every_reviewed_condition(self) -> None:

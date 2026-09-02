@@ -975,7 +975,18 @@ stats, guarded/page-tail variants, mutable process storage, publication and
 teardown. In particular, `ProcessMainInitializationStorage` currently returns
 `Initializing` to a racing caller rather than matching C's blocking
 once-release continuation, so this bootstrap component remains partial at the
-M2/M5 lifecycle boundary. The complete finite configuration-and-arithmetic component compares
+M2/M5 lifecycle boundary.
+The complete raw-primitive component adds one native, pinned-C/Rust 47-field
+record: the C probe directly includes pinned `src/os.c`, then compares the
+immutable configuration, good-size and large-page predicates, one
+no-hint/non-large map transition sequence, NUMA/current-node relation,
+monotonic-yield observation, successful zero/16-byte entropy calls, and the
+constant-false threadpool observation. It deliberately excludes addresses,
+random bytes, timestamps, error/fallback branches, hints, and huge/THP policy.
+That finite raw closure does not close M1: compiler TLS remains partial at the
+combined `src/init.c:mi_thread_theaps_done` terminal default/cached reset and
+`src/prim/prim-tls.c:_mi_theap_cached_set` cached-root/refcount boundary.
+The complete finite configuration-and-arithmetic component compares
 every frozen `config.*` C/Rust record and a compact representable scalar
 vector, including `_mi_is_power_of_two(0)`, generic non-power-of-two
 `_mi_align_up`/`_mi_align_down`, division, word rounding, and slice conversion.

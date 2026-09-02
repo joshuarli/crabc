@@ -1240,6 +1240,8 @@ fn fault_before(point: FaultPoint) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
     use crabc_core::Errno;
 
@@ -1476,6 +1478,155 @@ mod tests {
 
         let mut bytes = [0u8; 16];
         assert!(entropy_fill(&mut bytes).expect("Linux getrandom"));
+    }
+
+    /// Emits the finite, address-independent M1 raw primitive record.
+    ///
+    /// `compat/allocator/run.py` compares this one-test machine record to an
+    /// executable built from the pinned C `src/os.c` and `src/prim/prim.c`.
+    /// It deliberately covers only the frozen normal-success paths below;
+    /// error/fallback paths, option mutation, hints, huge pages, and allocator
+    /// lifecycle ownership remain separate source-map work.
+    #[test]
+    fn emit_m1_raw_c_rust_trace() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let mut mapping = Mapping::map_for_allocator(config, page, MapAccess::Reserved)
+            .expect("the selected one-page regular mapping succeeds");
+        let initially_zero = mapping.initially_zero();
+        let initially_committed = mapping.initially_committed();
+        assert_eq!(
+            mapping.commit(0, page),
+            Ok(Some(CommitOutcome::NotKnownZero)),
+            "the Unix commit path reports no known-zero guarantee"
+        );
+        assert_eq!(
+            mapping.decommit(0, page),
+            Ok(Some(DecommitOutcome::DoesNotNeedRecommit)),
+            "the frozen release profile keeps a decommitted map accessible"
+        );
+        assert!(mapping.purge(0, page).expect("the selected reset succeeds"));
+        assert!(mapping.protect(0, page).expect("the selected protect succeeds"));
+        assert!(mapping
+            .unprotect(0, page)
+            .expect("the selected unprotect succeeds"));
+        mapping.unmap().expect("the selected map is released explicitly");
+
+        let clock_before = monotonic_milliseconds().expect("CLOCK_MONOTONIC");
+        thread_yield().expect("the direct Linux yield succeeds");
+        let clock_after = monotonic_milliseconds().expect("CLOCK_MONOTONIC");
+        let mut zero_entropy = [0u8; 0];
+        let mut sixteen_entropy = [0u8; 16];
+        assert!(entropy_fill(&mut zero_entropy).expect("zero-byte getrandom"));
+        assert!(entropy_fill(&mut sixteen_entropy).expect("sixteen-byte getrandom"));
+        let numa_count = numa_node_count();
+        let numa_current = numa_node();
+        assert!(numa_count >= 1, "the source scan has a one-node fallback");
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value);
+            };
+        }
+
+        std::println!("CRABC_MI_M1_RAW_TRACE_BEGIN");
+        emit!("m1.raw.config.page_size", config.page_size().bytes());
+        emit!("m1.raw.config.large_page_size", config.large_page_size());
+        emit!("m1.raw.config.alloc_granularity", config.alloc_granularity());
+        emit!(
+            "m1.raw.config.physical_memory_in_kib",
+            config.physical_memory_in_kib()
+        );
+        emit!("m1.raw.config.virtual_address_bits", config.virtual_address_bits());
+        emit!("m1.raw.config.has_overcommit", u8::from(config.has_overcommit()));
+        emit!("m1.raw.config.has_partial_free", u8::from(config.has_partial_free()));
+        emit!("m1.raw.config.has_virtual_reserve", u8::from(config.has_virtual_reserve()));
+        emit!(
+            "m1.raw.config.has_transparent_huge_pages",
+            u8::from(config.has_transparent_huge_pages())
+        );
+
+        emit!("m1.raw.good_alloc_size.zero", config.good_alloc_size(0));
+        emit!("m1.raw.good_alloc_size.one", config.good_alloc_size(1));
+        emit!(
+            "m1.raw.good_alloc_size.512k_minus_one",
+            config.good_alloc_size(512 * 1024 - 1)
+        );
+        emit!("m1.raw.good_alloc_size.512k", config.good_alloc_size(512 * 1024));
+        emit!(
+            "m1.raw.good_alloc_size.512k_plus_one",
+            config.good_alloc_size(512 * 1024 + 1)
+        );
+        emit!(
+            "m1.raw.good_alloc_size.2m_minus_one",
+            config.good_alloc_size(2 * 1024 * 1024 - 1)
+        );
+        emit!("m1.raw.good_alloc_size.2m", config.good_alloc_size(2 * 1024 * 1024));
+        emit!(
+            "m1.raw.good_alloc_size.2m_plus_one",
+            config.good_alloc_size(2 * 1024 * 1024 + 1)
+        );
+        emit!(
+            "m1.raw.good_alloc_size.8m_minus_one",
+            config.good_alloc_size(8 * 1024 * 1024 - 1)
+        );
+        emit!("m1.raw.good_alloc_size.8m", config.good_alloc_size(8 * 1024 * 1024));
+        emit!(
+            "m1.raw.good_alloc_size.8m_plus_one",
+            config.good_alloc_size(8 * 1024 * 1024 + 1)
+        );
+        emit!(
+            "m1.raw.good_alloc_size.32m_minus_one",
+            config.good_alloc_size(32 * 1024 * 1024 - 1)
+        );
+        emit!("m1.raw.good_alloc_size.32m", config.good_alloc_size(32 * 1024 * 1024));
+        emit!(
+            "m1.raw.good_alloc_size.32m_plus_one",
+            config.good_alloc_size(32 * 1024 * 1024 + 1)
+        );
+        emit!("m1.raw.good_alloc_size.size_max", config.good_alloc_size(usize::MAX));
+        emit!(
+            "m1.raw.can_use_large_page.aligned",
+            u8::from(config.can_use_large_page(2 * 1024 * 1024, 2 * 1024 * 1024))
+        );
+        emit!(
+            "m1.raw.can_use_large_page.page_aligned_only",
+            u8::from(config.can_use_large_page(2 * 1024 * 1024, page))
+        );
+
+        emit!("m1.raw.map.request.no_hint", 1);
+        emit!("m1.raw.map.request.allow_large", 0);
+        emit!("m1.raw.map.reserved.success", 1);
+        emit!("m1.raw.map.reserved.is_large", 0);
+        emit!("m1.raw.map.reserved.is_zero", u8::from(initially_zero));
+        emit!(
+            "m1.raw.map.reserved.initially_committed",
+            u8::from(initially_committed)
+        );
+        emit!("m1.raw.map.commit.success", 1);
+        emit!("m1.raw.map.commit.is_zero", 0);
+        emit!("m1.raw.map.decommit.success", 1);
+        emit!("m1.raw.map.decommit.needs_recommit", 0);
+        emit!("m1.raw.map.reset.success", 1);
+        emit!("m1.raw.map.protect.success", 1);
+        emit!("m1.raw.map.unprotect.success", 1);
+        emit!("m1.raw.map.free.success", 1);
+
+        emit!("m1.raw.numa.count", numa_count);
+        emit!("m1.raw.numa.current_lt_count", u8::from(numa_current < numa_count));
+        emit!(
+            "m1.raw.clock.monotonic_after_yield",
+            u8::from(clock_after >= clock_before)
+        );
+        emit!("m1.raw.yield.success", 1);
+        emit!("m1.raw.entropy.zero_success", 1);
+        emit!("m1.raw.entropy.sixteen_success", 1);
+        emit!(
+            "m1.raw.threadpool.false",
+            u8::from(!crate::types::ThreadLocalData::detached().is_in_threadpool())
+        );
+        std::println!("CRABC_MI_M1_RAW_TRACE_END");
     }
 
     #[test]
