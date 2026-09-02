@@ -1224,10 +1224,12 @@ impl ThreadLocalData {
     /// Initializes the source detached metadata-TLD portion after the bounded
     /// main subprocess identity exists.
     ///
-    /// This is `mi_tld_init`'s detached branch: it names the same main
-    /// subprocess as the process heap and metadata theap, retains sequence
-    /// zero, and stores the source detached NUMA sentinel. It is not a live
-    /// thread registration and therefore does not affect either counter.
+    /// This is the `mi_heap_main_init_once`/`mi_tld_init` detached setup: it
+    /// first replaces the initial `MI_MEMID_STATIC` image with
+    /// `_mi_memid_create(MI_MEM_STATIC)`, then names the same main subprocess
+    /// as the process heap and metadata theap, retains sequence zero, and
+    /// stores the source detached NUMA sentinel. It is not a live thread
+    /// registration and therefore does not affect either counter.
     #[inline]
     pub(crate) fn attach_detached_main_subprocess(&mut self, subprocess: &'static MainSubprocess) {
         debug_assert_eq!(self.thread_id, THREAD_ID_DETACHED);
@@ -1238,7 +1240,7 @@ impl ThreadLocalData {
         self.theaps_lock = PrivateLock::new();
         self.recurse = false;
         self.is_in_threadpool = false;
-        self.memid = MemoryId::static_empty();
+        self.memid = MemoryId::static_kind_only();
     }
 
     /// Initializes the complete subprocess-attached/no-theap result of the
@@ -1751,14 +1753,28 @@ impl MemoryId {
         Self::empty_with_kind(MemoryKind::Static)
     }
 
-    /// The static null/zero-extent source image used by unrelated empty images.
+    /// Creates the exact null/zero-extent `MI_MEMID_STATIC` initializer.
     ///
-    /// This intentionally remains the kind-only null/zero image; concrete
-    /// static allocations such as `mi_process_tld_main` must use
-    /// [`Self::static_allocation`].
+    /// The pinned macro records immutable static storage as pinned and
+    /// initially committed even when its union is null and its extent is zero.
+    /// `src/init.c` uses this image for `mi_page_empty`, `mi_tld_detached`, and
+    /// `_mi_theap_empty`. It is intentionally distinct from
+    /// `_mi_memid_create(MI_MEM_STATIC)` ([`Self::static_kind_only`]) and from
+    /// concrete `_mi_memid_create_static` storage ([`Self::static_allocation`]).
     #[inline]
     pub(crate) const fn static_empty() -> Self {
-        Self::static_kind_only()
+        Self {
+            info: MemoryInfo {
+                os: OsMemory {
+                    base: null_mut(),
+                    size: 0,
+                },
+            },
+            kind: MemoryKind::Static,
+            is_pinned: true,
+            initially_committed: true,
+            initially_zero: false,
+        }
     }
 
     #[inline]
@@ -4309,6 +4325,42 @@ mod tests {
             "offsetof.mi_memid_t.initially_zero",
             offset_of!(MemoryId, initially_zero)
         );
+        // These are the actual immutable images, rather than fresh temporary
+        // values: C initializes both through `MI_MEMID_STATIC` in `src/init.c`.
+        let empty_page_memid = &EMPTY_PAGE.as_ref().memid;
+        let empty_theap_memid = &crate::bootstrap::empty_default_theap().memid;
+        record!(
+            "m1.bootstrap.empty_page.memid.kind",
+            empty_page_memid.kind as usize
+        );
+        record!(
+            "m1.bootstrap.empty_page.memid.pinned",
+            empty_page_memid.is_pinned as usize
+        );
+        record!(
+            "m1.bootstrap.empty_page.memid.committed",
+            empty_page_memid.initially_committed as usize
+        );
+        record!(
+            "m1.bootstrap.empty_page.memid.zero",
+            empty_page_memid.initially_zero as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.memid.kind",
+            empty_theap_memid.kind as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.memid.pinned",
+            empty_theap_memid.is_pinned as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.memid.committed",
+            empty_theap_memid.initially_committed as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.memid.zero",
+            empty_theap_memid.initially_zero as usize
+        );
         // `LAYOUT_PROBE` has always emitted this complete C image. Keep the
         // Rust record equally complete so the release-oracle comparison owns
         // the random-context ABI rather than relying only on local asserts.
@@ -4316,19 +4368,19 @@ mod tests {
         record!("alignof.mi_random_ctx_t", align_of::<TheapRandomImage>());
         record!(
             "offsetof.mi_random_ctx_t.input",
-            offset_of!(TheapRandomImage, input)
+            TheapRandomImage::INPUT_OFFSET
         );
         record!(
             "offsetof.mi_random_ctx_t.output",
-            offset_of!(TheapRandomImage, output)
+            TheapRandomImage::OUTPUT_OFFSET
         );
         record!(
             "offsetof.mi_random_ctx_t.output_available",
-            offset_of!(TheapRandomImage, output_available)
+            TheapRandomImage::OUTPUT_AVAILABLE_OFFSET
         );
         record!(
             "offsetof.mi_random_ctx_t.weak",
-            offset_of!(TheapRandomImage, weak)
+            TheapRandomImage::WEAK_OFFSET
         );
         record!("sizeof.mi_page_t", size_of::<Page>());
         record!("alignof.mi_page_t", align_of::<Page>());
@@ -4571,6 +4623,54 @@ mod tests {
             }
         }
         std::println!("CRABC_MI_LAYOUT_END");
+    }
+
+    #[test]
+    fn static_empty_bootstrap_images_keep_the_pinned_static_memid_flags() {
+        // Pinned `MI_MEMID_STATIC` is not `_mi_memid_create(MI_MEM_STATIC)`:
+        // its null/zero union still records immutable static storage as
+        // pinned and initially committed. `src/init.c` uses that exact image
+        // for mi_page_empty, the initial mi_tld_detached image, and
+        // _mi_theap_empty.
+        let static_empty = MemoryId::static_empty();
+        assert_eq!(static_empty.kind(), MemoryKind::Static);
+        assert!(static_empty.is_pinned());
+        assert!(static_empty.initially_committed());
+        assert!(!static_empty.initially_zero());
+
+        let page = Page::empty();
+        assert!(page.memid.is_pinned());
+        assert!(page.memid.initially_committed());
+        assert!(!page.memid.initially_zero());
+
+        let detached = ThreadLocalData::detached();
+        assert!(detached.memid.is_pinned());
+        assert!(detached.memid.initially_committed());
+        assert!(!detached.memid.initially_zero());
+
+        // `mi_heap_main_init_once` replaces the initial detached-TLD image
+        // with `_mi_memid_create(MI_MEM_STATIC)` before `mi_tld_init` binds
+        // the main subprocess. Do not preserve the initializer flags across
+        // that source transition.
+        let mut attached_detached = ThreadLocalData::detached();
+        attached_detached.attach_detached_main_subprocess(MainSubprocess::global());
+        assert_eq!(attached_detached.memid.kind(), MemoryKind::Static);
+        assert!(!attached_detached.memid.is_pinned());
+        assert!(!attached_detached.memid.initially_committed());
+        assert!(!attached_detached.memid.initially_zero());
+
+        let theap = Theap::empty();
+        assert!(theap.memid.is_pinned());
+        assert!(theap.memid.initially_committed());
+        assert!(!theap.memid.initially_zero());
+
+        // `_mi_memid_create(MI_MEM_STATIC)` remains a separate kind-only
+        // source path; collapsing it into the initializer would hide this
+        // distinction again.
+        let kind_only = MemoryId::static_kind_only();
+        assert!(!kind_only.is_pinned());
+        assert!(!kind_only.initially_committed());
+        assert!(!kind_only.initially_zero());
     }
 
     #[test]
@@ -5169,7 +5269,7 @@ mod tests {
         let mut alias = Page::empty();
         alias.block_size = 73;
         alias.used = 9;
-        alias.memid = MemoryId::static_empty();
+        alias.memid = MemoryId::static_kind_only();
         let primary = NonNull::from(&mut primary);
         let alias = NonNull::from(&mut alias);
 

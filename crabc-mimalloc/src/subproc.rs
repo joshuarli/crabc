@@ -682,7 +682,7 @@ mod tests {
                 ticket.sequence(),
                 0,
                 main,
-                MemoryId::static_empty(),
+                MemoryId::static_kind_only(),
             );
         }
         // SAFETY: `image` was initialized immediately above from this exact

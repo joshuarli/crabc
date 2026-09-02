@@ -1158,6 +1158,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/init.c"
+name = "MI_MEMID_STATIC-bootstrap-page-and-theap-images"
+source_region = "MI_MEMID_STATIC from include/mimalloc/types.h:338-339 as used by mi_page_empty and _mi_theap_empty in src/init.c:15-45,120-145"
+rust_module = "crabc_mimalloc::types and crabc_mimalloc::bootstrap"
+rust_item = "MemoryId::static_empty, EMPTY_PAGE, and bootstrap::empty_default_theap"
+intentional_difference = "The Rust wrappers make the immutable raw-pointer images Sync without exposing mutable access; their source memory-ID kind and flag images are C-oracle compared."
+tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/bootstrap.rs", "compat/allocator/run.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/page.c"
 name = "later-main-thread-exit-retired-page-prepass"
 source_region = "_mi_theap_collect_retired and mi_page_try_retire from src/page.c:414-518, called after _mi_deferred_free and before generic MI_ABANDON visitation by mi_theap_collect_ex in src/theap.c:112-123"

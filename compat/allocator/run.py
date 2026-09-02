@@ -884,6 +884,16 @@ int main(void) {
   U("offsetof.mi_memid_t.is_pinned", offsetof(mi_memid_t, is_pinned));
   U("offsetof.mi_memid_t.initially_committed", offsetof(mi_memid_t, initially_committed));
   U("offsetof.mi_memid_t.initially_zero", offsetof(mi_memid_t, initially_zero));
+  const mi_memid_t empty_page_memid = _mi_page_empty_get()->memid;
+  const mi_memid_t empty_theap_memid = _mi_theap_empty.memid;
+  U("m1.bootstrap.empty_page.memid.kind", empty_page_memid.memkind);
+  U("m1.bootstrap.empty_page.memid.pinned", empty_page_memid.is_pinned);
+  U("m1.bootstrap.empty_page.memid.committed", empty_page_memid.initially_committed);
+  U("m1.bootstrap.empty_page.memid.zero", empty_page_memid.initially_zero);
+  U("m1.bootstrap.empty_theap.memid.kind", empty_theap_memid.memkind);
+  U("m1.bootstrap.empty_theap.memid.pinned", empty_theap_memid.is_pinned);
+  U("m1.bootstrap.empty_theap.memid.committed", empty_theap_memid.initially_committed);
+  U("m1.bootstrap.empty_theap.memid.zero", empty_theap_memid.initially_zero);
   U("sizeof.mi_random_ctx_t", sizeof(mi_random_ctx_t));
   U("alignof.mi_random_ctx_t", _Alignof(mi_random_ctx_t));
   U("offsetof.mi_random_ctx_t.input", offsetof(mi_random_ctx_t, input));

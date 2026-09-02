@@ -1873,6 +1873,41 @@ class ContractTests(unittest.TestCase):
                 "offsetof.mi_random_ctx_t.weak",
             ],
         )
+        bootstrap = next(
+            component
+            for component in summary["components"]
+            if component["id"] == "atomics-locks-once-and-bootstrap"
+        )
+        self.assertEqual(
+            bootstrap["layout_keys"],
+            [
+                "m1.bootstrap.empty_page.memid.kind",
+                "m1.bootstrap.empty_page.memid.pinned",
+                "m1.bootstrap.empty_page.memid.committed",
+                "m1.bootstrap.empty_page.memid.zero",
+                "m1.bootstrap.empty_theap.memid.kind",
+                "m1.bootstrap.empty_theap.memid.pinned",
+                "m1.bootstrap.empty_theap.memid.committed",
+                "m1.bootstrap.empty_theap.memid.zero",
+            ],
+        )
+        self.assertIn(
+            "static-bootstrap-memid-image",
+            [check["id"] for check in bootstrap["checks"]],
+        )
+        self.assertIn(
+            {
+                "kind": "item",
+                "name": "MI_MEMID_STATIC-bootstrap-page-and-theap-images",
+                "required_statuses": [
+                    "implemented",
+                    "unit_verified",
+                    "differential_verified",
+                ],
+                "upstream": "src/init.c",
+            },
+            bootstrap["source_map_records"],
+        )
         raw_primitives = next(
             component
             for component in summary["components"]
@@ -1955,6 +1990,50 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             evidence["configuration-and-arithmetic"]["status"], "matched"
+        )
+        self.assertEqual(
+            evidence["atomics-locks-once-and-bootstrap"]["status"], "matched"
+        )
+
+    def test_m1_foundations_layout_evidence_keeps_bootstrap_image_mismatch_pending(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
+        summary = RUNNER.validate_m1_foundations_contract(
+            contract,
+            RUNNER.load_pin(),
+            RUNNER.load_port_map(),
+        )
+        keys = {
+            key
+            for component in summary["components"]
+            for key in component["layout_keys"]
+        }
+        c_layout = {key: 1 for key in keys}
+        rust_layout = dict(c_layout)
+        rust_layout["m1.bootstrap.empty_page.memid.pinned"] = 0
+
+        evidence = RUNNER.m1_foundations_layout_evidence(
+            summary["components"], c_layout, rust_layout
+        )
+
+        self.assertEqual(
+            evidence["atomics-locks-once-and-bootstrap"],
+            {
+                "keys": [
+                    "m1.bootstrap.empty_page.memid.kind",
+                    "m1.bootstrap.empty_page.memid.pinned",
+                    "m1.bootstrap.empty_page.memid.committed",
+                    "m1.bootstrap.empty_page.memid.zero",
+                    "m1.bootstrap.empty_theap.memid.kind",
+                    "m1.bootstrap.empty_theap.memid.pinned",
+                    "m1.bootstrap.empty_theap.memid.committed",
+                    "m1.bootstrap.empty_theap.memid.zero",
+                ],
+                "missing_from_rust": [],
+                "mismatches": [
+                    "m1.bootstrap.empty_page.memid.pinned (C=1, Rust=0)"
+                ],
+                "status": "pending",
+            },
         )
 
     def test_m1_foundations_report_does_not_promote_partial_components(self) -> None:

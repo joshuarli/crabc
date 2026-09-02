@@ -145,14 +145,28 @@
           "expected_passed_test_count": 1,
           "id": "empty-bootstrap-image",
           "target": "bootstrap::tests::pinned_activation_binds_stable_owner_addresses_and_publishes_heap_last"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "static-bootstrap-memid-image",
+          "target": "types::tests::static_empty_bootstrap_images_keep_the_pinned_static_memid_flags"
         }
       ],
       "completion_status": "partial",
       "id": "atomics-locks-once-and-bootstrap",
-      "layout_keys": [],
+      "layout_keys": [
+        "m1.bootstrap.empty_page.memid.kind",
+        "m1.bootstrap.empty_page.memid.pinned",
+        "m1.bootstrap.empty_page.memid.committed",
+        "m1.bootstrap.empty_page.memid.zero",
+        "m1.bootstrap.empty_theap.memid.kind",
+        "m1.bootstrap.empty_theap.memid.pinned",
+        "m1.bootstrap.empty_theap.memid.committed",
+        "m1.bootstrap.empty_theap.memid.zero"
+      ],
       "remaining_conditions": [
         "Audit every M1-relevant source call site that installs or observes initialization completion; the selected once and bootstrap tests are not a complete init.c lifecycle proof.",
-        "Audit the remaining static bootstrap image fields and their publication ordering; the selected empty-image witness is not a full init.c port."
+        "Audit the remaining static bootstrap image fields and their publication ordering beyond the C/Rust-checked empty-page and empty-theap memory-ID images; the selected witnesses are not a full init.c port."
       ],
       "source_map_records": [
         {
@@ -187,6 +201,16 @@
           "required_statuses": [
             "implemented",
             "unit_verified"
+          ],
+          "upstream": "src/init.c"
+        },
+        {
+          "kind": "item",
+          "name": "MI_MEMID_STATIC-bootstrap-page-and-theap-images",
+          "required_statuses": [
+            "implemented",
+            "unit_verified",
+            "differential_verified"
           ],
           "upstream": "src/init.c"
         },
@@ -296,7 +320,6 @@
         "offsetof.mi_random_ctx_t.weak"
       ],
       "remaining_conditions": [
-        "Emit and compare all six mi_random_ctx_t layout keys from the Rust machine record against the pinned C release record.",
         "Review split and reinitialization behavior against every selected random.c source branch before changing this component to complete."
       ],
       "source_map_records": [

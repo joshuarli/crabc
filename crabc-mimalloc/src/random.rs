@@ -105,6 +105,19 @@ impl Drop for TheapRandomImage {
 }
 
 impl TheapRandomImage {
+    // The release-oracle layout record is emitted from `types`' test module,
+    // while these fields remain private to the random-state owner. Keep that
+    // evidence boundary explicit instead of widening the mutable image API.
+    #[cfg(test)]
+    pub(crate) const INPUT_OFFSET: usize = core::mem::offset_of!(Self, input);
+    #[cfg(test)]
+    pub(crate) const OUTPUT_OFFSET: usize = core::mem::offset_of!(Self, output);
+    #[cfg(test)]
+    pub(crate) const OUTPUT_AVAILABLE_OFFSET: usize =
+        core::mem::offset_of!(Self, output_available);
+    #[cfg(test)]
+    pub(crate) const WEAK_OFFSET: usize = core::mem::offset_of!(Self, weak);
+
     /// Source's inert `_mi_theap_empty.random` image.
     #[inline]
     pub(crate) const fn empty_weak() -> Self {
@@ -405,7 +418,7 @@ impl WeakObservations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::mem::{align_of, needs_drop, offset_of, size_of};
+    use core::mem::{align_of, needs_drop, size_of};
 
     const KEY: [u8; 32] = [
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
@@ -445,10 +458,10 @@ mod tests {
     fn source_layout_and_chacha_initialization_keep_all_words_authoritative() {
         assert_eq!(size_of::<TheapRandomImage>(), 136);
         assert_eq!(align_of::<TheapRandomImage>(), 4);
-        assert_eq!(offset_of!(TheapRandomImage, input), 0);
-        assert_eq!(offset_of!(TheapRandomImage, output), 64);
-        assert_eq!(offset_of!(TheapRandomImage, output_available), 128);
-        assert_eq!(offset_of!(TheapRandomImage, weak), 132);
+        assert_eq!(TheapRandomImage::INPUT_OFFSET, 0);
+        assert_eq!(TheapRandomImage::OUTPUT_OFFSET, 64);
+        assert_eq!(TheapRandomImage::OUTPUT_AVAILABLE_OFFSET, 128);
+        assert_eq!(TheapRandomImage::WEAK_OFFSET, 132);
         assert!(needs_drop::<TheapRandomImage>());
 
         let mut context = TheapRandomImage::empty_weak();

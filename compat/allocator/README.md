@@ -960,6 +960,10 @@ checks, binds the result to an unchanged clean Git commit, and classifies each
 component plus its explicit exclusions. It intentionally exits 3 while the
 contract says M1 is partial. A passing focused check or shared M0/M3/M4
 producer does not close a whole source unit or promote any allocator backend.
+The bootstrap component compares the actual pinned `MI_MEMID_STATIC` empty-page
+and empty-Theap memory-ID flags against the release C oracle; this is evidence
+for those two immutable images only, not a general `src/init.c` completion
+claim.
 
 `allocator --full` extends that gate by building and auditing the standalone
 static and shared test adapter, including its exact 16-symbol export boundary,

@@ -2771,7 +2771,7 @@ mod tests {
         let slice_index = view.arena().info_slices;
 
         let mut heap = Heap::bootstrap_empty();
-        heap.initialize_main_static(subprocess, MemoryId::static_empty());
+        heap.initialize_main_static(subprocess, MemoryId::static_kind_only());
         heap.install_main_arena_pages(
             subprocess,
             view.arena().arena_index,
@@ -2834,7 +2834,7 @@ mod tests {
         assert!(pages.set_range(rejected, 2).is_some());
 
         let mut heap = Heap::bootstrap_empty();
-        heap.initialize_main_static(subprocess, MemoryId::static_empty());
+        heap.initialize_main_static(subprocess, MemoryId::static_kind_only());
         heap.install_main_arena_pages(
             subprocess,
             view.arena().arena_index,
