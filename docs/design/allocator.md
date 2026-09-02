@@ -746,6 +746,15 @@ source sequence but never increments the live count. Only a fully initialized
 TLD can consume its ticket into a non-dropping registration lease, whose
 explicit consuming release performs exactly one live-count decrement.
 
+The selected `ThreadLocalDataOwner` lifecycle makes that later direct-Malloc
+route observable without broadening it: ticket-zero teardown has no metadata
+capability, an injected post-ready direct-zeroed request consumes its later
+sequence without a capability or live lease, and one retry retains a typed
+subprocess-attached/no-theap Malloc capability through exact-owner teardown.
+This does not equate Rust's private backing with C's normal `_mi_meta_zalloc`
+backing, prove generic `_mi_meta_free` dispatch, or establish complete
+`mi_tld_init`/`mi_tld_free` list, lock, or arbitrary-thread behavior.
+
 `ThreadLocalDataOwner` receives that ticket internally rather than taking a
 caller-supplied sequence. Its full source-ordered TLD image names the same
 process-main identity as the detached metadata heap/TLD/theap bootstrap and

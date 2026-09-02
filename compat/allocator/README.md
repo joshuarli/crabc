@@ -166,7 +166,13 @@ choosing storage; ticket zero uses the real static main-TLD branch without
 touching metadata, while later tickets use an exact fresh direct-zeroed
 metadata capability. Only the fully initialized TLD converts its ticket into a
 live-count lease, so a metadata failure still consumes the sequence but does
-not leak a live count. The generic TLD checkpoint records direct `TPIDR_EL0`,
+not leak a live count. The selected isolated later-TLD regression proves that
+ticket-zero teardown retains no metadata capability, an injected post-ready
+direct-zeroed metadata failure consumes its later sequence without a capability
+or live lease, and the retry retains one typed Malloc capability through exact-
+owner teardown. It does not equate Rust's private backing with C's normal
+`_mi_meta_zalloc` backing or prove full `mi_tld_init`/`mi_tld_free` list, lock,
+or metadata-free behavior. The generic TLD checkpoint records direct `TPIDR_EL0`,
 Linux NUMA, the exact Unix non-threadpool result, the same main-subprocess
 pointer as detached metadata bootstrap state, and a null theap list. Its
 metadata path remains **subprocess-attached, no-theap**. Generic construction

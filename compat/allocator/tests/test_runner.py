@@ -2202,6 +2202,15 @@ class ContractTests(unittest.TestCase):
                         "meta::tests::bound_metadata_rejects_a_foreign_subprocess_"
                         "before_first_backing"
                     ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "later-tld-direct-malloc-capability-lifetime",
+                    "kind": "rust-unit",
+                    "target": (
+                        "tld::tests::direct_metadata_allocation_failure_consumes_its_"
+                        "ticket_but_never_leaks_live_count"
+                    ),
                 }
             ],
         )

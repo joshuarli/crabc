@@ -75,12 +75,18 @@
           "id": "meta-bound-first-backing-identity-and-retry",
           "kind": "rust-unit",
           "target": "meta::tests::bound_metadata_rejects_a_foreign_subprocess_before_first_backing"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "later-tld-direct-malloc-capability-lifetime",
+          "kind": "rust-unit",
+          "target": "tld::tests::direct_metadata_allocation_failure_consumes_its_ticket_but_never_leaks_live_count"
         }
       ],
       "completion_status": "partial",
       "id": "metadata",
       "remaining_conditions": [
-        "complete pinned C's normal _mi_meta_zalloc backing route and connect the selected exact-owner Malloc and regular-OS release witnesses to real metadata callers; complete no-free, arena registry/subprocess, huge/remap, and every remaining source memory-ID ownership branch with retry-preserving failure behavior where source ownership remains live"
+        "complete pinned C's normal _mi_meta_zalloc backing route and connect the selected regular-OS release witness to a real metadata caller; complete no-free, arena registry/subprocess, huge/remap, and every remaining source memory-ID ownership branch with retry-preserving failure behavior where source ownership remains live"
       ],
       "source_units": [
         "include/mimalloc/types.h",
@@ -323,6 +329,7 @@
       "the selected reset-advice regression proves only the private source snapshot/retry control flow with a deterministic advisory mock; it does not claim a live-kernel EAGAIN frequency or complete purge fault parity",
       "the selected arena-purge regressions prove only default one-slice delayed-purge callback splitting at a source 64-bit bitmap-field boundary and frozen-Linux default-decommit-error consumption; they do not claim general visitor behavior, configurable purge policy, general purge fault parity, registry-wide collection, concurrent arena use, or arena lifecycle parity",
       "the selected detached-metadata checks prove only that Rust binds its static detached metadata image before global PageMap publication and, for the bounded same-subprocess, empty-head, non-threadpool input, preserves kind-only static provenance and frozen normal enabled page-reclaim, initializes a possibly-weak random context, and derives an odd cookie before first session/backing. A nonempty head, mismatched subprocess, or thread-pool input is rejected before mutation rather than claiming C's locked list/split or option-adjustment path. They do not compare the private backing route with pinned C's normal _mi_meta_zalloc backing or establish complete _mi_theap_init, metadata, initialization, mutable-options, or fault-injection parity",
+      "the selected later-TLD direct-Malloc check proves only an isolated ticket-zero static teardown without a metadata capability, one injected post-ready direct-zeroed metadata failure that consumes its later sequence without a live capability or lease, and one retry's typed subprocess-attached/no-theap Malloc capability through exact-owner teardown. It does not establish pinned C normal _mi_meta_zalloc backing, full mi_tld_init/mi_tld_free lock/list behavior, arbitrary thread/ticket behavior, or generic _mi_meta_free branch parity",
       "this gate does not claim a production allocator backend or any later allocator milestone",
       "this gate does not claim non-AArch64 support"
     ],
