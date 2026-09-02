@@ -1876,6 +1876,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/prim/unix/prim.c"
+name = "linux-raw-numa-node-count-observation"
+source_region = "include/mimalloc/prim.h:82-86 _mi_prim_numa_node_count declaration; src/prim/unix/prim.c:677-689 allocation-free /sys/devices/system/node/node%u R_OK scan"
+rust_module = "crabc_mimalloc::os"
+rust_item = "numa_node_count/scan_linux_numa_node_count/linux_numa_node_path_is_readable"
+intentional_difference = "crabc_core::fs::access replaces mi_prim_access, while a fixed-size decimal path writer preserves source node probes 1 through 255, access-before-gap ordering, the four-missing-node tolerance, and the last_found plus one fallback. This private raw observation has no consumer and deliberately excludes src/os.c caching, mi_option_use_numa_nodes, current-node normalization, and NUMA arena-placement policy."
+tests = ["crabc-mimalloc/src/os.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/arena.c"
 name = "later-main-os-aligned-singleton-abandon-list-and-terminal-release"
 source_region = "non-arena _mi_arenas_page_abandon list insertion and _mi_arenas_page_unabandon removal from src/arena.c:1304-1355,1383-1424; full-queue detach from src/page.c:291-303; failed-reclaim empty tail from src/free.c:371-379; clipped PageMap/alias/primary/mapping release from the OS-aligned page path"

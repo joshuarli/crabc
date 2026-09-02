@@ -5,7 +5,8 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/prim.h`,
-// `src/prim/prim.c`, `src/prim/unix/prim.c`, and the raw page-alignment and
+// `src/prim/prim.c`, `src/prim/unix/prim.c` (including the raw
+// `_mi_prim_numa_node_count` observation), and the raw page-alignment and
 // memory-transition portions of `src/os.c`, including `src/os.c:655-680`'s
 // default `purge_decommits` branch for non-owning arena spans.
 
@@ -29,6 +30,7 @@
 //! only to construct a real kernel-compatible input for their local mapping
 //! fixture.
 
+use core::ffi::CStr;
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -50,6 +52,18 @@ const MADV_FREE: u32 = 8;
 const CLOCK_MONOTONIC: i32 = 1;
 const GRND_NONBLOCK: u32 = 0x1;
 const RUSAGE_SELF: i32 = 0;
+const R_OK: u32 = 4;
+
+// `src/prim/unix/prim.c:_mi_prim_numa_node_count` probes node entries one at
+// a time instead of allocating or parsing a topology file. It starts after
+// the implicit node zero, scans the source's half-open 1..256 range, and
+// permits four absent entries before a fifth ends the observation.
+const NUMA_NODE_SCAN_END: usize = 256;
+const NUMA_NODE_MAX_MISSING_GAP: usize = 4;
+const NUMA_NODE_PATH_PREFIX: &[u8] = b"/sys/devices/system/node/node";
+const NUMA_NODE_DECIMAL_CAPACITY: usize = 3;
+const NUMA_NODE_PATH_CAPACITY: usize =
+    NUMA_NODE_PATH_PREFIX.len() + NUMA_NODE_DECIMAL_CAPACITY + 1;
 
 // `src/prim/unix/prim.c:_mi_prim_reset` starts with MADV_FREE and permanently
 // switches to MADV_DONTNEED only when Linux says MADV_FREE is unsupported.
@@ -273,6 +287,96 @@ fn read_small_file<T>(path: &'static [u8], interpret: impl FnOnce(&[u8]) -> T) -
 #[inline]
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty() && haystack.windows(needle.len()).any(|window| window == needle)
+}
+
+/// Returns the source Linux primitive's observed logical NUMA-node count.
+///
+/// This is only `_mi_prim_numa_node_count` from
+/// `src/prim/unix/prim.c:677-689`: an allocation-free `R_OK` probe over the
+/// conventional sysfs node entries. It deliberately does not cache the
+/// result, read `mi_option_use_numa_nodes`, normalize a current-node value,
+/// or choose arena placement; those are separate `src/os.c` policy concerns.
+///
+/// The current bounded engine has no consumer for a topology count yet. Keep
+/// the primitive available for that later owner without turning its absence
+/// into a guessed allocator policy now.
+#[allow(dead_code)]
+pub(crate) fn numa_node_count() -> usize {
+    scan_linux_numa_node_count(linux_numa_node_path_is_readable)
+}
+
+/// Runs the exact sparse-node scan used by the pinned Linux primitive.
+///
+/// The predicate is evaluated before the gap decision for every scanned node,
+/// including the fifth absent node that ends the scan. Keeping this pure
+/// helper makes the source's sparse-topology boundary directly testable
+/// without making test results depend on the host's sysfs topology.
+fn scan_linux_numa_node_count(mut node_is_readable: impl FnMut(usize) -> bool) -> usize {
+    let mut last_found = 0usize;
+    for node in 1..NUMA_NODE_SCAN_END {
+        if node_is_readable(node) {
+            last_found = node;
+        } else if node - last_found > NUMA_NODE_MAX_MISSING_GAP {
+            break;
+        }
+    }
+    // `last_found` is at most 255 in the source loop, so this also preserves
+    // the source fallback of one logical node when every probe fails.
+    last_found + 1
+}
+
+/// Tests one source-shaped sysfs topology entry without allocation or libc.
+fn linux_numa_node_path_is_readable(node: usize) -> bool {
+    let mut path = [0u8; NUMA_NODE_PATH_CAPACITY];
+    let Some(path_length) = write_linux_numa_node_path(node, &mut path) else {
+        return false;
+    };
+    let Ok(path) = CStr::from_bytes_with_nul(&path[..path_length]) else {
+        return false;
+    };
+    crabc_core::fs::access(path, R_OK).is_ok()
+}
+
+/// Writes `/sys/devices/system/node/node<decimal>\\0` for one source scan
+/// index and returns its byte length including the trailing NUL.
+fn write_linux_numa_node_path(
+    node: usize,
+    path: &mut [u8; NUMA_NODE_PATH_CAPACITY],
+) -> Option<usize> {
+    if !(1..NUMA_NODE_SCAN_END).contains(&node) {
+        return None;
+    }
+
+    let prefix_length = NUMA_NODE_PATH_PREFIX.len();
+    path[..prefix_length].copy_from_slice(NUMA_NODE_PATH_PREFIX);
+
+    let mut decimal = [0u8; NUMA_NODE_DECIMAL_CAPACITY];
+    let decimal_length = write_decimal_node_index(node, &mut decimal);
+    let decimal_end = prefix_length.checked_add(decimal_length)?;
+    path[prefix_length..decimal_end].copy_from_slice(&decimal[..decimal_length]);
+    path[decimal_end] = 0;
+    decimal_end.checked_add(1)
+}
+
+/// Writes the source scan index's one-to-three decimal digits without a
+/// formatter or allocator. Callers have already bounded it to `1..256`.
+fn write_decimal_node_index(
+    mut node: usize,
+    output: &mut [u8; NUMA_NODE_DECIMAL_CAPACITY],
+) -> usize {
+    let digits = if node >= 100 {
+        3
+    } else if node >= 10 {
+        2
+    } else {
+        1
+    };
+    for index in (0..digits).rev() {
+        // The remainder is in 0..10, so the narrowing conversion is exact.
+        output[index] = b'0' + (node % 10) as u8;
+        node /= 10;
+    }
+    digits
 }
 
 /// The initial protection requested for a private anonymous mapping.
@@ -1159,6 +1263,62 @@ mod tests {
         }
     }
 
+    #[test]
+    fn linux_numa_node_count_scan_preserves_sparse_gap_and_probe_order() {
+        assert_eq!(scan_linux_numa_node_count(|_| false), 1);
+        assert_eq!(scan_linux_numa_node_count(|node| node <= 3), 4);
+        assert_eq!(
+            scan_linux_numa_node_count(|node| node == 1 || node == 6),
+            7,
+            "four absent nodes remain sparse rather than ending the source scan",
+        );
+
+        let mut probed = [0usize; NUMA_NODE_SCAN_END - 1];
+        let mut probe_count = 0;
+        let observed_count = scan_linux_numa_node_count(|node| {
+            probed[probe_count] = node;
+            probe_count += 1;
+            node == 1
+        });
+        assert_eq!(observed_count, 2);
+        assert_eq!(
+            &probed[..probe_count],
+            &[1, 2, 3, 4, 5, 6],
+            "the fifth absent node is probed before it ends the scan",
+        );
+
+        assert_eq!(
+            scan_linux_numa_node_count(|node| node == 1 || node % 5 == 0),
+            256,
+            "the source scans node 255 and reports its index plus one",
+        );
+    }
+
+    #[test]
+    fn linux_numa_node_count_path_matches_source_sysfs_entries() {
+        let mut path = [0u8; NUMA_NODE_PATH_CAPACITY];
+
+        let one_length = write_linux_numa_node_path(1, &mut path).unwrap();
+        assert_eq!(
+            &path[..one_length],
+            b"/sys/devices/system/node/node1\0",
+        );
+
+        let ten_length = write_linux_numa_node_path(10, &mut path).unwrap();
+        assert_eq!(
+            &path[..ten_length],
+            b"/sys/devices/system/node/node10\0",
+        );
+
+        let last_length = write_linux_numa_node_path(255, &mut path).unwrap();
+        assert_eq!(
+            &path[..last_length],
+            b"/sys/devices/system/node/node255\0",
+        );
+        assert!(write_linux_numa_node_path(0, &mut path).is_none());
+        assert!(write_linux_numa_node_path(256, &mut path).is_none());
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn x86_64_startup_page_size_accepts_only_the_four_kib_profile() {
@@ -1309,6 +1469,10 @@ mod tests {
         let _peak_resident_bytes = usage.peak_resident_bytes;
         let _major_page_faults = usage.major_page_faults;
         let _numa_node = numa_node();
+        assert!(
+            numa_node_count() >= 1,
+            "the raw NUMA-count observation preserves its one-node fallback",
+        );
 
         let mut bytes = [0u8; 16];
         assert!(entropy_fill(&mut bytes).expect("Linux getrandom"));

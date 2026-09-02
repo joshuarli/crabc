@@ -14,14 +14,14 @@
   "port_map_counts": {
     "differential_verified": 15,
     "exported": 4,
-    "implemented": 149,
-    "item_count": 145,
+    "implemented": 150,
+    "item_count": 146,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 149
+    "unit_verified": 150
   },
-  "port_map_sha256": "2d6a4a69c4080dbe6b87e75c735672abef15d283e70aac9f4c1fec6545b94619",
+  "port_map_sha256": "2e2853670e2f4dfe952719c2716ea1d452d026fd1b1787b4357d2987bfd90e50",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -412,6 +412,10 @@
       "differential_verified"
     ],
     "item:src/prim/unix/prim.c:linux-direct-process-thread-and-entropy-observations": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/prim/unix/prim.c:linux-raw-numa-node-count-observation": [
       "implemented",
       "unit_verified"
     ],
