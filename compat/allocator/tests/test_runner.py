@@ -1951,14 +1951,73 @@ class ContractTests(unittest.TestCase):
             for component in summary["components"]
             if component["id"] == "linux-raw-primitives"
         )
-        self.assertIn(
-            "linux-raw-numa-node-count-observation",
-            [record.get("name") for record in raw_primitives["source_map_records"]],
+        self.assertEqual(
+            [
+                declaration["name"]
+                for declaration in raw_primitives["prim_h_declaration_inventory"]
+            ],
+            list(RUNNER.M1_RAW_PRIMITIVE_DECLARATIONS),
         )
-        self.assertIn(
-            "prim-h-options-environment-and-diagnostics",
-            [exclusion["id"] for exclusion in summary["exclusions"]],
+        self.assertEqual(
+            [record["name"] for record in raw_primitives["source_map_records"]],
+            [
+                "mi_os_mem_config-and-good-allocation-size",
+                "linux-regular-map-memory-transitions",
+                "linux-direct-process-thread-and-entropy-observations",
+                "linux-raw-numa-node-count-observation",
+                "current-thread-unattached-tld-metadata-lifecycle",
+            ],
         )
+        self.assertEqual(
+            {
+                declaration["name"]: declaration["record_id"]
+                for declaration in raw_primitives["prim_h_declaration_inventory"]
+                if declaration["classification"] == "later-milestone-exclusion"
+            },
+            {
+                "_mi_prim_reuse": "prim-h-reuse-and-huge-page-allocation",
+                "_mi_prim_alloc_huge_os_pages": "prim-h-reuse-and-huge-page-allocation",
+                "mi_process_info_t": "prim-h-process-statistics",
+                "_mi_prim_process_info": "prim-h-process-statistics",
+                "_mi_prim_out_stderr": "prim-h-options-environment-and-diagnostics",
+                "_mi_prim_getenv": "prim-h-options-environment-and-diagnostics",
+                "_mi_prim_thread_init_auto_done": "prim-h-automatic-thread-lifecycle",
+                "_mi_prim_thread_done_auto_done": "prim-h-automatic-thread-lifecycle",
+                "_mi_prim_thread_associate_default_theap": "prim-h-automatic-thread-lifecycle",
+            },
+        )
+        exclusions_by_id = {
+            exclusion["id"]: exclusion["disposition"]
+            for exclusion in summary["exclusions"]
+        }
+        self.assertEqual(
+            {
+                exclusion_id: exclusions_by_id[exclusion_id]
+                for exclusion_id in {
+                    "prim-h-reuse-and-huge-page-allocation",
+                    "prim-h-process-statistics",
+                    "prim-h-options-environment-and-diagnostics",
+                    "prim-h-automatic-thread-lifecycle",
+                    "prim-c-automatic-process-lifecycle",
+                    "prim-c-allocator-redirection-integration",
+                    "prim-unix-nondefault-vm-routes",
+                    "prim-unix-option-and-diagnostic-routes",
+                    "prim-unix-portability-fallback-routes",
+                }
+            },
+            {
+                "prim-h-reuse-and-huge-page-allocation": "deferred-to-m2",
+                "prim-h-process-statistics": "deferred-to-m7",
+                "prim-h-options-environment-and-diagnostics": "deferred-to-m7",
+                "prim-h-automatic-thread-lifecycle": "deferred-to-m5",
+                "prim-c-automatic-process-lifecycle": "deferred-to-m5",
+                "prim-c-allocator-redirection-integration": "deferred-to-m8",
+                "prim-unix-nondefault-vm-routes": "deferred-to-m2",
+                "prim-unix-option-and-diagnostic-routes": "deferred-to-m7",
+                "prim-unix-portability-fallback-routes": "outside-m1",
+            },
+        )
+        self.assertNotIn("whole-prim-h-memory-policy", exclusions_by_id)
         self.assertEqual(
             RUNNER.m1_foundations_check_command(
                 summary["execution"], random_image["checks"][0]
@@ -1984,6 +2043,25 @@ class ContractTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RUNNER.HarnessError, "lacks required status"):
+            RUNNER.validate_m1_foundations_contract(
+                malformed,
+                RUNNER.load_pin(),
+                RUNNER.load_port_map(),
+            )
+
+    def test_m1_foundations_contract_rejects_an_unmapped_raw_prim_declaration(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
+        malformed = json.loads(json.dumps(contract))
+        raw_primitives = next(
+            component
+            for component in malformed["components"]
+            if component["id"] == "linux-raw-primitives"
+        )
+        raw_primitives["prim_h_declaration_inventory"][0]["record_id"] = "unreviewed"
+
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError, "lacks a current source-map witness"
+        ):
             RUNNER.validate_m1_foundations_contract(
                 malformed,
                 RUNNER.load_pin(),

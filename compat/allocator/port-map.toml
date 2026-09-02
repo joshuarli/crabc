@@ -75,10 +75,10 @@ performance_qualified = false
 
 [[unit]]
 upstream = "include/mimalloc/prim.h"
-source_region = "OS primitive interface"
+source_region = "OS primitive interface; only the selected immutable configuration, normal raw VM, clock/NUMA/yield/getrandom, and exact false-threadpool declarations are separately itemized"
 rust_module = "crabc_mimalloc::os"
-rust_item = "partial: Linux/AArch64 memory, clock, process/thread, CPU, yield, and entropy primitives through crabc-core"
-intentional_difference = "Linux/AArch64 direct primitives replace the upstream portability layer; remaining option/statistics/huge-page policy is absent."
+rust_item = "partial: Linux/AArch64 immutable configuration, normal raw VM transitions, clock, NUMA, yield, and entropy primitives through crabc-core; the exact Unix false threadpool observation is represented with the TLD image"
+intentional_difference = "Only separately named items are M1 raw-boundary evidence. Rust ProcessUsage, process/task IDs, and TPIDR identity do not stand in for prim.h declarations; process statistics, automatic lifecycle, options/diagnostics, reuse, and huge-page allocation remain explicit later exclusions."
 tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/os_host_model.rs"]
 exported = false
 implemented = false
@@ -438,10 +438,10 @@ performance_qualified = false
 
 [[unit]]
 upstream = "src/prim/prim.c"
-source_region = "platform primitive selection"
+source_region = "platform primitive selection plus generic automatic process and allocator-redirection callbacks"
 rust_module = "crabc_mimalloc::os"
-rust_item = "unimplemented"
-intentional_difference = "Linux/AArch64 only; no generic portability abstraction will be introduced."
+rust_item = "unimplemented; selected Linux Unix primitive leaves are separately itemized"
+intentional_difference = "The generic constructor/destructor lifecycle is deferred to M5 and _mi_is_redirected/_mi_allocator_init/_mi_allocator_done are deferred to M8. Linux/AArch64 only; no generic portability abstraction will be introduced."
 tests = []
 exported = false
 implemented = false
@@ -466,10 +466,10 @@ performance_qualified = false
 
 [[unit]]
 upstream = "src/prim/unix/prim.c"
-source_region = "Linux/Unix virtual-memory primitives"
+source_region = "Linux/Unix primitive unit; selected normal VM and direct-observation leaves are separately itemized"
 rust_module = "crabc_mimalloc::os"
-rust_item = "unimplemented"
-intentional_difference = "Only Linux/AArch64 behavior is in scope; raw syscalls remain centralized in crabc-core."
+rust_item = "partial through the separately itemized raw leaves; the full Unix primitive unit is unimplemented"
+intentional_difference = "Only Linux/AArch64 behavior is in scope; raw syscalls remain centralized in crabc-core. Nondefault VM, options/diagnostics, and portability fallback routes remain explicit exclusions."
 tests = []
 exported = false
 implemented = false
@@ -1863,10 +1863,10 @@ performance_qualified = false
 [[item]]
 upstream = "src/prim/unix/prim.c"
 name = "linux-regular-map-memory-transitions"
-source_region = "regular anonymous mmap/munmap with MAP_NORESERVE policy, guaranteed-aligned overmapping/trimming, commit, default-profile decommit, reset advisory cache, protect/unprotect, and published mapping ownership handoff"
+source_region = "_mi_prim_free; the no-hint/non-large regular unix_mmap branch used by _mi_prim_alloc; _mi_prim_commit; normal-release _mi_prim_decommit; _mi_prim_reset; and _mi_prim_protect"
 rust_module = "crabc_mimalloc::os"
-rust_item = "Mapping and its explicit transition methods"
-intentional_difference = "Kernel errno results remain typed Result values and ownership closes only after successful unmap. Randomized aligned hints, THP advice, huge pages, option state, and statistics remain outside this slice."
+rust_item = "Mapping::map_for_allocator/map_regular/unmap/commit/decommit/purge/protect/unprotect on valid raw-primitive subrange calls"
+intentional_difference = "Kernel errno results remain typed Result values and ownership closes only after successful unmap. This item does not claim map_aligned_for_allocator, range normalization, published-owner handoff, or src/os.c wrappers; _mi_prim_reuse, hints, large/huge/THP routes, option state, and statistics remain outside it."
 tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/os_host_model.rs"]
 exported = false
 implemented = true
@@ -1877,11 +1877,14 @@ performance_qualified = false
 
 [[item]]
 upstream = "src/prim/unix/prim.c"
+# Stable ratchet key retained from the pre-audit wording. It now names only
+# the four source primitives below; Rust process/task/TP helpers are not
+# evidence for this Unix primitive record.
 name = "linux-direct-process-thread-and-entropy-observations"
-source_region = "monotonic clock, getrusage, process/task/TLS identity, getcpu NUMA node, scheduler yield, and direct getrandom path"
+source_region = "the CLOCK_MONOTONIC success path of _mi_prim_clock_now, _mi_prim_numa_node, the direct getrandom branch of _mi_prim_random_buf, and _mi_prim_thread_yield"
 rust_module = "crabc_mimalloc::os"
-rust_item = "monotonic_milliseconds/process_usage/process_id/thread_id/thread_pointer_identity/numa_node/thread_yield/entropy_fill"
-intentional_difference = "Linux 5.10 direct crabc-core primitives replace libc calls; pre-5.10 clock/getrandom fallbacks are outside project policy, while process-owned AT_RANDOM lifetime/freshness remains a later initialization contract."
+rust_item = "monotonic_milliseconds/numa_node/thread_yield/entropy_fill"
+intentional_difference = "Linux 5.10 direct crabc-core primitives replace libc calls. Clock errors remain errors instead of taking C's clock() fallback, getrandom has no ENOSYS /dev/urandom fallback, and sched_yield is the direct no-libc counterpart to C sleep(0). ProcessUsage, process/task IDs, and TPIDR identity have distinct later/source mappings."
 tests = ["crabc-mimalloc/src/os.rs", "crabc-core/src/tests.rs"]
 exported = false
 implemented = true

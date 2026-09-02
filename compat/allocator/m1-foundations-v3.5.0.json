@@ -377,11 +377,137 @@
       "completion_status": "partial",
       "id": "linux-raw-primitives",
       "layout_keys": [],
+      "prim_h_declaration_inventory": [
+        {
+          "classification": "m1-raw-boundary",
+          "name": "mi_os_mem_config_t",
+          "record_id": "mi_os_mem_config-and-good-allocation-size"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_mem_init",
+          "record_id": "mi_os_mem_config-and-good-allocation-size"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_free",
+          "record_id": "linux-regular-map-memory-transitions"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_alloc",
+          "record_id": "linux-regular-map-memory-transitions"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_commit",
+          "record_id": "linux-regular-map-memory-transitions"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_decommit",
+          "record_id": "linux-regular-map-memory-transitions"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_reset",
+          "record_id": "linux-regular-map-memory-transitions"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "name": "_mi_prim_reuse",
+          "record_id": "prim-h-reuse-and-huge-page-allocation"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_protect",
+          "record_id": "linux-regular-map-memory-transitions"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "name": "_mi_prim_alloc_huge_os_pages",
+          "record_id": "prim-h-reuse-and-huge-page-allocation"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_numa_node",
+          "record_id": "linux-direct-process-thread-and-entropy-observations"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_numa_node_count",
+          "record_id": "linux-raw-numa-node-count-observation"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_clock_now",
+          "record_id": "linux-direct-process-thread-and-entropy-observations"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "name": "mi_process_info_t",
+          "record_id": "prim-h-process-statistics"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "name": "_mi_prim_process_info",
+          "record_id": "prim-h-process-statistics"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "name": "_mi_prim_out_stderr",
+          "record_id": "prim-h-options-environment-and-diagnostics"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "name": "_mi_prim_getenv",
+          "record_id": "prim-h-options-environment-and-diagnostics"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_random_buf",
+          "record_id": "linux-direct-process-thread-and-entropy-observations"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "name": "_mi_prim_thread_init_auto_done",
+          "record_id": "prim-h-automatic-thread-lifecycle"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "name": "_mi_prim_thread_done_auto_done",
+          "record_id": "prim-h-automatic-thread-lifecycle"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "name": "_mi_prim_thread_associate_default_theap",
+          "record_id": "prim-h-automatic-thread-lifecycle"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_thread_is_in_threadpool",
+          "record_id": "current-thread-unattached-tld-metadata-lifecycle"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_thread_yield",
+          "record_id": "linux-direct-process-thread-and-entropy-observations"
+        }
+      ],
       "remaining_conditions": [
-        "Inventory every pinned prim.h declaration and either give its M1 raw-boundary evidence or place it in an explicit later-milestone exclusion.",
-        "Keep huge-page policy, option/statistics state, process lifecycle, and retry policy outside this selected raw-primitive witness until separately specified."
+        "Close C/Rust differential evidence for the selected immutable configuration, normal mapping, direct clock/NUMA/yield/getrandom, and false-threadpool paths; their current source-map witnesses are implemented/unit-verified only.",
+        "Keep the checked prim.h declaration inventory source-ordered and linked only to a current raw-boundary witness or an explicit later-milestone exclusion. The mapping-fault-boundary check is crabc test instrumentation, not a prim.h declaration witness."
       ],
       "source_map_records": [
+        {
+          "kind": "item",
+          "name": "mi_os_mem_config-and-good-allocation-size",
+          "required_statuses": [
+            "implemented",
+            "unit_verified"
+          ],
+          "upstream": "src/os.c"
+        },
         {
           "kind": "item",
           "name": "linux-regular-map-memory-transitions",
@@ -408,6 +534,15 @@
             "unit_verified"
           ],
           "upstream": "src/prim/unix/prim.c"
+        },
+        {
+          "kind": "item",
+          "name": "current-thread-unattached-tld-metadata-lifecycle",
+          "required_statuses": [
+            "implemented",
+            "unit_verified"
+          ],
+          "upstream": "src/init.c"
         }
       ]
     },
@@ -461,21 +596,78 @@
     },
     {
       "disposition": "deferred-to-m2",
-      "id": "whole-prim-h-memory-policy",
-      "reason": "The selected Linux raw mapping, observation, and NUMA items do not constitute the complete prim.h interface, huge-page policy, allocator memory policy, or lifecycle policy.",
+      "id": "prim-h-reuse-and-huge-page-allocation",
+      "reason": "_mi_prim_reuse has no Rust raw primitive, and _mi_prim_alloc_huge_os_pages plus its huge-page VM boundary are M2 VM-substrate work. The selected normal mapping witness does not claim either declaration.",
       "upstream_paths": [
         "include/mimalloc/prim.h",
-        "src/prim/prim.c",
+        "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m7",
+      "id": "prim-h-process-statistics",
+      "reason": "mi_process_info_t and _mi_prim_process_info are the M7 statistics surface. Rust ProcessUsage is available for later callers but is not M1 raw-primitive source-map evidence.",
+      "upstream_paths": [
+        "include/mimalloc/prim.h",
         "src/prim/unix/prim.c"
       ]
     },
     {
       "disposition": "deferred-to-m7",
       "id": "prim-h-options-environment-and-diagnostics",
-      "reason": "_mi_prim_getenv and _mi_prim_out_stderr belong to the M7 options/environment/diagnostics surface. The current raw-primitive facilities do not supply their option parsing, environment policy, or diagnostic ownership.",
+      "reason": "_mi_prim_getenv and _mi_prim_out_stderr belong to the M7 options/environment/diagnostics surface. The selected primitive paths do not supply option parsing, environment policy, or diagnostic ownership.",
       "upstream_paths": [
         "include/mimalloc/prim.h",
-        "src/prim/prim.c",
+        "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m5",
+      "id": "prim-h-automatic-thread-lifecycle",
+      "reason": "_mi_prim_thread_init_auto_done, _mi_prim_thread_done_auto_done, and _mi_prim_thread_associate_default_theap require the general automatic pthread/TLS lifecycle that M5 has not closed. The exact false _mi_prim_thread_is_in_threadpool observation is separately represented.",
+      "upstream_paths": [
+        "include/mimalloc/prim.h",
+        "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m5",
+      "id": "prim-c-automatic-process-lifecycle",
+      "reason": "src/prim/prim.c constructor/destructor calls to _mi_auto_process_init and _mi_auto_process_done are automatic process lifecycle work, not evidence that the generic primitive unit is ported.",
+      "upstream_paths": [
+        "src/prim/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m8",
+      "id": "prim-c-allocator-redirection-integration",
+      "reason": "src/prim/prim.c _mi_is_redirected, _mi_allocator_init, and _mi_allocator_done are allocator redirection and libc integration callbacks. The Linux raw primitive leaves do not represent that M8 boundary.",
+      "upstream_paths": [
+        "src/prim/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m2",
+      "id": "prim-unix-nondefault-vm-routes",
+      "reason": "The selected normal map witness excludes unix_mmap address hints, overmap alignment, large/huge allocation routes, NUMA mbind placement, and source os.c ownership/range wrappers. Those VM-substrate routes remain M2 work.",
+      "upstream_paths": [
+        "src/prim/unix/prim.c",
+        "src/os.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m7",
+      "id": "prim-unix-option-and-diagnostic-routes",
+      "reason": "The Unix THP option/prctl mutation, advice and secure/debug policy branches, and optional PR_SET_VMA anonymous-name diagnostic route remain M7 options/modes/diagnostics work.",
+      "upstream_paths": [
+        "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "outside-m1",
+      "id": "prim-unix-portability-fallback-routes",
+      "reason": "The C libc fallback wrappers, clock() fallback, and getrandom ENOSYS /dev/urandom fallback are not M1 evidence: the Linux 5.10 profile uses direct crabc-core primitives and does not add a portability layer.",
+      "upstream_paths": [
         "src/prim/unix/prim.c"
       ]
     },

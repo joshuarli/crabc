@@ -223,8 +223,37 @@ M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
         "deferred-to-m2-m3",
         "deferred-to-m5",
         "deferred-to-m7",
+        "deferred-to-m8",
         "outside-m1",
     }
+)
+M1_RAW_PRIMITIVE_DECLARATIONS = (
+    "mi_os_mem_config_t",
+    "_mi_prim_mem_init",
+    "_mi_prim_free",
+    "_mi_prim_alloc",
+    "_mi_prim_commit",
+    "_mi_prim_decommit",
+    "_mi_prim_reset",
+    "_mi_prim_reuse",
+    "_mi_prim_protect",
+    "_mi_prim_alloc_huge_os_pages",
+    "_mi_prim_numa_node",
+    "_mi_prim_numa_node_count",
+    "_mi_prim_clock_now",
+    "mi_process_info_t",
+    "_mi_prim_process_info",
+    "_mi_prim_out_stderr",
+    "_mi_prim_getenv",
+    "_mi_prim_random_buf",
+    "_mi_prim_thread_init_auto_done",
+    "_mi_prim_thread_done_auto_done",
+    "_mi_prim_thread_associate_default_theap",
+    "_mi_prim_thread_is_in_threadpool",
+    "_mi_prim_thread_yield",
+)
+M1_RAW_PRIMITIVE_DECLARATION_CLASSIFICATIONS = frozenset(
+    {"m1-raw-boundary", "later-milestone-exclusion"}
 )
 
 # This is a source-order contract, not a claim that the incomplete Rust port
@@ -3424,16 +3453,21 @@ def validate_m1_foundations_contract(
     components: list[dict[str, Any]] = []
     seen_check_ids: set[str] = set()
     for index, raw_component in enumerate(raw_components):
-        if not isinstance(raw_component, Mapping) or set(raw_component) != {
+        if not isinstance(raw_component, Mapping):
+            raise HarnessError(f"M1 foundations component {index} has unexpected fields")
+        component_id = raw_component.get("id")
+        expected_component_keys = {
             "checks",
             "completion_status",
             "id",
             "layout_keys",
             "remaining_conditions",
             "source_map_records",
-        }:
+        }
+        if component_id == "linux-raw-primitives":
+            expected_component_keys.add("prim_h_declaration_inventory")
+        if set(raw_component) != expected_component_keys:
             raise HarnessError(f"M1 foundations component {index} has unexpected fields")
-        component_id = raw_component.get("id")
         if component_id != M1_FOUNDATIONS_COMPONENT_IDS[index]:
             raise HarnessError("M1 foundations component order or identity changed")
         completion_status = raw_component.get("completion_status")
@@ -3534,6 +3568,62 @@ def validate_m1_foundations_contract(
                 )
             references.append(reference)
 
+        declaration_inventory: list[dict[str, str]] = []
+        if component_id == "linux-raw-primitives":
+            raw_declaration_inventory = raw_component.get("prim_h_declaration_inventory")
+            if not isinstance(raw_declaration_inventory, list):
+                raise HarnessError(
+                    "M1 foundations raw primitive declaration inventory is invalid"
+                )
+            source_map_item_names = {
+                reference["name"]
+                for reference in references
+                if reference["kind"] == "item"
+            }
+            for declaration_index, raw_declaration in enumerate(raw_declaration_inventory):
+                if not isinstance(raw_declaration, Mapping) or set(raw_declaration) != {
+                    "classification",
+                    "name",
+                    "record_id",
+                }:
+                    raise HarnessError(
+                        "M1 foundations raw primitive declaration "
+                        f"{declaration_index} has unexpected fields"
+                    )
+                name = raw_declaration.get("name")
+                classification = raw_declaration.get("classification")
+                record_id = raw_declaration.get("record_id")
+                if (
+                    not isinstance(name, str)
+                    or not isinstance(record_id, str)
+                    or classification not in M1_RAW_PRIMITIVE_DECLARATION_CLASSIFICATIONS
+                ):
+                    raise HarnessError(
+                        "M1 foundations raw primitive declaration "
+                        f"{declaration_index} is invalid"
+                    )
+                if (
+                    classification == "m1-raw-boundary"
+                    and record_id not in source_map_item_names
+                ):
+                    raise HarnessError(
+                        "M1 foundations raw primitive declaration "
+                        f"{name} lacks a current source-map witness"
+                    )
+                declaration_inventory.append(
+                    {
+                        "classification": classification,
+                        "name": name,
+                        "record_id": record_id,
+                    }
+                )
+            if [declaration["name"] for declaration in declaration_inventory] != list(
+                M1_RAW_PRIMITIVE_DECLARATIONS
+            ):
+                raise HarnessError(
+                    "M1 foundations raw primitive declaration inventory changed"
+                )
+
         raw_checks = raw_component.get("checks")
         if not isinstance(raw_checks, list) or not raw_checks:
             raise HarnessError(f"M1 foundations component {component_id} lacks checks")
@@ -3583,16 +3673,17 @@ def validate_m1_foundations_contract(
                 }
             )
 
-        components.append(
-            {
-                "checks": checks,
-                "completion_status": completion_status,
-                "id": component_id,
-                "layout_keys": list(raw_layout_keys),
-                "remaining_conditions": list(raw_remaining_conditions),
-                "source_map_records": references,
-            }
-        )
+        component = {
+            "checks": checks,
+            "completion_status": completion_status,
+            "id": component_id,
+            "layout_keys": list(raw_layout_keys),
+            "remaining_conditions": list(raw_remaining_conditions),
+            "source_map_records": references,
+        }
+        if component_id == "linux-raw-primitives":
+            component["prim_h_declaration_inventory"] = declaration_inventory
+        components.append(component)
 
     complete_components = all(
         component["completion_status"] == "complete" for component in components
@@ -3646,6 +3737,27 @@ def validate_m1_foundations_contract(
                 "upstream_paths": list(paths),
             }
         )
+
+    exclusions_by_id = {exclusion["id"]: exclusion for exclusion in exclusions}
+    raw_primitive_component = next(
+        component
+        for component in components
+        if component["id"] == "linux-raw-primitives"
+    )
+    for declaration in raw_primitive_component["prim_h_declaration_inventory"]:
+        if declaration["classification"] != "later-milestone-exclusion":
+            continue
+        exclusion = exclusions_by_id.get(declaration["record_id"])
+        if exclusion is None:
+            raise HarnessError(
+                "M1 foundations raw primitive declaration "
+                f"{declaration['name']} lacks an explicit exclusion"
+            )
+        if not exclusion["disposition"].startswith("deferred-to-m"):
+            raise HarnessError(
+                "M1 foundations raw primitive declaration "
+                f"{declaration['name']} lacks a later-milestone exclusion"
+            )
 
     return {
         "components": components,
@@ -3856,17 +3968,20 @@ def m1_foundations_report(
         )
         if not complete:
             incomplete_components.append(component_id)
-        components.append(
-            {
-                "completion_status": component["completion_status"],
-                "executed_checks": checks,
-                "id": component_id,
-                "layout_evidence": layout,
-                "remaining_conditions": list(component["remaining_conditions"]),
-                "source_map_records": list(component["source_map_records"]),
-                "status": "complete" if complete else "partial",
-            }
-        )
+        report_component = {
+            "completion_status": component["completion_status"],
+            "executed_checks": checks,
+            "id": component_id,
+            "layout_evidence": layout,
+            "remaining_conditions": list(component["remaining_conditions"]),
+            "source_map_records": list(component["source_map_records"]),
+            "status": "complete" if complete else "partial",
+        }
+        if component_id == "linux-raw-primitives":
+            report_component["prim_h_declaration_inventory"] = list(
+                component["prim_h_declaration_inventory"]
+            )
+        components.append(report_component)
 
     milestone_complete = (
         summary["milestone"]["status"] == "complete" and not incomplete_components
