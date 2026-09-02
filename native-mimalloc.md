@@ -2377,9 +2377,9 @@ advance this AArch64 allocator ledger.
 
 | Milestone | Status | Evidence and remaining closure condition |
 | --- | --- | --- |
-| M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. `./scripts/dev.sh allocator --quick` passes on Linux/AArch64. This is inventory/skeleton completion only, not engine parity. |
-| M1 — pure foundations | complete (6/6 bounded components) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. The compiler-TLS component retains its 32-field pinned-C/Rust image, regular-reset, and cached-reference trace and adds a distinct 40-field normal-artifact C/Rust trace of one page-free same-TLD `D`/`A` call to the file-static `src/init.c:mi_thread_theaps_done` body: C's A→D collector calls; Rust's A→D generic queue-half empty branch with ordered empty-prepass witnesses; default then cached reset; heap detach; TLD-list final loop; and logical final release. It compares actual `D` membership/absence rather than whole main-Heap shape: C has metadata+D then metadata-only, while the selected Rust static image has D then empty. A clean native `./scripts/dev.sh allocator-m1` report is the closure evidence. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes the eight required categories—VM primitives, metadata, bitmaps, PageMap, arenas, initialization, fault injection, and allocator recursion—and records their remaining conditions and exclusions. `./scripts/dev.sh allocator-m2` runs source-private pinned-C/Rust PageMap success and failed-first-initialization differentials plus focused bootstrap, lazy-extension, and destruction-release ownership regressions, and writes `m2-memory-substrate-latest.json` only for a clean, unchanged native commit; it intentionally exits 3 while any category remains partial. The success record compares controlled partial commitment, two-submap extension, a two-slice clear, boundary rollback, and absent post-destruction root. The distinct cold-init record proves one failed body/no dynamic root/no replay on both sides, then records C's static empty-root/null-lookup/later-success behavior versus Rust's absent-root/no-cold-lookup-route/typed-poison safety boundary without normalizing it to equality. That semantic divergence remains a PageMap M2 closure condition. `PageMapInitializationError::Retained` now preserves an exact mapping when either initial commit and its cleanup `unmap` fail: `ProcessPageMapStorage` retains it before poisoning, while `MetaAllocator` has a distinct terminal owner slot. Separate Rust fault tests prove that failed lazy top-level commitment or submap mapping leaves the original PageMap owner usable, while failed destruction retains either the exact raw submap slot or the exact top-level `Mapping` for retry. This is a Rust safety strengthening because the pinned C release boundary is void/best-effort, not a claim of matching retry semantics. The metadata substrate also has a narrow typed-release witness: `MetaRelease` accepts only an exact Malloc capability or a regular anonymous `Mapping`; failed Malloc release is explicitly terminal/diagnostic and failed regular unmap returns the exact mapping for retry. It deliberately represents neither no-free nor arena, huge, or remap branches. The PageMap report retains header-dependent raw counts and root-ownership differences as explicit report data rather than claiming byte-layout equality. |
+| M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. A clean native `./scripts/dev.sh allocator --quick` exited 0 at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is inventory/skeleton completion only, not engine parity. |
+| M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. A clean native `./scripts/dev.sh allocator-m1` exited 0 at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`, with all six components complete and no unmet IDs. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
+| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`, a clean native `./scripts/dev.sh allocator-m2` exited 3 as designed: its selected PageMap component is complete, while VM primitives, metadata, bitmaps, arenas, initialization, fault injection, and allocator recursion remain partial. The ten PageMap checks cover source-private C/Rust success and failed-first-init differentials, bootstrap/lazy/release ownership failures, private-lock publication, and the process-owner terminal boundary. C's static empty-root/null-lookup/later-success result versus Rust's absent-root/typed-poison result is an explicitly accepted bounded safety divergence: C's sentinel is not a safe live-map continuation, and this does not claim public C ABI or full process-lifecycle parity. |
 | M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri; forced `cfg(miri)` is smoke evidence, not a Miri pass. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
@@ -2424,9 +2424,16 @@ exclusions remain nonclaims, not implicit M1 coverage.
 The M1 gate was rerun from a clean detached native checkout at
 `33e9fc801935c02ac30bc50c82674ece93ebca95`: it exited 0 and produced that
 checkout's `m1-foundations-latest.json` with all six components complete and
-no unmet component IDs. Thus M1 is current evidence for the allocator source
+no unmet component IDs. Thus M1 was current evidence for the allocator source
 revision that introduced the M2 cold-init record; it remains only the bounded
 six-component milestone described above.
+
+The M1 gate was rerun again from a clean detached native checkout at
+`265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`: it exited 0 and produced that
+checkout's `m1-foundations-latest.json` with all six components complete and
+no unmet component IDs. This is the current M1 runtime evidence recorded by
+this ledger; it remains only the bounded six-component milestone described
+above.
 
 ## M2 current partial gate
 
@@ -2450,8 +2457,18 @@ published dynamic map, and no replay. C retains `mi_page_map_empty`, keeps a
 null lookup safe, and reports later `_mi_page_map_init` success after consuming
 the failed body; Rust retains no fake live `PageMap`, exposes no cold lookup
 route in its absent-root/poisoned state, and reports terminal typed poison.
-Those values are a recorded safety divergence and an open M2 semantic
-condition, not exact-equality or full-initialization claims.
+Those values are a recorded, intentionally accepted bounded PageMap safety
+divergence, not exact-equality or full-initialization claims. The pinned C
+sentinel makes only its null lookup safe after the failed once body; it is not
+a valid dynamic map or safe registration/mutation continuation. Rust must not
+fabricate a `PageMap` or successful process continuation from that state: the
+source-order coordinator has already prepared its Heap and detached metadata.
+`process_init::tests::rejected_page_map_after_heap_and_metadata_retains_ticket_zero_without_tls_publication`
+proves that the coordinator retains this terminal state without publishing
+ticket-zero roots or admitting a later generic thread. A future public C ABI
+or complete process lifecycle that needs cold `free(NULL)` semantics must
+reopen this boundary with a distinct lookup-only cold-sentinel owner and
+lifecycle evidence.
 
 The selected Rust PageMap now carries a paired initial-commit/cleanup failure
 through `PageMapInitializationError::Retained` rather than dropping its
@@ -2476,8 +2493,10 @@ slot; the M2 concurrent-publication check observes one allocated/published
 candidate across four contenders. A future competing writer must retain a
 losing candidate before it can make that branch reachable. The C release calls
 are void/best-effort, so this is Rust ownership-safety evidence, not a C
-retry-parity claim. The remaining PageMap M2 semantic condition is the C
-static-empty-root versus Rust typed-poison cold-root gap.
+retry-parity claim. Together with the explicit cold-root safety decision
+above, these checks close the selected M2 PageMap component. They do not close
+general process lifecycle, public C ABI behavior, concurrent map lifetime, or
+allocator integration.
 
 The record deliberately does not equate source representations that are not
 the same: the pinned C header contains the Linux/musl `pthread_mutex_t`, while
@@ -2528,6 +2547,14 @@ release retry, and the four-contender private-lock publication witness. The
 PageMap component has one remaining condition: the documented C
 static-empty-root versus Rust typed-poison cold-root semantic gap.
 
+At `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`, the clean native command again
+exited 3 as designed with an unchanged source tree. It passed the metadata
+caller plus all ten PageMap checks, adding the process-owner terminal-boundary
+regression. `page-map` is now `complete` with no remaining condition. The
+report's unmet component IDs are exactly `vm-primitives`, `metadata`,
+`bitmaps`, `arenas`, `initialization`, `fault-injection`, and
+`allocator-recursion`; M2 itself remains partial.
+
 ## Active boundary and priority rule
 
 The integrated owner-local mapped-abandoned medium reclaim slice is a narrowly
@@ -2535,12 +2562,14 @@ mapped M5/Phase-E regression: it is neither a general scan nor a milestone,
 shadow, or promotion claim. Keep its source map, regression, and exact test
 result, but do not use it to advance M5.
 
-M0 and M1 are closed predecessors. M2 is now the current closure gate; do not
-advance M3, M4, or later milestones until M2 has its own complete
-current-commit contract and evidence. The narrowly scoped M5 work around the
-bounded process-once envelope does not advance M5. Existing M3/M4 bounded
-evidence remains regression evidence, not permission to skip M2 or milestone
-closure. M5 remains open until its Phase A–G acceptance conditions are met.
+M0 and M1 are closed predecessors. M2 is now the current closure gate; its
+selected PageMap component is complete, but its seven other required
+components remain partial. Do not advance M3, M4, or later milestones until
+M2 has its own complete current-commit contract and evidence. The narrowly
+scoped M5 work around the bounded process-once envelope does not advance M5.
+Existing M3/M4 bounded evidence remains regression evidence, not permission to
+skip M2 or milestone closure. M5 remains open until its Phase A–G acceptance
+conditions are met.
 
 ## Current M5 gate facts
 
