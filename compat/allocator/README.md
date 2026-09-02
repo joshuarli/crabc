@@ -960,7 +960,7 @@ checks, binds the result to an unchanged clean Git commit, and classifies each
 component plus its explicit exclusions. It intentionally exits 3 while the
 contract says M1 is partial. A passing focused check or shared M0/M3/M4
 producer does not close a whole source unit or promote any allocator backend.
-The bootstrap component compares a complete 149-key, address-independent
+The complete atomics/locks/once/bootstrap component compares a 148-key, address-independent
 release C/Rust vector for every represented field of the pinned immutable
 `mi_page_empty`, direct-page table, all 75 queues, pre-process-init
 `mi_tld_detached` source image, and `_mi_theap_empty` prefix through `memid`.
@@ -972,10 +972,14 @@ being treated as a pthread byte-layout match. The contract also records an
 explicit disposition for every 12 pinned direct `mi_atomic_do_once` call
 sites. This remains evidence for those source-initializer images only: it excludes
 stats, guarded/page-tail variants, mutable process storage, publication and
-teardown. In particular, `ProcessMainInitializationStorage` currently returns
-`Initializing` to a racing caller rather than matching C's blocking
-once-release continuation, so this bootstrap component remains partial at the
-M2/M5 lifecycle boundary.
+teardown. Its source-shaped Rust once witnesses also prove the bounded
+identity-capable `ProcessMainInitializationStorage` route: an active foreign
+racer waits through release, same-owner recursion refuses without blocking,
+READY cannot bypass a retained once lock, retained failure wakes its waiter,
+and a pre-body Rust-only cancellation is retryable. This is unit evidence for
+the named bounded envelope, not a C/Rust dynamic differential or a claim to
+complete `mi_process_init_once`, `mi_process_done`, automatic lifecycle, or
+process destruction; those remain M5 work.
 The complete raw-primitive component adds one native, pinned-C/Rust 47-field
 record: the C probe directly includes pinned `src/os.c`, then compares the
 immutable configuration, good-size and large-page predicates, one

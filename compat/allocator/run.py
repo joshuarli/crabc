@@ -432,9 +432,9 @@ M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES = (
 
 # `mi_atomic_do_once` is a macro, so its finite M1 accounting must name every
 # pinned direct invocation rather than imply that a local once unit test has
-# covered each lifecycle route.  The sole M1-covered use is deliberately
-# limited to its immutable static-image prefix; the C blocking lifecycle and
-# all later process/page-map/TLS paths remain explicitly deferred.
+# covered each lifecycle route. M1 covers immutable static images plus the
+# generic once protocol and one bounded ProcessMain envelope; full
+# process/page-map/TLS lifecycle routes remain explicitly deferred.
 M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS = (
     {
         "configuration": "all selected builds",
@@ -447,7 +447,7 @@ M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS = (
         "configuration": "all selected builds",
         "disposition": "m1-static-image-only",
         "function": "mi_heap_main_init_once",
-        "reason": "the immutable initial images are checked here; main-process initialization and racing-waiter behavior are not",
+        "reason": "the immutable initial images are checked here; full main-heap initialization, publication, and lifecycle remain outside M1",
         "source": "src/init.c:211",
     },
     {
@@ -459,16 +459,16 @@ M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS = (
     },
     {
         "configuration": "all selected builds",
-        "disposition": "deferred-to-m5",
+        "disposition": "m1-bounded-once-envelope",
         "function": "mi_process_init",
-        "reason": "the C caller blocks until once-release while the bounded Rust process-main route reports Initializing to a racer",
+        "reason": "the bounded identity-capable ProcessMain route proves active-racer blocking, recursive refusal, terminal publication before release, retained failure wakeup, and pre-body cancellation; options, OS, statistics, TLS-key/local, arena, automatic, and general lifecycle work remain M5",
         "source": "src/init.c:589",
     },
     {
         "configuration": "all selected builds",
         "disposition": "deferred-to-m5",
         "function": "mi_process_done",
-        "reason": "process teardown, destruction, and once lifetime are lifecycle work",
+        "reason": "a separate source once instance, process destruction, and lifecycle remain M5; ProcessMainThread teardown is ticket-zero thread teardown, not this function",
         "source": "src/init.c:653",
     },
     {

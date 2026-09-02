@@ -260,9 +260,10 @@ result may refine it only when it can prove retained ownership.
 ### `CRABC-MI-BOUNDED-PROCESS-MAIN-INITIALIZATION` — accepted incomplete process lifecycle
 
 - **Upstream/Rust:** `src/init.c:184-214,305-360,536-592` (`mi_heap_main_init_once`,
-  `_mi_thread_init_with_heap`, and `mi_process_init_once`) and
-  `src/subproc.c:29-46,95-101`; represented by
-  `process_init::ProcessMainInitializationStorage`,
+  `_mi_thread_init_with_heap`, and `mi_process_init_once`),
+  `src/libc.c:115-140` (`_mi_atomic_once_enter` and
+  `_mi_atomic_once_release`), and `src/subproc.c:29-46,95-101`; represented by
+  `process_init::ProcessMainInitializationStorage`, `once::AllocatorOnce`,
   `main_theap::MainStaticHeapFoundation`,
   `meta::MetaAllocator::prepare_for_main_subprocess`,
   `process_page_map::ProcessPageMapStorage`, and the
@@ -274,17 +275,28 @@ result may refine it only when it can prove retained ownership.
   TLD/Theap/default/fast roots—but accepts a frozen `MemoryConfig` instead of
   running source option/OS initialization. It exposes only immutable ready
   witnesses, does not reserve the process-shared arena, initialize pthread or
-  TLS keys, route allocations/frees, coordinate full concurrent startup, or
-  destroy/restart the process. Metadata's private map/arena stays private.
-  A preflight rejection remains cold; any failure after static selection is
-  terminally retained rather than replaying a partial static image. C's static
-  empty PageMap root remains absent.
+  TLS keys, route allocations/frees, coordinate general concurrent startup, or
+  destroy/restart the process. Identity-capable bounded `initialize` callers
+  do hold the source-shaped once gate through terminal publication and private
+  lock release; recursive owner entry returns the typed `Initializing` refusal
+  without executing a source body, while a foreign caller waits. The Rust-only
+  allocation-free preflight may cancel before source selection, retaining the
+  owner identity through unlock before reopening the gate. Metadata's private
+  map/arena stays private. A preflight rejection remains cold; any failure
+  after static selection is terminally retained rather than replaying a partial
+  static image. C's static empty PageMap root remains absent.
 - **Evidence:**
   `process_init::tests::process_main_initialization_orders_heap_metadata_map_then_ticket_zero_roots`
   proves the source order, distinct metadata/global map identities, default-
   then-fast roots, and no automatic process-shared arena reservation.
-  The preflight, metadata-failure, rejected-map, and ready-lease regressions
-  prove cold rejection, terminal retention, and immutable root reuse.
+  `process_main_once_blocks_a_distinct_racer_until_release_and_refuses_reentry`,
+  `process_main_once_blocks_a_terminal_ready_observer_until_once_release`, and
+  `process_main_once_wakes_a_distinct_racer_with_retained_after_failure` prove
+  the bounded source-shaped once envelope; the preflight and
+  `cancelled_pre_body_claim_handoffs_a_waiter_to_the_reopened_once` regressions
+  prove its retryable Rust-only cancellation boundary. The metadata-failure,
+  rejected-map, and ready-lease regressions prove terminal retention and
+  immutable root reuse.
   `main_theap::tests::static_heap_foundation_precedes_ticket_zero_tld_theap_and_tls_roots`
   and `subproc::tests::selected_static_bootstrap_cannot_issue_ticket_zero_before_heap_foundation`
   prove the two prerequisite boundaries.

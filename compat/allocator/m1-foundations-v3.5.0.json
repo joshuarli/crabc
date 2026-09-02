@@ -228,6 +228,31 @@
         },
         {
           "expected_passed_test_count": 1,
+          "id": "once-preflight-cancellation-handoff",
+          "target": "once::tests::cancelled_pre_body_claim_handoffs_a_waiter_to_the_reopened_once"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-main-once-active-racer",
+          "target": "process_init::tests::process_main_once_blocks_a_distinct_racer_until_release_and_refuses_reentry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-main-once-terminal-ready",
+          "target": "process_init::tests::process_main_once_blocks_a_terminal_ready_observer_until_once_release"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-main-once-retained-failure",
+          "target": "process_init::tests::process_main_once_wakes_a_distinct_racer_with_retained_after_failure"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-main-preflight-cancellation",
+          "target": "process_init::tests::preflight_rejection_leaves_process_startup_cold_and_ticket_zero_unselected"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "empty-bootstrap-image",
           "target": "bootstrap::tests::pinned_activation_binds_stable_owner_addresses_and_publishes_heap_last"
         },
@@ -242,7 +267,7 @@
           "target": "types::tests::static_bootstrap_images_keep_the_complete_pinned_relational_shape"
         }
       ],
-      "completion_status": "partial",
+      "completion_status": "complete",
       "id": "atomics-locks-once-and-bootstrap",
       "layout_keys": [
         "m1.bootstrap.empty_page.self_is_null",
@@ -406,7 +431,7 @@
           "configuration": "all selected builds",
           "disposition": "m1-static-image-only",
           "function": "mi_heap_main_init_once",
-          "reason": "the immutable initial images are checked here; main-process initialization and racing-waiter behavior are not",
+          "reason": "the immutable initial images are checked here; full main-heap initialization, publication, and lifecycle remain outside M1",
           "source": "src/init.c:211"
         },
         {
@@ -418,16 +443,16 @@
         },
         {
           "configuration": "all selected builds",
-          "disposition": "deferred-to-m5",
+          "disposition": "m1-bounded-once-envelope",
           "function": "mi_process_init",
-          "reason": "the C caller blocks until once-release while the bounded Rust process-main route reports Initializing to a racer",
+          "reason": "the bounded identity-capable ProcessMain route proves active-racer blocking, recursive refusal, terminal publication before release, retained failure wakeup, and pre-body cancellation; options, OS, statistics, TLS-key/local, arena, automatic, and general lifecycle work remain M5",
           "source": "src/init.c:589"
         },
         {
           "configuration": "all selected builds",
           "disposition": "deferred-to-m5",
           "function": "mi_process_done",
-          "reason": "process teardown, destruction, and once lifetime are lifecycle work",
+          "reason": "a separate source once instance, process destruction, and lifecycle remain M5; ProcessMainThread teardown is ticket-zero thread teardown, not this function",
           "source": "src/init.c:653"
         },
         {
@@ -480,9 +505,7 @@
           "source": "src/prim/windows/prim.c:721"
         }
       ],
-      "remaining_conditions": [
-        "Implement and prove the C mi_atomic_do_once blocking continuation for active main-process initialization and teardown: ProcessMainInitializationStorage currently returns Initializing to a racing caller instead of waiting for release. This M2/M5 lifecycle condition prevents closure of this component."
-      ],
+      "remaining_conditions": [],
       "source_map_records": [
         {
           "kind": "unit",
@@ -518,6 +541,15 @@
             "unit_verified"
           ],
           "upstream": "src/libc.c"
+        },
+        {
+          "kind": "item",
+          "name": "bounded-source-main-process-initialization-order",
+          "required_statuses": [
+            "implemented",
+            "unit_verified"
+          ],
+          "upstream": "src/init.c"
         },
         {
           "kind": "item",
