@@ -2373,7 +2373,7 @@ advance this AArch64 allocator ledger.
 | Milestone | Status | Evidence and remaining closure condition |
 | --- | --- | --- |
 | M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. `./scripts/dev.sh allocator --quick` passes on Linux/AArch64. This is inventory/skeleton completion only, not engine parity. |
-| M1 — pure foundations | partial (5/6 components complete) | Complete: `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, and `linux-raw-primitives`. The atomics component proves the bounded identity-capable process-main `mi_atomic_do_once` envelope—active-racer blocking, recursive refusal, terminal release ordering, retained-failure wakeup, and pre-body cancellation—without claiming whole `mi_process_init_once`, `mi_process_done`, or process lifecycle. Partial: `compiler-tls-roots` lacks a finite C/Rust trace joining `src/init.c:mi_thread_theaps_done` terminal default/cached reset with `src/prim/prim-tls.c:_mi_theap_cached_set` publication/refcount transitions. The 148-key immutable bootstrap vector and 12-call-site ledger are bounded evidence, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion. |
+| M1 — pure foundations | partial (5/6 components complete) | Complete: `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, and `linux-raw-primitives`. The atomics component proves the bounded identity-capable process-main `mi_atomic_do_once` envelope—active-racer blocking, recursive refusal, terminal release ordering, retained-failure wakeup, and pre-body cancellation—without claiming whole `mi_process_init_once`, `mi_process_done`, or process lifecycle. The compiler-TLS component now has a fixed 32-field pinned-C/Rust subsidiary trace for selected static roots and identity, count-zero image, positive regular-slot reset, and a controlled cached-Theap `1 → 2 → 1` reference pair. It is a union of a constructor-suppressed C image reader and a normal C transition reader, compared with isolated Rust observations; it is not one continuous same-TLD lifecycle trace. Partial: `compiler-tls-roots` still lacks a trace of `src/init.c:mi_thread_theaps_done` default/cached reset, shared-list detach, and final teardown together on the same TLD. The 148-key immutable bootstrap vector and 12-call-site ledger are bounded evidence, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion. |
 | M2 — memory substrate | partial | Selected metadata, bitmap, PageMap, arena, initialization, and fault paths exist, but their source units remain partial; no full substrate, fault, and no-recursion closure record exists. |
 | M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri; forced `cfg(miri)` is smoke evidence, not a Miri pass. |
 | M4 — fundamental operations | bounded direct-engine evidence | The selected 33-test M4 C adapter and its required operation records pass, but this is a one-thread private adapter over the still-partial M1–M3 substrate. It is not a closed production/general milestone. |
@@ -2394,18 +2394,22 @@ supporting evidence, not a pass for this checkpoint.
 `partial`: five of its six components are complete—
 `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`,
 `provenance-and-represented-layouts`, `random-image`, and
-`linux-raw-primitives`—and the compiler-TLS condition named in the M1 table
-remains. `./scripts/dev.sh allocator-m1` must produce
-`.work/reports/allocator/m1-foundations-latest.json` from the clean current
-commit. Until that report has every component complete, no remaining condition,
-all required source-map states, all focused checks, and all required layout
-keys, its exit status `3` is intentional and M1 is not closed.
+`linux-raw-primitives`—and `compiler-tls-roots` is the only partial component.
+Its new finite C/Rust trace is supporting evidence for the selected root-image,
+regular-reset, and cached-reference primitives, not a waiver of the unbound
+same-TLD `mi_thread_theaps_done` terminal sequence. A clean native
+`./scripts/dev.sh allocator --quick` passes at this checkpoint. A clean native
+`./scripts/dev.sh allocator-m1` must produce
+`.work/reports/allocator/m1-foundations-latest.json` from the current commit.
+Until that report has every component complete, no remaining condition, all
+required source-map states, all focused checks, and all required layout keys,
+its exit status `3` is intentional and M1 is not closed.
 
 The `fec84761e9fbdb29c32d8f492ca6c9cfa08a015b` M1 report is historical
 supporting evidence for its older partial contract only. It does not attest the
-current static-image, raw-primitive, represented-layout, or compiler-TLS
-boundary. Deferred lifecycle and whole-unit exclusions remain nonclaims, not
-implicit M1 coverage.
+current static-image, raw-primitive, represented-layout, bounded compiler-TLS
+trace, or remaining same-TLD terminal boundary. Deferred lifecycle and
+whole-unit exclusions remain nonclaims, not implicit M1 coverage.
 
 ## Active boundary and priority rule
 
