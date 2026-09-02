@@ -113,6 +113,7 @@ use crate::process_page_map::{
 };
 use crate::single_thread::{
     FreeError, OwnerLocalMainHeapPageAllocator, OwnerLocalMainHeapPageSessionBindError,
+    OwnerLocalMappedAbandonedClaimSelector,
     PageAllocatorEngine, PageAllocatorEngineState, RemoteFreePreparationError, RemoteFreeProducer,
     RemoteFreeProducerPair,
     ThreadExitMappedRegularPostExitAdoptError,
@@ -222,8 +223,13 @@ extern crate std;
 /// receives one freshly revalidated attachment view, while all allocator
 /// queue/cache/poison state remains in this value between calls.
 #[must_use = "an owner-local page engine must finish or be retained with its attachment"]
-pub(crate) struct MainHeapThreadOwnerLocalPageEngine {
+pub(crate) struct MainHeapThreadOwnerLocalPageEngine<'main> {
     engine: Option<OwnerLocalMainHeapPageAllocator<'static, 'static>>,
+    // The matching process pair and static-main Heap lease are selector facts
+    // of this persistent owner, not general `PageAllocatorEngine` state.  A
+    // short bound session borrows this value only for the selected
+    // mapped-abandoned pre-fresh claim.
+    mapped_abandoned_claim: OwnerLocalMappedAbandonedClaimSelector<'main>,
     lifecycle: MainHeapThreadOwnerLocalPageEngineLease,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
@@ -246,29 +252,30 @@ pub(crate) enum MainHeapThreadOwnerLocalPageEngineAccessError {
     Session(MainHeapThreadPageSessionError),
     Bind(OwnerLocalMainHeapPageSessionBindError),
     MissingEngine,
+    MappedAbandonedClaimTerminal,
 }
 
 /// A consuming all-free finish which retained the exact persistent engine.
 #[must_use = "a failed owner-local finish retains the exact page engine"]
-pub(crate) enum MainHeapThreadOwnerLocalPageEngineFinishFailure {
+pub(crate) enum MainHeapThreadOwnerLocalPageEngineFinishFailure<'main> {
     Access {
-        owner: MainHeapThreadOwnerLocalPageEngine,
+        owner: MainHeapThreadOwnerLocalPageEngine<'main>,
         error: MainHeapThreadOwnerLocalPageEngineAccessError,
     },
-    NotQuiescent(MainHeapThreadOwnerLocalPageEngine),
+    NotQuiescent(MainHeapThreadOwnerLocalPageEngine<'main>),
 }
 
-impl MainHeapThreadOwnerLocalPageEngineFinishFailure {
+impl<'main> MainHeapThreadOwnerLocalPageEngineFinishFailure<'main> {
     /// Recovers the exact engine for the pinned TLS payload's retained state.
     #[inline]
-    pub(crate) fn into_owner(self) -> MainHeapThreadOwnerLocalPageEngine {
+    pub(crate) fn into_owner(self) -> MainHeapThreadOwnerLocalPageEngine<'main> {
         match self {
             Self::Access { owner, .. } | Self::NotQuiescent(owner) => owner,
         }
     }
 }
 
-impl core::fmt::Debug for MainHeapThreadOwnerLocalPageEngineFinishFailure {
+impl core::fmt::Debug for MainHeapThreadOwnerLocalPageEngineFinishFailure<'_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Access { error, .. } => formatter
@@ -290,13 +297,13 @@ impl core::fmt::Debug for MainHeapThreadOwnerLocalPageEngineFinishFailure {
 /// never enter the drain again. `AttachmentOnly` proves the page engine has
 /// been consumed; only the remaining attachment boundary may be retried.
 #[must_use = "a failed collect-abandon finish retains its exact source owner state"]
-pub(crate) enum MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure {
-    PreDrain(MainHeapThreadOwnerLocalPageEngine),
-    RetainedTerminalEngine(MainHeapThreadOwnerLocalPageEngine),
+pub(crate) enum MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure<'main> {
+    PreDrain(MainHeapThreadOwnerLocalPageEngine<'main>),
+    RetainedTerminalEngine(MainHeapThreadOwnerLocalPageEngine<'main>),
     AttachmentOnly,
 }
 
-impl core::fmt::Debug for MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure {
+impl core::fmt::Debug for MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure<'_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::PreDrain(_) => formatter.write_str(
@@ -2126,12 +2133,12 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure<
     },
 }
 
-impl MainHeapThreadOwnerLocalPageEngine {
+impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
     /// Promotes one attached later-thread owner into its persistent local page
     /// engine. The paired process capability is consumed once; only its
     /// stable arena view and exact-owned-ranges PageMap reference remain.
     pub(crate) fn begin(
-        attachment: &mut MainHeapThreadAttachment<'_>,
+        attachment: &mut MainHeapThreadAttachment<'main>,
         pair: ProcessPageArenaLease,
     ) -> Result<Self, MainHeapThreadOwnerLocalPageEngineBeginError> {
         let attachment_subprocess = attachment
@@ -2166,6 +2173,8 @@ impl MainHeapThreadOwnerLocalPageEngine {
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Session)?;
         let lifecycle = MainHeapThreadOwnerLocalPageEngineLease::claim(&session)
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment)?;
+        let mapped_abandoned_claim =
+            OwnerLocalMappedAbandonedClaimSelector::new(pair, session.main_heap_lease());
         // SAFETY: the pair and attachment checks above establish one process
         // image, and the initial short session captures the exact owner
         // identity which every later operation revalidates before binding.
@@ -2179,6 +2188,7 @@ impl MainHeapThreadOwnerLocalPageEngine {
         };
         Ok(Self {
             engine: Some(engine),
+            mapped_abandoned_claim,
             lifecycle,
             _not_send_or_sync: PhantomData,
         })
@@ -2188,26 +2198,53 @@ impl MainHeapThreadOwnerLocalPageEngine {
     /// suspending, resuming, scheduling, or moving the stored engine state.
     pub(crate) fn with_local_allocator<R>(
         &mut self,
-        attachment: &mut MainHeapThreadAttachment<'_>,
+        attachment: &mut MainHeapThreadAttachment<'main>,
         operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
     ) -> Result<R, MainHeapThreadOwnerLocalPageEngineAccessError> {
+        // Check the selector before the attachment's ordinary lifecycle gate:
+        // an earlier callback may have terminalized a claimed source and its
+        // unbind guard has intentionally closed that lifecycle too. Preserve
+        // the more precise selected-source error for the next public call.
+        if self.mapped_abandoned_claim.is_terminal() {
+            return Err(MainHeapThreadOwnerLocalPageEngineAccessError::MappedAbandonedClaimTerminal);
+        }
         self.lifecycle.precheck_access().map_err(|error| {
             MainHeapThreadOwnerLocalPageEngineAccessError::Session(
                 MainHeapThreadPageSessionError::Attachment(error),
             )
         })?;
-        let engine = self
-            .engine
-            .as_mut()
-            .ok_or(MainHeapThreadOwnerLocalPageEngineAccessError::MissingEngine)?;
         let session = attachment
             .owner_local_page_session()
             .map_err(MainHeapThreadOwnerLocalPageEngineAccessError::Session)?;
-        engine
-            .with_owner_local_main_heap_session(session, |engine| {
-                operation(&mut MainHeapThreadOwnerLocalAllocator { engine })
-            })
-            .map_err(MainHeapThreadOwnerLocalPageEngineAccessError::Bind)
+        // Keep the persistent engine and the selector in disjoint borrows
+        // before binding the short source session. The engine borrows the
+        // selector through its private adapter only until that binding guard
+        // drops; neither field gains a self-reference.
+        let result = {
+            let (engine_slot, selector) = (&mut self.engine, &mut self.mapped_abandoned_claim);
+            let engine = engine_slot
+                .as_mut()
+                .ok_or(MainHeapThreadOwnerLocalPageEngineAccessError::MissingEngine)?;
+            engine
+                .with_owner_local_main_heap_session(session, selector, |engine| {
+                    operation(&mut MainHeapThreadOwnerLocalAllocator { engine })
+                })
+                .map_err(MainHeapThreadOwnerLocalPageEngineAccessError::Bind)?
+        };
+        // An allocation may discover a terminal mapped-abandoned source only
+        // after its ordinary callback has started. Do not return that
+        // callback's `AllocationFailed`/`None` value as though it were a
+        // normal source OOM miss: the selector has retained a root or exact
+        // range and this typed owner must report the terminal boundary.
+        if self.mapped_abandoned_claim.is_terminal() {
+            // The short source callback has fully returned and its selector
+            // borrow is gone. Latch the real owner-local attachment boundary
+            // here rather than mutating its adapter through the source while
+            // the generic engine was mutably borrowed.
+            MainHeapThreadAttachment::latch_unfinished_owner_local_page_engine();
+            return Err(MainHeapThreadOwnerLocalPageEngineAccessError::MappedAbandonedClaimTerminal);
+        }
+        Ok(result)
     }
 
     /// Consumes an all-free persistent engine after source force collection.
@@ -2215,8 +2252,8 @@ impl MainHeapThreadOwnerLocalPageEngine {
     /// pinned TLS payload to retain or retry.
     pub(crate) fn finish(
         mut self,
-        attachment: &mut MainHeapThreadAttachment<'_>,
-    ) -> Result<(), MainHeapThreadOwnerLocalPageEngineFinishFailure> {
+        attachment: &mut MainHeapThreadAttachment<'main>,
+    ) -> Result<(), MainHeapThreadOwnerLocalPageEngineFinishFailure<'main>> {
         if let Err(error) = self.lifecycle.precheck_access() {
             return Err(MainHeapThreadOwnerLocalPageEngineFinishFailure::Access {
                 owner: self,
@@ -2231,6 +2268,12 @@ impl MainHeapThreadOwnerLocalPageEngine {
                 error: MainHeapThreadOwnerLocalPageEngineAccessError::MissingEngine,
             });
         }
+        if self.mapped_abandoned_claim.is_terminal() {
+            return Err(MainHeapThreadOwnerLocalPageEngineFinishFailure::Access {
+                owner: self,
+                error: MainHeapThreadOwnerLocalPageEngineAccessError::MappedAbandonedClaimTerminal,
+            });
+        }
         let session = match attachment.owner_local_page_session() {
             Ok(session) => session,
             Err(error) => {
@@ -2241,7 +2284,7 @@ impl MainHeapThreadOwnerLocalPageEngine {
             }
         };
         let engine = self.engine.as_mut().expect("the engine was checked before its source borrow");
-        match engine.finish_owner_local_main_heap_session(session) {
+        match engine.finish_owner_local_main_heap_session(session, &mut self.mapped_abandoned_claim) {
             Ok(true) => {
                 drop(self.engine.take());
                 match self.lifecycle.finish() {
@@ -2268,8 +2311,15 @@ impl MainHeapThreadOwnerLocalPageEngine {
     /// compiler-TLS failure state around that one-way drain.
     pub(crate) fn finish_after_collect_abandon(
         mut self,
-        attachment: &mut MainHeapThreadAttachment<'_>,
-    ) -> Result<(), MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure> {
+        attachment: &mut MainHeapThreadAttachment<'main>,
+    ) -> Result<(), MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure<'main>> {
+        if self.mapped_abandoned_claim.is_terminal() {
+            return Err(
+                MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(
+                    self,
+                ),
+            );
+        }
         let Some(engine) = self.engine.take() else {
             return Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly);
         };
@@ -2317,6 +2367,36 @@ impl MainHeapThreadOwnerLocalPageEngine {
     pub(crate) fn test_end_borrowed_state(&mut self) {
         self.lifecycle.test_end_borrowed_state();
     }
+
+    /// Binds the exact paired reserved mapping used by the owner-local
+    /// selector's direct-commit retry regression. This test-only seam is
+    /// deliberately installed before any short session starts; ordinary
+    /// runtime owners retain no direct mapping authority.
+    #[cfg(test)]
+    pub(crate) fn test_bind_page_area_commit_lease(&mut self, pair: ProcessPageArenaLease) {
+        self.engine
+            .as_mut()
+            .expect("a live owner-local test engine has not entered its drain")
+            .test_bind_page_area_commit_lease(pair);
+    }
+
+    /// Forces the private paired-claim closure to unwind once after the
+    /// source hook has entered it. This cannot be enabled in production and
+    /// exists only to prove the scoped PageMap poison also closes the
+    /// persistent owner-local allocation boundary.
+    #[cfg(test)]
+    pub(crate) fn test_panic_mapped_abandoned_claim_closure_once(&mut self) {
+        self.mapped_abandoned_claim.test_panic_claim_closure_once();
+    }
+
+    /// Forces one post-low-owner span proof to take its retained completion.
+    /// The focused same-callback regression uses this after a real A-to-B
+    /// claim to prove a later Small allocation cannot fresh-fallback.
+    #[cfg(test)]
+    pub(crate) fn test_fail_mapped_abandoned_claim_span_validation_once(&mut self) {
+        self.mapped_abandoned_claim
+            .test_fail_claim_span_validation_once();
+    }
 }
 
 impl MainHeapThreadOwnerLocalAllocator<'_> {
@@ -2331,6 +2411,30 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
     #[inline]
     pub(crate) fn inject_page_free_collect_failure_once(&mut self) {
         self.engine.inject_page_free_collect_failure_once();
+    }
+
+    /// Enables the existing source `commit == false` fresh-page seam while
+    /// this short owner-local session is bound. It is test-only and creates
+    /// no production allocation option.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_enable_page_commit_on_demand(&mut self) {
+        self.engine.test_enable_page_commit_on_demand();
+    }
+
+    /// Observes the PageMap identity for one exact current client while the
+    /// owner-local engine remains bound. The raw page is not returned or
+    /// retained outside this test-only short session.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_page_for_block(&self, block: NonNull<u8>) -> *mut Page {
+        unsafe { self.engine.page_for_block(block) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_queue_count(&self, bin: usize) -> Option<usize> {
+        self.engine.queue_count(bin)
     }
 
     #[inline]
@@ -7567,7 +7671,7 @@ mod tests {
         finish_main: bool,
         operation: impl for<'main> FnOnce(
             &mut MainHeapThreadAttachment<'main>,
-            MainHeapThreadOwnerLocalPageEngine,
+            MainHeapThreadOwnerLocalPageEngine<'main>,
             ProcessPageArenaLease,
         ) + Send
         + 'static,
@@ -7624,6 +7728,100 @@ mod tests {
         })
         .join()
         .expect("the owner-local fixture remains current-thread local");
+    }
+
+    /// Builds one real ordinary A-to-B mapped medium candidate for selector
+    /// terminal regressions. A exits with its client live; B receives only an
+    /// ordinary same-bin allocation path. The caller deliberately retains B
+    /// terminally, so this fixture does not attempt main teardown or pretend
+    /// a retained PageMap root has returned to the normal lifecycle.
+    fn with_owner_local_mapped_medium_candidate(
+        operation: impl for<'main> FnOnce(
+            &mut MainHeapThreadAttachment<'main>,
+            MainHeapThreadOwnerLocalPageEngine<'main>,
+            ProcessPageArenaLease,
+        ) + Send
+        + 'static,
+    ) {
+        thread::spawn(move || {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the terminal selector fixture forms one process map/arena pair");
+            let _main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the terminal selector fixture");
+            let main_heap = _main
+                .shared_main_heap_lease()
+                .expect("the fixture lends its static main Heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut source = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("terminal selector source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("terminal selector source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut source_owner = MainHeapThreadOwnerLocalPageEngine::begin(
+                        &mut source,
+                        pair,
+                    )
+                    .expect("A creates the terminal selector source owner");
+                    let source_block = source_owner
+                        .with_local_allocator(&mut source, |allocator| {
+                            allocator.allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        })
+                        .expect("A's ordinary medium allocation remains bound")
+                        .expect("A creates one live ordinary medium client");
+                    source_owner
+                        .finish_after_collect_abandon(&mut source)
+                        .expect("A publishes one live mapped-abandoned medium candidate");
+
+                    let mut target = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("terminal selector target attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("terminal selector target attachment retained: {error:?}")
+                        }
+                    };
+                    let owner = MainHeapThreadOwnerLocalPageEngine::begin(&mut target, pair)
+                        .expect("B creates its independent terminal selector owner");
+                    let _ = source_block;
+                    operation(&mut target, owner, pair);
+                });
+                worker
+                    .join()
+                    .expect("the terminal selector fixture stays on its source thread");
+            });
+
+            // A retained selector intentionally closes its PageMap root and
+            // owner-local attachment. This test fixture checks that terminal
+            // boundary rather than attempting an invalid main teardown.
+        })
+        .join()
+        .expect("the terminal selector fixture remains current-thread local");
     }
 
     /// The stable facts a joined post-exit consumer needs to compare the
@@ -8296,6 +8494,319 @@ mod tests {
                 .finish_after_user_destructors()
                 .expect("aligned operations leave teardown quiescent");
         });
+    }
+
+    /// A retained post-low-owner range closes the selector before the outer
+    /// user callback returns. The second allocation is deliberately Small:
+    /// it would otherwise take the direct fresh-page route without touching
+    /// the selected-medium finder. This proves the scalar allocation gate is
+    /// effective inside one callback, not only at its wrapper postcheck.
+    #[test]
+    fn owner_local_mapped_medium_terminal_blocks_small_in_same_callback() {
+        with_owner_local_mapped_medium_candidate(|attachment, mut owner, _pair| {
+            owner.test_fail_mapped_abandoned_claim_span_validation_once();
+            let result = owner.with_local_allocator(attachment, |allocator| {
+                assert!(
+                    allocator.allocate(SMALL_MAX_OBJ_SIZE + 1, false).is_none(),
+                    "the forced post-low-owner retained completion is not an ordinary allocation"
+                );
+                assert!(
+                    allocator.allocate(73, false).is_none(),
+                    "a later Small allocation in this callback cannot fresh-allocate after selector terminalization"
+                );
+            });
+            assert!(matches!(
+                result,
+                Err(MainHeapThreadOwnerLocalPageEngineAccessError::MappedAbandonedClaimTerminal),
+            ));
+            drop(owner);
+            assert_eq!(
+                attachment.finish_after_user_destructors(),
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal),
+                "the retained source also closes the attachment lifecycle"
+            );
+        });
+    }
+
+    /// The paired claim closure itself may unwind after it acquires the
+    /// scoped PageMap access. Its source `Drop` and the outer unbind guard
+    /// must retain that terminal root before any later Small allocation can
+    /// reach a fresh direct page.
+    #[test]
+    fn owner_local_mapped_medium_claim_unwind_blocks_later_small_allocation() {
+        with_owner_local_mapped_medium_candidate(|attachment, mut owner, _pair| {
+            owner.test_panic_mapped_abandoned_claim_closure_once();
+            let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = owner.with_local_allocator(attachment, |allocator| {
+                    allocator.allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                });
+            }));
+            assert!(unwind.is_err(), "the focused scoped claim closure unwinds");
+            assert!(matches!(
+                owner.with_local_allocator(attachment, |allocator| allocator.allocate(73, false)),
+                Err(MainHeapThreadOwnerLocalPageEngineAccessError::MappedAbandonedClaimTerminal),
+            ));
+            drop(owner);
+            assert_eq!(
+                attachment.finish_after_user_destructors(),
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal),
+                "claim-closure unwind leaves the attachment terminally retained"
+            );
+        });
+    }
+
+    /// Pinned `page.c:855-863` retries `mi_page_queue_find_free_ex` once in
+    /// false-collection mode after a claimed mapped page is reabandoned by a
+    /// final direct mapping failure. This drives that exact allocation-time
+    /// owner-local selector, rather than the older typed post-exit route:
+    /// A exits with one real reserved/on-demand medium page, B has only its
+    /// ordinary same-bin allocation, and the first B page-area commit fails.
+    /// The one consumed fault must reabandon A's exact bitmap candidate and
+    /// let B claim that same span through the bounded internal false retry;
+    /// it must not force collect or claim a fresh medium span.
+    #[test]
+    fn owner_local_mapped_medium_selector_reabandons_commit_failure_then_false_retries() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_reserved_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the reserved process map and arena form one source image");
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its static heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let fault = fault::install(fault::Plan::disabled());
+                    let arena = process_arena
+                        .arena()
+                        .expect("the reserved paired arena remains published through both owners");
+                    let request = SMALL_MAX_OBJ_SIZE + 1;
+
+                    let mut source = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("selector source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("selector source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut source_owner = MainHeapThreadOwnerLocalPageEngine::begin(
+                        &mut source,
+                        pair,
+                    )
+                    .expect("A creates its ordinary persistent owner-local engine");
+                    source_owner.test_bind_page_area_commit_lease(pair);
+                    let (source_block, source_page) = source_owner
+                        .with_local_allocator(&mut source, |allocator| {
+                            allocator.test_enable_page_commit_on_demand();
+                            let block = allocator
+                                .allocate(request, false)
+                                .expect("A commits its first real reserved medium prefix");
+                            let page = NonNull::new(
+                                // SAFETY: `block` is A's current local client
+                                // while this short owner-local session stays bound.
+                                unsafe { allocator.test_page_for_block(block) },
+                            )
+                            .expect("A's normal source allocation is PageMap-published");
+                            (block, page)
+                        })
+                        .expect("A's short source allocation projection remains usable");
+                    let source_page_ref = unsafe { source_page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(source_page_ref.block_size()),
+                        Some(PageKind::Medium),
+                        "the selected ordinary source shape is one medium page"
+                    );
+                    assert!(
+                        source_page_ref.slice_pcommitted() != 0,
+                        "A's selected source page has a real on-demand committed prefix"
+                    );
+                    assert!(
+                        source_page_ref.free_list_head().is_null()
+                            && source_page_ref.capacity() < source_page_ref.reserved()
+                            && source_page_ref.used() < usize::from(source_page_ref.reserved()),
+                        "A's one live block reaches the source extension boundary without becoming full"
+                    );
+                    let bin = crate::size_class::bin(source_page_ref.block_size())
+                        .expect("the selected medium source page has one regular bin");
+                    let source_slice = source_page_ref
+                        .memid()
+                        .arena_memory()
+                        .expect("the source page belongs to the reserved paired arena")
+                        .slice_index as usize;
+                    let source_address = source_block.as_ptr().addr();
+
+                    source_owner
+                        .finish_after_collect_abandon(&mut source)
+                        .expect("A publishes its live normal medium through owner-exit abandonment");
+                    let registered_after_source_exit = page_map
+                        .page_map()
+                        .expect("A's exited source remains PageMap-readable")
+                        .test_registered_entry_count()
+                        .expect("the registered source span count remains auditable");
+                    assert_eq!(
+                        unsafe {
+                            page_map.page_map().unwrap().checked_lookup(
+                                core::ptr::with_exposed_provenance::<u8>(source_address),
+                            )
+                        },
+                        source_page.as_ptr(),
+                        "A's source span remains PageMap-published after its owner exits"
+                    );
+                    {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("A's static-main bitmap remains projectable before B attaches");
+                        assert_eq!(
+                            heap.heap_mut().abandoned_count(bin),
+                            Some(1),
+                            "A leaves one selected static-main bitmap/count candidate"
+                        );
+                        heap.unlock()
+                            .expect("the pre-B static-main observation releases its short lock");
+                    }
+
+                    let mut target = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("selector target attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("selector target attachment retained: {error:?}")
+                        }
+                    };
+                    let mut target_owner = MainHeapThreadOwnerLocalPageEngine::begin(
+                        &mut target,
+                        pair,
+                    )
+                    .expect("B creates its independent owner-local engine");
+                    // B needs only the direct mapping authority required to
+                    // extend A's inherited reserved prefix. It does not opt
+                    // into the fresh-page on-demand seam and receives no A
+                    // page, route, or free capability.
+                    target_owner.test_bind_page_area_commit_lease(pair);
+                    fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+                    let reclaimed = target_owner
+                        .with_local_allocator(&mut target, |allocator| {
+                            allocator.allocate(request, false)
+                        })
+                        .expect("the selector's reabandon/retry stays a usable B operation")
+                        .expect("B reclaims and extends A's exact source page after one commit miss");
+                    let (reclaimed_page, target_queue_count) = target_owner
+                        .with_local_allocator(&mut target, |allocator| {
+                            (
+                                NonNull::new(
+                                    // SAFETY: `reclaimed` is B's current
+                                    // client within this bound observation.
+                                    unsafe { allocator.test_page_for_block(reclaimed) },
+                                )
+                                .expect("B's allocation remains PageMap-published"),
+                                allocator.test_queue_count(bin),
+                            )
+                        })
+                        .expect("B's short post-retry observation remains usable");
+                    assert_eq!(
+                        fault.observed(),
+                        2,
+                        "ordinal-one injection fails the first direct commit and the bounded false retry performs exactly one successful second commit"
+                    );
+                    fault.set(fault::Plan::disabled());
+                    assert_eq!(
+                        reclaimed_page, source_page,
+                        "B's retry reclaims A's original PageMap page instead of allocating a fresh span"
+                    );
+                    assert_eq!(
+                        target_queue_count,
+                        Some(1),
+                        "the successful retry tail-enqueues the one inherited regular page"
+                    );
+                    assert_eq!(
+                        page_map
+                            .page_map()
+                            .expect("B's completed selector leaves the map observable")
+                            .test_registered_entry_count(),
+                        Ok(registered_after_source_exit),
+                        "the retry leaves one reused span rather than adding a fresh medium range"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(source_slice, 1),
+                        Some(false),
+                        "B preserves A's original ordinary arena bitmap claim through reabandon/reclaim"
+                    );
+
+                    target_owner
+                        .with_local_allocator(&mut target, |allocator| {
+                            // SAFETY: source reassociation transferred A's
+                            // surviving current block to B's exact page
+                            // engine, and `reclaimed` is B's other current
+                            // client. No former source owner remains.
+                            unsafe {
+                                allocator
+                                    .free(reclaimed)
+                                    .expect("B frees its retried current block");
+                                allocator
+                                    .free(source_block)
+                                    .expect("B frees A's transferred current block for terminal cleanup");
+                            }
+                        })
+                        .expect("B's cleanup remains a normal local operation");
+                    target_owner
+                        .finish(&mut target)
+                        .expect("B releases the reclaimed source page after both current clients free");
+                    target
+                        .finish_after_user_destructors()
+                        .expect("B's finished attachment tears down after the retry witness");
+                    assert!(
+                        unsafe {
+                            page_map.page_map().unwrap().checked_lookup(
+                                core::ptr::with_exposed_provenance::<u8>(source_address),
+                            )
+                        }
+                        .is_null(),
+                        "normal B cleanup unregisters A's original PageMap range"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(source_slice, 1),
+                        Some(true),
+                        "normal B cleanup clears A's original arena bitmap bit"
+                    );
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "B's finished selector lifecycle reopens the process PageMap"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("the owner-local selector retry fixture remains current-thread local");
+            });
+
+            main.teardown()
+                .expect("the static main images retire after the selector retry fixture");
+        })
+        .join()
+        .expect("the mapped-medium selector retry fixture remains current-thread local");
     }
 
     #[test]

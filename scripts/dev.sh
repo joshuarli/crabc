@@ -716,6 +716,7 @@ case "$command" in
             --test native_pointer_first_current_owner_reallocate \
             --test native_pointer_first_usable_size \
             --test native_owner_exit_collection_race \
+            --test native_ordinary_mapped_medium_reclaim \
             -- --test-threads=1
         # The next-`munmap` injection is a separately gated direct witness:
         # a failed OS terminal release must retain its PageMap source without

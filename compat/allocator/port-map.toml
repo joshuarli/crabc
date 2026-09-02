@@ -2608,6 +2608,25 @@ differential_verified = false
 stress_verified = false
 performance_qualified = false
 
+# This ordinary allocation-time row is intentionally separate from the
+# preceding explicit post-exit route.  It owns no source client or route: the
+# later owner discovers only the one selected static-main bitmap candidate.
+[[item]]
+upstream = "src/arena.c"
+name = "owner-local-selected-static-main-medium-mapped-abandoned-reclaim"
+source_region = "src/arena.c:655-778 mi_arena_try_claim_abandoned and mi_arenas_page_try_find_abandoned; src/page.c:276-340 _mi_theap_page_reclaim and mi_page_fresh_alloc; src/page.c:630-706 mi_page_extend_free; src/page.c:855-863 _mi_page_abandon followed by one false-mode first_try retry; and src/page-queue.c:204-243,306-332 queue-tail insertion"
+rust_module = "crabc_mimalloc::main_heap_page, crabc_mimalloc::single_thread, crabc_mimalloc::abandoned, crabc_mimalloc::arena, crabc_mimalloc::process_arena, crabc_mimalloc::process_page_map, and crabc_mimalloc::types"
+implementation_scope = "private selected native-shadow ordinary later-main allocation; default-off audit witnesses"
+rust_item = "MainHeapThreadOwnerLocalPageEngine's OwnerLocalMappedAbandonedClaimSelector; OwnerLocalMainHeapPageSession::with_owner_local_mapped_abandoned_claim_source; PageAllocatorEngine::{reclaim_selected_mapped_medium_before_fresh,reclaim_selected_mapped_medium_with_source,reclaim_selected_mapped_medium_with_source_map,release_span_with_page_map}; MainArenaMappedAbandonedPage; abandoned::try_adopt_retained; and ProcessPageArenaLease::try_with_mapped_abandoned_claim"
+intentional_difference = "Only a bound persistent later-main owner may inspect its matching static-main Heap's Relaxed abandoned count after `collect_retired(false)`, and that count is an early skip rather than claim authority. For one normal `PageKind::Medium` same-bin request in the selected arena, the sealed source takes the paired PageMap claim, resolves every exact arena entry, claims the low owner bit, reassociates, false-collects, proves `used < reserved` plus the complete release span under that same map access, transfers the range, tail-enqueues it, and uses either its inherited immediate head or the source scalar extension. No source pointer, route, registry, or raw map capability escapes the higher-ranked callback. A direct mapping/commit miss alone reabandones the exact page and receives the source's one false-mode retry; any lock, map, geometry, collector, prefix, local, or later post-claim failure terminally retains the root/range/page and blocks every subsequent allocation in that owner. This adds no multi-arena or bitmap scan, small/large/singleton/full/unmapped/foreign route, fresh fallback after a successful claim, concurrent routing, public allocator API, default-backend change, or milestone/promotion claim."
+tests = ["crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/process_arena.rs", "crabc-mimalloc/src/process_page_map.rs", "crabc-mimalloc/tests/native_ordinary_mapped_medium_reclaim.rs", "scripts/dev.sh"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
 # The preceding sole-route handoff intentionally remains a distinct typed
 # source outcome. This row records the only aggregate registry exception:
 # after every sibling has terminally released, its final mapped regular member

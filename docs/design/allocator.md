@@ -2130,8 +2130,11 @@ heap-local arena image until the bitmap claim, original-Theap restoration,
 second live-owner collection, and queue insertion have all succeeded; only
 then can the caller allocate the third block. It does not broaden the handoff
 to general scanning, cross-thread adoption, or a public allocator route. The
-test invokes this adapter explicitly before its third allocation; generic
-`PageAllocatorEngine::allocate` does not scan an abandoned-page map. The latter preserves the small-page
+test invokes this dynamic adapter explicitly before its third allocation;
+`PageAllocatorEngine::allocate` has no dynamic-map scan. The separate,
+selected static-main owner-local medium branch is documented by
+`owner-local-selected-static-main-medium-mapped-abandoned-reclaim` and does
+not expose this dynamic capability. The latter preserves the small-page
 partial collector's head, clears the bit/count before live reassociation,
 collects again, and appends the page back to the same Theap queue. Its all-free
 dynamic-arena result retains the distinct queue-detached release capability and

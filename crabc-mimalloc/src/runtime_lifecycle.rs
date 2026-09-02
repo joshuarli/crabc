@@ -5038,8 +5038,8 @@ struct NativePersistentThreadOwner {
 /// an error. No variant carries a scheduler token, registry entry, route, or
 /// raw pointer capability.
 enum NativePersistentThreadOwnerExitState {
-    PreDrain(MainHeapThreadOwnerLocalPageEngine),
-    RetainedTerminalEngine(MainHeapThreadOwnerLocalPageEngine),
+    PreDrain(MainHeapThreadOwnerLocalPageEngine<'static>),
+    RetainedTerminalEngine(MainHeapThreadOwnerLocalPageEngine<'static>),
     AttachmentOnly,
 }
 

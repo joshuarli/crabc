@@ -170,8 +170,14 @@ use crate::invariants;
 use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedPage};
 use crate::page;
 use crate::page_map::PageMap;
-use crate::process_page_map::{LiveAllocationPointer, ProcessPageMapMutationLease};
-use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
+use crate::process_page_map::{
+    LiveAllocationPointer, MappedAbandonedClaimCompletion, MappedAbandonedClaimedRange,
+    MappedAbandonedClaimOutcome, MappedAbandonedClaimRetainedRange,
+    ProcessPageMapMutationLease,
+};
+use crate::process_arena::{
+    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaError,
+};
 use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
 use crate::subproc::MainSubprocess;
@@ -236,11 +242,21 @@ fn page_queue_bin(page: &Page) -> Option<usize> {
 enum PageCollectError {
     Remote(RemoteFreeError),
     Local(FreeListError),
+    /// A mapped-abandoned bitmap/low-owner transfer crossed its source
+    /// ownership boundary but could not finish reassociation or reabandon.
+    /// The page remains with this allocator's retained terminal state.
+    Abandon(AbandonError),
     InvalidOwnerState,
     /// A post-collection page release or queue lifecycle invariant failed.
     /// The source transition may already have cleared map/queue ownership, so
     /// this is retained exactly like a collection error rather than retried.
     Lifecycle,
+    /// A selected mapped-abandoned page crossed the normal A-to-B range
+    /// transfer, then its direct page-area commit failed after the source
+    /// cannot reabandon it.  Retain the exact commit diagnostic together
+    /// with the selector's terminal owner rather than treating this as an
+    /// ordinary allocator no-page result.
+    MappedAbandonedPageCommit(PageCommitError),
     /// Test-only failure before `remote_free::collect` can detach producer
     /// state. This exact variant is the sole cleanup-recoverable provenance.
     #[cfg(test)]
@@ -321,6 +337,28 @@ enum GenericPathError {
     Local(FreeListError),
     PageCommit(PageCommitError),
     Lifecycle,
+}
+
+/// Result of the selected static-main mapped-medium claim placed immediately
+/// before the ordinary fresh-page branch.
+///
+/// `RetryAfterReabandon` is deliberately distinct from `NoCandidate`: C's
+/// `mi_page_fresh` returned null after an already-claimed page could not
+/// extend, so the caller must enter its existing one-time retry boundary
+/// rather than allocating a fresh span in that same branch.
+enum MappedMediumReclaimBeforeFresh {
+    NoCandidate,
+    Reclaimed(NonNull<Page>),
+    RetryAfterReabandon,
+}
+
+/// The source `_mi_page_abandon` tail after a reclaimed page has already
+/// returned to the target queue. An empty result consumed the page's terminal
+/// PageMap/arena release; a nonempty result republished its exact mapped bit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReabandonReclaimedRegularOutcome {
+    Reabandoned,
+    Released,
 }
 
 impl From<PageToFullError> for GenericPathError {
@@ -2324,6 +2362,383 @@ pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
 pub(crate) type OwnerLocalMainHeapPageAllocator<'arena, 'map> =
     PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSession>;
 
+// The selector keeps Copy process/static-Heap leases, so it lives in a child
+// module rather than merely using private fields in this large translation
+// unit. The parent generic engine can name only the non-Copy callback source
+// and its narrow `pub(super)` operations; it cannot copy a lease into a
+// callback result or manufacture a source outside the sealed hook below.
+mod owner_local_mapped_abandoned_claim {
+use super::*;
+
+/// The one selected static-main mapped-abandoned claim source retained by a
+/// persistent later-main owner.
+///
+/// This is deliberately not part of [`PageAllocatorEngine`].  The ordinary
+/// engine owns only its current queue/cache/page state; the enclosing
+/// [`crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine`] retains this
+/// matching process pair and static-Heap lease across short local calls.  A
+/// temporary [`OwnerLocalMainHeapPageSession`] hook borrows it only while a
+/// current attached owner is bound.
+#[must_use = "a selected mapped-abandoned claim source must remain with its persistent later-main owner"]
+pub(crate) struct OwnerLocalMappedAbandonedClaimSelector<'main> {
+    pair: ProcessPageArenaLease,
+    main_heap: MainStaticHeapLease<'main>,
+    retained: Option<OwnerLocalMappedAbandonedClaimRetention>,
+    #[cfg(test)]
+    test_claim_closure_panic_once: bool,
+    #[cfg(test)]
+    test_claim_span_validation_failure_once: bool,
+}
+
+/// The fail-closed state after the selected source branch could no longer
+/// resume ordinary allocation.  A claim token remains in this persistent
+/// owner until its whole owner does: dropping it would otherwise poison the
+/// root while losing the source page.  A normal `into_page` transfer instead
+/// leaves the generic engine's existing collection poison responsible for the
+/// page and records only that this selector cannot reopen allocation.
+enum OwnerLocalMappedAbandonedClaimRetention {
+    Root,
+    Claimed(MappedAbandonedClaimedRange),
+    Retained(MappedAbandonedClaimRetainedRange),
+    Transferred,
+}
+
+/// Result of asking a sealed page session for its temporary owner-local
+/// mapped-abandoned source.
+///
+/// `Completed` carries only the caller's independent result. The source is
+/// higher-ranked at the hook boundary, so neither its matching process pair,
+/// static-Heap lease, nor a scoped PageMap claim capability can occur in this
+/// value or survive the bound session that minted it.
+pub(crate) enum OwnerLocalMappedAbandonedClaimSourceHookOutcome<R> {
+    /// This is an ordinary non-owner-local session. No source operation ran.
+    Unavailable,
+    /// The persistent owner had already retained a root or exact range.
+    Terminal,
+    /// The callback consumed its complete temporary source view.
+    Completed(R),
+}
+
+/// A non-Copy, callback-only selected source for one bound later-main owner.
+///
+/// This value deliberately owns no independently usable process/map
+/// capability. Its private methods execute the static Heap snapshot, paired
+/// short PageMap claim, and all terminal retention while the callback is
+/// active. `OwnerLocalMainHeapPageSession` mints it from its erased selector
+/// pointer only under the unique outer page-engine borrow and the higher-
+/// ranked session hook makes it impossible for safe crate code to retain this
+/// view past unbind.
+pub(crate) struct OwnerLocalMappedAbandonedClaimSource<'source> {
+    selector: &'source mut OwnerLocalMappedAbandonedClaimSelector<'static>,
+    claim_attempt_active: bool,
+}
+
+/// A source-local result from the synchronized static-main Heap snapshot.
+/// This remains private so a `MainArenaMappedAbandonedPage` cannot be used as
+/// a generic selector capability outside the source callback.
+pub(super) enum OwnerLocalMappedAbandonedSelectedMapOutcome<R> {
+    NoCandidate,
+    Terminal,
+    Completed(R),
+}
+
+impl<'main> OwnerLocalMappedAbandonedClaimSelector<'main> {
+    #[inline]
+    pub(crate) const fn new(
+        pair: ProcessPageArenaLease,
+        main_heap: MainStaticHeapLease<'main>,
+    ) -> Self {
+        Self {
+            pair,
+            main_heap,
+            retained: None,
+            #[cfg(test)]
+            test_claim_closure_panic_once: false,
+            #[cfg(test)]
+            test_claim_span_validation_failure_once: false,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn is_terminal(&self) -> bool { self.retained.is_some() }
+
+    /// Arms one private source-claim closure unwind regression. This exists
+    /// only to prove that the paired PageMap unwind poison reaches the
+    /// owner-local terminal boundary before another size class can allocate.
+    #[cfg(test)]
+    pub(crate) fn test_panic_claim_closure_once(&mut self) {
+        assert!(
+            !self.test_claim_closure_panic_once && !self.test_claim_span_validation_failure_once,
+            "one focused selector closure fault is armed at a time"
+        );
+        self.test_claim_closure_panic_once = true;
+    }
+
+    /// Arms one private post-low-owner span-validation rejection. The real
+    /// source claim still reassociates and false-collects a page; the test
+    /// forces only the final retained completion so a same-callback Small
+    /// allocation can prove the persistent selector gate has already closed.
+    #[cfg(test)]
+    pub(crate) fn test_fail_claim_span_validation_once(&mut self) {
+        assert!(
+            !self.test_claim_closure_panic_once && !self.test_claim_span_validation_failure_once,
+            "one focused selector closure fault is armed at a time"
+        );
+        self.test_claim_span_validation_failure_once = true;
+    }
+
+    #[inline]
+    fn retain_root(&mut self) -> bool {
+        if self.retained.is_none() {
+            self.retained = Some(OwnerLocalMappedAbandonedClaimRetention::Root);
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    fn retain_claimed(&mut self, claimed: MappedAbandonedClaimedRange) -> bool {
+        // An unlock failure returns the completed linear transfer token.  Do
+        // not consume it into a normal target page: this persistent terminal
+        // owner retains the token itself after latching the root.
+        if matches!(
+            self.retained,
+            None | Some(OwnerLocalMappedAbandonedClaimRetention::Root)
+        ) {
+            self.retained = Some(OwnerLocalMappedAbandonedClaimRetention::Claimed(claimed));
+            true
+        } else {
+            // A second claim after terminalization is unreachable: the hook
+            // no longer admits a source attempt. Keep the unexpected exact
+            // linear range fail-closed in release builds rather than relying
+            // on a debug assertion or dropping it into an unowned root.
+            core::mem::forget(claimed);
+            false
+        }
+    }
+
+    #[inline]
+    fn retain_retained(&mut self, retained: MappedAbandonedClaimRetainedRange) -> bool {
+        if matches!(
+            self.retained,
+            None | Some(OwnerLocalMappedAbandonedClaimRetention::Root)
+        ) {
+            self.retained = Some(OwnerLocalMappedAbandonedClaimRetention::Retained(retained));
+            true
+        } else {
+            // See `retain_claimed`: a second terminal range is an internal
+            // invariant violation, but its source page must remain retained
+            // in release builds as well.
+            core::mem::forget(retained);
+            false
+        }
+    }
+
+    #[inline]
+    fn mark_transferred_terminal(&mut self) -> bool {
+        if matches!(
+            self.retained,
+            None | Some(OwnerLocalMappedAbandonedClaimRetention::Root)
+        ) {
+            self.retained = Some(OwnerLocalMappedAbandonedClaimRetention::Transferred);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl OwnerLocalMappedAbandonedClaimSource<'_> {
+    /// Latches only this exact persistent selector. The source deliberately
+    /// has no adapter/session pointer: its callback executes while the full
+    /// page engine is mutably borrowed, so attachment/lifecycle latching must
+    /// wait until that callback has returned and all source borrows are gone.
+    #[inline]
+    pub(super) fn retain_root(&mut self) {
+        let _ = self.selector.retain_root();
+    }
+
+    #[inline]
+    pub(super) fn retain_claimed(&mut self, claimed: MappedAbandonedClaimedRange) {
+        let _ = self.selector.retain_claimed(claimed);
+        // The exact linear token is either stored by the selector or
+        // deliberately forgotten by its release-build fail-closed branch
+        // before the outer owner latches its lifecycle.
+    }
+
+    #[inline]
+    pub(super) fn retain_retained(&mut self, retained: MappedAbandonedClaimRetainedRange) {
+        let _ = self.selector.retain_retained(retained);
+    }
+
+    #[inline]
+    pub(super) fn mark_transferred_terminal(&mut self) {
+        let _ = self.selector.mark_transferred_terminal();
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn take_test_claim_closure_panic(&mut self) -> bool {
+        core::mem::replace(&mut self.selector.test_claim_closure_panic_once, false)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn take_test_claim_span_validation_failure(&mut self) -> bool {
+        core::mem::replace(
+            &mut self.selector.test_claim_span_validation_failure_once,
+            false,
+        )
+    }
+
+    /// Takes C's synchronized static-main count early skip and constructs the
+    /// matching bitmap/count capability. The heap lock is released before the
+    /// callback reaches the paired PageMap claim; count remains only a relaxed
+    /// skip, never authority to claim a bitmap bit.
+    pub(super) fn with_selected_map<R>(
+        &mut self,
+        arena: NonNull<crate::types::Arena>,
+        target_heap: NonNull<Heap>,
+        bin: usize,
+        operation: impl for<'map> FnOnce(
+            &'map mut Self,
+            MainArenaMappedAbandonedPage<'map>,
+        ) -> R,
+    ) -> OwnerLocalMappedAbandonedSelectedMapOutcome<R> {
+        let arena = match unsafe { ArenaView::from_ptr(arena.as_ptr()) } {
+            Some(arena) => arena,
+            None => {
+                self.retain_root();
+                return OwnerLocalMappedAbandonedSelectedMapOutcome::Terminal;
+            }
+        };
+        let mut guard = match self.selector.main_heap.lock_heap() {
+            Ok(guard) => guard,
+            Err(_) => {
+                self.retain_root();
+                return OwnerLocalMappedAbandonedSelectedMapOutcome::Terminal;
+            }
+        };
+        let static_heap = NonNull::from(guard.heap_mut());
+        let selected = if static_heap != target_heap {
+            Err(())
+        } else if !unsafe { static_heap.as_ref() }.has_abandoned_page_in_bin(bin) {
+            Ok(None)
+        } else {
+            arena.main_heap_abandoned_page(static_heap, bin).map(Some).ok_or(())
+        };
+        if guard.unlock().is_err() {
+            self.retain_root();
+            return OwnerLocalMappedAbandonedSelectedMapOutcome::Terminal;
+        }
+        match selected {
+            Ok(None) => OwnerLocalMappedAbandonedSelectedMapOutcome::NoCandidate,
+            Ok(Some(map)) => OwnerLocalMappedAbandonedSelectedMapOutcome::Completed(operation(self, map)),
+            Err(()) => {
+                self.retain_root();
+                OwnerLocalMappedAbandonedSelectedMapOutcome::Terminal
+            }
+        }
+    }
+
+    /// Runs exactly one paired PageMap claim while this callback-only source
+    /// remains live. If the resolver/adopt/validation closure unwinds, the
+    /// paired access poisons its root and this source's `Drop` mirrors that
+    /// terminal state into the persistent selector before unbind.
+    pub(super) fn attempt_mapped_claim(
+        &mut self,
+        operation: impl for<'map> FnOnce(
+            crate::process_page_map::MappedAbandonedClaimAccess<'map>,
+        ) -> MappedAbandonedClaimCompletion,
+    ) -> MappedAbandonedClaimOutcome {
+        assert!(
+            !self.claim_attempt_active,
+            "one owner-local source cannot nest mapped-abandoned claim attempts"
+        );
+        self.claim_attempt_active = true;
+        // SAFETY: this non-Copy source exposes the selected process pair only
+        // here. The caller keeps resolver, adoption, and complete span
+        // validation inside the paired closure and consumes every completion
+        // before this synchronous callback returns.
+        let outcome = unsafe { self.selector.pair.try_with_mapped_abandoned_claim(operation) };
+        self.claim_attempt_active = false;
+        outcome
+    }
+}
+
+impl Drop for OwnerLocalMappedAbandonedClaimSource<'_> {
+    fn drop(&mut self) {
+        if self.claim_attempt_active {
+            // A claim closure panicked before it returned a completion. The
+            // paired PageMap access has already poisoned its root on unwind;
+            // preserve the matching selector terminal state before a later
+            // small/singleton allocation can bypass the medium branch.
+            self.retain_root();
+        }
+    }
+}
+
+/// Mints the callback-only source after the parent adapter has copied its
+/// installed selector pointer. Keeping construction here prevents the parent
+/// generic engine from naming any selector field, including the Copy process
+/// pair and static-Heap lease.
+///
+/// # Safety
+///
+/// The parent adapter proves `selector` remains installed for the whole
+/// higher-ranked callback and that no overlapping source callback can run
+/// under the unique outer page-engine borrow.
+pub(super) unsafe fn with_bound_source<R>(
+    mut selector: NonNull<OwnerLocalMappedAbandonedClaimSelector<'static>>,
+    operation: impl for<'source> FnOnce(OwnerLocalMappedAbandonedClaimSource<'source>) -> R,
+) -> OwnerLocalMappedAbandonedClaimSourceHookOutcome<R> {
+    // SAFETY: delegated by the parent adapter's binding proof above.
+    let selector = unsafe { selector.as_mut() };
+    if selector.is_terminal() {
+        return OwnerLocalMappedAbandonedClaimSourceHookOutcome::Terminal;
+    }
+    OwnerLocalMappedAbandonedClaimSourceHookOutcome::Completed(operation(
+        OwnerLocalMappedAbandonedClaimSource {
+            selector,
+            claim_attempt_active: false,
+        },
+    ))
+}
+
+impl Drop for OwnerLocalMappedAbandonedClaimSelector<'_> {
+    fn drop(&mut self) {
+        // A selector is normally dropped only after a finished owner has no
+        // terminal source range. If a failed paired unlock or retained
+        // adoption left an exact linear range here, deliberately leak that
+        // range rather than invoke its ordinary Drop while destroying the
+        // only explicit terminal owner. The paired root is already poisoned;
+        // this preserves the page/range as fail-closed retained state until a
+        // broader terminal lifecycle exists.
+        let retained = self.retained.take();
+        match retained {
+            Some(OwnerLocalMappedAbandonedClaimRetention::Claimed(claimed)) => {
+                core::mem::forget(claimed);
+            }
+            Some(OwnerLocalMappedAbandonedClaimRetention::Retained(retained)) => {
+                core::mem::forget(retained);
+            }
+            Some(OwnerLocalMappedAbandonedClaimRetention::Root)
+            | Some(OwnerLocalMappedAbandonedClaimRetention::Transferred)
+            | None => {}
+        }
+    }
+}
+
+} // mod owner_local_mapped_abandoned_claim
+
+use owner_local_mapped_abandoned_claim::OwnerLocalMappedAbandonedSelectedMapOutcome;
+pub(crate) use owner_local_mapped_abandoned_claim::{
+    OwnerLocalMappedAbandonedClaimSelector,
+    OwnerLocalMappedAbandonedClaimSource,
+    OwnerLocalMappedAbandonedClaimSourceHookOutcome,
+};
+
 /// Why a short later-main source view could not bind to its persistent local
 /// page engine.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2345,6 +2760,8 @@ pub(crate) enum OwnerLocalMainHeapPageSessionBindError {
 /// between calls without making the TLS payload self-referential.
 pub(crate) struct OwnerLocalMainHeapPageSession {
     active: Option<NonNull<MainHeapThreadPageSession<'static, 'static>>>,
+    mapped_abandoned_claim_selector:
+        Option<NonNull<OwnerLocalMappedAbandonedClaimSelector<'static>>>,
     thread: LiveThreadId,
     thread_sequence: usize,
     _not_send_or_sync: PhantomData<*mut ()>,
@@ -2354,6 +2771,7 @@ impl OwnerLocalMainHeapPageSession {
     fn new(session: &MainHeapThreadPageSession<'_, '_>) -> Self {
         Self {
             active: None,
+            mapped_abandoned_claim_selector: None,
             thread: session
                 .thread_id()
                 .expect("a later-main page session always has a live owner"),
@@ -2369,6 +2787,7 @@ impl OwnerLocalMainHeapPageSession {
     fn from_identity(thread: LiveThreadId, thread_sequence: usize) -> Self {
         Self {
             active: None,
+            mapped_abandoned_claim_selector: None,
             thread,
             thread_sequence,
             _not_send_or_sync: PhantomData,
@@ -2378,8 +2797,9 @@ impl OwnerLocalMainHeapPageSession {
     fn bind(
         &mut self,
         session: &mut MainHeapThreadPageSession<'_, '_>,
+        selector: &mut OwnerLocalMappedAbandonedClaimSelector<'_>,
     ) -> Result<(), OwnerLocalMainHeapPageSessionBindError> {
-        if self.active.is_some() {
+        if self.active.is_some() || self.mapped_abandoned_claim_selector.is_some() {
             return Err(OwnerLocalMainHeapPageSessionBindError::Reentrant);
         }
         if session.thread_id() != Some(self.thread)
@@ -2391,6 +2811,11 @@ impl OwnerLocalMainHeapPageSession {
         // installs an unbind guard before any engine operation and keeps the
         // stack session alive until that guard has cleared the slot.
         self.active = Some(NonNull::from(session).cast());
+        // The selector remains owned by `MainHeapThreadOwnerLocalPageEngine`.
+        // This erased pointer is installed only for the same synchronous
+        // bound operation as `active`; its guard clears both before either
+        // stack borrow can end.
+        self.mapped_abandoned_claim_selector = Some(NonNull::from(selector).cast());
         Ok(())
     }
 
@@ -2413,6 +2838,52 @@ impl OwnerLocalMainHeapPageSession {
         // borrow and the source attachment's unique short session borrow.
         unsafe { active.as_mut() }
     }
+
+    /// Mints one non-escaping source view for the caller's synchronous
+    /// owner-local operation.
+    ///
+    /// # Safety
+    ///
+    /// `session` must be this live adapter under the unique outer
+    /// `PageAllocatorEngine` borrow. `bind` has installed its selector pointer
+    /// and the unbind guard remains live for the complete callback. This
+    /// method first copies only that raw pointer, then creates the temporary
+    /// selector borrow; it holds no `&mut OwnerLocalMainHeapPageSession` while
+    /// `operation` runs. The operation may use the separately held unique
+    /// engine borrow, but it performs no nested public allocation while the
+    /// temporary source owns its selector borrow. The higher-ranked callback
+    /// cannot return `source`, and unbind clears both raw slots before either
+    /// source attachment ends.
+    unsafe fn with_owner_local_mapped_abandoned_claim_source<R>(
+        session: NonNull<Self>,
+        operation: impl for<'source> FnOnce(OwnerLocalMappedAbandonedClaimSource<'source>) -> R,
+    ) -> OwnerLocalMappedAbandonedClaimSourceHookOutcome<R> {
+        let Some(selector) = (unsafe { session.as_ref() }).mapped_abandoned_claim_selector
+        else {
+            return OwnerLocalMappedAbandonedClaimSourceHookOutcome::Unavailable;
+        };
+        // SAFETY: `bind` stores only the persistent owner's selector and the
+        // unbind guard clears it before that owner can move/drop. The child
+        // module owns the selector fields and mints the non-Copy source, so
+        // this parent generic adapter cannot copy either source lease.
+        unsafe {
+            owner_local_mapped_abandoned_claim::with_bound_source(
+                selector, operation,
+            )
+        }
+    }
+
+    /// This is intentionally only a boolean latch. It does not expose the
+    /// selector, source leases, map access, or token state, so every generic
+    /// allocation entry may safely include it in its ordinary poison gate.
+    /// The selected source callback performs no nested public allocation;
+    /// therefore this observation happens either before that callback begins
+    /// or after it has dropped its exclusive selector borrow.
+    #[inline]
+    fn is_owner_local_mapped_abandoned_claim_terminal(&self) -> bool {
+        self.mapped_abandoned_claim_selector
+            .is_some_and(|selector| unsafe { selector.as_ref() }.is_terminal())
+    }
 }
 
 struct OwnerLocalMainHeapPageSessionUnbind {
@@ -2422,9 +2893,26 @@ struct OwnerLocalMainHeapPageSessionUnbind {
 impl Drop for OwnerLocalMainHeapPageSessionUnbind {
     fn drop(&mut self) {
         // SAFETY: the guard cannot outlive the engine call which created it;
-        // that call keeps the adapter alive and does not move the engine.
-        unsafe { (*self.session).active = None };
-        MainHeapThreadAttachment::end_owner_local_page_engine_access();
+        // that call keeps the adapter alive and does not move the engine. On
+        // unwind, the callback-only source has already dropped before this
+        // outer bind guard, so reading its selector terminal latch cannot
+        // overlap the source's exclusive selector borrow.
+        let terminal = unsafe {
+            (*self.session)
+                .mapped_abandoned_claim_selector
+                .is_some_and(|selector| selector.as_ref().is_terminal())
+        };
+        // SAFETY: see above. Clear both erased pointers before the stack
+        // source view can end; only the scalar lifecycle decision remains.
+        unsafe {
+            (*self.session).active = None;
+            (*self.session).mapped_abandoned_claim_selector = None;
+        }
+        if terminal {
+            MainHeapThreadAttachment::latch_unfinished_owner_local_page_engine();
+        } else {
+            MainHeapThreadAttachment::end_owner_local_page_engine_access();
+        }
     }
 }
 
@@ -2529,6 +3017,24 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
         } else {
             MainHeapThreadAttachment::latch_unfinished_owner_local_page_engine();
         }
+    }
+    #[inline]
+    unsafe fn with_owner_local_mapped_abandoned_claim_source<R>(
+        session: NonNull<Self>,
+        operation: impl for<'source> FnOnce(OwnerLocalMappedAbandonedClaimSource<'source>) -> R,
+    ) -> OwnerLocalMappedAbandonedClaimSourceHookOutcome<R> {
+        // SAFETY: the sealed generic engine passes its currently borrowed
+        // adapter only while `with_owner_local_main_heap_session` keeps the
+        // selector/attachment raw slots installed.
+        unsafe {
+            OwnerLocalMainHeapPageSession::with_owner_local_mapped_abandoned_claim_source(
+                session, operation,
+            )
+        }
+    }
+    #[inline]
+    fn is_owner_local_mapped_abandoned_claim_terminal(&self) -> bool {
+        OwnerLocalMainHeapPageSession::is_owner_local_mapped_abandoned_claim_terminal(self)
     }
 }
 
@@ -7819,15 +8325,59 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
         }
     }
 
+    /// Binds one exact paired reserved mapping to this persistent owner for
+    /// the private on-demand commit regression. The normal owner-local path
+    /// never stores direct mapping authority: this is compiled only in unit
+    /// tests, before any source page exists.
+    #[cfg(test)]
+    pub(crate) fn test_bind_page_area_commit_lease(&mut self, pair: ProcessPageArenaLease) {
+        assert!(
+            self.page_area_commit_lease.is_none(),
+            "one private on-demand fixture binds exactly one paired mapping lease"
+        );
+        assert_eq!(
+            pair.memory_config()
+                .expect("the test pair remains configuration-ready"),
+            self.page_map.memory_config(),
+            "the test direct-commit mapping uses this engine's PageMap configuration"
+        );
+        let pair_arena = pair
+            .arena()
+            .expect("the test pair retains one published arena");
+        assert!(
+            core::ptr::eq(pair_arena.arena(), self.arena.arena()),
+            "the test direct-commit mapping uses this engine's exact arena"
+        );
+        self.page_area_commit_lease = Some(pair);
+    }
+
+    /// Selects the source `commit == false` fresh-regular-page branch for
+    /// the bound owner-local unit fixture. It must run while a short session
+    /// is active and before the first source page is published.
+    #[cfg(test)]
+    pub(crate) fn test_enable_page_commit_on_demand(&mut self) {
+        assert_eq!(
+            self.session.theap().page_count(),
+            0,
+            "the test-only fresh-page commitment choice precedes every page"
+        );
+        assert!(
+            self.page_area_commit_lease.is_some(),
+            "the test-only commitment choice requires paired direct mapping authority"
+        );
+        self.page_commit_on_demand = true;
+    }
+
     /// Runs one local operation through a freshly revalidated source view.
     /// The adapter and every engine field stay in place across calls; only the
     /// temporary session pointer is installed for this closure.
     pub(crate) fn with_owner_local_main_heap_session<R>(
         &mut self,
         mut session: MainHeapThreadPageSession<'_, '_>,
+        selector: &mut OwnerLocalMappedAbandonedClaimSelector<'_>,
         operation: impl FnOnce(&mut Self) -> R,
     ) -> Result<R, OwnerLocalMainHeapPageSessionBindError> {
-        if let Err(error) = self.session.bind(&mut session) {
+        if let Err(error) = self.session.bind(&mut session, selector) {
             MainHeapThreadAttachment::end_owner_local_page_engine_access();
             return Err(error);
         }
@@ -7843,8 +8393,9 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
     pub(crate) fn finish_owner_local_main_heap_session(
         &mut self,
         session: MainHeapThreadPageSession<'_, '_>,
+        selector: &mut OwnerLocalMappedAbandonedClaimSelector<'_>,
     ) -> Result<bool, OwnerLocalMainHeapPageSessionBindError> {
-        self.with_owner_local_main_heap_session(session, |engine| {
+        self.with_owner_local_main_heap_session(session, selector, |engine| {
             engine.finish_quiescent_in_place()
         })
     }
@@ -34743,6 +35294,23 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         block_size: usize,
         kind: PageKind,
     ) -> Result<Option<NonNull<Page>>, GenericPathError> {
+        self.find_generic_queue_page_with_first_try(bin, block_size, kind, true)
+    }
+
+    /// The recursive false-mode retry from `mi_page_queue_find_free_ex`.
+    ///
+    /// A mapped page that was successfully claimed and then reabandoned after
+    /// the source's final direct mapping failure may not fall straight through
+    /// to a fresh span.  C retries this same queue finder once with
+    /// `first_try == false`; only a second failure can reach the outer OOM
+    /// policy, where its existing forced collection remains distinct.
+    fn find_generic_queue_page_with_first_try(
+        &mut self,
+        bin: usize,
+        block_size: usize,
+        kind: PageKind,
+        first_try: bool,
+    ) -> Result<Option<NonNull<Page>>, GenericPathError> {
         let first = self
             .session
             .queue(bin)
@@ -34865,11 +35433,299 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         if !self.collect_retired(false) {
             return Err(GenericPathError::Lifecycle);
         }
+
+        match self.reclaim_selected_mapped_medium_before_fresh(bin, block_size, kind)? {
+            MappedMediumReclaimBeforeFresh::NoCandidate => {}
+            MappedMediumReclaimBeforeFresh::Reclaimed(page) => return Ok(Some(page)),
+            MappedMediumReclaimBeforeFresh::RetryAfterReabandon => {
+                if first_try {
+                    return self.find_generic_queue_page_with_first_try(
+                        bin,
+                        block_size,
+                        kind,
+                        false,
+                    );
+                }
+                // The source's second `mi_page_fresh` failure is the ordinary
+                // no-page result.  Only now may `allocate_generic_with_retry`
+                // decide whether its separate forced collection is warranted.
+                return Ok(None);
+            }
+        }
+
         let Some(fresh) = self.allocate_fresh_page(block_size, kind) else {
             return Ok(None);
         };
         self.push_regular_page(bin, fresh);
         Ok(Some(fresh))
+    }
+
+    /// Ports the selected-arena, normal-medium part of
+    /// `mi_arenas_page_try_find_abandoned` plus `mi_page_fresh_alloc`.
+    ///
+    /// This is intentionally only the static-main, currently selected arena
+    /// and medium-page shape needed by the ordinary native runtime. The
+    /// relaxed Heap count is an early skip only; the matching map bitmap and
+    /// low owner-bit claim inside `try_adopt_retained` remain the authority.
+    /// No source page identity, client pointer, post-exit route, registry, or
+    /// fresh-page fallback crosses this boundary.
+    fn reclaim_selected_mapped_medium_before_fresh(
+        &mut self,
+        bin: usize,
+        block_size: usize,
+        kind: PageKind,
+    ) -> Result<MappedMediumReclaimBeforeFresh, GenericPathError> {
+        if kind != PageKind::Medium || bin >= ARENA_BIN_COUNT {
+            return Ok(MappedMediumReclaimBeforeFresh::NoCandidate);
+        }
+        let mut engine = NonNull::from(&mut *self);
+        let session = NonNull::from(&mut self.session);
+        // SAFETY: this sealed hook receives the current generic session only
+        // while this unique engine borrow and its unbind guard are live. Its
+        // higher-ranked source cannot escape or store the selector/map
+        // capability. `engine` is used only synchronously inside the callback,
+        // while the hook itself holds no overlapping session reference.
+        let outcome = unsafe {
+            <Session as TheapPageSession>::with_owner_local_mapped_abandoned_claim_source(
+                session,
+                |mut source| {
+                    // SAFETY: see the hook proof above; the callback is the
+                    // sole temporary source operation under this engine.
+                    unsafe {
+                        engine.as_mut().reclaim_selected_mapped_medium_with_source(
+                            &mut source,
+                            bin,
+                            block_size,
+                        )
+                    }
+                },
+            )
+        };
+        match outcome {
+            OwnerLocalMappedAbandonedClaimSourceHookOutcome::Unavailable => {
+                Ok(MappedMediumReclaimBeforeFresh::NoCandidate)
+            }
+            OwnerLocalMappedAbandonedClaimSourceHookOutcome::Terminal => {
+                Err(GenericPathError::Lifecycle)
+            }
+            OwnerLocalMappedAbandonedClaimSourceHookOutcome::Completed(result) => result,
+        }
+    }
+
+    /// Completes the selected static-main source sequence while the temporary
+    /// source is still callback-bound. No map/lease/token can cross this
+    /// function's caller: `with_selected_map` invokes the inner claim and all
+    /// target queue/reabandon outcomes synchronously before source unbind.
+    fn reclaim_selected_mapped_medium_with_source(
+        &mut self,
+        source: &mut OwnerLocalMappedAbandonedClaimSource<'_>,
+        bin: usize,
+        block_size: usize,
+    ) -> Result<MappedMediumReclaimBeforeFresh, GenericPathError> {
+        let Some(target_thread) = self.session.thread_id() else {
+            source.retain_root();
+            return Err(GenericPathError::Lifecycle);
+        };
+        let target_theap = NonNull::from(self.session.theap());
+        let Some(target_heap) = NonNull::new(self.session.theap().heap()) else {
+            source.retain_root();
+            return Err(GenericPathError::Lifecycle);
+        };
+        let arena = NonNull::from(self.arena.arena());
+        let mut engine = NonNull::from(&mut *self);
+        match source.with_selected_map(arena, target_heap, bin, |source, map| {
+            // SAFETY: the source callback remains the sole holder of the
+            // selected static Heap/map authority and `engine` remains the
+            // enclosing unique allocation borrow for this synchronous call.
+            unsafe {
+                engine.as_mut().reclaim_selected_mapped_medium_with_source_map(
+                    source,
+                    bin,
+                    block_size,
+                    target_theap,
+                    target_thread,
+                    &map,
+                )
+            }
+        }) {
+            OwnerLocalMappedAbandonedSelectedMapOutcome::NoCandidate => {
+                Ok(MappedMediumReclaimBeforeFresh::NoCandidate)
+            }
+            OwnerLocalMappedAbandonedSelectedMapOutcome::Terminal => Err(GenericPathError::Lifecycle),
+            OwnerLocalMappedAbandonedSelectedMapOutcome::Completed(result) => result,
+        }
+    }
+
+    fn reclaim_selected_mapped_medium_with_source_map(
+        &mut self,
+        source: &mut OwnerLocalMappedAbandonedClaimSource<'_>,
+        bin: usize,
+        block_size: usize,
+        target_theap: NonNull<Theap>,
+        target_thread: LiveThreadId,
+        map: &MainArenaMappedAbandonedPage<'_>,
+    ) -> Result<MappedMediumReclaimBeforeFresh, GenericPathError> {
+        let arena = &self.arena;
+        #[cfg(test)]
+        let test_panic_claim_closure = source.take_test_claim_closure_panic();
+        #[cfg(test)]
+        let test_fail_span_validation = source.take_test_claim_span_validation_failure();
+        let outcome = source.attempt_mapped_claim(|access| {
+            #[cfg(test)]
+            if test_panic_claim_closure {
+                panic!("focused mapped-abandoned claim closure unwind");
+            }
+            let adoption = unsafe {
+                abandoned::try_adopt_retained(
+                    map,
+                    self.thread_sequence,
+                    target_theap,
+                    target_thread,
+                    |slice_index| {
+                        let start = arena.slice_start(slice_index)?;
+                        NonNull::new(access.page_map().checked_lookup(start))
+                    },
+                )
+            };
+            match adoption {
+                Ok(None) => access.no_candidate(),
+                Err(failure) => unsafe { access.retain_after_adopt_failure(failure) },
+                Ok(Some(adopted)) => {
+                    let page = adopted.page();
+                    let valid = {
+                        // SAFETY: adoption holds this exact low-owner page
+                        // while the scoped map validates every arena entry.
+                        let page_ref = unsafe { page.as_ref() };
+                        page_ref.theap() == target_theap.as_ptr()
+                            && page_ref.heap() == self.session.theap().heap()
+                            && page_ref.memid().kind() == MemoryKind::Arena
+                            && page_ref.block_size() == block_size
+                            && size_class::page_kind_for_block_size(page_ref.block_size())
+                                == Some(PageKind::Medium)
+                            && size_class::bin(page_ref.block_size()) == Some(bin)
+                            && page_ref.reserved() != 0
+                            && page_ref.capacity() <= page_ref.reserved()
+                            && page_ref.used() < usize::from(page_ref.reserved())
+                            && !page_is_in_full(page_ref)
+                            && page_ref.is_queue_detached()
+                            && matches!(
+                                self.release_span_with_page_map(page.as_ptr(), access.page_map()),
+                                Some(ReleaseSpan::Arena { .. })
+                            )
+                    };
+                    #[cfg(test)]
+                    let valid = valid && !test_fail_span_validation;
+                    if valid {
+                        // SAFETY: the full target association and scoped
+                        // complete-span PageMap proof precede this transfer.
+                        unsafe { access.claim_after_full_span_validation(adopted) }
+                    } else {
+                        // SAFETY: a post-low-owner proof failure must retain
+                        // the exact source range rather than fresh-fallback.
+                        unsafe { access.retain_after_span_validation_failure(adopted) }
+                    }
+                }
+            }
+        });
+
+        let page = match outcome {
+            MappedAbandonedClaimOutcome::Busy
+            | MappedAbandonedClaimOutcome::Completed(
+                MappedAbandonedClaimCompletion::NoCandidate(_),
+            ) => return Ok(MappedMediumReclaimBeforeFresh::NoCandidate),
+            MappedAbandonedClaimOutcome::Completed(
+                MappedAbandonedClaimCompletion::Claimed(claimed),
+            ) => unsafe { claimed.into_page() },
+            MappedAbandonedClaimOutcome::Completed(
+                MappedAbandonedClaimCompletion::Retained(retained),
+            ) => {
+                source.retain_retained(retained);
+                return Err(GenericPathError::Lifecycle);
+            }
+            MappedAbandonedClaimOutcome::UnlockFailed { completion, .. } => match completion {
+                MappedAbandonedClaimCompletion::NoCandidate(_) => {
+                    source.retain_root();
+                    return Err(GenericPathError::Lifecycle);
+                }
+                MappedAbandonedClaimCompletion::Claimed(claimed) => {
+                    source.retain_claimed(claimed);
+                    return Err(GenericPathError::Lifecycle);
+                }
+                MappedAbandonedClaimCompletion::Retained(retained) => {
+                    source.retain_retained(retained);
+                    return Err(GenericPathError::Lifecycle);
+                }
+            },
+            MappedAbandonedClaimOutcome::PairMismatch
+            | MappedAbandonedClaimOutcome::RootTerminal
+            | MappedAbandonedClaimOutcome::RootTerminalLock(_) => {
+                source.retain_root();
+                return Err(GenericPathError::Lifecycle);
+            }
+        };
+
+        let queue = match self.session.queue_mut(bin) {
+            Some(queue) => queue as *mut _,
+            None => {
+                return Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                    source,
+                    page,
+                    GenericPathError::Lifecycle,
+                ));
+            }
+        };
+        // SAFETY: the completed token has transferred exactly this detached,
+        // target-associated range after false collection and full validation.
+        unsafe { page_queue_push_at_end_metadata(&mut *queue, page.as_ptr()) };
+        self.update_direct_cache(bin);
+        self.session.note_page_added();
+        if !unsafe { page.as_ref() }.free_list_head().is_null() {
+            return Ok(MappedMediumReclaimBeforeFresh::Reclaimed(page));
+        }
+        if unsafe { page.as_ref() }.capacity() >= unsafe { page.as_ref() }.reserved() {
+            return Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                source,
+                page,
+                GenericPathError::Lifecycle,
+            ));
+        }
+        match self.extend_page_before_allocation(page) {
+            Ok(()) if !unsafe { page.as_ref() }.free_list_head().is_null() => {
+                Ok(MappedMediumReclaimBeforeFresh::Reclaimed(page))
+            }
+            Ok(()) => Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                source,
+                page,
+                GenericPathError::Lifecycle,
+            )),
+            Err(error) if Self::selected_mapped_medium_reabandonable_mapping_failure(error) => {
+                match self.reabandon_reclaimed_regular_page(source, bin, page, map) {
+                    Ok(
+                        ReabandonReclaimedRegularOutcome::Reabandoned
+                        | ReabandonReclaimedRegularOutcome::Released,
+                    ) => Ok(MappedMediumReclaimBeforeFresh::RetryAfterReabandon),
+                    Err(error) => Err(error),
+                }
+            }
+            Err(error) => Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                source, page, error,
+            )),
+        }
+    }
+
+    /// Returns whether this exact post-claim extension failure is the source
+    /// direct mapping/commit miss which may take `_mi_page_abandon` and one
+    /// false-mode queue retry. Every local, lifecycle, prefix, plan, or
+    /// post-commit free-list failure remains terminal after the A-to-B range
+    /// transfer and must not select a fresh page.
+    #[inline]
+    fn selected_mapped_medium_reabandonable_mapping_failure(error: GenericPathError) -> bool {
+        matches!(
+            error,
+            GenericPathError::PageCommit(PageCommitError::Mapping(
+                ProcessPageArenaLeaseError::Arena(ProcessSharedArenaError::Mapping(_))
+            ))
+        )
     }
 
     /// Performs the source's local-only `mi_page_free_quick_collect` without
@@ -34907,6 +35763,102 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 .map_err(GenericPathError::Local);
         }
         Ok(false)
+    }
+
+    /// Performs `_mi_page_abandon` after a mapped-abandoned page was claimed,
+    /// reassociated, false-collected, and appended to this target queue, but
+    /// its required source extension failed.
+    ///
+    /// The result deliberately retains the C split: an all-free page takes
+    /// the terminal release tail while a live page is queue-detached and
+    /// republished to the same static-main bitmap/count pair. Either success
+    /// returns to the caller's existing no-page retry boundary; it never
+    /// invokes a fresh arena claim from this already-claimed branch.
+    fn reabandon_reclaimed_regular_page(
+        &mut self,
+        source: &mut OwnerLocalMappedAbandonedClaimSource<'_>,
+        bin: usize,
+        page: NonNull<Page>,
+        map: &MainArenaMappedAbandonedPage<'_>,
+    ) -> Result<ReabandonReclaimedRegularOutcome, GenericPathError> {
+        if let Err(error) = self.page_free_collect_false(page) {
+            return Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                source,
+                page,
+                GenericPathError::Collection(error),
+            ));
+        }
+        // `_mi_page_abandon` releases an all-free queue member before it
+        // removes a live member for the mapped-abandoned publication path.
+        if unsafe { page.as_ref() }.used() == 0 {
+            if self.release_page(bin, page.as_ptr()) {
+                return Ok(ReabandonReclaimedRegularOutcome::Released);
+            }
+            return Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                source,
+                page,
+                GenericPathError::Lifecycle,
+            ));
+        }
+
+        let queue = match self.session.queue_mut(bin) {
+            Some(queue) => queue as *mut _,
+            None => {
+                return Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                    source,
+                    page,
+                    GenericPathError::Lifecycle,
+                ));
+            }
+        };
+        // SAFETY: this exact page was tail-enqueued above and remains an
+        // exclusive target-queue member until source abandonment detaches it.
+        unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        self.update_direct_cache(bin);
+        if !self.session.note_page_removed() {
+            return Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                source,
+                page,
+                GenericPathError::Lifecycle,
+            ));
+        }
+
+        // SAFETY: source order is false collection, queue detach, then
+        // abandoned identity/map publication and low-bit unown. `map` binds
+        // this selected static-main arena's exact bitmap/count pair formed
+        // under the short static-Heap lock before the A-to-B claim.
+        match unsafe { abandoned::abandon_after_collect(page, Some(map)) } {
+            Ok(AbandonResult::UnownedMapped) => {
+                Ok(ReabandonReclaimedRegularOutcome::Reabandoned)
+            }
+            Ok(AbandonResult::Empty) => {
+                // A producer can make the page empty in the source unown
+                // loop after its queue detach. The helper has already cleared
+                // the map identity/count and retained the low owner bit, so
+                // finish the detached-arena terminal release exactly once.
+                if self.release_queue_detached_abandoned_arena_page(page) {
+                    Ok(ReabandonReclaimedRegularOutcome::Released)
+                } else {
+                    Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                        source,
+                        page,
+                        GenericPathError::Lifecycle,
+                    ))
+                }
+            }
+            Ok(AbandonResult::UnownedUnmapped) => {
+                Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                    source,
+                    page,
+                    GenericPathError::Lifecycle,
+                ))
+            }
+            Err(error) => Err(self.retain_transferred_mapped_abandoned_claim_failure(
+                source,
+                page,
+                GenericPathError::Collection(PageCollectError::Abandon(error)),
+            )),
+        }
     }
 
     /// Performs the selected page's source extension before its free-list
@@ -36175,7 +37127,11 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
 
     #[inline]
     fn is_collection_poisoned(&self) -> bool {
-        self.collection_poison.is_some() || self.page_commit_poison
+        self.collection_poison.is_some()
+            || self.page_commit_poison
+            || self
+                .session
+                .is_owner_local_mapped_abandoned_claim_terminal()
     }
 
     /// Records the first owner-side collection failure before its caller can
@@ -36201,6 +37157,34 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             popped_block,
             test_recoverable,
         });
+    }
+
+    /// Retains a normally transferred A-to-B page when a later target queue,
+    /// extension, or reabandon transition fails. The linear claim token has
+    /// already become this engine's raw page, so the generic collector owns
+    /// the page retention while the persistent selector separately latches
+    /// every later public allocation call. This is intentionally distinct
+    /// from retained-range outcomes, which keep their token in the selector
+    /// without entering the generic page engine.
+    fn retain_transferred_mapped_abandoned_claim_failure(
+        &mut self,
+        source: &mut OwnerLocalMappedAbandonedClaimSource<'_>,
+        page: NonNull<Page>,
+        error: GenericPathError,
+    ) -> GenericPathError {
+        let retained_error = match error {
+            GenericPathError::Collection(error) => error,
+            GenericPathError::Local(error) => PageCollectError::Local(error),
+            GenericPathError::PageCommit(error) => {
+                PageCollectError::MappedAbandonedPageCommit(error)
+            }
+            GenericPathError::Lifecycle => PageCollectError::Lifecycle,
+        };
+        source.mark_transferred_terminal();
+        if self.collection_poison.is_none() {
+            self.retain_page_collect_poison(page, retained_error, None);
+        }
+        error
     }
 
     #[cfg(test)]
@@ -37117,6 +38101,18 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// release provenance instead of treating an OS mapping as an
     /// external-arena bitmap claim.
     fn release_span(&self, page: *mut Page) -> Option<ReleaseSpan> {
+        self.release_span_with_page_map(page, self.page_map)
+    }
+
+    /// The same complete release-span proof under one explicitly supplied
+    /// PageMap view.  Ordinary owners delegate to [`Self::release_span`]; the
+    /// selected mapped-abandoned claim uses this only inside its short paired
+    /// PageMap closure before a range token transfers A's span to B.
+    fn release_span_with_page_map(
+        &self,
+        page: *mut Page,
+        page_map: &PageMap,
+    ) -> Option<ReleaseSpan> {
         let page = NonNull::new(page)?;
         // SAFETY: each caller retains the exact initialized page through this
         // preflight, either by exclusive queue ownership or by its linear
@@ -37127,11 +38123,11 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // SAFETY: this preflight holds exclusive live-page ownership and
             // serializes the page-map observations named by the constructor.
             let published = unsafe {
-                PublishedOsAlignedPage::from_page(self.page_map.memory_config(), page)
+                PublishedOsAlignedPage::from_page(page_map.memory_config(), page)
             }?;
             // SAFETY: the returned token carries the exact clipped range and
             // primary address whose entries must still name this page.
-            if unsafe { !published.page_map_entries_match(self.page_map) } {
+            if unsafe { !published.page_map_entries_match(page_map) } {
                 return None;
             }
             return Some(ReleaseSpan::Os(published));
@@ -37183,7 +38179,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // page area, while `size` remains the complete arena-release span.
         for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
             let address = slice_start.addr().checked_add(offset)? as *const u8;
-            if unsafe { self.page_map.checked_lookup(address) } != page.as_ptr() {
+            if unsafe { page_map.checked_lookup(address) } != page.as_ptr() {
                 return None;
             }
         }

@@ -24,6 +24,10 @@ use core::ptr::NonNull;
 use crate::arena::ArenaView;
 use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
+use crate::single_thread::{
+    OwnerLocalMappedAbandonedClaimSource,
+    OwnerLocalMappedAbandonedClaimSourceHookOutcome,
+};
 use crate::types::{
     Heap, LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapOwner,
     ThreadLocalData,
@@ -299,6 +303,32 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// Static bootstrap sessions are inert; dynamic sessions poison their
     /// retained attachment so later teardown/re-entry cannot lie.
     fn latch_unfinished_page_engine(&mut self);
+
+    /// Runs the selected owner-local mapped-abandoned source only while its
+    /// persistent later-main selector is synchronously bound to this session.
+    ///
+    /// The higher-ranked callback makes the non-Copy source unrepresentable
+    /// in `R`: a caller cannot retain the pair, static-Heap lease, or scoped
+    /// PageMap claim capability after this bound session ends. The sealed
+    /// default is deliberately unavailable and accepts no linear token, so a
+    /// generic session cannot accidentally consume/forget one.
+    #[inline]
+    unsafe fn with_owner_local_mapped_abandoned_claim_source<R>(
+        _session: NonNull<Self>,
+        _operation: impl for<'source> FnOnce(OwnerLocalMappedAbandonedClaimSource<'source>) -> R,
+    ) -> OwnerLocalMappedAbandonedClaimSourceHookOutcome<R>
+    where
+        Self: Sized,
+    {
+        OwnerLocalMappedAbandonedClaimSourceHookOutcome::Unavailable
+    }
+
+    /// Reports the persistent selected-source terminal latch without exposing
+    /// any source capability. Allocation entry gates include this predicate so
+    /// a second allocation in one bound user callback cannot bypass a first
+    /// medium claim failure through an unrelated size class.
+    #[inline]
+    fn is_owner_local_mapped_abandoned_claim_terminal(&self) -> bool { false }
 }
 
 impl ExclusiveTheapSession<'_> {

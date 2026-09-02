@@ -791,6 +791,27 @@ edge may consume only one mapped regular member after every sibling and
 singleton tail terminally releases; it has no scan, fallback, or source-full
 transfer capability.
 
+  Separately, the persistent native later-main owner has one ordinary
+  allocation-time exception, recorded by
+  `owner-local-selected-static-main-medium-mapped-abandoned-reclaim` in
+  `compat/allocator/port-map.toml`. After the existing
+  `collect_retired(false)` boundary, a same-bin normal medium request may
+  inspect only its matching selected static-main Heap's Relaxed abandoned
+  count. That count is an early skip, never a bitmap claim proof. The sealed
+  owner-local callback then takes one paired PageMap access, claims the
+  matching low-owner bitmap member, performs abandoned and live false
+  collection, proves the complete arena span under that same access with
+  `used < reserved`, and only then transfers the range for target queue-tail
+  insertion. An inherited immediate head is consumed directly; an exhausted
+  page follows the scalar extension. A direct mapping/commit miss alone
+  reabandons the exact page and gets the source's one false-mode retry; every
+  other post-claim failure retains the root/range/page and closes that owner to
+  all later allocations. The two native audit witnesses use ordinary A and B
+  threads without giving B A's pointer or route: one proves extension and one
+  proves inherited-head reuse. This remains selected static-main medium
+  evidence, not scanning, a fresh fallback after claim, another size class,
+  public allocator parity, default selection, or an M5/promotion claim.
+
   `abandon_mapped_regular_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete
   structural preflight rejects before mutation unless every direct slot is the

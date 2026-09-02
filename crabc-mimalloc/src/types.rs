@@ -341,6 +341,17 @@ impl Heap {
         false
     }
 
+    /// Returns C `heap->abandoned_count[bin] != 0` for the relaxed
+    /// allocation-time early skip in `arena.c:mi_arenas_page_try_find_abandoned`.
+    ///
+    /// This is only a search hint: the matching arena bitmap plus its low
+    /// page-owner claim remains the authority for reclamation. In particular,
+    /// a `true` result never identifies or reserves a page.
+    #[inline]
+    pub(crate) fn has_abandoned_page_in_bin(&self, bin: usize) -> bool {
+        bin < BIN_COUNT && self.abandoned_count[bin].load(Ordering::Relaxed) != 0
+    }
+
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn abandoned_count(&self, bin: usize) -> Option<usize> {

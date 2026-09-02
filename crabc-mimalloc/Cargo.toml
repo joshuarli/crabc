@@ -121,6 +121,14 @@ path = "tests/native_owner_exit_collection_race.rs"
 # interleaving while raw native pointers take the production PageMap path.
 required-features = ["native-runtime-test-audit"]
 
+[[test]]
+name = "native_ordinary_mapped_medium_reclaim"
+path = "tests/native_ordinary_mapped_medium_reclaim.rs"
+# This direct allocation-time witness keeps B independent of A's former
+# pointer and route while it proves the ordinary same-bin path reclaims one
+# mapped-abandoned medium page before it would claim a fresh span.
+required-features = ["native-runtime-test-audit"]
+
 [features]
 default = []
 # Private, allocation-backed process context used only by the standalone

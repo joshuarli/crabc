@@ -14,14 +14,14 @@
   "port_map_counts": {
     "differential_verified": 15,
     "exported": 4,
-    "implemented": 148,
-    "item_count": 144,
+    "implemented": 149,
+    "item_count": 145,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 148
+    "unit_verified": 149
   },
-  "port_map_sha256": "71febb7fe2b41e1e7208c00105afe93f073c38aed7780dd3a68a5e335d9b7f7c",
+  "port_map_sha256": "3f007549b00256586aeefa261b27c8ad7223f69e8a5279b6b0dcc645d511cf03",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -215,6 +215,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:os-aligned-singleton-metadata-page-map-and-release": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:owner-local-selected-static-main-medium-mapped-abandoned-reclaim": [
       "implemented",
       "unit_verified"
     ],
