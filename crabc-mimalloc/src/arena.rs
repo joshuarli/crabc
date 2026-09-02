@@ -41,7 +41,7 @@ use crate::atomic::{
 use crate::abandoned::{MappedAbandonedClaim, MappedAbandonedPages};
 use crate::bitmap::{
     AbandonedBitmapClaim, BinnedBitmapLayout, BinnedBitmapView, BitmapLayout,
-    BitmapView, BFIELD_BITS, BCHUNK_SIZE,
+    BitmapView, BCHUNK_SIZE,
 };
 use crate::config::{
     ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, ARENA_SLICE_SIZE,
@@ -2029,44 +2029,18 @@ impl<'arena> ArenaView<'arena> {
         // ranges, so a concurrent later release belongs to the next pass.
         // This bounded lifecycle has one thread but preserves that state edge.
         i64_store_release(&arena.purge_expire, 0);
-        let mut slice_index = arena.info_slices;
-        while slice_index < arena.slice_count {
-            let Some(purge) = (unsafe { self.slices_purge() }) else {
-                return false;
-            };
-            let Some(is_scheduled) = purge.is_set_range(slice_index, 1) else {
-                return false;
-            };
-            if !is_scheduled {
-                slice_index += 1;
-                continue;
-            }
-
-            // `_mi_bitmap_forall_setc_rangesn` visits at most one source bitmap
-            // field at a time. Preserve that grouping before the source fallback
-            // tries individual slices if a concurrent allocation blocks the full run.
-            let remaining_in_field = BFIELD_BITS - (slice_index % BFIELD_BITS);
-            let maximum = core::cmp::min(remaining_in_field, arena.slice_count - slice_index);
-            let mut slice_count = 1usize;
-            while slice_count < maximum {
-                let Some(next_scheduled) = purge.is_set_range(slice_index + slice_count, 1)
-                else {
-                    return false;
-                };
-                if !next_scheduled {
-                    break;
-                }
-                slice_count += 1;
-            }
-            if purge.clear_range(slice_index, slice_count) != Some(true) {
-                return false;
-            }
-            if !self.purge_scheduled_range(page_size, slice_index, slice_count) {
-                return false;
-            }
-            slice_index += slice_count;
-        }
-        true
+        let Some(purge) = (unsafe { self.slices_purge() }) else {
+            return false;
+        };
+        // `_mi_bitmap_forall_setc_rangesn(..., 1, ...)` dispatches to the
+        // generic source visitor: snapshot the conservative map, atomically
+        // exchange a data field, then offer its field-bounded ranges. If this
+        // Rust callback exposes a retryable error, returning false makes the
+        // visitor restore only its not-yet-visited snapshot suffix; the
+        // current range's owner has already rescheduled its own failed work.
+        purge.visit_set_ranges_clear(|slice_index, slice_count| {
+            self.purge_scheduled_range(page_size, slice_index, slice_count)
+        })
     }
 
     /// Attempts the source full-range purge claim, then retries individual

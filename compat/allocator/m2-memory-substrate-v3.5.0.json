@@ -123,12 +123,18 @@
           "id": "c-rust-bitmap-abandoned-claim-differential",
           "kind": "c-rust-bitmap-abandoned-claim-differential",
           "target": "bitmap::tests::emit_m2_bitmap_abandoned_claim_c_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-bitmap-clear-range-differential",
+          "kind": "c-rust-bitmap-clear-range-differential",
+          "target": "bitmap::tests::emit_m2_bitmap_clear_range_c_rust_trace"
         }
       ],
       "completion_status": "partial",
       "id": "bitmaps",
       "remaining_conditions": [
-        "complete source-shaped bitmap ownership, range, visitor, statistics, and concurrency behavior beyond the selected one-chunk abandoned-page reject/restore, accept, and stale-conservative-map repair differential"
+        "complete source-shaped bitmap ownership, range, other visitor families, statistics, and concurrency behavior beyond the selected one-chunk abandoned-page reject/restore, accept, and stale-conservative-map repair differential and the selected one-chunk scalar clear-range visitor's field-bounded completed/stopped traversal"
       ],
       "source_units": [
         "src/bitmap.c",

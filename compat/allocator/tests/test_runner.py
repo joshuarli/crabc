@@ -2250,6 +2250,12 @@ class ContractTests(unittest.TestCase):
                     "id": "c-rust-bitmap-abandoned-claim-differential",
                     "kind": "c-rust-bitmap-abandoned-claim-differential",
                     "target": "bitmap::tests::emit_m2_bitmap_abandoned_claim_c_rust_trace",
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "c-rust-bitmap-clear-range-differential",
+                    "kind": "c-rust-bitmap-clear-range-differential",
+                    "target": "bitmap::tests::emit_m2_bitmap_clear_range_c_rust_trace",
                 }
             ],
         )
@@ -2588,6 +2594,61 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.bitmap.drain.chunkmap_cleared"] = 0
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_bitmap_abandoned_claim_trace(c_trace, rust_trace)
+
+    @staticmethod
+    def _m2_bitmap_clear_range_trace() -> dict[str, int]:
+        return {
+            "m2.bitmap_range.control.bfield_bits": 64,
+            "m2.bitmap_range.control.bchunk_bits": 512,
+            "m2.bitmap_range.layout.byte_size": 192,
+            "m2.bitmap_range.complete.chunk_count": 1,
+            "m2.bitmap_range.complete.set_transitioned": 1,
+            "m2.bitmap_range.complete.returned_completed": 1,
+            "m2.bitmap_range.complete.callback_count": 4,
+            "m2.bitmap_range.complete.range_0_index": 1,
+            "m2.bitmap_range.complete.range_0_count": 2,
+            "m2.bitmap_range.complete.range_1_index": 5,
+            "m2.bitmap_range.complete.range_1_count": 2,
+            "m2.bitmap_range.complete.range_2_index": 62,
+            "m2.bitmap_range.complete.range_2_count": 2,
+            "m2.bitmap_range.complete.range_3_index": 64,
+            "m2.bitmap_range.complete.range_3_count": 2,
+            "m2.bitmap_range.complete.data_cleared": 1,
+            "m2.bitmap_range.complete.chunkmap_retained": 1,
+            "m2.bitmap_range.reject.set_transitioned": 1,
+            "m2.bitmap_range.reject.returned_completed": 0,
+            "m2.bitmap_range.reject.callback_count": 1,
+            "m2.bitmap_range.reject.range_index": 1,
+            "m2.bitmap_range.reject.range_count": 2,
+            "m2.bitmap_range.reject.visited_range_cleared": 1,
+            "m2.bitmap_range.reject.unvisited_same_field_restored": 1,
+            "m2.bitmap_range.reject.later_field_untouched": 1,
+            "m2.bitmap_range.reject.chunkmap_retained": 1,
+        }
+
+    def test_m2_bitmap_clear_range_trace_requires_the_selected_transitions(self) -> None:
+        c_trace = self._m2_bitmap_clear_range_trace()
+        output = "CRABC_MI_M2_BITMAP_CLEAR_RANGE_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_BITMAP_CLEAR_RANGE_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_bitmap_clear_range_trace(output, source="pinned C")
+        RUNNER.validate_m2_bitmap_clear_range_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_bitmap_clear_range_trace()
+        RUNNER.validate_m2_bitmap_clear_range_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_bitmap_clear_range_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_BITMAP_CLEAR_RANGE_TRACE_KEYS),
+        )
+
+    def test_m2_bitmap_clear_range_trace_rejects_missing_residual_restoration(self) -> None:
+        c_trace = self._m2_bitmap_clear_range_trace()
+        rust_trace = self._m2_bitmap_clear_range_trace()
+        rust_trace["m2.bitmap_range.reject.unvisited_same_field_restored"] = 0
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_bitmap_clear_range_trace(c_trace, rust_trace)
 
     def test_m2_parser_is_native_only_and_mutually_exclusive(self) -> None:
         with mock.patch.object(sys, "argv", ["run.py", "--m2"]):

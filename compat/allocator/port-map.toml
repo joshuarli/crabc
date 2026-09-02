@@ -203,8 +203,8 @@ performance_qualified = false
 upstream = "src/bitmap.c"
 source_region = "bitmap and binned bitmap claims"
 rust_module = "crabc_mimalloc::bitmap"
-rust_item = "partial: ordinary and binned dynamic bitmap initialization, mutation, search, binning, rollback, abandoned-page single-bit source-snapshot claim visitation with rejected-bit restoration, clear-once-set quiescence, and the ordinary tseq-zero lowest-bit registry claim"
-intentional_difference = "General visitors/callbacks and statistics counters remain absent. The abandoned visitor restores a rejected candidate and its conservative chunk-map bit before this source snapshot returns; it does not retry that chunk in the same traversal. `clear_once_set` waits for that temporary clear to be restored, while another reader can claim an independently set atomic word. The arena capability, not this non-owning BitmapView, verifies the ordinary page bit and supplies PageMap/lifetime authority. The TLS-key registry and one private dynamic arena-pages owner receive distinct typed transient MetaAllocation projections."
+rust_item = "partial: ordinary and binned dynamic bitmap initialization, mutation, search, binning, rollback, abandoned-page single-bit source-snapshot claim visitation with rejected-bit restoration, clear-once-set quiescence, the ordinary tseq-zero lowest-bit registry claim, and the selected scalar clear-range visit for default arena purge"
+intentional_difference = "Other visitor/callback families and statistics counters remain absent. The abandoned visitor restores a rejected candidate and its conservative chunk-map bit before this source snapshot returns; it does not retry that chunk in the same traversal. The selected clear-range visitor snapshots the conservative map, exchanges one field at a time, emits low-to-high field-bounded runs, and restores only an unvisited residual when its callback stops. `clear_once_set` waits for that temporary clear to be restored, while another reader can claim an independently set atomic word. The arena capability, not this non-owning BitmapView, verifies the ordinary page bit and supplies PageMap/lifetime authority. The TLS-key registry and one private dynamic arena-pages owner receive distinct typed transient MetaAllocation projections."
 tests = ["crabc-mimalloc/src/bitmap.rs"]
 exported = false
 implemented = false
@@ -218,7 +218,7 @@ upstream = "src/bitmap.h"
 source_region = "bitmap field/chunk representations and binned bitmap declarations"
 rust_module = "crabc_mimalloc::bitmap"
 rust_item = "partial: Chunk, BitmapView, and BinnedBitmapView lifetime-bound dynamic representations"
-intentional_difference = "The Rust flexible-array boundary is an explicitly sized lifetime-bound view. The TLS-key registry and one private dynamic arena-pages owner obtain it transiently from distinct exact typed metadata capabilities; general allocator-backed raw views and visitors remain absent."
+intentional_difference = "The Rust flexible-array boundary is an explicitly sized lifetime-bound view. The TLS-key registry and one private dynamic arena-pages owner obtain it transiently from distinct exact typed metadata capabilities; general allocator-backed raw views and other visitor families remain absent."
 tests = ["crabc-mimalloc/src/bitmap.rs"]
 exported = false
 implemented = false
@@ -1881,7 +1881,7 @@ name = "mi_bitmap-size-init-and-range-operations"
 source_region = "mi_bitmap_size/init, cross-chunk unsafe/set/clear/query/popcount operations, and conservative chunk-map maintenance"
 rust_module = "crabc_mimalloc::bitmap"
 rust_item = "BitmapLayout/BitmapView::initialize_zeroed/publish_preserved/try_find_and_claim_lowest"
-intentional_difference = "Assertion-invalid layouts and ranges are rejected before access. The typed TLS-key path has distinct fresh-zero and copied-prefix publication, but general visitors, callbacks, statistics, and allocator-owned raw metadata remain absent."
+intentional_difference = "Assertion-invalid layouts and ranges are rejected before access. The typed TLS-key path has distinct fresh-zero and copied-prefix publication, but other visitor/callback families, statistics, and allocator-owned raw metadata remain absent."
 tests = ["crabc-mimalloc/src/bitmap.rs"]
 exported = false
 implemented = true
@@ -1896,8 +1896,23 @@ name = "abandoned-page-claim-and-clear-once-set-quiescence"
 source_region = "src/bitmap.c:594-710 scalar one-bit claim, 1024-1042 size/init and conservative chunk-map repair, 1306-1328 mi_bitmap_find, 1340-1380 mi_bitmap_try_find_and_claim_visit/mi_bitmap_try_find_and_claim, and 1425-1432 mi_bitmap_clear_once_set; paired with src/arena.c:655-671 mi_arena_try_claim_abandoned, src/arena.c:684-696 mi_page_arena_pages, src/arena.c:725-778 mi_arenas_page_try_find_abandoned, src/arena.c:1304-1337 _mi_arenas_page_abandon, and src/arena.c:1383-1409 _mi_arenas_page_unabandon"
 rust_module = "crabc_mimalloc::bitmap and crabc_mimalloc::arena"
 rust_item = "BitmapView::try_find_and_claim_lowest/try_find_and_claim_abandoned/clear_once_set; ArenaAbandonedPages::main_page_is_set; and the MappedAbandonedPages implementations for MainArenaMappedAbandonedPage and DynamicArenaMappedAbandonedPage, including publish, try_claim, clear_once_set, and decrement_after_identity_clear"
-intentional_difference = "The checked view rejects an invalid bit index. The ordinary TLS-key path uses tseq zero and low-to-high chunk-map candidates; the abandoned path retains its visitor cycle, AcqRel claim/restore, conservative-map repair, and the applicable Relaxed/Acquire observations. A native pinned-C/Rust one-chunk trace fixes sequence five and bit 17: a `KeepSet` rejection restores the bit and chunk-map state, an accepted claim clears the bit while intentionally retaining the conservative map, then one drained probe invokes no callback and clears that stale map. The two purpose-bound arena capabilities add a checked counterpart to the source `mi_page_arena_pages` ordinary-`pages` assertion: a candidate whose paired ordinary bit is absent is rejected as `KeepSet`, so the abandoned bit and paired Heap count remain available rather than fabricating an adoption. A successful claim alone decrements that count; an unabandon clear waits for a temporary claimant to restore before it clears the bit, then its caller clears identity and decrements. The source snapshot visits a rejected candidate once, so it cannot retry the same chunk in that traversal; an independent reader may claim a later atomic-word candidate. This is not the C `keep_set = false` rejection route, a PageMap lookup, a general arena scan, runtime reclaim integration, multi-chunk/sequence distribution, races, general visitors, statistics, or flexible-array allocation ownership."
+intentional_difference = "The checked view rejects an invalid bit index. The ordinary TLS-key path uses tseq zero and low-to-high chunk-map candidates; the abandoned path retains its visitor cycle, AcqRel claim/restore, conservative-map repair, and the applicable Relaxed/Acquire observations. A native pinned-C/Rust one-chunk trace fixes sequence five and bit 17: a `KeepSet` rejection restores the bit and chunk-map state, an accepted claim clears the bit while intentionally retaining the conservative map, then one drained probe invokes no callback and clears that stale map. The two purpose-bound arena capabilities add a checked counterpart to the source `mi_page_arena_pages` ordinary-`pages` assertion: a candidate whose paired ordinary bit is absent is rejected as `KeepSet`, so the abandoned bit and paired Heap count remain available rather than fabricating an adoption. A successful claim alone decrements that count; an unabandon clear waits for a temporary claimant to restore before it clears the bit, then its caller clears identity and decrements. The source snapshot visits a rejected candidate once, so it cannot retry the same chunk in that traversal; an independent reader may claim a later atomic-word candidate. This is not the C `keep_set = false` rejection route, a PageMap lookup, a general arena scan, runtime reclaim integration, multi-chunk/sequence distribution, races, other visitor families, statistics, or flexible-array allocation ownership."
 tests = ["crabc-mimalloc/src/bitmap.rs", "crabc-mimalloc/src/arena.rs", "compat/allocator/run.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/bitmap.c"
+name = "scalar-clear-range-visitor-for-default-arena-purge"
+source_region = "src/bitmap.c:1462-1509 _mi_bitmap_forall_setc_ranges and 1517-1521 _mi_bitmap_forall_setc_rangesn default dispatch; paired with src/arena.c:2321-2355 and 2376-2383 default delayed-purge visitor/call site"
+rust_module = "crabc_mimalloc::bitmap and crabc_mimalloc::arena"
+rust_item = "BitmapView::visit_set_ranges_clear and ArenaView::collect_scheduled_purge/purge_scheduled_range"
+intentional_difference = "The selected native pinned-C/Rust trace calls the generic routine directly on one scalar one-chunk image: a completed walk emits maximal low-to-high runs without crossing a 64-bit source field and retains the conservative map; a stopped callback leaves its visited range clear, restores only the unvisited residual in its exchanged field, and does not touch a later field. Rust checks a stale source-map candidate against the dynamic layout before storage access, whereas C relies on its valid bitmap precondition. The source's `rangesn <= 1` delegation makes this the relevant default-purge implementation, but the trace does not execute or prove the wrapper's policy. The existing Rust arena callback returns false only after its typed retryable error has rescheduled its current range, so the visitor restores the still-unvisited suffix instead of silently losing work; C's selected purge visitor always continues. This does not claim multi-chunk traversal, rangesn policy, binned bitmaps, statistics, arena/subprocess ownership, races, general purge integration, or allocator integration."
+tests = ["crabc-mimalloc/src/bitmap.rs", "crabc-mimalloc/src/arena.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -2639,9 +2654,9 @@ performance_qualified = false
 [[item]]
 upstream = "src/arena.c"
 name = "default-delayed-external-arena-purge"
-source_region = "mi_arena_schedule_purge/mi_arena_purge/mi_arena_purge_range/_mi_bitmap_forall_setc_rangesn/_mi_arenas_collect with purge_decommits=1, plus src/os.c:_mi_os_purge_ex and src/prim/unix/prim.c:_mi_prim_decommit's frozen-Linux advisory-error outcome"
+source_region = "mi_arena_schedule_purge/mi_arena_purge/mi_arena_purge_range/_mi_bitmap_forall_setc_rangesn/_mi_arenas_collect with purge_decommits=1, including the selected scalar _mi_bitmap_forall_setc_ranges default-dispatch boundary recorded separately, plus src/os.c:_mi_os_purge_ex and src/prim/unix/prim.c:_mi_prim_decommit's frozen-Linux advisory-error outcome"
 rust_module = "crabc_mimalloc::arena, crabc_mimalloc::os, and crabc_mimalloc::single_thread"
-rust_item = "schedule_arena_purge/ArenaView::collect_scheduled_purge (including source 64-bit BFIELD callback grouping and frozen-Linux advisory-error consumption)/decommit_arena_range/SingleThreadAllocator::collect_retired"
+rust_item = "schedule_arena_purge/ArenaView::collect_scheduled_purge through BitmapView::visit_set_ranges_clear (including source 64-bit BFIELD callback grouping and frozen-Linux advisory-error consumption)/decommit_arena_range/SingleThreadAllocator::collect_retired"
 intentional_difference = "The frozen default retains the source 4-second schedule, pinned skip, free-bitmap ownership claim, per-64-bit-source-field callback grouping, non-owning decommit, and source error outcome: a default Linux MADV_DONTNEED error leaves the mapping accessible and committed, restores free availability, and consumes the already-cleared purge work. Direct clock failure skips optional scheduling instead of losing a terminal slice owner; alternate reset policy, registry-wide collection, statistics, and concurrent allocator lifecycle remain absent."
 tests = ["crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/os_host_model.rs", "crabc-mimalloc/src/single_thread.rs"]
 exported = false
