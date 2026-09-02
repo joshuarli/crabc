@@ -9091,10 +9091,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
-    def test_libc_static_c_abi_pthread_barrierattr_pshared_stays_record_only(
+    def test_libc_static_c_abi_pthread_barrierattr_pshared_stays_independent_record_leaf(
         self,
     ) -> None:
-        """Keep barrierattr pshared as an unconsumed raw-record pair."""
+        """Keep the original pshared pair independently linkable and record-only."""
 
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -9141,9 +9141,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             ).read_text(encoding="utf-8").splitlines()
             if line and not line.startswith("#")
         }
-        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
-            encoding="utf-8"
-        )
         runner = RUNNER.read_text(encoding="utf-8")
 
         for path in (probe_path, start_path, artifact_runner_path):
@@ -9224,13 +9221,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             }
             <= static_exports
         )
-        self.assertTrue(
-            {
-                "pthread_barrier_init",
-                "pthread_barrier_destroy",
-                "pthread_barrier_wait",
-            }.isdisjoint(static_exports)
-        )
         for header_probe in (c_header_probe, cxx_header_probe):
             for required in (
                 "crabc_pthread_barrierattr_setpshared_signature",
@@ -9249,20 +9239,123 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_barrierattr_setpshared|pthread_barrierattr_getpshared",
             header_runner,
         )
-        self.assertIn('id = "static-c-pthread-barrierattr-pshared"', parity_ledger)
-        self.assertIn(
-            'command = "./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared"',
-            parity_ledger,
-        )
         self.assertIn("run_libc_pthread_barrierattr_pshared_probe()", runner)
         self.assertIn(
             "/workspace/compat/x86_64/run_libc_pthread_barrierattr_pshared.sh",
             runner,
         )
-        self.assertIn("    libc-pthread-barrierattr-pshared) ;;", runner)
         self.assertIn(
             '    libc-pthread-barrierattr-pshared)\n        [ "$#" -eq 0 ] || fail "libc-pthread-barrierattr-pshared takes no arguments"',
             runner,
+        )
+
+    def test_libc_static_c_abi_pthread_barrier_ports_private_and_shared_protocol(
+        self,
+    ) -> None:
+        """Keep the complete barrier source port and its local static evidence coherent."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation_path = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "pthread_barrier.rs"
+        )
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_barrier_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_barrier_start.S"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_barrier.sh"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+
+        for path in (implementation_path, probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing pthread barrier input: {path}")
+        implementation = implementation_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_barrier.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_barrierattr_init.c::pthread_barrierattr_init",
+            "src/thread/pthread_barrierattr_destroy.c::pthread_barrierattr_destroy",
+            "src/thread/pthread_barrier_init.c::pthread_barrier_init",
+            "src/thread/pthread_barrier_destroy.c::pthread_barrier_destroy",
+            "src/thread/pthread_barrier_wait.c::pthread_barrier_wait",
+            "src/thread/vmlock.c",
+            "PublicPthreadBarrierStorage",
+            "BARRIER_INSTANCE_POINTER_INDEX",
+            "shared_barrier_wait",
+            "vmlock_wait",
+            "FUTEX_PRIVATE_FLAG",
+            "process-private",
+            "process-shared",
+        ):
+            self.assertIn(required, implementation)
+
+        for required in (
+            "pthread_barrierattr_init",
+            "pthread_barrierattr_destroy",
+            "pthread_barrierattr_setpshared",
+            "pthread_barrierattr_getpshared",
+            "pthread_barrier_init",
+            "pthread_barrier_destroy",
+            "pthread_barrier_wait",
+            "PRIVATE_BARRIER_ROUNDS",
+            "exactly_one_serial",
+            "MAP_SHARED | MAP_ANONYMOUS",
+            "raw_syscall0(SYS_fork)",
+            "CRABC_PTHREAD_BARRIER_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pthread_barrier_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+        self.assertNotIn("%fs", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_pthread_c11_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "pthread_barrier_wait lacks its futex syscall",
+            "pthread_barrier_wait lacks futex=202",
+            "pthread_barrier_wait lacks x86 atomic handoff",
+            "candidate pulled unselected",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {
+                "pthread_barrierattr_init",
+                "pthread_barrierattr_destroy",
+                "pthread_barrierattr_setpshared",
+                "pthread_barrierattr_getpshared",
+                "pthread_barrier_init",
+                "pthread_barrier_destroy",
+                "pthread_barrier_wait",
+            }
+            <= static_exports
         )
 
     def test_libc_static_c_abi_pthread_spin_destroy_stays_source_closed(

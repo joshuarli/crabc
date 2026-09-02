@@ -406,6 +406,8 @@ mod pthread_cpuclock;
 mod pthread_name;
 #[path = "pthread_barrierattr_pshared.rs"]
 mod pthread_barrierattr_pshared;
+#[path = "pthread_barrier.rs"]
+mod pthread_barrier;
 #[path = "pthread_spin_init.rs"]
 mod pthread_spin_init;
 #[path = "pthread_cancel.rs"]

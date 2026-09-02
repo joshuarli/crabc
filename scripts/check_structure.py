@@ -353,6 +353,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/pthread_affinity.rs"),
     Path("libc/src/c_abi/x86_64/pthread_atfork.rs"),
     Path("libc/src/c_abi/x86_64/pthread_barrierattr_pshared.rs"),
+    # This exact complete barrier port remains a separately evidenced static
+    # C-ABI slice; it does not admit general pthread or x86 runtime support.
+    Path("libc/src/c_abi/x86_64/pthread_barrier.rs"),
     Path("libc/src/c_abi/x86_64/pthread_cancel.rs"),
     Path("libc/src/c_abi/x86_64/pthread_condattr_clock.rs"),
     Path("libc/src/c_abi/x86_64/pthread_condattr_pshared.rs"),
@@ -4286,6 +4289,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_mutex.rs"]',
         '#[path = "pthread_cond.rs"]',
         '#[path = "pthread_rwlock.rs"]',
+        '#[path = "pthread_barrier.rs"]',
         '#[path = "c11_thread_lifecycle.rs"]',
         '#[path = "c11_sync.rs"]',
         '#[path = "pthread_once.rs"]',
