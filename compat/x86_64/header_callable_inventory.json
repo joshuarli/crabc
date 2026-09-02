@@ -375,6 +375,7 @@
         "getresuid",
         "getrlimit",
         "getrusage",
+        "getservent",
         "getsid",
         "getsockname",
         "getsockopt",
@@ -614,6 +615,9 @@
         "nrand48",
         "ns_get16",
         "ns_get32",
+        "ns_initparse",
+        "ns_name_uncompress",
+        "ns_parserr",
         "ns_put16",
         "ns_put32",
         "ns_skiprr",
@@ -849,6 +853,7 @@
         "setresuid",
         "setreuid",
         "setrlimit",
+        "setservent",
         "setsid",
         "setsockopt",
         "setuid",
@@ -1276,7 +1281,6 @@
         "getservbyname_r",
         "getservbyport",
         "getservbyport_r",
-        "getservent",
         "getspent",
         "getspnam",
         "getspnam_r",
@@ -1335,9 +1339,6 @@
         "mremap",
         "mtx_timedlock",
         "name_to_handle_at",
-        "ns_initparse",
-        "ns_name_uncompress",
-        "ns_parserr",
         "open_by_handle_at",
         "open_memstream",
         "open_wmemstream",
@@ -1422,7 +1423,6 @@
         "setlogmask",
         "setmntent",
         "setpwent",
-        "setservent",
         "setspent",
         "setstate",
         "settimeofday",
@@ -424028,8 +424028,8 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "4bfa894feb3ce1f46f058a7934c4b5181b28ec3e9e96eea882c9ba20e9a788e6",
-    "static_c_abi_exports_sha256": "8f851425ec24d4f6afb6d3da9779235dbd0d4c3a9140aa4ba9437416357b3c9d"
+    "parity_ledger_sha256": "9322362f9e32a75828ea04d72c140735e99cfe6c90fa0e11205c2ab672aacaae",
+    "static_c_abi_exports_sha256": "f269a24db3a44bf1e3155ca275abfbac40e1c9b21d62342f7cd69b1bc46b02e0"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -442584,7 +442584,6 @@
       "getservbyname_r",
       "getservbyport",
       "getservbyport_r",
-      "getservent",
       "getspent",
       "getspnam",
       "getspnam_r",
@@ -442649,9 +442648,6 @@
       "mtx_timedlock",
       "name_to_handle_at",
       "nftw",
-      "ns_initparse",
-      "ns_name_uncompress",
-      "ns_parserr",
       "open_by_handle_at",
       "open_memstream",
       "open_wmemstream",
@@ -442752,7 +442748,6 @@
       "setmntent",
       "setnetent",
       "setpwent",
-      "setservent",
       "setspent",
       "setstate",
       "settimeofday",
@@ -442845,8 +442840,8 @@
     },
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
-      "default_static": 1105,
-      "unprovided": 361,
+      "default_static": 1110,
+      "unprovided": 356,
       "verified_feature_archives": 47
     },
     "candidate_external_callable_count": 1513,
@@ -442861,7 +442856,7 @@
       "ok": 2617,
       "oracle-not-applicable": 1
     },
-    "static_export_complement_count": 408
+    "static_export_complement_count": 403
   },
   "target": "x86_64-unknown-linux-musl"
 }

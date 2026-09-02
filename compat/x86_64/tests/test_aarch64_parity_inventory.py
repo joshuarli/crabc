@@ -232,7 +232,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(pthread_tls["contract_state"], "selected-private")
         self.assertEqual(pthread_tls["verified_slice_count"], 1)
-        self.assertEqual(pthread_tls["verified_artifact_count"], 37)
+        self.assertEqual(pthread_tls["verified_artifact_count"], 38)
         self.assertIn(
             {"family": "libc.pthread-tls", "id": "static-c-pthread-barrier"},
             report["selected_private_artifacts"],
@@ -251,12 +251,12 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         posix_runtime = next(
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
-        self.assertEqual(posix_runtime["verified_artifact_count"], 163)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 166)
         self.assertEqual(posix_runtime["verified_slice_count"], 6)
         resolver = next(
             row for row in report["families"] if row["id"] == "libc.resolver"
         )
-        self.assertEqual(resolver["verified_artifact_count"], 18)
+        self.assertEqual(resolver["verified_artifact_count"], 20)
         self.assertIn(
             {"family": "libc.resolver", "id": "static-c-resolver-runtime"},
             report["selected_private_artifacts"],
@@ -270,7 +270,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            361,
+            367,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -361,10 +361,10 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1154)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1180)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
-            1133,
+            1159,
         )
         self.assertEqual(
             report["unsupported_contracts"],
@@ -380,7 +380,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
         self.assertEqual(posix_runtime["contract_state"], "selected-private")
-        self.assertEqual(posix_runtime["verified_artifact_count"], 163)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 166)
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-sleep"},
             report["selected_private_artifacts"],

@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 362)
+        self.assertEqual(report["verified_artifact_count"], 367)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -3361,11 +3361,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1513)
-        self.assertEqual(provider_audit["default_static_callable_count"], 1105)
+        self.assertEqual(provider_audit["default_static_callable_count"], 1110)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 361)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 356)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -26821,7 +26821,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("dn_skipname", exports)
-        self.assertFalse(exports & {"ns_name_uncompress"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -26932,7 +26931,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertTrue({"__dn_expand", "dn_expand"} <= exports)
-        self.assertFalse(exports & {"ns_name_uncompress"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -27065,7 +27063,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("_ns_flagdata", exports)
-        self.assertFalse(exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress"})
+        self.assertTrue({"ns_initparse", "ns_parserr", "ns_name_uncompress"} <= exports)
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -27095,7 +27093,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "global default with no relocation",
             "0x8000/15",
             "six 0/0 records",
-            "Parser sections remain deliberately unselected",
+            "single-object candidate does not extract the separately owned parser-trio object",
         ):
             self.assertIn(phrase, source_mapping)
 
@@ -27107,7 +27105,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             if isinstance(entry, dict) and entry.get("kind") == "c-posix"
         )
         self.assertIn("immutable `_ns_flagdata` sixteen-record mask/shift section", source_oracle["role"])
-        self.assertIn("co-resident-but-unselected parser/byte helpers", source_oracle["role"])
+        self.assertIn(
+            "co-resident parser/byte helpers outside this one-object candidate",
+            source_oracle["role"],
+        )
 
         data = self.data()
         artifacts = self.family(data, "libc.resolver")["verified_artifact"]
@@ -29919,7 +29920,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_put32", exports)
-        self.assertFalse(exports & {"ns_name_uncompress"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -30049,6 +30049,70 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.validate_ledger(data)
 
 
+    def test_nameser_message_parser_is_a_positive_three_entry_provider(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-nameser-message-parser"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/x86_64/nameser-message-parser-provider.toml",
+            "libc/src/c_abi/x86_64/nameser_message_parser.rs",
+            "compat/x86_64/run_libc_nameser_message_parser.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-nameser-message-parser"},
+        )
+        for phrase in (
+            "Private native x86 static caller-owned nameserver message-parser C ABI artifact",
+            "exactly `ns_initparse`, `ns_parserr`, and `ns_name_uncompress`",
+            "ordinary demand-driven `libc.a` closure",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        layout = next(item for item in prerequisites if "80-byte align-8 `ns_msg`" in item)
+        assert isinstance(layout, str)
+        self.assertIn("1,048-byte align-8 `ns_rr`", layout)
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertTrue(
+            {"ns_initparse", "ns_parserr", "ns_name_uncompress"} <= exports
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-nameser-message-parser"
+        )
+        artifact["source_owners"].remove(
+            "libc/src/c_abi/x86_64/nameser_message_parser.rs"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-nameser-message-parser source owners omit",
+        ):
+            ledger.validate_ledger(data)
+
+
     def test_ns_skiprr_artifact_keeps_its_private_parser_boundary(self) -> None:
         data = self.data()
         family = self.family(data, "libc.resolver")
@@ -30111,7 +30175,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_skiprr", exports)
-        self.assertFalse(exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress"})
+        self.assertTrue({"ns_initparse", "ns_parserr", "ns_name_uncompress"} <= exports)
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)

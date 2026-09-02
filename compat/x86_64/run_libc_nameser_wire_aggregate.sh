@@ -5,8 +5,9 @@
 # true `-nostdlib -static` executable. The final link begins with exactly one
 # extracted ns_skiprr object and admits ordinary demand-driven libc.a closure
 # for the eight selected nameser leaves plus initial-TLS errno support. It is
-# a private caller-owned DNS wire/data transaction, not resolver state, DNS
-# I/O, a DNS parser, or a netdb/runtime claim.
+# a private caller-owned DNS wire/data transaction. This candidate does not
+# extract the separately owned parser trio, resolver state, DNS I/O, or a
+# netdb/runtime claim.
 set -euo pipefail
 export LC_ALL=C
 
@@ -237,7 +238,7 @@ grep -Eq 'call.*<ns_get16>' "$ns_skiprr_disassembly" ||
 if grep -Eq '\bsyscall\b' "$ns_skiprr_disassembly"; then
     fail "ns_skiprr implementation unexpectedly performs a syscall"
 fi
-for unselected in ns_initparse ns_parserr ns_name_uncompress __res_state res_init \
+for forbidden_candidate_symbol in ns_initparse ns_parserr ns_name_uncompress __res_state res_init \
     res_query res_querydomain res_search res_mkquery res_send getaddrinfo \
     freeaddrinfo getnameinfo gethostbyaddr gethostbyname gethostbyname2 \
     gethostent getnetbyaddr getnetbyname getnetent getprotobyname \
@@ -246,8 +247,8 @@ for unselected in ns_initparse ns_parserr ns_name_uncompress __res_state res_ini
     inet_ntop inet_pton inet_ntoa inet_network htonl htons ntohl ntohs \
     if_indextoname if_nameindex if_nametoindex if_freenameindex socket bind \
     connect send recv malloc free calloc realloc; do
-    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
-        fail "candidate accidentally selects ${unselected}"
+    if grep -Eq "[[:space:]]${forbidden_candidate_symbol}$" "$candidate_symbols"; then
+        fail "candidate unexpectedly pulls ${forbidden_candidate_symbol}"
     fi
 done
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' \

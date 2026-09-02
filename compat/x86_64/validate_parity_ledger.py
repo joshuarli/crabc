@@ -1832,6 +1832,12 @@ NS_PUT32_SYMBOLS = ("ns_put32",)
 
 NS_SKIPRR_SYMBOLS = ("ns_skiprr",)
 
+NAMESER_MESSAGE_PARSER_SYMBOLS = (
+    "ns_initparse",
+    "ns_parserr",
+    "ns_name_uncompress",
+)
+
 INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
 GETHOSTID_SYMBOLS = ("gethostid",)
@@ -3149,11 +3155,11 @@ def validate_header_layout_foundation_manifest(
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1513,
-            "default_static_callable_count": 1105,
+            "default_static_callable_count": 1110,
             "verified_feature_callable_count": 47,
             "verified_feature_profile_count": 21,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 361,
+            "unprovided_callable_count": 356,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -6190,12 +6196,12 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "no-feature default static archive",
         "isolated exact Cargo requests",
         "ordinary archive extraction",
-        "1,105 current default-static",
+        "1,110 current default-static",
         "47 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "361-name unprovided complement",
+        "356-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -47339,10 +47345,6 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
         set(DN_SKIPNAME_SYMBOLS) <= exports,
         "static-c-dn-skipname must retain its selected export",
     )
-    require(
-        "ns_name_uncompress" not in exports,
-        "static-c-dn-skipname must not add the unselected nameserver parser export",
-    )
 
     static_root = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -47694,10 +47696,6 @@ def require_dn_expand_artifact(family: Mapping[str, Any]) -> None:
         set(DN_EXPAND_SYMBOLS) <= exports,
         "static-c-dn-expand must retain both source-required alias exports",
     )
-    require(
-        "ns_name_uncompress" not in exports,
-        "static-c-dn-expand must not add the unselected nameserver parser export",
-    )
 
     static_root = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -48022,7 +48020,7 @@ def require_ns_flagdata_artifact(family: Mapping[str, Any]) -> None:
             and "global default with no relocation" in item
             and "0x8000/15" in item
             and "six 0/0 records" in item
-            and "Parser sections remain deliberately unselected" in item
+            and "single-object candidate does not extract the separately owned parser-trio object" in item
             for item in prerequisites
         ),
         "static-c-ns-flagdata must retain its pinned-musl data-section closure",
@@ -48073,10 +48071,6 @@ def require_ns_flagdata_artifact(family: Mapping[str, Any]) -> None:
     require(
         set(NS_FLAGDATA_SYMBOLS) <= exports,
         "static-c-ns-flagdata must retain _ns_flagdata export",
-    )
-    require(
-        not (exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress"}),
-        "static-c-ns-flagdata must not add unselected parser or resolver exports",
     )
 
     static_root = (
@@ -48138,7 +48132,7 @@ def require_ns_flagdata_artifact(family: Mapping[str, Any]) -> None:
             and "src/network/ns_parse.c" in entry["role"]
             and "immutable `_ns_flagdata` sixteen-record mask/shift section" in entry["role"]
             and "nameser macro extraction" in entry["role"]
-            and "co-resident-but-unselected parser/byte helpers" in entry["role"]
+            and "co-resident parser/byte helpers outside this one-object candidate" in entry["role"]
             and "Resolver state/files" in entry["role"]
             and "Ethernet" in entry["role"]
             for entry in oracle
@@ -48436,13 +48430,6 @@ def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
     require(
         set(NS_GET16_SYMBOLS) <= exports,
         "static-c-ns-get16 must retain its selected export",
-    )
-    require(
-        not (
-            exports
-            & {"ns_name_uncompress"}
-        ),
-        "static-c-ns-get16 must not add broader nameserver exports",
     )
 
     static_root = (
@@ -48784,13 +48771,6 @@ def require_ns_get32_artifact(family: Mapping[str, Any]) -> None:
     require(
         set(NS_GET32_SYMBOLS) <= exports,
         "static-c-ns-get32 must retain its selected export",
-    )
-    require(
-        not (
-            exports
-            & {"ns_name_uncompress"}
-        ),
-        "static-c-ns-get32 must not add broader nameserver exports",
     )
 
     static_root = (
@@ -49140,13 +49120,6 @@ def require_ns_put16_artifact(family: Mapping[str, Any]) -> None:
     require(
         set(NS_PUT16_SYMBOLS) <= exports,
         "static-c-ns-put16 must retain its selected export",
-    )
-    require(
-        not (
-            exports
-            & {"ns_name_uncompress"}
-        ),
-        "static-c-ns-put16 must not add broader nameserver exports",
     )
 
     static_root = (
@@ -73034,10 +73007,6 @@ def require_ns_put32_artifact(family: Mapping[str, Any]) -> None:
         set(NS_PUT32_SYMBOLS) <= exports,
         "static-c-ns-put32 must retain its selected export",
     )
-    require(
-        "ns_name_uncompress" not in exports,
-        "static-c-ns-put32 must not add the unselected nameserver parser export",
-    )
 
     static_root = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -73384,10 +73353,6 @@ def require_ns_skiprr_artifact(family: Mapping[str, Any]) -> None:
     require(
         set(NS_SKIPRR_SYMBOLS) <= exports,
         "static-c-ns-skiprr must retain its selected export",
-    )
-    require(
-        not (exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress"}),
-        "static-c-ns-skiprr must not expose an unselected broader parser entry",
     )
 
     static_root = (
@@ -73784,10 +73749,6 @@ def require_nameser_wire_aggregate_artifact(family: Mapping[str, Any]) -> None:
     require(
         expected_symbols <= exports,
         "static-c-nameser-wire-aggregate must retain all selected nameser exports",
-    )
-    require(
-        not (exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress"}),
-        "static-c-nameser-wire-aggregate must not expose a broader parser entry",
     )
 
     static_root = (
@@ -75900,6 +75861,25 @@ def validate_ledger(
     require_ns_put32_artifact(by_id["libc.resolver"])
     require_ns_skiprr_artifact(by_id["libc.resolver"])
     require_nameser_wire_aggregate_artifact(by_id["libc.resolver"])
+    require_closed_static_leaf_artifacts(
+        by_id["libc.resolver"],
+        (
+            (
+                "static-c-nameser-message-parser",
+                "./scripts/dev-x86_64.sh libc-nameser-message-parser",
+                "libc/src/c_abi/x86_64/nameser_message_parser.rs",
+                "compat/x86_64/run_libc_nameser_message_parser.sh",
+                NAMESER_MESSAGE_PARSER_SYMBOLS,
+            ),
+            (
+                "static-c-service-lifecycle",
+                "./scripts/dev-x86_64.sh libc-service-lifecycle",
+                "libc/src/c_abi/x86_64/service_lifecycle.rs",
+                "compat/x86_64/run_libc_service_lifecycle.sh",
+                ("getservent", "setservent"),
+            ),
+        ),
+    )
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_endservent_artifact(by_id["libc.c-abi-compat"])
     require_protocol_database_artifact(by_id["libc.c-abi-compat"])

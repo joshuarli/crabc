@@ -6,8 +6,9 @@
 # extracted ns_skiprr object and reaches only its selected dn_skipname/ns_get16
 # and initial-TLS errno closure through normal archive demand. This is static
 # evidence, not an archive-free claim: malformed ranges retain musl's EMSGSIZE
-# publication. It does not select a DNS parser, resolver state/configuration,
-# DNS I/O, sockets, hosts, netdb, or name expansion/compression.
+# publication. This candidate does not extract the separately owned parser
+# trio, resolver state/configuration, DNS I/O, sockets, hosts, netdb, or name
+# expansion/compression.
 set -euo pipefail
 export LC_ALL=C
 
@@ -215,7 +216,7 @@ grep -Eq 'call.*<ns_get16>' "$candidate_disassembly" ||
 if grep -Eq '\bsyscall\b' "$candidate_disassembly"; then
     fail "ns_skiprr implementation unexpectedly performs a syscall"
 fi
-for unselected in dn_expand ns_get32 ns_put16 ns_put32 _ns_flagdata \
+for forbidden_candidate_symbol in dn_expand ns_get32 ns_put16 ns_put32 _ns_flagdata \
     ns_initparse ns_parserr ns_name_uncompress __res_state res_init \
     res_query res_querydomain res_search res_mkquery res_send \
     getaddrinfo freeaddrinfo getnameinfo gethostbyaddr gethostbyname \
@@ -225,8 +226,8 @@ for unselected in dn_expand ns_get32 ns_put16 ns_put32 _ns_flagdata \
     inet_aton inet_ntop inet_pton inet_ntoa inet_network htonl htons ntohl \
     ntohs if_indextoname if_nameindex if_nametoindex if_freenameindex socket \
     bind connect send recv malloc free calloc realloc; do
-    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
-        fail "candidate accidentally selects ${unselected}"
+    if grep -Eq "[[:space:]]${forbidden_candidate_symbol}$" "$candidate_symbols"; then
+        fail "candidate unexpectedly pulls ${forbidden_candidate_symbol}"
     fi
 done
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
