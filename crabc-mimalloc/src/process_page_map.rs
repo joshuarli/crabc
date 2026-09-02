@@ -40,6 +40,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 use crabc_core::Errno;
 
+use crate::abandoned::{AdoptedPage, RetainedAdoptFailure};
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::MemoryConfig;
 use crate::page_map::{PageMap, PageMapHeader, PageMapRoot};
@@ -608,6 +609,385 @@ unsafe impl Send for ProcessPageMapLease {}
 // SAFETY: see the Send justification above.
 unsafe impl Sync for ProcessPageMapLease {}
 
+/// The only completed operation states for one mapped-abandoned claim.
+///
+/// `AdoptedPage` is deliberately not exposed directly: it predates the final
+/// complete-span proof. The closure can return [`Self::Claimed`] only through
+/// [`MappedAbandonedClaimAccess::claim_after_full_span_validation`], which
+/// consumes the scoped PageMap capability after source reassociation and the
+/// target owner's exact `release_span` / all-PageMap-entry validation. The
+/// resulting linear token then names the A-to-B range transfer.
+#[must_use = "a completed mapped-abandoned claim must be consumed as a no-candidate, claimed range, or terminal retained range"]
+pub(crate) enum MappedAbandonedClaimCompletion {
+    /// The selected source bitmap search completed without an adopted page.
+    /// No low-owner claim remains with this operation, so a caller may resume
+    /// the pinned ordinary fresh-page path after the outer lock releases.
+    NoCandidate(MappedAbandonedClaimNoCandidate),
+    /// The source bitmap/low-owner operation reassociated one page with the
+    /// target and the complete arena/PageMap span was validated before this
+    /// token left the short closure.
+    Claimed(MappedAbandonedClaimedRange),
+    /// A low-owner claim already occurred but the source adoption or target
+    /// span validation could not complete. This retains the exact page and a
+    /// source-specific reason; constructing it terminally poisons the root.
+    Retained(MappedAbandonedClaimRetainedRange),
+}
+
+/// Proof that this scoped source attempt completed before a low-owner claim.
+///
+/// Its field is private so only [`MappedAbandonedClaimAccess::no_candidate`]
+/// can construct the clean completion.  In particular, safe crate code cannot
+/// cross the low-owner boundary and then forge a `NoCandidate` return that
+/// would reopen the root.
+#[must_use = "the no-candidate proof completes exactly one claim access"]
+pub(crate) struct MappedAbandonedClaimNoCandidate {
+    _scoped: (),
+}
+
+/// The outer state of one nonblocking mapped-abandoned claim access.
+///
+/// [`Self::Busy`] is the only clean retry result: its closure did not run and
+/// the map root remains reusable. Every other non-success result either names
+/// an invalid paired root or a terminal root, and must not turn into a fresh
+/// allocation fallback. In particular, [`Self::UnlockFailed`] returns the
+/// completed claim token because the source operation happened before the
+/// private futex wake failed.
+#[must_use = "a mapped-abandoned claim outcome must preserve its exact source ownership state"]
+pub(crate) enum MappedAbandonedClaimOutcome {
+    /// A normal page lifecycle currently owns the source-plain map. The
+    /// closure did not run and no candidate state changed.
+    Busy,
+    /// The supplied map lease and validated process-page-arena lease name
+    /// different immutable PageMap roots. No lock was acquired and no source
+    /// state changed.
+    PairMismatch,
+    /// This root was already terminal, became terminal before the closure
+    /// could run. The closure did not run.
+    RootTerminal,
+    /// The closure did not run, but releasing the pre-closure short lock
+    /// reported a private-futex wake failure. The root is poisoned and the
+    /// error remains distinct from a prior terminal state.
+    RootTerminalLock(Errno),
+    /// The closure completed and the short PageMap exclusion boundary released
+    /// normally.
+    Completed(MappedAbandonedClaimCompletion),
+    /// The closure completed, then the private lock's Release transition
+    /// reported a wake failure. The root is already poisoned. `completion`
+    /// preserves a claimed or retained exact range so the target owner can be
+    /// latched terminally instead of forgetting the source transfer.
+    UnlockFailed {
+        completion: MappedAbandonedClaimCompletion,
+        error: Errno,
+    },
+}
+
+/// One PageMap borrow scoped to exactly one mapped-abandoned source attempt.
+///
+/// This is constructed only by
+/// [`ProcessPageMapLease::try_with_validated_mapped_abandoned_claim`]. It can
+/// expose the map only during that closure, and its consuming constructors are
+/// the only normal way to turn a source `AdoptedPage` or
+/// `RetainedAdoptFailure` into an outer completion state.
+pub(crate) struct MappedAbandonedClaimAccess<'map> {
+    page_map: &'map PageMap,
+    storage: &'static ProcessPageMapStorage,
+    completed: bool,
+}
+
+impl<'map> MappedAbandonedClaimAccess<'map> {
+    /// Borrows the map only for the current selected bitmap/low-owner claim
+    /// sequence. The higher-ranked outer closure prevents a normal reference
+    /// escape; callers must not manufacture a raw PageMap escape.
+    #[inline]
+    pub(crate) fn page_map(&self) -> &'map PageMap { self.page_map }
+
+    /// Completes the scoped attempt before any source low-owner claim won.
+    #[inline]
+    pub(crate) fn no_candidate(mut self) -> MappedAbandonedClaimCompletion {
+        self.completed = true;
+        MappedAbandonedClaimCompletion::NoCandidate(MappedAbandonedClaimNoCandidate {
+            _scoped: (),
+        })
+    }
+
+    /// Transfers one adopted page into the target-owned exact-range token.
+    ///
+    /// # Safety
+    ///
+    /// `adopted` must be the result of this closure's one
+    /// `abandoned::try_adopt_retained` call. Before calling this method, the
+    /// closure must have validated the target Theap/Heap association and its
+    /// complete `ReleaseSpan::Arena` shape, including every matching PageMap
+    /// entry, while this access remains live. It must perform no later source
+    /// PageMap operation or second bitmap search. The returned token may be
+    /// consumed only after the outer outcome reports a normal completion (or
+    /// an explicitly latched terminal unlock failure).
+    pub(crate) unsafe fn claim_after_full_span_validation(
+        self,
+        adopted: AdoptedPage,
+    ) -> MappedAbandonedClaimCompletion {
+        self.claim(adopted.page())
+    }
+
+    #[cfg(test)]
+    /// Builds a claimed completion from a non-dereferenced fixture page.
+    ///
+    /// This exists only to test this scope's completion and linear-handoff
+    /// state mechanics. It does not model bitmap selection, source adoption,
+    /// or the required production full-span validation.
+    ///
+    /// # Safety
+    ///
+    /// The test must treat `page` only as an opaque, non-dereferenced page
+    /// identity and model a completed exact-range transfer.
+    pub(crate) unsafe fn test_claim_after_full_span_validation(
+        self,
+        page: NonNull<Page>,
+    ) -> MappedAbandonedClaimCompletion {
+        self.claim(page)
+    }
+
+    #[inline]
+    fn claim(mut self, page: NonNull<Page>) -> MappedAbandonedClaimCompletion {
+        self.completed = true;
+        MappedAbandonedClaimCompletion::Claimed(MappedAbandonedClaimedRange {
+            storage: self.storage,
+            page,
+            handed_off: false,
+        })
+    }
+
+    /// Retains a source adoption failure after its low-owner claim.
+    ///
+    /// # Safety
+    ///
+    /// `failure` must be this closure's `try_adopt_retained` failure. Its
+    /// exact page remains live with the low owner held; no fresh fallback,
+    /// unowned retry, or PageMap operation may follow this transition.
+    pub(crate) unsafe fn retain_after_adopt_failure(
+        self,
+        failure: RetainedAdoptFailure,
+    ) -> MappedAbandonedClaimCompletion {
+        self.retain(
+            failure.page(),
+            MappedAbandonedClaimRetainedReason::Adoption(failure),
+        )
+    }
+
+    /// Retains an adopted page whose target-owned exact span did not validate.
+    ///
+    /// # Safety
+    ///
+    /// `adopted` must be this closure's successfully low-owner-claimed source
+    /// adoption. The failed validation means its page remains a terminal
+    /// target owner; it cannot be reabandoned or replaced with a fresh page
+    /// through this access.
+    pub(crate) unsafe fn retain_after_span_validation_failure(
+        self,
+        adopted: AdoptedPage,
+    ) -> MappedAbandonedClaimCompletion {
+        self.retain(
+            adopted.page(),
+            MappedAbandonedClaimRetainedReason::SpanValidation,
+        )
+    }
+
+    #[cfg(test)]
+    /// Builds a terminal retained completion from a fixture page.
+    ///
+    /// This checks the claim scope's terminal state mechanics only; it does
+    /// not model the production low-owner or span-validation transition.
+    ///
+    /// # Safety
+    ///
+    /// The test must treat `page` as an opaque, non-dereferenced page and
+    /// retain the returned terminal token through its assertion.
+    pub(crate) unsafe fn test_retain_after_span_validation_failure(
+        self,
+        page: NonNull<Page>,
+    ) -> MappedAbandonedClaimCompletion {
+        self.retain(page, MappedAbandonedClaimRetainedReason::SpanValidation)
+    }
+
+    #[inline]
+    fn retain(
+        mut self,
+        page: NonNull<Page>,
+        reason: MappedAbandonedClaimRetainedReason,
+    ) -> MappedAbandonedClaimCompletion {
+        self.completed = true;
+        MappedAbandonedClaimCompletion::Retained(MappedAbandonedClaimRetainedRange::terminal(
+            self.storage,
+            page,
+            reason,
+        ))
+    }
+}
+
+impl Drop for MappedAbandonedClaimAccess<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            // The closure neither proved a clean no-candidate search nor
+            // handed a low-owner result to an explicit token.  This includes
+            // unwinding before its terminal completion constructor, so do not
+            // release the short exclusion boundary into a reusable root.
+            self.storage.state.store(POISONED, Ordering::Release);
+        }
+    }
+}
+
+/// The exact target-owned page range after source adoption and full span
+/// validation.
+///
+/// Dropping this token means the caller lost an A-to-B ownership transfer.
+/// Conservatively poison the process root rather than reopen a map whose
+/// source low owner may still name this page.
+#[must_use = "a claimed mapped-abandoned range must transfer to its target owner or terminally retain the root"]
+pub(crate) struct MappedAbandonedClaimedRange {
+    storage: &'static ProcessPageMapStorage,
+    page: NonNull<Page>,
+    handed_off: bool,
+}
+
+impl MappedAbandonedClaimedRange {
+    /// Consumes the validated transfer token into the target owner's page.
+    ///
+    /// # Safety
+    ///
+    /// Call this only after matching an outer
+    /// [`MappedAbandonedClaimOutcome::Completed`] result, or after explicitly
+    /// latching the target owner terminally for
+    /// [`MappedAbandonedClaimOutcome::UnlockFailed`]. The target must retain
+    /// the page through its complete queue/reclaim/reabandon/release tail and
+    /// must not fresh-fallback while that range remains live.
+    pub(crate) unsafe fn into_page(mut self) -> NonNull<Page> {
+        self.handed_off = true;
+        self.page
+    }
+}
+
+impl Drop for MappedAbandonedClaimedRange {
+    fn drop(&mut self) {
+        if !self.handed_off {
+            self.storage.state.store(POISONED, Ordering::Release);
+        }
+    }
+}
+
+/// The reason a low-owner-claimed page became a terminal retained range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MappedAbandonedClaimRetainedReason {
+    /// `try_adopt_retained` failed after its bitmap/low-owner transition.
+    Adoption(RetainedAdoptFailure),
+    /// The target-owned complete arena/PageMap span did not validate after
+    /// successful source adoption.
+    SpanValidation,
+}
+
+/// One terminal retained source page after a low-owner claim.
+///
+/// Its constructor poisons the root immediately. The page and reason remain
+/// available only to the caller's explicit terminal owner; ordinary allocation
+/// cannot resume through this map root.
+#[must_use = "a retained mapped-abandoned range must remain with an explicit terminal owner"]
+pub(crate) struct MappedAbandonedClaimRetainedRange {
+    storage: &'static ProcessPageMapStorage,
+    page: NonNull<Page>,
+    reason: MappedAbandonedClaimRetainedReason,
+}
+
+impl MappedAbandonedClaimRetainedRange {
+    #[inline]
+    fn terminal(
+        storage: &'static ProcessPageMapStorage,
+        page: NonNull<Page>,
+        reason: MappedAbandonedClaimRetainedReason,
+    ) -> Self {
+        storage.state.store(POISONED, Ordering::Release);
+        Self {
+            storage,
+            page,
+            reason,
+        }
+    }
+
+    /// Returns the terminal source reason while retaining the range token.
+    #[inline]
+    pub(crate) const fn reason(&self) -> MappedAbandonedClaimRetainedReason { self.reason }
+
+    /// Borrows the terminally retained raw page for an explicit terminal
+    /// owner transition.
+    ///
+    /// # Safety
+    ///
+    /// The caller must keep this range terminally retained and must not use
+    /// the pointer to resume normal allocation, a fresh fallback, or an
+    /// unowned source retry. The root is already poisoned.
+    #[inline]
+    pub(crate) unsafe fn page(&self) -> NonNull<Page> { self.page }
+}
+
+impl Drop for MappedAbandonedClaimRetainedRange {
+    fn drop(&mut self) {
+        self.storage.state.store(POISONED, Ordering::Release);
+    }
+}
+
+/// Poisons the root before releasing a short claim lock if its closure does
+/// not return normally. This prevents unwinding from exposing a successful
+/// bitmap/low-owner transition as a fresh reusable PageMap lifecycle.
+struct MappedAbandonedClaimScope {
+    storage: &'static ProcessPageMapStorage,
+    guard: Option<PrivateLockGuard<'static>>,
+    completed: bool,
+}
+
+impl MappedAbandonedClaimScope {
+    #[inline]
+    fn new(storage: &'static ProcessPageMapStorage, guard: PrivateLockGuard<'static>) -> Self {
+        Self {
+            storage,
+            guard: Some(guard),
+            completed: false,
+        }
+    }
+
+    #[inline]
+    fn complete(&mut self) {
+        self.completed = true;
+    }
+
+    fn unlock(mut self) -> Result<(), Errno> {
+        let Some(guard) = self.guard.take() else {
+            // This scope is normally constructed with exactly one guard. If
+            // an internal future change violates that invariant after the
+            // closure completed, do not let the completed Drop path reopen
+            // the root as though it had released normally.
+            self.storage.state.store(POISONED, Ordering::Release);
+            return Err(Errno::INVAL);
+        };
+        let result = guard.unlock();
+        if result.is_err() {
+            // `PrivateLockGuard::unlock` already made the Release visible.
+            // Its guard is consumed, so this scope's Drop cannot observe it;
+            // record terminal state here before the caller sees the error.
+            self.storage.state.store(POISONED, Ordering::Release);
+        }
+        result
+    }
+}
+
+impl Drop for MappedAbandonedClaimScope {
+    fn drop(&mut self) {
+        if !self.completed && self.guard.is_some() {
+            // Store before `guard` drops so a waiter cannot observe an
+            // unlocked-but-healthy root after a panic or early path that may
+            // have crossed the low-owner boundary.
+            self.storage.state.store(POISONED, Ordering::Release);
+        }
+    }
+}
+
 impl ProcessPageMapLease {
     /// Returns the published source root after confirming the process owner
     /// remains live.
@@ -624,6 +1004,97 @@ impl ProcessPageMapLease {
             return Err(ProcessPageMapError::Poisoned);
         }
         Ok(self.storage.config())
+    }
+
+    /// Runs one complete selected mapped-abandoned claim attempt while holding
+    /// the PageMap's plain-entry exclusion boundary.
+    ///
+    /// The paired lease is rechecked against this map's immutable root before
+    /// the nonblocking `try_lock`. A bare map lease therefore cannot enter the
+    /// short claim path without an independently validated
+    /// [`crate::process_arena::ProcessPageArenaLease`] witness. This does not
+    /// construct a [`ProcessPageMapMutationLease`] or enter W03's blocking
+    /// post-owner-exit mutation path.
+    ///
+    /// # Safety
+    ///
+    /// `paired` must remain the selected process map/arena pair, and the
+    /// caller must retain the selected static-main arena, target Theap/Heap,
+    /// page metadata, and complete candidate PageMap span for the call. The
+    /// closure may perform only one pinned source sequence: resolver lookup,
+    /// matching bitmap/low-owner claim, `try_adopt_retained`, and full target
+    /// `release_span`/all-PageMap-span validation. It must then finish through
+    /// one [`MappedAbandonedClaimAccess`] constructor. It must not retain a
+    /// raw PageMap access, perform another candidate search, register or
+    /// unregister a range, use W03, or call
+    /// [`MappedAbandonedClaimedRange::into_page`] inside the closure.
+    ///
+    /// Any successful claim must return `Claimed`; any post-low-owner failure
+    /// must return `Retained`. The caller owns the resulting target page only
+    /// after it matches the outer outcome and consumes the linear range token
+    /// under that token's contract. A closure that panics or unwinds is
+    /// terminally retained before its lock releases.
+    pub(crate) unsafe fn try_with_validated_mapped_abandoned_claim(
+        self,
+        paired: crate::process_arena::ProcessPageArenaLease,
+        operation: impl for<'map> FnOnce(
+            MappedAbandonedClaimAccess<'map>,
+        ) -> MappedAbandonedClaimCompletion,
+    ) -> MappedAbandonedClaimOutcome {
+        let root = match self.root() {
+            Ok(root) => root,
+            Err(_) => return MappedAbandonedClaimOutcome::RootTerminal,
+        };
+        let paired_root = match paired.page_map_root() {
+            Ok(root) => root,
+            Err(_) => return MappedAbandonedClaimOutcome::RootTerminal,
+        };
+        if root != paired_root {
+            return MappedAbandonedClaimOutcome::PairMismatch;
+        }
+
+        let guard = match self.storage.page_lifecycle_lock.try_lock() {
+            Some(guard) => guard,
+            None => return MappedAbandonedClaimOutcome::Busy,
+        };
+        if self.storage.state.load(Ordering::Acquire) != READY || self.storage.root.load().is_none() {
+            return match guard.unlock() {
+                Ok(()) => MappedAbandonedClaimOutcome::RootTerminal,
+                Err(error) => {
+                    // The closure did not run, but a visible Release followed by
+                    // a failed wake means no later lifecycle may trust this root.
+                    self.storage.state.store(POISONED, Ordering::Release);
+                    MappedAbandonedClaimOutcome::RootTerminalLock(error)
+                }
+            };
+        }
+
+        let mut scope = MappedAbandonedClaimScope::new(self.storage, guard);
+        let completion = operation(MappedAbandonedClaimAccess {
+            page_map: self.storage.page_map_ref(),
+            storage: self.storage,
+            completed: false,
+        });
+        if matches!(&completion, MappedAbandonedClaimCompletion::Retained(_)) {
+            // A retained range crossed the low-owner boundary. The token
+            // itself already terminalizes the root, and repeating the store
+            // here makes the outer transition independent of its constructor.
+            self.storage.state.store(POISONED, Ordering::Release);
+        }
+        // The closure returned normally and its completion now owns any
+        // claimed/retained page token. A later unlock failure stays visible in
+        // the distinct outer outcome below.
+        scope.complete();
+        match scope.unlock() {
+            Ok(()) => MappedAbandonedClaimOutcome::Completed(completion),
+            Err(error) => {
+                // The atomic Release occurred before this wake failure. The
+                // completion remains the sole evidence of a possible range
+                // transfer, but the root cannot return to normal admission.
+                self.storage.state.store(POISONED, Ordering::Release);
+                MappedAbandonedClaimOutcome::UnlockFailed { completion, error }
+            }
+        }
     }
 
     /// Looks up the page containing one exact live native allocation without

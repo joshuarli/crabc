@@ -79,7 +79,9 @@ use crate::lock::PrivateLock;
 use crate::os::{MapAccess, Mapping, MemoryConfig};
 use crate::page_map::PageMapHeader;
 use crate::process_page_map::{
-    ProcessPageMapError, ProcessPageMapLease, ProcessPageMapMutationLease,
+    MappedAbandonedClaimAccess, MappedAbandonedClaimCompletion,
+    MappedAbandonedClaimOutcome, ProcessPageMapError, ProcessPageMapLease,
+    ProcessPageMapMutationLease,
 };
 use crate::subproc::MainSubprocess;
 
@@ -1008,6 +1010,42 @@ impl ProcessPageArenaLease {
             .map_err(ProcessPageArenaLeaseError::PageMap)
     }
 
+    /// Runs one nonblocking mapped-abandoned claim attempt after this lease
+    /// has proved the PageMap and arena belong to the same process image.
+    ///
+    /// This is only the short source `lookup -> bitmap -> low-owner` claim
+    /// boundary. It does not begin an ordinary page-engine lifecycle or enter
+    /// W03's blocking terminal-mutation path. The closure receives one scoped
+    /// map capability and must return its concrete no-candidate, claimed-range,
+    /// or terminal-retained completion. A competing normal lifecycle returns
+    /// clean [`MappedAbandonedClaimOutcome::Busy`] before the closure runs.
+    ///
+    /// # Safety
+    ///
+    /// The caller must satisfy
+    /// [`ProcessPageMapLease::try_with_validated_mapped_abandoned_claim`]'s
+    /// exact selected-range, complete-claim, span-validation, and
+    /// terminal-retention contract. This pair proves only stable process
+    /// map/arena identity; it does not prove that the selected bitmap bit names
+    /// a live PageMap page or transfer that page's owner by itself. The
+    /// claimed token is the sole post-validation A-to-B transfer right; it
+    /// must remain coupled to the caller's reclaim, reabandon, release, or
+    /// terminal-retention owner after this short closure ends.
+    #[inline]
+    pub(crate) unsafe fn try_with_mapped_abandoned_claim(
+        self,
+        operation: impl for<'map> FnOnce(
+            MappedAbandonedClaimAccess<'map>,
+        ) -> MappedAbandonedClaimCompletion,
+    ) -> MappedAbandonedClaimOutcome {
+        // SAFETY: the caller supplies the delegated selected-range and
+        // terminal-owner contract; this pairing preserves process identity.
+        unsafe {
+            self.page_map
+                .try_with_validated_mapped_abandoned_claim(self, operation)
+        }
+    }
+
     /// Blocks only for W03's one exact post-owner-exit terminal mutation
     /// after this pair's map/arena identity has already been proven.
     ///
@@ -1414,10 +1452,16 @@ static PROCESS_SHARED_ARENA: ProcessSharedArenaStorage = ProcessSharedArenaStora
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::{cell::Cell, ptr::NonNull};
     use crate::arena::ArenaId;
     use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE, ARENA_SLICE_SIZE};
     use crate::os::{fault, MapAccess, PageSize};
-    use crate::process_page_map::ProcessPageMapStorage;
+    use crate::process_page_map::{
+        MappedAbandonedClaimCompletion, MappedAbandonedClaimOutcome,
+        MappedAbandonedClaimRetainedReason, ProcessPageMapError,
+        ProcessPageMapStorage,
+    };
+    use crate::types::Page;
     use crabc_core::Errno;
 
     fn memory_config() -> MemoryConfig {
@@ -1446,6 +1490,19 @@ mod tests {
             MapAccess::Committed,
         )
         .expect("map one source-sized arena backing")
+    }
+
+    fn paired_claim_fixture(config: MemoryConfig) -> ProcessPageArenaLease {
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let shared = match ProcessSharedArenaStorage::test_static_owner()
+            .install_one_owned_external_arena(page_map, one_arena_mapping(config))
+        {
+            Ok(shared) => shared,
+            Err(_) => panic!("the isolated process arena publishes"),
+        };
+        ProcessPageArenaLease::join(page_map, shared)
+            .expect("the matching process map and arena form one claim capability")
     }
 
     #[test]
@@ -1908,6 +1965,241 @@ mod tests {
             "the capability rejects a range beyond the exact claimed page span"
         );
         assert!(claim.release(), "the isolated source claim returns to its free bitmap");
+    }
+
+    #[test]
+    fn paired_mapped_abandoned_claim_access_is_nonblocking_and_leaves_a_clean_root_reusable() {
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let shared = match ProcessSharedArenaStorage::test_static_owner()
+            .install_one_owned_external_arena(page_map, one_arena_mapping(config))
+        {
+            Ok(shared) => shared,
+            Err(_) => panic!("the isolated process arena publishes"),
+        };
+        let pair = ProcessPageArenaLease::join(page_map, shared)
+            .expect("the matching process map and arena form one claim capability");
+
+        let held = pair
+            .begin_page_lifecycle()
+            .expect("the fixture holds the ordinary long PageMap lifecycle");
+        let called = Cell::new(false);
+        // SAFETY: the matching pair is proven above, but the held long
+        // lifecycle makes this short attempt return before its closure can
+        // access a PageMap entry or claim any candidate range.
+        let busy = unsafe {
+            pair.try_with_mapped_abandoned_claim(|_| {
+                called.set(true);
+                panic!("a busy short claim must not invoke its closure")
+            })
+        };
+        assert!(matches!(
+            busy,
+            MappedAbandonedClaimOutcome::Busy
+        ));
+        assert!(
+            !called.get(),
+            "a busy nonblocking claim boundary never invokes its closure"
+        );
+        held
+            .finish()
+            .expect("the ordinary fixture lifecycle releases its map guard");
+
+        // SAFETY: this matching pair has no PageMap entry or abandoned bitmap
+        // bit. The closure therefore returns its explicit no-candidate result
+        // without a plain entry access or an exact-range transfer.
+        let completed = unsafe {
+            pair.try_with_mapped_abandoned_claim(|access| {
+                assert_eq!(
+                    access.page_map().memory_config(),
+                    config,
+                    "the one scoped closure observes the paired final map"
+                );
+                access.no_candidate()
+            })
+        };
+        assert!(matches!(
+            completed,
+            MappedAbandonedClaimOutcome::Completed(
+                MappedAbandonedClaimCompletion::NoCandidate(_)
+            )
+        ));
+
+        pair.begin_page_lifecycle()
+            .expect("a completed short no-candidate claim leaves the root reusable")
+            .finish()
+            .expect("the final empty lifecycle releases normally");
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_pair_mismatch_skips_the_closure_and_keeps_both_roots_reusable() {
+        let config = memory_config();
+        let first = paired_claim_fixture(config);
+        let second = paired_claim_fixture(config);
+        let called = Cell::new(false);
+
+        // SAFETY: this direct primitive is intentionally exercised only to
+        // prove its mandatory pairing recheck. The distinct roots reject
+        // before the closure can inspect a PageMap or claim a source bit.
+        let outcome = unsafe {
+            first
+                .page_map
+                .try_with_validated_mapped_abandoned_claim(second, |_| {
+                    called.set(true);
+                    panic!("a mismatched pair must not invoke its claim closure")
+                })
+        };
+        assert!(matches!(
+            outcome,
+            MappedAbandonedClaimOutcome::PairMismatch
+        ));
+        assert!(
+            !called.get(),
+            "pair mismatch is nonmutating and cannot enter the scoped map access"
+        );
+
+        first
+            .begin_page_lifecycle()
+            .expect("the first mismatched root remains reusable")
+            .finish()
+            .expect("the first fixture lifecycle releases normally");
+        second
+            .begin_page_lifecycle()
+            .expect("the second mismatched root remains reusable")
+            .finish()
+            .expect("the second fixture lifecycle releases normally");
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_dropped_claimed_range_poisoned_the_root() {
+        let pair = paired_claim_fixture(memory_config());
+        let expected_page = NonNull::<Page>::dangling();
+
+        // SAFETY: the cfg(test) completion constructor models only a completed
+        // exact-range transfer with an opaque page identity; it dereferences
+        // neither the identity nor a PageMap entry.
+        let outcome = unsafe {
+            pair.try_with_mapped_abandoned_claim(|access| {
+                access.test_claim_after_full_span_validation(expected_page)
+            })
+        };
+        let claimed = match outcome {
+            MappedAbandonedClaimOutcome::Completed(MappedAbandonedClaimCompletion::Claimed(
+                claimed,
+            )) => claimed,
+            _ => panic!("the clean short scope returns its claimed transfer token"),
+        };
+
+        drop(claimed);
+        assert!(matches!(
+            pair.begin_page_lifecycle(),
+            Err(ProcessPageArenaLeaseError::PageMap(
+                ProcessPageMapError::Poisoned
+            ))
+        ));
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_explicit_claimed_range_handoff_leaves_the_root_reusable() {
+        let pair = paired_claim_fixture(memory_config());
+        let expected_page = NonNull::<Page>::dangling();
+
+        // SAFETY: as above, the test-only constructor models a completed
+        // source transfer without dereferencing the opaque fixture identity.
+        let outcome = unsafe {
+            pair.try_with_mapped_abandoned_claim(|access| {
+                access.test_claim_after_full_span_validation(expected_page)
+            })
+        };
+        let claimed = match outcome {
+            MappedAbandonedClaimOutcome::Completed(MappedAbandonedClaimCompletion::Claimed(
+                claimed,
+            )) => claimed,
+            _ => panic!("the clean short scope returns its claimed transfer token"),
+        };
+
+        // SAFETY: this opaque fixture identity models the target terminal
+        // owner consuming the validated transfer; it is never dereferenced.
+        let handed_off = unsafe { claimed.into_page() };
+        assert_eq!(handed_off, expected_page);
+        pair.begin_page_lifecycle()
+            .expect("the explicit claimed-range handoff disarms its Drop poison")
+            .finish()
+            .expect("the final empty lifecycle releases normally");
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_retained_completion_terminalizes_the_root() {
+        let pair = paired_claim_fixture(memory_config());
+        let expected_page = NonNull::<Page>::dangling();
+
+        // SAFETY: the test-only constructor models only the terminal result
+        // after a low-owner claim and failed span validation; the fixture
+        // page is opaque and is never dereferenced.
+        let outcome = unsafe {
+            pair.try_with_mapped_abandoned_claim(|access| {
+                access.test_retain_after_span_validation_failure(expected_page)
+            })
+        };
+        let retained = match outcome {
+            MappedAbandonedClaimOutcome::Completed(MappedAbandonedClaimCompletion::Retained(
+                retained,
+            )) => retained,
+            _ => panic!("a terminal retained completion remains explicit after unlock"),
+        };
+        assert_eq!(
+            retained.reason(),
+            MappedAbandonedClaimRetainedReason::SpanValidation
+        );
+        // SAFETY: the root is terminal and this opaque identity is observed
+        // only to prove that the returned terminal token retains the page.
+        assert_eq!(unsafe { retained.page() }, expected_page);
+        assert!(matches!(
+            pair.begin_page_lifecycle(),
+            Err(ProcessPageArenaLeaseError::PageMap(
+                ProcessPageMapError::Poisoned
+            ))
+        ));
+        drop(retained);
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_panic_terminalizes_before_releasing_the_scope() {
+        let pair = paired_claim_fixture(memory_config());
+
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // SAFETY: this deliberately exercises the documented unwind
+            // path before any source claim; the scope must poison before its
+            // private lock guard is released.
+            let _ = unsafe {
+                pair.try_with_mapped_abandoned_claim(
+                    |_access| -> MappedAbandonedClaimCompletion {
+                        panic!("exercise mapped-abandoned claim unwind")
+                    },
+                )
+            };
+        }));
+        assert!(unwind.is_err());
+
+        // A released but terminal root reaches the readiness check. A stuck
+        // short lock would have returned Busy instead, so this also proves
+        // the unwind guard released its private lock after poisoning.
+        let terminal = unsafe {
+            pair.try_with_mapped_abandoned_claim(|_| {
+                panic!("a terminal root must not invoke a later claim closure")
+            })
+        };
+        assert!(matches!(
+            terminal,
+            MappedAbandonedClaimOutcome::RootTerminal
+        ));
+        assert!(matches!(
+            pair.begin_page_lifecycle(),
+            Err(ProcessPageArenaLeaseError::PageMap(
+                ProcessPageMapError::Poisoned
+            ))
+        ));
     }
 
     #[test]
