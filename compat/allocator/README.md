@@ -876,6 +876,7 @@ Run the harness through the pinned Linux/AArch64 development image:
 
 ```sh
 ./scripts/dev.sh allocator --quick
+./scripts/dev.sh allocator-m1
 ./scripts/dev.sh allocator --full
 ./scripts/dev.sh allocator --churn
 ./scripts/dev.sh allocator-tls
@@ -950,6 +951,15 @@ explicitly clears the production target rustflags and must show that the
 pinned compiler default emits TLSDESC, keeping the production model requirement
 explicit. `allocator-tls` runs this judge alone and writes
 `.work/reports/allocator/tls-codegen.json`.
+
+`allocator-m1` writes the current-commit
+`.work/reports/allocator/m1-foundations-latest.json` record from the checked-in
+[`m1-foundations-v3.5.0.json`](m1-foundations-v3.5.0.json) contract. It reruns
+the source/ratchet/C-release-layout producers and only the named focused Rust
+checks, binds the result to an unchanged clean Git commit, and classifies each
+component plus its explicit exclusions. It intentionally exits 3 while the
+contract says M1 is partial. A passing focused check or shared M0/M3/M4
+producer does not close a whole source unit or promote any allocator backend.
 
 `allocator --full` extends that gate by building and auditing the standalone
 static and shared test adapter, including its exact 16-symbol export boundary,

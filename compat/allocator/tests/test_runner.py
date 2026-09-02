@@ -229,9 +229,13 @@ class InventoryTests(unittest.TestCase):
                 self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
             with mock.patch.object(sys, "argv", ["run.py", "--quick", "--x86-64"]):
                 self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
+        with mock.patch.object(sys, "argv", ["run.py", "--m1"]):
+            arguments = RUNNER.parse_arguments()
+            self.assertTrue(arguments.m1)
+            self.assertEqual(arguments.architecture, "aarch64")
 
     def test_parser_does_not_allow_x86_64_to_claim_later_production_lanes(self) -> None:
-        for mode in ("--full", "--perf-smoke", "--perf-full", "--generate-contracts", "--snapshot-ratchet"):
+        for mode in ("--m1", "--full", "--perf-smoke", "--perf-full", "--generate-contracts", "--snapshot-ratchet"):
             with self.subTest(mode=mode), mock.patch.object(
                 sys, "argv", ["run.py", mode, "--architecture", "x86_64"]
             ):
@@ -1834,6 +1838,201 @@ class ContractTests(unittest.TestCase):
         self.assertIn("broader claimed M5 lifecycle surface", blocker)
         self.assertNotIn("large_object_mode: not-claimed", blocker)
 
+    def test_m1_foundations_contract_keeps_a_finite_partial_inventory(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
+        summary = RUNNER.validate_m1_foundations_contract(
+            contract,
+            RUNNER.load_pin(),
+            RUNNER.load_port_map(),
+        )
+
+        self.assertEqual(
+            [component["id"] for component in summary["components"]],
+            list(RUNNER.M1_FOUNDATIONS_COMPONENT_IDS),
+        )
+        self.assertEqual(summary["milestone"]["status"], "partial")
+        self.assertEqual(summary["execution"], {
+            "features": [],
+            "package": "crabc-mimalloc",
+            "test_threads": 1,
+            "timeout_seconds": 300,
+        })
+        random_image = next(
+            component
+            for component in summary["components"]
+            if component["id"] == "random-image"
+        )
+        self.assertEqual(
+            random_image["layout_keys"],
+            [
+                "sizeof.mi_random_ctx_t",
+                "alignof.mi_random_ctx_t",
+                "offsetof.mi_random_ctx_t.input",
+                "offsetof.mi_random_ctx_t.output",
+                "offsetof.mi_random_ctx_t.output_available",
+                "offsetof.mi_random_ctx_t.weak",
+            ],
+        )
+        raw_primitives = next(
+            component
+            for component in summary["components"]
+            if component["id"] == "linux-raw-primitives"
+        )
+        self.assertIn(
+            "linux-raw-numa-node-count-observation",
+            [record.get("name") for record in raw_primitives["source_map_records"]],
+        )
+        self.assertIn(
+            "prim-h-options-environment-and-diagnostics",
+            [exclusion["id"] for exclusion in summary["exclusions"]],
+        )
+        self.assertEqual(
+            RUNNER.m1_foundations_check_command(
+                summary["execution"], random_image["checks"][0]
+            ),
+            [
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--locked",
+                "--lib",
+                "random::tests::pinned_c_block_vector_uses_the_original_chacha_word_layout",
+                "--",
+                "--test-threads=1",
+            ],
+        )
+
+    def test_m1_foundations_contract_rejects_a_noncurrent_source_map_claim(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
+        malformed = json.loads(json.dumps(contract))
+        malformed["components"][0]["source_map_records"][0]["required_statuses"].append(
+            "stress_verified"
+        )
+
+        with self.assertRaisesRegex(RUNNER.HarnessError, "lacks required status"):
+            RUNNER.validate_m1_foundations_contract(
+                malformed,
+                RUNNER.load_pin(),
+                RUNNER.load_port_map(),
+            )
+
+    def test_m1_foundations_layout_evidence_marks_only_missing_m1_keys_pending(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
+        summary = RUNNER.validate_m1_foundations_contract(
+            contract,
+            RUNNER.load_pin(),
+            RUNNER.load_port_map(),
+        )
+        keys = {
+            key
+            for component in summary["components"]
+            for key in component["layout_keys"]
+        }
+        c_layout = {key: 1 for key in keys}
+        rust_layout = dict(c_layout)
+        rust_layout.pop("offsetof.mi_random_ctx_t.weak")
+
+        evidence = RUNNER.m1_foundations_layout_evidence(
+            summary["components"], c_layout, rust_layout
+        )
+
+        self.assertEqual(
+            evidence["random-image"],
+            {
+                "keys": [
+                    "sizeof.mi_random_ctx_t",
+                    "alignof.mi_random_ctx_t",
+                    "offsetof.mi_random_ctx_t.input",
+                    "offsetof.mi_random_ctx_t.output",
+                    "offsetof.mi_random_ctx_t.output_available",
+                    "offsetof.mi_random_ctx_t.weak",
+                ],
+                "missing_from_rust": ["offsetof.mi_random_ctx_t.weak"],
+                "mismatches": [],
+                "status": "pending",
+            },
+        )
+        self.assertEqual(
+            evidence["configuration-and-arithmetic"]["status"], "matched"
+        )
+
+    def test_m1_foundations_report_does_not_promote_partial_components(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
+        pin = RUNNER.load_pin()
+        summary = RUNNER.validate_m1_foundations_contract(
+            contract,
+            pin,
+            RUNNER.load_port_map(),
+        )
+        keys = {
+            key
+            for component in summary["components"]
+            for key in component["layout_keys"]
+        }
+        focused_checks = [
+            {
+                "component": component["id"],
+                "command": [],
+                "evidence_scope": "focused-source-test",
+                "id": check["id"],
+                "passed_test_count": check["expected_passed_test_count"],
+                "target": check["target"],
+            }
+            for component in summary["components"]
+            for check in component["checks"]
+        ]
+        source_state = {
+            "kind": "git",
+            "revision": "a" * 40,
+            "worktree_clean": True,
+            "worktree_status": {
+                "bytes": 0,
+                "hex": "",
+                "sha256": hashlib.sha256(b"").hexdigest(),
+            },
+        }
+        report = RUNNER.m1_foundations_report(
+            contract=contract,
+            pin=pin,
+            summary=summary,
+            source_attestation=RUNNER.m1_foundations_source_attestation(
+                source_state, source_state
+            ),
+            shared_oracle={
+                "c_oracle": {
+                    "profiles": {
+                        "release": {
+                            "artifact": {
+                                "bytes": 1,
+                                "path": ".work/test/libmimalloc.so",
+                                "sha256": "b" * 64,
+                            },
+                            "layout": {key: 1 for key in keys},
+                        }
+                    }
+                },
+                "compiler_tls_codegen": {"status": "passed"},
+                "production_dependency_graph": {"target": "aarch64-unknown-linux-musl"},
+                "rust_release_layout": {
+                    "comparison": {"status": "matched"},
+                    "layout": {key: 1 for key in keys},
+                },
+            },
+            focused_checks=focused_checks,
+        )
+
+        self.assertEqual(report["milestone"]["status"], "partial")
+        self.assertEqual(
+            report["milestone"]["unmet_component_ids"],
+            list(RUNNER.M1_FOUNDATIONS_COMPONENT_IDS),
+        )
+        self.assertEqual(
+            RUNNER.m1_foundations_unmet_message(report).split(";", 1)[0],
+            "M1 foundations remain partial for "
+            + ", ".join(RUNNER.M1_FOUNDATIONS_COMPONENT_IDS),
+        )
+
     def test_native_owner_exit_lifecycle_contract_covers_every_reviewed_condition(self) -> None:
         contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
         summary = RUNNER.validate_native_owner_exit_lifecycle_contract(
@@ -2406,6 +2605,7 @@ class ContractTests(unittest.TestCase):
             "adapted_test_contract_sha256": "adapted-tests",
             "adapted_stress_test_contract_sha256": "adapted-stress",
             "native_shadow_stress_contract_sha256": "native-shadow-stress",
+            "m1_foundations_contract_sha256": "m1-foundations",
             "owner_exit_publication_contract_sha256": "owner-exit-publication",
             "api_contract_sha256": "api",
             "port_map_sha256": "current-port-map",

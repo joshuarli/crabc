@@ -194,6 +194,7 @@ Commands:
   lua [options]       build Lua 5.4 through the owned crabc sysroot
   allocator --quick|--full|--churn|--soak
                       build/check the pinned mimalloc v3.5.0 C-oracle baseline
+  allocator-m1        run the current-commit M1 foundations evidence gate
   allocator-upstream [options]
                       run exact pinned upstream pthread stress on the native shadow libc
   allocator-shadow    run the nondefault native-mimalloc libc ABI/pthread shadow gate
@@ -258,8 +259,10 @@ run_in_container() {
     prepare_work_dir
     local rustix_source_host="${CRABC_RUSTIX_SOURCE_HOST:-$ROOT_DIR/../rustix}"
     local rustybench_source_host="${CRABC_RUSTYBENCH_SOURCE_HOST:-$ROOT_DIR/../rustybench}"
+    local git_common_dir="${CRABC_CONTAINER_GIT_COMMON_DIR:-}"
     local -a rustix_mount=()
     local -a rustybench_mount=()
+    local -a git_common_mount=()
     if [ -d "$rustix_source_host" ]; then
         # The comparison harness treats Rustix only as a pinned test oracle.
         # Keep a user checkout read-only, outside the worktree, and expose its
@@ -280,6 +283,17 @@ run_in_container() {
             --env CRABC_RUSTYBENCH_SOURCE=/opt/rustybench
             --volume "$rustybench_source_host:/opt/rustybench:ro"
         )
+    fi
+    if [ -n "$git_common_dir" ]; then
+        if [[ "$git_common_dir" != /* ]] || [ ! -d "$git_common_dir" ]; then
+            configuration_error "CRABC_CONTAINER_GIT_COMMON_DIR must name an existing absolute directory"
+            return 1
+        fi
+        # A linked worktree's .git file records its common directory as a
+        # host-absolute path. Mount that one Git metadata directory read-only
+        # at the same path only for an attested command, so in-container Git
+        # can read the worktree state without making source metadata mutable.
+        git_common_mount=(--volume "$git_common_dir:$git_common_dir:ro")
     fi
     # The bind-mounted checkout can be owned by the host runner while the
     # container queries it as root. Scope Git's ownership exception to this
@@ -311,8 +325,24 @@ run_in_container() {
     if [ -d "$rustybench_source_host" ]; then
         docker_args+=("${rustybench_mount[@]}")
     fi
+    if [ -n "$git_common_dir" ]; then
+        docker_args+=("${git_common_mount[@]}")
+    fi
     docker_args+=("$IMAGE" "$@")
     "${docker_args[@]}"
+}
+
+allocator_m1_git_common_dir() {
+    local common_dir
+    if ! common_dir="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)"; then
+        configuration_error "allocator-m1 requires a Git worktree with a readable common directory"
+        return 1
+    fi
+    if [[ "$common_dir" != /* ]] || [ ! -d "$common_dir" ]; then
+        configuration_error "allocator-m1 Git common directory is not an existing absolute path: $common_dir"
+        return 1
+    fi
+    printf '%s\n' "$common_dir"
 }
 
 # Resolver evidence must not inherit Docker's host-derived DNS configuration.
@@ -648,6 +678,21 @@ case "$command" in
                 exit 2
                 ;;
         esac
+        ;;
+    allocator-m1)
+        ensure_image
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        # This is an acceptance-record producer, not a synonym for a green
+        # allocator milestone. It returns the runner's intentional unmet-M1
+        # status while the checked contract has remaining conditions.
+        if ! m1_git_common_dir="$(allocator_m1_git_common_dir)"; then
+            exit 2
+        fi
+        CRABC_CONTAINER_GIT_COMMON_DIR="$m1_git_common_dir" \
+            run_in_container python3 compat/allocator/run.py --m1
         ;;
     allocator-upstream)
         ensure_image

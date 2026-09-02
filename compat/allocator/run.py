@@ -169,6 +169,9 @@ X86_64_TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run-x86_64.py"
 X86_64_TLS_CODEGEN_REPORT = REPORT_ROOT / "tls-codegen-x86_64.json"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
+M1_FOUNDATIONS_CONTRACT = ALLOCATOR_ROOT / "m1-foundations-v3.5.0.json"
+M1_FOUNDATIONS_REPORT = REPORT_ROOT / "m1-foundations-latest.json"
+M1_FOUNDATIONS_CARGO_TARGET = ARTIFACT_ROOT / "m1-foundations/cargo-target"
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -194,6 +197,34 @@ M5_5D_EVIDENCE = (
     "native-post-exit-registry:high-water",
     "source-derived:test-stress-single-creating-thread",
     "canonical-upstream-stress:current-head-full-matrix",
+)
+
+# M1 is an intentionally finite foundations gate.  These are source-shaped
+# components, not a claim that the four broad upstream units which contain
+# them are complete.  Keeping the inventory in the runner makes a manifest
+# reorder/removal an explicit reviewed contract change.
+M1_FOUNDATIONS_COMPONENT_IDS = (
+    "configuration-and-arithmetic",
+    "atomics-locks-once-and-bootstrap",
+    "provenance-and-represented-layouts",
+    "random-image",
+    "linux-raw-primitives",
+    "compiler-tls-roots",
+)
+M1_FOUNDATIONS_GLOBAL_EVIDENCE = (
+    "release-c-rust-layout",
+    "compiler-tls-codegen",
+    "production-dependency-graph",
+)
+M1_FOUNDATIONS_COMPONENT_STATUSES = frozenset({"partial", "complete"})
+M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
+    {
+        "deferred-to-m2",
+        "deferred-to-m2-m3",
+        "deferred-to-m5",
+        "deferred-to-m7",
+        "outside-m1",
+    }
 )
 
 # This is a source-order contract, not a claim that the incomplete Rust port
@@ -3236,6 +3267,672 @@ def validate_m5_gate_contract(
     }
 
 
+def _m1_foundations_port_map_record(
+    port_map: Mapping[str, Any], reference: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Resolve one reviewed M1 source-map reference without widening its scope."""
+
+    kind = reference["kind"]
+    upstream = reference["upstream"]
+    records = port_map["unit"] if kind == "unit" else port_map.get("item", [])
+    matches = [
+        record
+        for record in records
+        if record.get("upstream") == upstream
+        and (kind == "unit" or record.get("name") == reference["name"])
+    ]
+    if len(matches) != 1:
+        name = "" if kind == "unit" else f":{reference['name']}"
+        raise HarnessError(f"M1 foundations source-map record is absent or ambiguous: {kind}:{upstream}{name}")
+    return matches[0]
+
+
+def _m1_foundations_source_test_exists(target: str, check_id: str) -> None:
+    """Refuse a checked-in M1 filter once its current source witness is gone."""
+
+    target_parts = target.split("::")
+    if len(target_parts) != 3 or target_parts[1] != "tests":
+        raise HarnessError(
+            f"M1 foundations check {check_id} has an unsupported source test filter: {target}"
+        )
+    module, _, test = target_parts
+    source = ROOT / "crabc-mimalloc" / "src" / f"{module}.rs"
+    if not source.is_file():
+        raise HarnessError(
+            f"M1 foundations check {check_id} names no current source test filter: {target}"
+        )
+    source_text = source.read_text(encoding="utf-8")
+    if not re.search(
+        rf"(?m)^\s*fn\s+{re.escape(test)}\s*(?:<[^>]*>)?\s*\(", source_text
+    ):
+        raise HarnessError(
+            f"M1 foundations check {check_id} names no current source test filter: {target}"
+        )
+
+
+def validate_m1_foundations_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str], port_map: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Validate the finite M1 acceptance contract without promoting M1.
+
+    M1 names only reviewable foundations.  In particular, a true item row in
+    ``port-map.toml`` is evidence for that source-shaped item, never an
+    implicit claim that the enclosing upstream header or translation unit is
+    complete.  The contract therefore carries the selected references,
+    focused source tests, and explicit deferred exclusions together.
+    """
+
+    expected_keys = {
+        "components",
+        "exclusions",
+        "execution",
+        "format",
+        "global_evidence",
+        "milestone",
+        "schema",
+        "target",
+        "upstream",
+    }
+    if set(contract) != expected_keys or contract.get("format") != 1 or contract.get(
+        "schema"
+    ) != "crabc-mimalloc-m1-foundations":
+        raise HarnessError("unsupported M1 foundations contract")
+
+    upstream = contract.get("upstream")
+    expected_upstream = {
+        "archive_sha256": pin["sha256"],
+        "revision": pin["revision"],
+        "version": pin["version"],
+    }
+    if not isinstance(upstream, Mapping) or dict(upstream) != expected_upstream:
+        raise HarnessError("M1 foundations contract upstream identity mismatch")
+
+    target = contract.get("target")
+    expected_target = {
+        "architecture": "aarch64",
+        "endianness": "little",
+        "kernel_baseline": "5.10",
+        "os": "linux",
+        "rust_target": "aarch64-unknown-linux-musl",
+    }
+    if not isinstance(target, Mapping) or dict(target) != expected_target:
+        raise HarnessError("M1 foundations contract target changed")
+
+    execution = contract.get("execution")
+    expected_execution = {
+        "features": [],
+        "package": "crabc-mimalloc",
+        "test_threads": 1,
+        "timeout_seconds": 300,
+    }
+    if not isinstance(execution, Mapping) or dict(execution) != expected_execution:
+        raise HarnessError("M1 foundations execution contract changed")
+
+    global_evidence = contract.get("global_evidence")
+    if global_evidence != list(M1_FOUNDATIONS_GLOBAL_EVIDENCE):
+        raise HarnessError("M1 foundations global evidence inventory changed")
+
+    milestone = contract.get("milestone")
+    if not isinstance(milestone, Mapping) or set(milestone) != {
+        "completion_rule",
+        "id",
+        "nonclaims",
+        "status",
+    }:
+        raise HarnessError("M1 foundations contract lacks a milestone record")
+    if milestone.get("id") != "m1" or milestone.get("status") not in M1_FOUNDATIONS_COMPONENT_STATUSES:
+        raise HarnessError("M1 foundations milestone identity or status is invalid")
+    if not isinstance(milestone.get("completion_rule"), str) or not milestone["completion_rule"]:
+        raise HarnessError("M1 foundations milestone lacks a completion rule")
+    nonclaims = milestone.get("nonclaims")
+    if (
+        not isinstance(nonclaims, list)
+        or not nonclaims
+        or not all(isinstance(nonclaim, str) and nonclaim for nonclaim in nonclaims)
+        or len(set(nonclaims)) != len(nonclaims)
+    ):
+        raise HarnessError("M1 foundations milestone lacks a valid nonclaim inventory")
+
+    raw_components = contract.get("components")
+    if not isinstance(raw_components, list) or len(raw_components) != len(
+        M1_FOUNDATIONS_COMPONENT_IDS
+    ):
+        raise HarnessError("M1 foundations component inventory changed")
+
+    components: list[dict[str, Any]] = []
+    seen_check_ids: set[str] = set()
+    for index, raw_component in enumerate(raw_components):
+        if not isinstance(raw_component, Mapping) or set(raw_component) != {
+            "checks",
+            "completion_status",
+            "id",
+            "layout_keys",
+            "remaining_conditions",
+            "source_map_records",
+        }:
+            raise HarnessError(f"M1 foundations component {index} has unexpected fields")
+        component_id = raw_component.get("id")
+        if component_id != M1_FOUNDATIONS_COMPONENT_IDS[index]:
+            raise HarnessError("M1 foundations component order or identity changed")
+        completion_status = raw_component.get("completion_status")
+        if completion_status not in M1_FOUNDATIONS_COMPONENT_STATUSES:
+            raise HarnessError(f"M1 foundations component {component_id} has an invalid status")
+
+        raw_remaining_conditions = raw_component.get("remaining_conditions")
+        if (
+            not isinstance(raw_remaining_conditions, list)
+            or not all(
+                isinstance(condition, str) and condition
+                for condition in raw_remaining_conditions
+            )
+            or len(set(raw_remaining_conditions)) != len(raw_remaining_conditions)
+        ):
+            raise HarnessError(
+                f"M1 foundations component {component_id} has invalid remaining conditions"
+            )
+        if completion_status == "partial" and not raw_remaining_conditions:
+            raise HarnessError(
+                f"M1 foundations partial component {component_id} must name its remaining conditions"
+            )
+        if completion_status == "complete" and raw_remaining_conditions:
+            raise HarnessError(
+                f"M1 foundations complete component {component_id} retains conditions"
+            )
+
+        raw_layout_keys = raw_component.get("layout_keys")
+        if (
+            not isinstance(raw_layout_keys, list)
+            or not all(isinstance(key, str) and key for key in raw_layout_keys)
+            or len(set(raw_layout_keys)) != len(raw_layout_keys)
+        ):
+            raise HarnessError(f"M1 foundations component {component_id} has invalid layout keys")
+
+        raw_references = raw_component.get("source_map_records")
+        if not isinstance(raw_references, list) or not raw_references:
+            raise HarnessError(f"M1 foundations component {component_id} lacks source-map records")
+        references: list[dict[str, Any]] = []
+        reference_keys: set[tuple[str, str, str]] = set()
+        for reference_index, raw_reference in enumerate(raw_references):
+            if not isinstance(raw_reference, Mapping):
+                raise HarnessError(
+                    f"M1 foundations component {component_id} source-map record {reference_index} is not an object"
+                )
+            kind = raw_reference.get("kind")
+            expected_reference_keys = (
+                {"kind", "required_statuses", "upstream"}
+                if kind == "unit"
+                else {"kind", "name", "required_statuses", "upstream"}
+            )
+            if kind not in {"item", "unit"} or set(raw_reference) != expected_reference_keys:
+                raise HarnessError(
+                    f"M1 foundations component {component_id} source-map record {reference_index} has unexpected fields"
+                )
+            upstream_path = raw_reference.get("upstream")
+            name = raw_reference.get("name", "")
+            if not isinstance(upstream_path, str) or not upstream_path:
+                raise HarnessError(
+                    f"M1 foundations component {component_id} source-map record {reference_index} has invalid upstream path"
+                )
+            if kind == "item" and (not isinstance(name, str) or not name):
+                raise HarnessError(
+                    f"M1 foundations component {component_id} source-map record {reference_index} has invalid name"
+                )
+            reference_key = (kind, upstream_path, str(name))
+            if reference_key in reference_keys:
+                raise HarnessError(
+                    f"M1 foundations component {component_id} repeats source-map record {kind}:{upstream_path}:{name}"
+                )
+            reference_keys.add(reference_key)
+            statuses = raw_reference.get("required_statuses")
+            if (
+                not isinstance(statuses, list)
+                or not statuses
+                or not all(status in STATUS_FIELDS for status in statuses)
+                or len(set(statuses)) != len(statuses)
+            ):
+                raise HarnessError(
+                    f"M1 foundations component {component_id} source-map record {reference_index} has invalid statuses"
+                )
+            reference = {
+                "kind": kind,
+                "required_statuses": list(statuses),
+                "upstream": upstream_path,
+            }
+            if kind == "item":
+                reference["name"] = name
+            port_record = _m1_foundations_port_map_record(port_map, reference)
+            missing_statuses = [
+                status for status in statuses if port_record.get(status) is not True
+            ]
+            if missing_statuses:
+                record_name = "" if kind == "unit" else f":{name}"
+                raise HarnessError(
+                    "M1 foundations source-map record lacks required status "
+                    f"{kind}:{upstream_path}{record_name}: {', '.join(missing_statuses)}"
+                )
+            references.append(reference)
+
+        raw_checks = raw_component.get("checks")
+        if not isinstance(raw_checks, list) or not raw_checks:
+            raise HarnessError(f"M1 foundations component {component_id} lacks checks")
+        checks: list[dict[str, Any]] = []
+        for check_index, raw_check in enumerate(raw_checks):
+            if not isinstance(raw_check, Mapping) or set(raw_check) != {
+                "expected_passed_test_count",
+                "id",
+                "target",
+            }:
+                raise HarnessError(
+                    f"M1 foundations component {component_id} check {check_index} has unexpected fields"
+                )
+            check_id = raw_check.get("id")
+            target_name = raw_check.get("target")
+            expected_passed_test_count = raw_check.get("expected_passed_test_count")
+            if (
+                not isinstance(check_id, str)
+                or not re.fullmatch(r"[a-z][a-z0-9-]*", check_id)
+                or check_id in seen_check_ids
+            ):
+                raise HarnessError(
+                    f"M1 foundations component {component_id} check {check_index} has an invalid id"
+                )
+            if (
+                not isinstance(target_name, str)
+                or not re.fullmatch(r"[a-z_][a-z0-9_]*(?:::[a-z_][a-z0-9_]*)+", target_name)
+            ):
+                raise HarnessError(
+                    f"M1 foundations component {component_id} check {check_id} has an invalid target"
+                )
+            if (
+                not isinstance(expected_passed_test_count, int)
+                or isinstance(expected_passed_test_count, bool)
+                or expected_passed_test_count <= 0
+            ):
+                raise HarnessError(
+                    f"M1 foundations component {component_id} check {check_id} has an invalid expected test count"
+                )
+            _m1_foundations_source_test_exists(target_name, check_id)
+            seen_check_ids.add(check_id)
+            checks.append(
+                {
+                    "expected_passed_test_count": expected_passed_test_count,
+                    "id": check_id,
+                    "target": target_name,
+                }
+            )
+
+        components.append(
+            {
+                "checks": checks,
+                "completion_status": completion_status,
+                "id": component_id,
+                "layout_keys": list(raw_layout_keys),
+                "remaining_conditions": list(raw_remaining_conditions),
+                "source_map_records": references,
+            }
+        )
+
+    complete_components = all(
+        component["completion_status"] == "complete" for component in components
+    )
+    if (milestone["status"] == "complete") != complete_components:
+        raise HarnessError(
+            "M1 foundations milestone status must match its component completion states"
+        )
+
+    raw_exclusions = contract.get("exclusions")
+    if not isinstance(raw_exclusions, list) or not raw_exclusions:
+        raise HarnessError("M1 foundations contract lacks explicit exclusions")
+    exclusions: list[dict[str, Any]] = []
+    exclusion_ids: set[str] = set()
+    for index, raw_exclusion in enumerate(raw_exclusions):
+        if not isinstance(raw_exclusion, Mapping) or set(raw_exclusion) != {
+            "disposition",
+            "id",
+            "reason",
+            "upstream_paths",
+        }:
+            raise HarnessError(f"M1 foundations exclusion {index} has unexpected fields")
+        exclusion_id = raw_exclusion.get("id")
+        disposition = raw_exclusion.get("disposition")
+        reason = raw_exclusion.get("reason")
+        paths = raw_exclusion.get("upstream_paths")
+        if (
+            not isinstance(exclusion_id, str)
+            or not re.fullmatch(r"[a-z][a-z0-9-]*", exclusion_id)
+            or exclusion_id in exclusion_ids
+            or exclusion_id in M1_FOUNDATIONS_COMPONENT_IDS
+        ):
+            raise HarnessError(f"M1 foundations exclusion {index} has an invalid id")
+        if disposition not in M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS:
+            raise HarnessError(f"M1 foundations exclusion {exclusion_id} has an invalid disposition")
+        if not isinstance(reason, str) or not reason:
+            raise HarnessError(f"M1 foundations exclusion {exclusion_id} has no reason")
+        if (
+            not isinstance(paths, list)
+            or not paths
+            or not all(isinstance(path, str) and path for path in paths)
+            or len(set(paths)) != len(paths)
+        ):
+            raise HarnessError(f"M1 foundations exclusion {exclusion_id} has invalid upstream paths")
+        exclusion_ids.add(exclusion_id)
+        exclusions.append(
+            {
+                "disposition": disposition,
+                "id": exclusion_id,
+                "reason": reason,
+                "upstream_paths": list(paths),
+            }
+        )
+
+    return {
+        "components": components,
+        "exclusions": exclusions,
+        "execution": expected_execution,
+        "global_evidence": list(M1_FOUNDATIONS_GLOBAL_EVIDENCE),
+        "milestone": {
+            "completion_rule": milestone["completion_rule"],
+            "id": "m1",
+            "nonclaims": list(nonclaims),
+            "status": milestone["status"],
+        },
+        "target": expected_target,
+    }
+
+
+def m1_foundations_contract_record(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Render the checked contract identity retained in each M1 report."""
+
+    return {
+        "format": contract["format"],
+        "path": relative(M1_FOUNDATIONS_CONTRACT),
+        "schema": contract["schema"],
+        "sha256": file_digest(M1_FOUNDATIONS_CONTRACT),
+        "upstream": {
+            "archive_sha256": pin["sha256"],
+            "revision": pin["revision"],
+            "version": pin["version"],
+        },
+    }
+
+
+def m1_foundations_check_command(
+    execution: Mapping[str, Any], check: Mapping[str, Any]
+) -> list[str]:
+    """Build one focused, source-filtered M1 Cargo invocation."""
+
+    command = ["cargo", "test", "-p", str(execution["package"])]
+    features = execution["features"]
+    if features:
+        command.extend(("--features", ",".join(str(feature) for feature in features)))
+    command.extend(("--locked", "--lib", str(check["target"])))
+    command.extend(("--", f"--test-threads={execution['test_threads']}"))
+    return command
+
+
+def run_m1_foundations_checks(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Run every focused M1 check in a gate-private Cargo target directory."""
+
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
+    execution = summary["execution"]
+    records: list[dict[str, Any]] = []
+    for component in summary["components"]:
+        for check in component["checks"]:
+            command = m1_foundations_check_command(execution, check)
+            result = command_record(
+                command,
+                cwd=ROOT,
+                env=environment,
+                timeout_seconds=execution["timeout_seconds"],
+            )
+            require_success(result, f"M1 foundations check {check['id']}")
+            output = str(result["stdout"]) + "\n" + str(result["stderr"])
+            passed_test_count = parse_rust_test_count(output)
+            if passed_test_count != check["expected_passed_test_count"]:
+                raise HarnessError(
+                    f"M1 foundations check {check['id']} passed {passed_test_count} tests; "
+                    f"expected {check['expected_passed_test_count']}"
+                )
+            records.append(
+                {
+                    "component": component["id"],
+                    "command": command,
+                    "evidence_scope": "focused-source-test",
+                    "id": check["id"],
+                    "passed_test_count": passed_test_count,
+                    "target": check["target"],
+                }
+            )
+    return records
+
+
+def m1_foundations_layout_evidence(
+    components: Sequence[Mapping[str, Any]],
+    c_layout: Mapping[str, int],
+    rust_layout: Mapping[str, int],
+) -> dict[str, dict[str, Any]]:
+    """Classify only the layout keys declared by the M1 component contract."""
+
+    evidence: dict[str, dict[str, Any]] = {}
+    for component in components:
+        keys = component["layout_keys"]
+        if not keys:
+            evidence[component["id"]] = {
+                "keys": [],
+                "status": "not-applicable",
+            }
+            continue
+        missing_from_c = sorted(key for key in keys if key not in c_layout)
+        if missing_from_c:
+            raise HarnessError(
+                "M1 foundations required C release layout keys are absent for "
+                f"{component['id']}: {', '.join(missing_from_c)}"
+            )
+        missing_from_rust = sorted(key for key in keys if key not in rust_layout)
+        mismatches = [
+            f"{key} (C={c_layout[key]}, Rust={rust_layout[key]})"
+            for key in keys
+            if key in rust_layout and c_layout[key] != rust_layout[key]
+        ]
+        evidence[component["id"]] = {
+            "keys": list(keys),
+            "missing_from_rust": missing_from_rust,
+            "mismatches": mismatches,
+            "status": "matched" if not missing_from_rust and not mismatches else "pending",
+        }
+    return evidence
+
+
+def m1_foundations_source_state() -> dict[str, Any]:
+    """Capture a clean current commit before or after the finite M1 gate."""
+
+    state = runtime_ticket_zero_soak_source_state()
+    return validate_runtime_ticket_zero_soak_source_state(state, "M1 foundations source")
+
+
+def m1_foundations_source_attestation(before: object, after: object) -> dict[str, Any]:
+    """Require the report to bind every M1 observation to one clean commit."""
+
+    source_before = validate_runtime_ticket_zero_soak_source_state(
+        before, "M1 foundations source before"
+    )
+    source_after = validate_runtime_ticket_zero_soak_source_state(
+        after, "M1 foundations source after"
+    )
+    if not source_before["worktree_clean"] or not source_after["worktree_clean"]:
+        raise HarnessError("M1 foundations requires a clean Git source")
+    if source_before != source_after:
+        raise HarnessError("M1 foundations source changed during execution")
+    return {
+        "after": source_after,
+        "before": source_before,
+        "git_read_environment": dict(RUNTIME_TICKET_ZERO_SOAK_GIT_READ_ENVIRONMENT),
+        "unchanged_during_execution": True,
+    }
+
+
+def m1_foundations_report(
+    *,
+    contract: Mapping[str, Any],
+    pin: Mapping[str, str],
+    summary: Mapping[str, Any],
+    source_attestation: Mapping[str, Any],
+    shared_oracle: Mapping[str, Any],
+    focused_checks: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Render a current-commit M1 evidence report without changing its status."""
+
+    c_oracle = shared_oracle.get("c_oracle")
+    rust_release_layout = shared_oracle.get("rust_release_layout")
+    if not isinstance(c_oracle, Mapping) or not isinstance(rust_release_layout, Mapping):
+        raise HarnessError("M1 foundations shared oracle lacks release layout evidence")
+    profiles = c_oracle.get("profiles")
+    if not isinstance(profiles, Mapping) or not isinstance(profiles.get("release"), Mapping):
+        raise HarnessError("M1 foundations shared oracle lacks the release profile")
+    release = profiles["release"]
+    c_layout = release.get("layout")
+    rust_layout = rust_release_layout.get("layout")
+    if not isinstance(c_layout, Mapping) or not isinstance(rust_layout, Mapping):
+        raise HarnessError("M1 foundations shared oracle release layout is invalid")
+    layout_evidence = m1_foundations_layout_evidence(
+        summary["components"], c_layout, rust_layout
+    )
+
+    compiler_tls = shared_oracle.get("compiler_tls_codegen")
+    dependency_graph = shared_oracle.get("production_dependency_graph")
+    if not isinstance(compiler_tls, Mapping) or compiler_tls.get("status") != "passed":
+        raise HarnessError("M1 foundations compiler-TLS codegen evidence did not pass")
+    if not isinstance(dependency_graph, Mapping):
+        raise HarnessError("M1 foundations production dependency evidence is absent")
+
+    checks_by_component: dict[str, list[dict[str, Any]]] = {
+        component["id"]: [] for component in summary["components"]
+    }
+    for check in focused_checks:
+        component_id = check.get("component")
+        if component_id not in checks_by_component:
+            raise HarnessError("M1 foundations focused check has an unknown component")
+        checks_by_component[component_id].append(dict(check))
+
+    components: list[dict[str, Any]] = []
+    incomplete_components: list[str] = []
+    for component in summary["components"]:
+        component_id = component["id"]
+        checks = checks_by_component[component_id]
+        if len(checks) != len(component["checks"]):
+            raise HarnessError(
+                f"M1 foundations component {component_id} lacks an executed focused check"
+            )
+        layout = layout_evidence[component_id]
+        complete = (
+            component["completion_status"] == "complete"
+            and not component["remaining_conditions"]
+            and layout["status"] in {"matched", "not-applicable"}
+        )
+        if not complete:
+            incomplete_components.append(component_id)
+        components.append(
+            {
+                "completion_status": component["completion_status"],
+                "executed_checks": checks,
+                "id": component_id,
+                "layout_evidence": layout,
+                "remaining_conditions": list(component["remaining_conditions"]),
+                "source_map_records": list(component["source_map_records"]),
+                "status": "complete" if complete else "partial",
+            }
+        )
+
+    milestone_complete = (
+        summary["milestone"]["status"] == "complete" and not incomplete_components
+    )
+    release_layout_artifact = release.get("artifact")
+    if not isinstance(release_layout_artifact, Mapping):
+        raise HarnessError("M1 foundations shared release profile lacks its artifact record")
+    return {
+        "components": components,
+        "contract": m1_foundations_contract_record(contract, pin),
+        "exclusions": list(summary["exclusions"]),
+        "format": 1,
+        "milestone": {
+            "completion_rule": summary["milestone"]["completion_rule"],
+            "id": "m1",
+            "nonclaims": list(summary["milestone"]["nonclaims"]),
+            "status": "complete" if milestone_complete else "partial",
+            "unmet_component_ids": incomplete_components,
+        },
+        "schema": "crabc-mimalloc-m1-foundations-report",
+        "shared_evidence": {
+            "compiler_tls_codegen": {
+                "status": compiler_tls["status"],
+            },
+            "production_dependency_graph": {
+                "status": "recorded",
+            },
+            "release_c_rust_layout": {
+                "c_layout_key_count": len(c_layout),
+                "c_release_artifact": dict(release_layout_artifact),
+                "rust_layout_key_count": len(rust_layout),
+                "rust_subset_comparison": rust_release_layout.get("comparison"),
+                "scope": (
+                    "M1 consumes only the component-declared layout keys; the shared "
+                    "oracle's broader M0/M3/M4 traces are supporting producers, not M1 closure."
+                ),
+            },
+        },
+        "source": dict(source_attestation),
+        "target": dict(summary["target"]),
+    }
+
+
+def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
+    """Execute and record the finite M1 gate, including a clean-commit binding."""
+
+    source_before = m1_foundations_source_state()
+    pin = load_pin()
+    contract = read_json(M1_FOUNDATIONS_CONTRACT)
+    port_map = load_port_map()
+    summary = validate_m1_foundations_contract(contract, pin, port_map)
+    shared_oracle = run_milestone0(
+        offline=offline,
+        generate_contracts=False,
+        check_only=False,
+        architecture="aarch64",
+        write_report=False,
+    )
+    focused_checks = run_m1_foundations_checks(summary)
+    source_after = m1_foundations_source_state()
+    report = m1_foundations_report(
+        contract=contract,
+        pin=pin,
+        summary=summary,
+        source_attestation=m1_foundations_source_attestation(source_before, source_after),
+        shared_oracle=shared_oracle,
+        focused_checks=focused_checks,
+    )
+    write_json(M1_FOUNDATIONS_REPORT, report)
+    return report
+
+
+def m1_foundations_unmet_message(report: Mapping[str, Any]) -> str:
+    """Explain an intentional M1 partial result without calling it a test failure."""
+
+    milestone = report.get("milestone")
+    if not isinstance(milestone, Mapping):
+        return "M1 foundations report is invalid"
+    components = milestone.get("unmet_component_ids")
+    if not isinstance(components, list) or not all(isinstance(component, str) for component in components):
+        return "M1 foundations report has no valid unmet-component record"
+    return (
+        "M1 foundations remain partial for "
+        + ", ".join(components)
+        + f"; review {relative(M1_FOUNDATIONS_REPORT)}"
+    )
+
+
 def source_function_body(source_text: str, *, path: str, function: str) -> str:
     """Return one simple C function body from pinned source text.
 
@@ -6166,6 +6863,7 @@ def ratchet_payload(port_map: Mapping[str, Any]) -> dict[str, Any]:
         "adapted_stress_test_contract_sha256": file_digest(ADAPTED_STRESS_TEST_CONTRACT),
         "native_shadow_stress_fixture_count": len(native_shadow_stress["source_hashes"]),
         "native_shadow_stress_contract_sha256": file_digest(NATIVE_SHADOW_STRESS_CONTRACT),
+        "m1_foundations_contract_sha256": file_digest(M1_FOUNDATIONS_CONTRACT),
         "owner_exit_publication_contract_sha256": file_digest(
             OWNER_EXIT_PUBLICATION_CONTRACT
         ),
@@ -6220,6 +6918,7 @@ def check_ratchet(port_map: Mapping[str, Any]) -> None:
         "adapted_test_contract_sha256",
         "adapted_stress_test_contract_sha256",
         "native_shadow_stress_contract_sha256",
+        "m1_foundations_contract_sha256",
         "owner_exit_publication_contract_sha256",
         "api_contract_sha256",
         "port_map_sha256",
@@ -10865,6 +11564,11 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--quick", action="store_true", help="run the Milestone 0 C oracle and deterministic contract gate")
+    mode.add_argument(
+        "--m1",
+        action="store_true",
+        help="run the current-commit finite M1 foundations evidence gate",
+    )
     mode.add_argument("--full", action="store_true", help="run the audited Milestone 5 full-lane report")
     mode.add_argument(
         "--churn",
@@ -10914,13 +11618,14 @@ def parse_arguments() -> argparse.Namespace:
         )
     )
     arguments = parser.parse_args()
-    if not any((arguments.quick, arguments.full, arguments.churn, arguments.soak, arguments.native_shadow_stress, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
-        parser.error("choose --quick, --full, --churn, --soak, --native-shadow-stress, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
+    if not any((arguments.quick, arguments.m1, arguments.full, arguments.churn, arguments.soak, arguments.native_shadow_stress, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
+        parser.error("choose --quick, --m1, --full, --churn, --soak, --native-shadow-stress, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
     if arguments.generate_contracts or arguments.snapshot_ratchet:
-        if arguments.quick or arguments.full or arguments.churn or arguments.soak or arguments.native_shadow_stress or arguments.perf_smoke or arguments.perf_full:
+        if arguments.quick or arguments.m1 or arguments.full or arguments.churn or arguments.soak or arguments.native_shadow_stress or arguments.perf_smoke or arguments.perf_full:
             parser.error("contract generation/snapshot cannot be combined with a gate mode")
     if arguments.architecture == "x86_64" and (
-        arguments.full
+        arguments.m1
+        or arguments.full
         or arguments.perf_smoke
         or arguments.perf_full
         or arguments.generate_contracts
@@ -10964,6 +11669,12 @@ def main() -> int:
                 architecture=arguments.architecture,
             )
             print(json.dumps(result, sort_keys=True))
+            return 0
+        if arguments.m1:
+            report = run_m1_foundations(offline=arguments.offline)
+            print(M1_FOUNDATIONS_REPORT)
+            if report["milestone"]["status"] != "complete":
+                raise MilestoneUnavailable(m1_foundations_unmet_message(report))
             return 0
         if arguments.soak:
             run_runtime_ticket_zero_soak(

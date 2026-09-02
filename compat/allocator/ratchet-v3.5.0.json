@@ -8,6 +8,7 @@
   "api_total_item_count": 336,
   "configuration_profile_count": 5,
   "format": 1,
+  "m1_foundations_contract_sha256": "bda2cb6f33bc1188bba5856ea2412e8ac85546c78b9e82c268b3a7bf18594478",
   "native_shadow_stress_contract_sha256": "cdef617f743ccd7c26283a3ce22ce17c43d6ae79b3873ac400a54fb1749139c8",
   "native_shadow_stress_fixture_count": 1,
   "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
