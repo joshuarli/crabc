@@ -32,7 +32,7 @@ import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -173,6 +173,7 @@ M1_FOUNDATIONS_CONTRACT = ALLOCATOR_ROOT / "m1-foundations-v3.5.0.json"
 M1_FOUNDATIONS_REPORT = REPORT_ROOT / "m1-foundations-latest.json"
 M1_FOUNDATIONS_CARGO_TARGET = ARTIFACT_ROOT / "m1-foundations/cargo-target"
 M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/raw-primitive-trace"
+M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/compiler-tls-trace"
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -215,6 +216,7 @@ M1_FOUNDATIONS_COMPONENT_IDS = (
 M1_FOUNDATIONS_GLOBAL_EVIDENCE = (
     "release-c-rust-layout",
     "raw-primitive-c-rust-trace",
+    "compiler-tls-c-rust-trace",
     "compiler-tls-codegen",
     "production-dependency-graph",
 )
@@ -764,6 +766,15 @@ ORACLE_SOURCES = (
 # singular; `src/prim/prim.c` continues to own the Unix primitive inclusion.
 M1_RAW_PRIMITIVE_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/os.c"
+)
+
+# Both compiler-TLS readers include the pinned `src/threadlocal.c` directly
+# to observe its otherwise-private direct TLS roots. Their source lists omit
+# the standalone translation unit so every C definition remains singular. The
+# image reader and normal transition reader are deliberately separate: only
+# the former suppresses `src/prim/prim.c` automatic process attach.
+M1_COMPILER_TLS_ORACLE_SOURCES = tuple(
+    item for item in ORACLE_SOURCES if item != "src/threadlocal.c"
 )
 
 # The reviewed M4 and M5 adapters are intentionally partial adaptations, not a
@@ -2270,6 +2281,137 @@ int main(void) {
 """
 
 
+# The image reader directly includes `src/threadlocal.c` solely to observe
+# its private static root and direct-TLS declarations. It is compiled with
+# the same isolated constructor-suppression define as the M1 bootstrap reader;
+# it never calls a process/thread initializer or exercises a normal artifact.
+M1_COMPILER_TLS_IMAGE_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+#include <mimalloc/prim.h>
+#include <mimalloc/prim-tls.h>
+
+// The selected direct-thread-pointer branch does not need this declaration in
+// `prim-tls.h`, but `prim-tls.c:32` still defines the source helper root.
+extern mi_decl_hidden mi_decl_thread void* __mi_thread_id_helper;
+
+// Resolved through `-I <pinned-source>/src`; this exposes only the source
+// private static root image for this dedicated reader translation unit.
+#include "threadlocal.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+int main(void) {
+  const mi_thread_locals_t* const dynamic = mi_thread_locals_peek();
+  if (dynamic == NULL) return 10;
+  const mi_memid_t memid = dynamic->memid;
+  const mi_threadid_t identity = _mi_prim_thread_id();
+
+  puts("CRABC_MI_M1_TLS_IMAGE_TRACE_BEGIN");
+  U("m1.tls.image.dynamic.is_empty", dynamic == &mi_thread_locals_empty);
+  U("m1.tls.image.dynamic.count", dynamic->count);
+  U("m1.tls.image.dynamic.memid.base_is_null", memid.mem.os.base == NULL);
+  U("m1.tls.image.dynamic.memid.size", memid.mem.os.size);
+  U("m1.tls.image.dynamic.memid.kind", memid.memkind);
+  U("m1.tls.image.dynamic.memid.pinned", memid.is_pinned);
+  U("m1.tls.image.dynamic.memid.initially_committed", memid.initially_committed);
+  U("m1.tls.image.dynamic.memid.initially_zero", memid.initially_zero);
+  U("m1.tls.image.dynamic.slot0.version", dynamic->slots[0].version);
+  U("m1.tls.image.dynamic.slot0.value_is_null", dynamic->slots[0].value == NULL);
+  U("m1.tls.image.fast_is_null", mi_slot_fast_peek() == NULL);
+  U("m1.tls.image.default_is_empty", _mi_theap_default() == (mi_theap_t*)&_mi_theap_empty);
+  U("m1.tls.image.cached_is_empty", _mi_theap_cached() == (mi_theap_t*)&_mi_theap_empty);
+  U("m1.tls.image.helper_is_null", __mi_thread_id_helper == NULL);
+  U("m1.tls.image.identity.nonzero", identity != 0);
+  U("m1.tls.image.identity.not_helper", identity != (mi_threadid_t)(uintptr_t)&__mi_thread_id_helper);
+  U("m1.tls.image.empty_theap.refcount", mi_atomic_load_relaxed(&_mi_theap_empty.refcount));
+  puts("CRABC_MI_M1_TLS_IMAGE_TRACE_END");
+  return 0;
+}
+"""
+
+
+# This normal-artifact reader drives only two finite source primitives. The
+# first is the positive-count regular backing teardown in `threadlocal.c`; the
+# second is the source-local cached-root store/refcount pair. It deliberately
+# does not call `_mi_thread_done`, `mi_thread_theaps_done`, or any pthread/
+# process hook, so it cannot be mistaken for the composite M5 lifecycle.
+M1_COMPILER_TLS_TRANSITION_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+#include <mimalloc/prim.h>
+#include <mimalloc/prim-tls.h>
+
+// Resolved through `-I <pinned-source>/src`; this lets the probe inspect the
+// raw dynamic-root and fast-slot state immediately around the exact source
+// teardown routine without altering the pinned archive.
+#include "threadlocal.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+int main(void) {
+  uintptr_t payload = 0x5a;
+  const mi_thread_local_t regular_key = ((mi_thread_local_t)1 << 16);
+  if (!_mi_thread_local_set(regular_key, &payload)) return 10;
+  const mi_thread_locals_t* const regular_before = mi_thread_locals_peek();
+  if (regular_before == NULL || regular_before->count != 16) return 11;
+  const size_t regular_count = regular_before->count;
+  const size_t regular_slot0_version = regular_before->slots[0].version;
+  const bool regular_slot0_value_nonnull = regular_before->slots[0].value != NULL;
+  if (!mi_slot_fast_set(&payload)) return 12;
+  const bool regular_fast_nonnull = mi_slot_fast_peek() != NULL;
+  mi_theap_t* const default_before = _mi_theap_default();
+  mi_theap_t* const cached_before = _mi_theap_cached();
+  _mi_thread_locals_thread_done();
+  const bool default_unchanged = _mi_theap_default() == default_before;
+  const bool cached_unchanged = _mi_theap_cached() == cached_before;
+
+  // Normalize only the probe's cache predecessor. The previous normal root
+  // is source-owned and is not part of the primitive refcount witness.
+  _mi_theap_cached_set((mi_theap_t*)&_mi_theap_empty);
+  mi_theap_t dynamic = mi_init_struct_zero;
+  dynamic.memid = _mi_memid_create(MI_MEM_MALLOC);
+  mi_atomic_store_relaxed(&dynamic.refcount, 1);
+  const size_t empty_before = mi_atomic_load_relaxed(&_mi_theap_empty.refcount);
+  if (mi_atomic_load_relaxed(&dynamic.refcount) != 1) return 13;
+  _mi_theap_cached_set(&dynamic);
+  const bool cached_is_dynamic = _mi_theap_cached() == &dynamic;
+  const size_t dynamic_enter = mi_atomic_load_relaxed(&dynamic.refcount);
+  const size_t empty_enter = mi_atomic_load_relaxed(&_mi_theap_empty.refcount);
+  _mi_theap_cached_set((mi_theap_t*)&_mi_theap_empty);
+
+  puts("CRABC_MI_M1_TLS_TRANSITION_TRACE_BEGIN");
+  U("m1.tls.regular.before.count", regular_count);
+  U("m1.tls.regular.before.slot0.version", regular_slot0_version);
+  U("m1.tls.regular.before.slot0.value_nonnull", regular_slot0_value_nonnull);
+  U("m1.tls.regular.before.fast_nonnull", regular_fast_nonnull);
+  U("m1.tls.regular.after.dynamic_is_null", mi_thread_locals_peek() == NULL);
+  U("m1.tls.regular.after.fast_is_null", mi_slot_fast_peek() == NULL);
+  U("m1.tls.regular.after.default_unchanged", default_unchanged);
+  U("m1.tls.regular.after.cached_unchanged", cached_unchanged);
+  U("m1.tls.cache.initial.empty_refcount", empty_before);
+  U("m1.tls.cache.enter.cached_is_dynamic", cached_is_dynamic);
+  U("m1.tls.cache.enter.dynamic_refcount", dynamic_enter);
+  U("m1.tls.cache.enter.empty_refcount", empty_enter);
+  U("m1.tls.cache.reset.cached_is_empty", _mi_theap_cached() == (mi_theap_t*)&_mi_theap_empty);
+  U("m1.tls.cache.reset.dynamic_refcount", mi_atomic_load_relaxed(&dynamic.refcount));
+  U("m1.tls.cache.reset.empty_refcount", mi_atomic_load_relaxed(&_mi_theap_empty.refcount));
+  puts("CRABC_MI_M1_TLS_TRANSITION_TRACE_END");
+  return 0;
+}
+"""
+
+
 # This schema freezes the selected direct C/Rust fundamental trace. Comparing
 # only the two observed maps would allow a synchronized deletion to silently
 # shrink the recorded contract. The 51-field base is shared, while the 24-field
@@ -2436,6 +2578,58 @@ M1_RAW_PRIMITIVE_TRACE_EXPECTED_COUNT = 47
 M1_RAW_PRIMITIVE_ADDRESS_LIKE_SCALAR_KEYS = frozenset(
     {"m1.raw.config.virtual_address_bits"}
 )
+
+
+# These two C records deliberately remain distinct execution modes. The first
+# reads only compiler/linker initialized source state, while the second lets
+# the normal C artifact exercise the finite regular-backing and cached-root
+# primitives. The union is fixed so matching C/Rust probes cannot erase a
+# root, reset, or reference-count transition together.
+M1_COMPILER_TLS_IMAGE_TRACE_EXPECTED_KEYS = frozenset(
+    {
+        "m1.tls.image.dynamic.is_empty",
+        "m1.tls.image.dynamic.count",
+        "m1.tls.image.dynamic.memid.base_is_null",
+        "m1.tls.image.dynamic.memid.size",
+        "m1.tls.image.dynamic.memid.kind",
+        "m1.tls.image.dynamic.memid.pinned",
+        "m1.tls.image.dynamic.memid.initially_committed",
+        "m1.tls.image.dynamic.memid.initially_zero",
+        "m1.tls.image.dynamic.slot0.version",
+        "m1.tls.image.dynamic.slot0.value_is_null",
+        "m1.tls.image.fast_is_null",
+        "m1.tls.image.default_is_empty",
+        "m1.tls.image.cached_is_empty",
+        "m1.tls.image.helper_is_null",
+        "m1.tls.image.identity.nonzero",
+        "m1.tls.image.identity.not_helper",
+        "m1.tls.image.empty_theap.refcount",
+    }
+)
+M1_COMPILER_TLS_TRANSITION_TRACE_EXPECTED_KEYS = frozenset(
+    {
+        "m1.tls.regular.before.count",
+        "m1.tls.regular.before.slot0.version",
+        "m1.tls.regular.before.slot0.value_nonnull",
+        "m1.tls.regular.before.fast_nonnull",
+        "m1.tls.regular.after.dynamic_is_null",
+        "m1.tls.regular.after.fast_is_null",
+        "m1.tls.regular.after.default_unchanged",
+        "m1.tls.regular.after.cached_unchanged",
+        "m1.tls.cache.initial.empty_refcount",
+        "m1.tls.cache.enter.cached_is_dynamic",
+        "m1.tls.cache.enter.dynamic_refcount",
+        "m1.tls.cache.enter.empty_refcount",
+        "m1.tls.cache.reset.cached_is_empty",
+        "m1.tls.cache.reset.dynamic_refcount",
+        "m1.tls.cache.reset.empty_refcount",
+    }
+)
+M1_COMPILER_TLS_TRACE_EXPECTED_KEYS = frozenset(
+    M1_COMPILER_TLS_IMAGE_TRACE_EXPECTED_KEYS
+    | M1_COMPILER_TLS_TRANSITION_TRACE_EXPECTED_KEYS
+)
+M1_COMPILER_TLS_TRACE_EXPECTED_COUNT = 32
 
 
 class HarnessError(RuntimeError):
@@ -4795,6 +4989,79 @@ def run_m1_raw_primitive_differential(
     }
 
 
+def run_m1_compiler_tls_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the finite compiler-TLS roots/primitives with pinned C.
+
+    The initial root image is intentionally a constructor-suppressed C
+    reader, while the regular-reset and cached-root pair run in a normal C
+    artifact. The Rust test emits their fixed address-independent union, but
+    makes no composite ``mi_thread_theaps_done`` lifecycle claim.
+    """
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m1-compiler-tls-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m1_compiler_tls_trace(
+            compiler,
+            source,
+            M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "dynamic_theap::tests::emit_m1_compiler_tls_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M1 compiler-TLS trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m1_compiler_tls_trace(rust_output)
+    validate_m1_compiler_tls_full_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M1 compiler-TLS trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m1_compiler_tls_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "constructor-suppressed pinned-C root image plus ordinary pinned-C "
+            "threadlocal.c positive-count regular reset and a controlled no-page C "
+            "prim-tls.c cached-root/reference pair only; no _mi_thread_done, "
+            "mi_thread_theaps_done, same-TLD default/cached terminal reset, shared-list "
+            "detach, page-bearing owner, pthread/process hook, or public allocator lifecycle"
+        ),
+        "status": comparison["status"],
+    }
+
+
 def m1_foundations_layout_evidence(
     components: Sequence[Mapping[str, Any]],
     c_layout: Mapping[str, int],
@@ -4875,6 +5142,7 @@ def m1_foundations_report(
     source_attestation: Mapping[str, Any],
     shared_oracle: Mapping[str, Any],
     raw_primitive_differential: Mapping[str, Any],
+    compiler_tls_differential: Mapping[str, Any],
     focused_checks: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Render a current-commit M1 evidence report without changing its status."""
@@ -4927,6 +5195,21 @@ def m1_foundations_report(
         or not isinstance(raw_rust, Mapping)
     ):
         raise HarnessError("M1 foundations raw C/Rust differential record is invalid")
+    if (
+        not isinstance(compiler_tls_differential, Mapping)
+        or compiler_tls_differential.get("status") != "matched"
+    ):
+        raise HarnessError("M1 foundations compiler-TLS C/Rust differential did not match")
+    compiler_tls_comparison = compiler_tls_differential.get("comparison")
+    compiler_tls_c_oracle = compiler_tls_differential.get("c_oracle")
+    compiler_tls_rust = compiler_tls_differential.get("rust")
+    if (
+        not isinstance(compiler_tls_comparison, Mapping)
+        or compiler_tls_comparison.get("status") != "matched"
+        or not isinstance(compiler_tls_c_oracle, Mapping)
+        or not isinstance(compiler_tls_rust, Mapping)
+    ):
+        raise HarnessError("M1 foundations compiler-TLS C/Rust differential record is invalid")
 
     checks_by_component: dict[str, list[dict[str, Any]]] = {
         component["id"]: [] for component in summary["components"]
@@ -4950,11 +5233,16 @@ def m1_foundations_report(
         raw_trace_matched = (
             component_id != "linux-raw-primitives" or raw_comparison["status"] == "matched"
         )
+        compiler_tls_trace_matched = (
+            component_id != "compiler-tls-roots"
+            or compiler_tls_comparison["status"] == "matched"
+        )
         complete = (
             component["completion_status"] == "complete"
             and not component["remaining_conditions"]
             and layout["status"] in {"matched", "not-applicable"}
             and raw_trace_matched
+            and compiler_tls_trace_matched
         )
         if not complete:
             incomplete_components.append(component_id)
@@ -4978,6 +5266,11 @@ def m1_foundations_report(
             report_component["c_rust_differential"] = {
                 "compared_value_count": raw_comparison.get("compared_value_count"),
                 "status": raw_comparison["status"],
+            }
+        if component_id == "compiler-tls-roots":
+            report_component["c_rust_differential"] = {
+                "compared_value_count": compiler_tls_comparison.get("compared_value_count"),
+                "status": compiler_tls_comparison["status"],
             }
         components.append(report_component)
 
@@ -5004,6 +5297,13 @@ def m1_foundations_report(
         "shared_evidence": {
             "compiler_tls_codegen": {
                 "status": compiler_tls["status"],
+            },
+            "compiler_tls_c_rust_trace": {
+                "c_source_files": compiler_tls_c_oracle.get("source_files"),
+                "compared_value_count": compiler_tls_comparison.get("compared_value_count"),
+                "rust_passed_test_count": compiler_tls_rust.get("passed_test_count"),
+                "scope": compiler_tls_differential.get("scope"),
+                "status": compiler_tls_comparison["status"],
             },
             "production_dependency_graph": {
                 "status": "recorded",
@@ -5064,6 +5364,11 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
     )
+    compiler_tls_differential = run_m1_compiler_tls_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+    )
     focused_checks = run_m1_foundations_checks(summary)
     source_after = m1_foundations_source_state()
     report = m1_foundations_report(
@@ -5073,6 +5378,7 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
         source_attestation=m1_foundations_source_attestation(source_before, source_after),
         shared_oracle=shared_oracle,
         raw_primitive_differential=raw_primitive_differential,
+        compiler_tls_differential=compiler_tls_differential,
         focused_checks=focused_checks,
     )
     write_json(M1_FOUNDATIONS_REPORT, report)
@@ -8746,6 +9052,39 @@ def parse_m1_raw_primitive_trace(output: str) -> dict[str, int]:
     )
 
 
+def parse_m1_compiler_tls_image_trace(output: str) -> dict[str, int]:
+    """Parse the constructor-suppressed compiler-TLS root image record."""
+
+    return parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M1_TLS_IMAGE_TRACE_BEGIN",
+        end="CRABC_MI_M1_TLS_IMAGE_TRACE_END",
+        description="M1 compiler-TLS image trace",
+    )
+
+
+def parse_m1_compiler_tls_transition_trace(output: str) -> dict[str, int]:
+    """Parse the normal-artifact finite TLS primitive record."""
+
+    return parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M1_TLS_TRANSITION_TRACE_BEGIN",
+        end="CRABC_MI_M1_TLS_TRANSITION_TRACE_END",
+        description="M1 compiler-TLS transition trace",
+    )
+
+
+def parse_m1_compiler_tls_trace(output: str) -> dict[str, int]:
+    """Parse the full Rust compiler-TLS record emitted by one focused test."""
+
+    return parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M1_TLS_TRACE_BEGIN",
+        end="CRABC_MI_M1_TLS_TRACE_END",
+        description="M1 compiler-TLS C/Rust trace",
+    )
+
+
 def parse_rust_test_count(output: str) -> int:
     matches = re.findall(
         r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
@@ -9069,6 +9408,106 @@ def compare_m1_raw_primitive_trace(
     if problems:
         raise HarnessError(
             "Rust M1 raw-primitive trace differs from pinned C: " + "; ".join(problems)
+        )
+    return {"compared_value_count": len(rust_trace), "status": "matched"}
+
+
+def validate_m1_compiler_tls_trace_schema(
+    trace: Mapping[str, int], *, source: str, expected_keys: frozenset[str], expected_count: int
+) -> None:
+    """Refuse a narrowed or widened compiler-TLS source record."""
+
+    if len(expected_keys) != expected_count:
+        raise HarnessError("internal M1 compiler-TLS trace schema has an unexpected key count")
+    observed = set(trace)
+    missing = sorted(expected_keys.difference(observed))
+    unexpected = sorted(observed.difference(expected_keys))
+    if missing or unexpected:
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M1 compiler-TLS trace does not match the fixed "
+            f"{expected_count}-key schema: " + "; ".join(problems)
+        )
+
+
+def validate_m1_compiler_tls_image_trace(trace: Mapping[str, int], *, source: str) -> None:
+    """Validate the isolated root-image subset before records are combined."""
+
+    validate_m1_compiler_tls_trace_schema(
+        trace,
+        source=source,
+        expected_keys=M1_COMPILER_TLS_IMAGE_TRACE_EXPECTED_KEYS,
+        expected_count=len(M1_COMPILER_TLS_IMAGE_TRACE_EXPECTED_KEYS),
+    )
+
+
+def validate_m1_compiler_tls_transition_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Validate the normal-artifact primitive subset before records are combined."""
+
+    validate_m1_compiler_tls_trace_schema(
+        trace,
+        source=source,
+        expected_keys=M1_COMPILER_TLS_TRANSITION_TRACE_EXPECTED_KEYS,
+        expected_count=len(M1_COMPILER_TLS_TRANSITION_TRACE_EXPECTED_KEYS),
+    )
+
+
+def validate_m1_compiler_tls_full_trace(trace: Mapping[str, int], *, source: str) -> None:
+    """Validate the union consumed by the C/Rust differential comparator."""
+
+    validate_m1_compiler_tls_trace_schema(
+        trace,
+        source=source,
+        expected_keys=M1_COMPILER_TLS_TRACE_EXPECTED_KEYS,
+        expected_count=M1_COMPILER_TLS_TRACE_EXPECTED_COUNT,
+    )
+
+
+def merge_m1_compiler_tls_trace(
+    image_trace: Mapping[str, int], transition_trace: Mapping[str, int], *, source: str
+) -> dict[str, int]:
+    """Join the two deliberately separate C execution modes without overlap."""
+
+    overlap = sorted(set(image_trace).intersection(transition_trace))
+    if overlap:
+        raise HarnessError(
+            f"{source} M1 compiler-TLS image/transition records overlap: " + ", ".join(overlap)
+        )
+    merged = {**image_trace, **transition_trace}
+    validate_m1_compiler_tls_full_trace(merged, source=source)
+    return merged
+
+
+def compare_m1_compiler_tls_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require the finite source-specific TLS roots/primitives to match."""
+
+    validate_m1_compiler_tls_full_trace(c_trace, source="pinned C")
+    validate_m1_compiler_tls_full_trace(rust_trace, source="Rust")
+    missing_from_c = sorted(set(rust_trace).difference(c_trace))
+    missing_from_rust = sorted(set(c_trace).difference(rust_trace))
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in sorted(set(c_trace).intersection(rust_trace))
+        if c_trace[key] != rust_trace[key]
+    ]
+    problems: list[str] = []
+    if missing_from_c:
+        problems.append("missing from C oracle: " + ", ".join(missing_from_c))
+    if missing_from_rust:
+        problems.append("missing from Rust port: " + ", ".join(missing_from_rust))
+    if mismatches:
+        problems.append("value mismatches: " + ", ".join(mismatches))
+    if problems:
+        raise HarnessError(
+            "Rust M1 compiler-TLS trace differs from pinned C: " + "; ".join(problems)
         )
     return {"compared_value_count": len(rust_trace), "status": "matched"}
 
@@ -9635,6 +10074,103 @@ def build_m1_raw_primitive_trace(
                 "src/prim/unix/prim.c",
             ),
         ),
+    }
+
+
+def build_m1_compiler_tls_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Run the finite compiler-TLS C records in their two source modes.
+
+    The pre-process image and normal regular-backing/cache primitives cannot
+    share a process: the former must suppress automatic attach, while the
+    latter must retain the ordinary pinned C artifact configuration. Their
+    non-overlapping address-free records are joined only after each mode has
+    passed its own fixed schema.
+    """
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    def build_one(
+        *,
+        name: str,
+        probe: str,
+        defines: Sequence[str],
+        parser: Callable[[str], dict[str, int]],
+        validator: Callable[[Mapping[str, int]], None],
+    ) -> dict[str, Any]:
+        trace_source = profile_dir / f"m1-compiler-tls-{name}-trace-probe.c"
+        trace_binary = profile_dir / f"m1-compiler-tls-{name}-trace-probe"
+        trace_source.write_text(probe, encoding="utf-8")
+        command = [
+            compiler,
+            "-std=c11",
+            "-fPIC",
+            "-ftls-model=initial-exec",
+            "-DMI_SHARED_LIB",
+            "-DMI_SHARED_LIB_EXPORT",
+            "-DMI_LIBC_MUSL=1",
+            *defines,
+            "-I",
+            str(source / "include"),
+            "-I",
+            str(source / "src"),
+            *profile_flags,
+            str(trace_source),
+            *(str(source / item) for item in M1_COMPILER_TLS_ORACLE_SOURCES),
+            "-pthread",
+            "-o",
+            str(trace_binary),
+        ]
+        build = command_record(command, cwd=source)
+        require_success(build, f"pinned C M1 compiler-TLS {name} trace build")
+        run = command_record((str(trace_binary),), cwd=source)
+        require_success(run, f"pinned C M1 compiler-TLS {name} trace execution")
+        record = parser(str(run["stdout"]))
+        validator(record)
+        return {
+            "command": command,
+            "defines": list(defines),
+            "record": record,
+        }
+
+    image = build_one(
+        name="image",
+        probe=M1_COMPILER_TLS_IMAGE_TRACE_PROBE,
+        defines=M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES,
+        parser=parse_m1_compiler_tls_image_trace,
+        validator=lambda record: validate_m1_compiler_tls_image_trace(record, source="pinned C"),
+    )
+    transition = build_one(
+        name="transition",
+        probe=M1_COMPILER_TLS_TRANSITION_TRACE_PROBE,
+        defines=(),
+        parser=parse_m1_compiler_tls_transition_trace,
+        validator=lambda record: validate_m1_compiler_tls_transition_trace(
+            record, source="pinned C"
+        ),
+    )
+    return {
+        "image": image,
+        "record": merge_m1_compiler_tls_trace(
+            image["record"], transition["record"], source="pinned C"
+        ),
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc/prim-tls.h",
+                "include/mimalloc/internal.h",
+                "src/threadlocal.c",
+                "src/prim/prim-tls.c",
+                "src/theap.c",
+                "src/init.c",
+                "src/prim/prim.c",
+            ),
+        ),
+        "transition": transition,
     }
 
 

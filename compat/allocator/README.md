@@ -45,7 +45,7 @@ original-ChaCha primitive. The random slice includes direct `getrandom`,
 error/short-read weak continuation, source counter/nonce/output clearing, and
 in-place address-identity splitting; its dependency-owned replacement for the
 source-local weak shuffle is recorded in `known-differences.md`. Five private
-compiler-TLS roots now preserve the pinned initial images and teardown values,
+compiler-TLS roots now preserve the pinned initial images and selected teardown values,
 while the selected Linux/AArch64 thread identity reads `TPIDR_EL0` directly. A
 process-static private metadata owner now ports the successful detached-Malloc
 paths in `src/subproc.c:19-88`: it directly maps its page map and external
@@ -987,9 +987,14 @@ no-hint/non-large map transition sequence, NUMA/current-node relation,
 monotonic-yield observation, successful zero/16-byte entropy calls, and the
 constant-false threadpool observation. It deliberately excludes addresses,
 random bytes, timestamps, error/fallback branches, hints, and huge/THP policy.
-That finite raw closure does not close M1: compiler TLS remains partial at the
-combined `src/init.c:mi_thread_theaps_done` terminal default/cached reset and
-`src/prim/prim-tls.c:_mi_theap_cached_set` cached-root/refcount boundary.
+The bounded compiler-TLS subsidiary trace adds one 32-field direct pinned-C/Rust
+record: a constructor-suppressed initial five-root image and TPIDR identity,
+the count-zero image plus positive regular-slot reset, and the local
+cached-Theap `1 -> 2 -> 1` reference pair. It deliberately does not bind the
+same-TLD `src/init.c:mi_thread_theaps_done` terminal default/cached reset,
+shared-list detach, or final teardown; it also excludes page-bearing TLS
+attachment and M5 process/thread lifecycle integration. Compiler TLS therefore
+remains partial despite the matched subsidiary trace.
 The complete finite configuration-and-arithmetic component compares
 every frozen `config.*` C/Rust record and a compact representable scalar
 vector, including `_mi_is_power_of_two(0)`, generic non-power-of-two

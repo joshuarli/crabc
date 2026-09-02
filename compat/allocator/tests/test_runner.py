@@ -1505,6 +1505,24 @@ CRABC_MI_M1_RAW_TRACE_END
         ):
             RUNNER.compare_m1_raw_primitive_trace(trace, trace)
 
+    def test_m1_compiler_tls_trace_schema_requires_every_selected_source_fact(self) -> None:
+        self.assertEqual(RUNNER.M1_COMPILER_TLS_TRACE_EXPECTED_COUNT, 32)
+        self.assertEqual(
+            len(RUNNER.M1_COMPILER_TLS_TRACE_EXPECTED_KEYS),
+            RUNNER.M1_COMPILER_TLS_TRACE_EXPECTED_COUNT,
+        )
+        trace = {key: 1 for key in RUNNER.M1_COMPILER_TLS_TRACE_EXPECTED_KEYS}
+        self.assertEqual(
+            RUNNER.compare_m1_compiler_tls_trace(trace, trace),
+            {"compared_value_count": 32, "status": "matched"},
+        )
+        trace.pop("m1.tls.cache.reset.dynamic_refcount")
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError,
+            r"fixed 32-key schema.*m1\.tls\.cache\.reset\.dynamic_refcount",
+        ):
+            RUNNER.compare_m1_compiler_tls_trace(trace, trace)
+
     def test_fundamental_trace_same_run_marker_cannot_claim_comparison(self) -> None:
         status = RUNNER.pending_fundamental_trace_comparison()
         self.assertEqual(status["status"], "pending")
@@ -2280,6 +2298,10 @@ class ContractTests(unittest.TestCase):
             [check["id"] for check in compiler_tls["checks"]],
         )
         self.assertIn(
+            "compiler-tls-c-rust-trace",
+            [check["id"] for check in compiler_tls["checks"]],
+        )
+        self.assertIn(
             {
                 "kind": "item",
                 "name": "current-thread-allocator-owned-regular-tls-backing",
@@ -2287,6 +2309,20 @@ class ContractTests(unittest.TestCase):
                 "upstream": "src/threadlocal.c",
             },
             compiler_tls["source_map_records"],
+        )
+        self.assertEqual(
+            [
+                record["name"]
+                for record in compiler_tls["source_map_records"]
+                if record["required_statuses"]
+                == ["implemented", "unit_verified", "differential_verified"]
+            ],
+            [
+                "linux-aarch64-private-compiler-tls-root-image-and-thread-identity",
+                "count-zero-root-image-and-positive-regular-reset",
+                "canonical-empty-cached-root-transition",
+                "cached-theap-reference-pair",
+            ],
         )
         raw_primitives = next(
             component
@@ -2630,6 +2666,13 @@ class ContractTests(unittest.TestCase):
                 "scope": "selected raw M1 source paths",
                 "status": "matched",
             },
+            compiler_tls_differential={
+                "c_oracle": {"source_files": []},
+                "comparison": {"compared_value_count": 32, "status": "matched"},
+                "rust": {"passed_test_count": 1},
+                "scope": "selected compiler-TLS M1 source paths",
+                "status": "matched",
+            },
             focused_checks=focused_checks,
         )
 
@@ -2657,6 +2700,16 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             raw_component["c_rust_differential"],
             {"compared_value_count": 47, "status": "matched"},
+        )
+        compiler_tls_component = next(
+            component
+            for component in report["components"]
+            if component["id"] == "compiler-tls-roots"
+        )
+        self.assertEqual(compiler_tls_component["status"], "partial")
+        self.assertEqual(
+            compiler_tls_component["c_rust_differential"],
+            {"compared_value_count": 32, "status": "matched"},
         )
 
     def test_native_owner_exit_lifecycle_contract_covers_every_reviewed_condition(self) -> None:

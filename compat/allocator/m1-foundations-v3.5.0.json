@@ -1136,13 +1136,18 @@
           "expected_passed_test_count": 1,
           "id": "allocator-owned-key-registry",
           "target": "owned_tls_key_registry::tests::allocator_owned_registry_does_not_install_or_export_compiler_tls_roots"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "compiler-tls-c-rust-trace",
+          "target": "dynamic_theap::tests::emit_m1_compiler_tls_c_rust_trace"
         }
       ],
       "completion_status": "partial",
       "id": "compiler-tls-roots",
       "layout_keys": [],
       "remaining_conditions": [
-        "Default/cached terminal-root reset is owned by src/init.c:mi_thread_theaps_done (377-421), while cached-root publication and paired refcount changes are owned by src/prim/prim-tls.c:_mi_theap_cached_set (211-229). No finite pinned-C/Rust trace binds those combined boundaries, so this component remains partial.",
+        "A bounded 32-field native C/Rust trace covers the selected initial compiler-TLS roots and identity, count-zero image, positive regular-slot reset, and local cached-root/reference pair. It does not bind the same-TLD terminal sequence in src/init.c:mi_thread_theaps_done (377-421): default/cached reset, shared-list detach, and final teardown. Rust's static/default attachment and dynamic/cached attachment use separate TLD images, so compiler TLS remains partial.",
         "The later process/thread lifecycle, page-bearing TLS attachment, and public runtime integration stay explicitly outside this M1 component."
       ],
       "source_map_records": [
@@ -1163,6 +1168,46 @@
             "unit_verified"
           ],
           "upstream": "src/threadlocal.c"
+        },
+        {
+          "kind": "item",
+          "name": "linux-aarch64-private-compiler-tls-root-image-and-thread-identity",
+          "required_statuses": [
+            "implemented",
+            "unit_verified",
+            "differential_verified"
+          ],
+          "upstream": "include/mimalloc/prim-tls.h"
+        },
+        {
+          "kind": "item",
+          "name": "count-zero-root-image-and-positive-regular-reset",
+          "required_statuses": [
+            "implemented",
+            "unit_verified",
+            "differential_verified"
+          ],
+          "upstream": "src/threadlocal.c"
+        },
+        {
+          "kind": "item",
+          "name": "canonical-empty-cached-root-transition",
+          "required_statuses": [
+            "implemented",
+            "unit_verified",
+            "differential_verified"
+          ],
+          "upstream": "src/prim/prim-tls.c"
+        },
+        {
+          "kind": "item",
+          "name": "cached-theap-reference-pair",
+          "required_statuses": [
+            "implemented",
+            "unit_verified",
+            "differential_verified"
+          ],
+          "upstream": "src/theap.c"
         }
       ]
     }
@@ -1307,7 +1352,7 @@
     {
       "disposition": "deferred-to-m5",
       "id": "whole-prim-tls-lifecycle",
-      "reason": "The compiler-TLS codegen image does not prove src/init.c:mi_thread_theaps_done terminal default/cached reset together with src/prim/prim-tls.c:_mi_theap_cached_set paired refcount transitions, general cached-root switching, process/thread teardown, page-bearing attachment, or public allocator/runtime integration.",
+      "reason": "The bounded 32-field compiler-TLS C/Rust trace proves only selected initial roots/identity, count-sensitive regular reset, and a controlled cached-root/reference pair. It does not prove src/init.c:mi_thread_theaps_done same-TLD terminal default/cached reset, shared-list detach, general cached-root switching, process/thread teardown, page-bearing attachment, or public allocator/runtime integration.",
       "upstream_paths": [
         "include/mimalloc/prim-tls.h",
         "src/init.c",
@@ -1336,6 +1381,7 @@
   "global_evidence": [
     "release-c-rust-layout",
     "raw-primitive-c-rust-trace",
+    "compiler-tls-c-rust-trace",
     "compiler-tls-codegen",
     "production-dependency-graph"
   ],

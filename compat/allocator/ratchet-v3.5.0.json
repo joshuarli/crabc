@@ -8,21 +8,21 @@
   "api_total_item_count": 336,
   "configuration_profile_count": 5,
   "format": 1,
-  "m1_foundations_contract_sha256": "922ccfce5b98cbfeaf37339613c8057b6a32f1f26f36a8804b485c3323b30dc8",
+  "m1_foundations_contract_sha256": "db221d8a9e005a386fbb33fdd2a6baea90bbb3da9155b7923215fba7a84fc016",
   "native_shadow_stress_contract_sha256": "cdef617f743ccd7c26283a3ce22ce17c43d6ae79b3873ac400a54fb1749139c8",
   "native_shadow_stress_fixture_count": 1,
   "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
   "port_map_counts": {
-    "differential_verified": 28,
+    "differential_verified": 32,
     "exported": 4,
-    "implemented": 156,
-    "item_count": 152,
+    "implemented": 160,
+    "item_count": 156,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 156
+    "unit_verified": 160
   },
-  "port_map_sha256": "9dfa2d47ee0a045a3210b6c799793c40498bc91ca9a0bac14bf8c08e15b55af6",
+  "port_map_sha256": "6ee8b57bb9f3d1a514d9e59d460fdd20aa0b9ad64e748789fc6d88cec352ec74",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_atomic_do_once-callsite-disposition-ledger": [
       "implemented",
@@ -95,6 +95,11 @@
     "item:include/mimalloc/prim-tls.h:linux-aarch64-private-compiler-tls-root-codegen": [
       "implemented",
       "unit_verified"
+    ],
+    "item:include/mimalloc/prim-tls.h:linux-aarch64-private-compiler-tls-root-image-and-thread-identity": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:include/mimalloc/types.h:linux-aarch64-default-release-constants": [
       "implemented",
@@ -440,6 +445,11 @@
       "unit_verified",
       "differential_verified"
     ],
+    "item:src/prim/prim-tls.c:canonical-empty-cached-root-transition": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/prim/unix/prim.c:linux-direct-process-thread-and-entropy-observations": [
       "implemented",
       "unit_verified",
@@ -468,6 +478,11 @@
     "item:src/subproc.c:detached-malloc-metadata-theap-checkpoint": [
       "implemented",
       "unit_verified"
+    ],
+    "item:src/theap.c:cached-theap-reference-pair": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/theap.c:default-theap-prefix-and-exclusive-pinned-bootstrap": [
       "implemented",
@@ -660,6 +675,11 @@
     "item:src/threadlocal.c:allocator-owned-process-global-regular-tls-key-registry": [
       "implemented",
       "unit_verified"
+    ],
+    "item:src/threadlocal.c:count-zero-root-image-and-positive-regular-reset": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/threadlocal.c:current-thread-allocator-owned-regular-tls-backing": [
       "implemented",

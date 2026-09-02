@@ -3158,6 +3158,66 @@ performance_qualified = false
 
 [[item]]
 upstream = "include/mimalloc/prim-tls.h"
+name = "linux-aarch64-private-compiler-tls-root-image-and-thread-identity"
+source_region = "mimalloc v3.5.0 include/mimalloc/prim-tls.h:41-50 Linux MI_TLS_MODEL_LOCAL selection, :61-73 musl direct-thread-pointer selection, :87-97 AArch64 TPIDR_EL0 identity, and :247-264 default/cached root declarations; paired initial values are defined in src/prim/prim-tls.c:25-32 and src/threadlocal.c:23-64"
+rust_module = "crabc_mimalloc::compiler_tls and crabc_mimalloc::thread_local"
+rust_item = "private compiler-TLS dynamic/fast/default/cached/helper roots, DynamicThreadLocalBacking immutable empty image, current_thread_identity, and m1_compiler_tls_image_trace_fields"
+intentional_difference = "The direct 17-field image reader compares only address-independent relations on a fresh native thread: count-zero backing/memid/first slot, null fast/helper roots, empty default/cached roots, nonzero TPIDR identity distinct from the helper, and empty-Theap refcount. It exposes neither root addresses nor lifecycle authority, and does not claim a process or pthread teardown sequence."
+tests = ["crabc-mimalloc/src/compiler_tls.rs", "crabc-mimalloc/src/thread_local.rs", "crabc-mimalloc/src/dynamic_theap.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/threadlocal.c"
+name = "count-zero-root-image-and-positive-regular-reset"
+source_region = "mimalloc v3.5.0 src/threadlocal.c:23-64 immutable mi_thread_locals_empty and TLS roots, :103-145 first 16-slot regular growth/set, and :205-214 count-sensitive backing free/null plus fast-root clear"
+rust_module = "crabc_mimalloc::compiler_tls, crabc_mimalloc::thread_local, and crabc_mimalloc::dynamic_theap"
+rust_item = "DynamicThreadLocalBacking, ThreadLocalBackingOwner::begin_with_metadata/set/teardown, m1_compiler_tls_first_regular_slot_fields, and explicit private fast-root clear"
+intentional_difference = "The direct 8-field normal-artifact trace proves the selected count-zero image and one positive first-slot transition only: count 16, version 1/non-null slot, a non-null fast sentinel, backing/fast null after teardown, and unchanged default/cached roots. It saves the source facts before metadata free and neither reads freed backing nor treats Rust's owner teardown as the later init.c composite lifecycle."
+tests = ["crabc-mimalloc/src/compiler_tls.rs", "crabc-mimalloc/src/thread_local.rs", "crabc-mimalloc/src/dynamic_theap.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/prim/prim-tls.c"
+name = "canonical-empty-cached-root-transition"
+source_region = "mimalloc v3.5.0 src/prim/prim-tls.c:25-32 initial empty default/cached/helper roots and :211-229 _mi_theap_cached_set store-new, incref-new, decref-previous order"
+rust_module = "crabc_mimalloc::compiler_tls and crabc_mimalloc::dynamic_theap"
+rust_item = "cached_theap/set_cached_theap plus DynamicTheapAttachment::restore_empty_cached_root_and_release and complete_page_drain_after_cached_root_reset"
+intentional_difference = "The C side uses one controlled no-page/no-list dynamic Theap fixture, while Rust observes only its cached-root/reference pair before the existing no-page list-detach suffix. No list state is emitted or compared, and the split post-reset suffix is not asserted to be src/init.c:mi_thread_theaps_done or a same-TLD default/cached reset."
+tests = ["crabc-mimalloc/src/compiler_tls.rs", "crabc-mimalloc/src/dynamic_theap.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/theap.c"
+name = "cached-theap-reference-pair"
+source_region = "mimalloc v3.5.0 src/theap.c:357-369 _mi_theap_incref/_mi_theap_decref static-memory exclusion and non-static reference updates, exercised by src/prim/prim-tls.c:211-229"
+rust_module = "crabc_mimalloc::types and crabc_mimalloc::dynamic_theap"
+rust_item = "Theap::refcount and the typed dynamic-Theap cached-root acquire/release pair"
+intentional_difference = "The direct local fixture compares only a controlled non-static dynamic Theap's 1 -> 2 -> 1 reference pair while the canonical empty Theap remains at 1. It does not claim page/TLD/list ownership, general cached switching, or default-root lifecycle behavior."
+tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/dynamic_theap.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/prim-tls.h"
 name = "linux-aarch64-private-compiler-tls-root-codegen"
 source_region = "MI_TLS_MODEL_LOCAL compiler-TLS roots, initial values, Linux/AArch64 thread-pointer identity, and teardown reset values; count-sensitive dynamic-root reset from src/threadlocal.c:205-214"
 rust_module = "crabc_mimalloc::compiler_tls, crabc_mimalloc::main_theap, crabc_mimalloc::dynamic_theap, and crabc_mimalloc::runtime_lifecycle"

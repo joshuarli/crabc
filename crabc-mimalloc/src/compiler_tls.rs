@@ -357,6 +357,63 @@ fn thread_id_helper_address() -> Option<LiveThreadId> {
     LiveThreadId::new(core::ptr::addr_of_mut!(THREAD_ID_HELPER_ROOT) as usize)
 }
 
+/// Returns the finite constructor-image facts consumed by the M1 C/Rust
+/// compiler-TLS differential. This is deliberately test-only: it exposes no
+/// pointer value or lifecycle authority, only the selected source relations
+/// from `threadlocal.c`, `prim-tls.c`, and `prim-tls.h`.
+#[cfg(test)]
+pub(crate) fn m1_compiler_tls_image_trace_fields() -> [usize; 17] {
+    let dynamic = dynamic_backing_peek().expect("fresh compiler TLS has its source empty root");
+    // SAFETY: the caller uses this only on a fresh native test thread, where
+    // the immutable process-static image is the installed root and cannot be
+    // modified or freed.
+    let dynamic = unsafe { dynamic.as_ref() };
+    let identity = current_thread_identity().expect("selected direct identity is live");
+    let helper = thread_id_helper_address().expect("source helper TLS address is live");
+    let empty = crate::bootstrap::empty_default_theap();
+
+    [
+        is_empty_dynamic_backing(NonNull::from(dynamic)) as usize,
+        dynamic.count,
+        unsafe { dynamic.memid.info.os.base.is_null() } as usize,
+        unsafe { dynamic.memid.info.os.size },
+        dynamic.memid.kind as usize,
+        dynamic.memid.is_pinned as usize,
+        dynamic.memid.initially_committed as usize,
+        dynamic.memid.initially_zero as usize,
+        dynamic.slots[0].m1_compiler_tls_image_fields().0,
+        dynamic.slots[0].m1_compiler_tls_image_fields().1 as usize,
+        fast_slot_peek().is_none() as usize,
+        core::ptr::eq(default_theap().as_ptr(), empty_default_theap_ptr()) as usize,
+        core::ptr::eq(cached_theap().as_ptr(), empty_default_theap_ptr()) as usize,
+        unsafe { THREAD_ID_HELPER_ROOT.is_null() } as usize,
+        (identity.get() != 0) as usize,
+        (identity != helper) as usize,
+        empty.refcount(),
+    ]
+}
+
+/// Reads the source-declared first regular slot only under its typed backing
+/// owner's current-thread test proof. Production code has no raw slot-image
+/// projection API.
+///
+/// # Safety
+///
+/// `backing` must be the live current-thread allocation retained by the
+/// matching `ThreadLocalBackingOwner`, and that owner must retain exclusive
+/// access for the duration of this observation. The helper does not extend
+/// the backing lifetime or validate a stale compiler-TLS root.
+#[cfg(test)]
+pub(crate) unsafe fn m1_compiler_tls_first_regular_slot_fields(
+    backing: NonNull<DynamicThreadLocalBacking>,
+) -> (usize, bool) {
+    // SAFETY: forwarded from the caller, which retains the exact live backing
+    // owner and its exclusive current-thread access through this observation.
+    let backing = unsafe { backing.as_ref() };
+    let (version, value_is_null) = backing.slots[0].m1_compiler_tls_image_fields();
+    (version, !value_is_null)
+}
+
 /// Resets all source pointer roots at the allocation-free thread-teardown boundary.
 ///
 /// As in pinned `_mi_thread_locals_thread_done`, the dynamic backing becomes

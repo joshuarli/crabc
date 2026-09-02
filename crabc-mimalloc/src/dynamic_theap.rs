@@ -1230,6 +1230,37 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             return Err(self.poison(error));
         }
 
+        self.complete_page_drain_after_cached_root_reset(theap_pointer)
+    }
+
+    /// Completes only the post-cached-reset suffix of the no-page dynamic
+    /// teardown. The private split keeps the source order inspectable: a
+    /// caller must first have completed the cached-root store and paired
+    /// 2 -> 1 release, then may detach lists and metadata. It is not the
+    /// broader `src/init.c:mi_thread_theaps_done` composite lifecycle.
+    fn complete_page_drain_after_cached_root_reset(
+        &mut self,
+        theap_pointer: *mut Theap,
+    ) -> Result<(), DynamicTheapError> {
+        if self.cached_root_bound
+            || !self.roots.cached_is_canonical_empty()
+            || !core::ptr::eq(cached_theap().as_ptr(), self.roots.cached.as_ptr())
+        {
+            return Err(self.poison(DynamicTheapError::RootOwnership));
+        }
+        let cached_refcount = match self
+            .theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .map(|theap| theap.refcount())
+        {
+            Some(refcount) => refcount,
+            None => return Err(self.poison(DynamicTheapError::TheapProjection)),
+        };
+        if cached_refcount != 1 {
+            return Err(self.poison(DynamicTheapError::CachedReference));
+        }
+
         let detach_heap = match self.heap_and_tld_mut() {
             Ok((heap, tld)) => tld.detach_one_theap_from_heap(heap, theap_pointer),
             Err(error) => return Err(self.poison(error)),
@@ -2613,7 +2644,8 @@ mod tests {
         SMALL_SIZE_MAX, WORD_SIZE,
     };
     use crate::compiler_tls::{
-        dynamic_backing_peek, is_empty_dynamic_backing, set_cached_theap,
+        dynamic_backing_peek, is_empty_dynamic_backing, m1_compiler_tls_first_regular_slot_fields,
+        m1_compiler_tls_image_trace_fields, set_cached_theap, set_fast_slot,
     };
     use crate::os::{PageSize, fault};
     use crate::os_page::PublishedOsAlignedPage;
@@ -2704,6 +2736,7 @@ mod tests {
         DynamicThreadExitSingletonRemoteFreeFailure,
     };
     use crate::tld::ThreadLocalDataOwner;
+    use crate::thread_local::{ThreadLocalBackingOwner, ThreadLocalKey, ThreadLocalSlotIndex};
     use crate::types::{
         BIN_BLOCK_SIZES, MemoryKind, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
     };
@@ -21571,6 +21604,167 @@ mod tests {
         })
         .join()
         .expect("the current-thread attachment test completes");
+    }
+
+    /// Emits the finite address-independent compiler-TLS M1 record compared
+    /// to two pinned C executables: the constructor-suppressed source image,
+    /// then the normal regular-backing and cached-root primitives. This is not
+    /// a claim that Rust models `src/init.c:mi_thread_theaps_done` as one
+    /// same-TLD composite teardown; its static/default and dynamic/cached
+    /// owners remain intentionally separate.
+    #[test]
+    fn emit_m1_compiler_tls_c_rust_trace() {
+        let image = thread::spawn(m1_compiler_tls_image_trace_fields)
+            .join()
+            .expect("the fresh compiler-TLS image reader completes");
+
+        let regular = thread::spawn(|| {
+            let (subprocess, metadata, _) = fixture();
+            let mut owner = unsafe {
+                ThreadLocalBackingOwner::begin_with_metadata(metadata, subprocess, memory_config())
+            }
+            .expect("the isolated regular backing starts from the source empty root");
+            let key = ThreadLocalKey::from_parts(
+                ThreadLocalSlotIndex::new(0).expect("zero is a valid regular index"),
+                1,
+            )
+            .expect("the first source regular key is representable");
+            let mut payload = 0x5ausize;
+            owner
+                .set(key, core::ptr::from_mut(&mut payload).cast())
+                .expect("the first non-null regular slot grows to sixteen entries");
+            let backing = dynamic_backing_peek().expect("the live regular image is installed");
+            let backing_count = unsafe { backing.as_ref() }.count();
+            let (slot0_version, slot0_value_nonnull) = unsafe {
+                m1_compiler_tls_first_regular_slot_fields(backing)
+            };
+            let default_before = default_theap();
+            let cached_before = cached_theap();
+            set_fast_slot(Some(NonNull::from(&mut payload).cast()));
+            let fast_nonnull = fast_slot_peek().is_some();
+
+            // `ThreadLocalBackingOwner::teardown` performs the source
+            // metadata-free then dynamic-root-clear prefix. `threadlocal.c`
+            // subsequently clears its independent fast root; spell that
+            // separate source action directly instead of calling composite
+            // `compiler_tls::reset_for_thread_teardown`.
+            owner
+                .teardown()
+                .expect("the positive-count regular backing frees before root clear");
+            set_fast_slot(None);
+
+            [
+                backing_count,
+                slot0_version,
+                slot0_value_nonnull as usize,
+                fast_nonnull as usize,
+                dynamic_backing_peek().is_none() as usize,
+                fast_slot_peek().is_none() as usize,
+                (default_theap() == default_before) as usize,
+                (cached_theap() == cached_before) as usize,
+            ]
+        })
+        .join()
+        .expect("the isolated regular backing trace completes");
+
+        let cache = thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
+            let theap_pointer = owner
+                .theap_pointer()
+                .expect("the cached primitive owns one initialized dynamic Theap");
+            let empty_before = crate::bootstrap::empty_default_theap().refcount();
+            let enter_refcount = owner
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .expect("the typed attachment projects its dynamic Theap")
+                .refcount();
+            let cached_is_dynamic = core::ptr::eq(cached_theap().as_ptr(), theap_pointer);
+            let empty_enter = crate::bootstrap::empty_default_theap().refcount();
+            assert_eq!(enter_refcount, 2);
+            assert!(cached_is_dynamic);
+
+            // The source clears regular backing before it resets cached. The
+            // dynamic attachment uses the same prefix and then exposes the
+            // exact cached store/release pair for this finite witness only.
+            owner
+                .begin_page_drain()
+                .expect("the no-page source owner clears its regular backing first");
+            owner
+                .restore_empty_cached_root_and_release(theap_pointer)
+                .expect("the source cached root resets before list detach");
+            let cached_is_empty = core::ptr::eq(
+                cached_theap().as_ptr(),
+                crate::bootstrap::empty_default_theap_ptr(),
+            );
+            let reset_refcount = owner
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .expect("the dynamic Theap remains typed through cached reset")
+                .refcount();
+            let empty_reset = crate::bootstrap::empty_default_theap().refcount();
+            assert_eq!(reset_refcount, 1);
+            assert!(cached_is_empty);
+            owner
+                .complete_page_drain_after_cached_root_reset(theap_pointer)
+                .expect("the post-cached-reset source suffix tears down normally");
+
+            [
+                empty_before,
+                cached_is_dynamic as usize,
+                enter_refcount,
+                empty_enter,
+                cached_is_empty as usize,
+                reset_refcount,
+                empty_reset,
+            ]
+        })
+        .join()
+        .expect("the finite cached-root primitive trace completes");
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value);
+            };
+        }
+
+        std::println!("CRABC_MI_M1_TLS_TRACE_BEGIN");
+        emit!("m1.tls.image.dynamic.is_empty", image[0]);
+        emit!("m1.tls.image.dynamic.count", image[1]);
+        emit!("m1.tls.image.dynamic.memid.base_is_null", image[2]);
+        emit!("m1.tls.image.dynamic.memid.size", image[3]);
+        emit!("m1.tls.image.dynamic.memid.kind", image[4]);
+        emit!("m1.tls.image.dynamic.memid.pinned", image[5]);
+        emit!("m1.tls.image.dynamic.memid.initially_committed", image[6]);
+        emit!("m1.tls.image.dynamic.memid.initially_zero", image[7]);
+        emit!("m1.tls.image.dynamic.slot0.version", image[8]);
+        emit!("m1.tls.image.dynamic.slot0.value_is_null", image[9]);
+        emit!("m1.tls.image.fast_is_null", image[10]);
+        emit!("m1.tls.image.default_is_empty", image[11]);
+        emit!("m1.tls.image.cached_is_empty", image[12]);
+        emit!("m1.tls.image.helper_is_null", image[13]);
+        emit!("m1.tls.image.identity.nonzero", image[14]);
+        emit!("m1.tls.image.identity.not_helper", image[15]);
+        emit!("m1.tls.image.empty_theap.refcount", image[16]);
+        emit!("m1.tls.regular.before.count", regular[0]);
+        emit!("m1.tls.regular.before.slot0.version", regular[1]);
+        emit!("m1.tls.regular.before.slot0.value_nonnull", regular[2]);
+        emit!("m1.tls.regular.before.fast_nonnull", regular[3]);
+        emit!("m1.tls.regular.after.dynamic_is_null", regular[4]);
+        emit!("m1.tls.regular.after.fast_is_null", regular[5]);
+        emit!("m1.tls.regular.after.default_unchanged", regular[6]);
+        emit!("m1.tls.regular.after.cached_unchanged", regular[7]);
+        emit!("m1.tls.cache.initial.empty_refcount", cache[0]);
+        emit!("m1.tls.cache.enter.cached_is_dynamic", cache[1]);
+        emit!("m1.tls.cache.enter.dynamic_refcount", cache[2]);
+        emit!("m1.tls.cache.enter.empty_refcount", cache[3]);
+        emit!("m1.tls.cache.reset.cached_is_empty", cache[4]);
+        emit!("m1.tls.cache.reset.dynamic_refcount", cache[5]);
+        emit!("m1.tls.cache.reset.empty_refcount", cache[6]);
+        std::println!("CRABC_MI_M1_TLS_TRACE_END");
     }
 
     #[test]

@@ -434,6 +434,15 @@ impl ThreadLocalSlot {
         version: 0,
         value: core::ptr::null_mut(),
     };
+
+    /// Returns the source `(version, value-is-null)` image only for the
+    /// finite M1 compiler-TLS differential. Production callers must use the
+    /// typed key lookup rather than inspect a raw slot image.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn m1_compiler_tls_image_fields(&self) -> (usize, bool) {
+        (self.version as usize, self.value.is_null())
+    }
 }
 
 /// A caller-owned per-thread view of dynamic TLS slot storage.
