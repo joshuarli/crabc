@@ -48,9 +48,16 @@ releases its typed Malloc capability. The separate nonexclusive dynamic-Theap
 witness follows a sequence-one Malloc TLD and Malloc Theap through no-page
 teardown. Its implementation releases regular backing, then the Theap, then
 the TLD; the audit distinguishes those three attachment-local capabilities
-from the process-owned registry bitmap. Neither witness claims normal C backing,
-generic metadata-free dispatch, exclusive-arena Theap allocation, or complete
-TLD/list/lock lifecycle parity.
+from the process-owned registry bitmap. The separate selected TLS-resize
+witness begins only after a fresh 16-slot Rust image: one injected
+pre-allocation failure preserves the direct-Malloc root/count/old slot/exact
+capability, and one 16-to-32 retry copies slot 15, publishes slot 16, reaches
+live-one/high-water-two, then tears down to zero. It is not a comparison of
+C's initial count-zero `_mi_meta_rezalloc(NULL, ...)` route with Rust's
+separate fresh zalloc image. None of these witnesses claims normal C backing,
+arbitrary growth, generic metadata-free dispatch, exclusive-arena Theap
+allocation, complete TLS/TLD/Theap/registry lifecycle, concurrency,
+pthread/process lifecycle, or ABI integration.
 This state
 is not a valid C-program observable difference and has no C differential
 entry; an arena-release result may be added only when it can prove retained

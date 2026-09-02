@@ -2221,6 +2221,15 @@ class ContractTests(unittest.TestCase):
                         "exact_malloc_metadata_lifecycle"
                     ),
                 },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "threadlocal-live-rezalloc-malloc-capability-lifetime",
+                    "kind": "rust-unit",
+                    "target": (
+                        "thread_local::tests::current_thread_backing_rezalloc_failure_"
+                        "preserves_the_old_malloc_capability_then_retries"
+                    ),
+                },
             ],
         )
         page_map = next(component for component in summary["components"] if component["id"] == "page-map")

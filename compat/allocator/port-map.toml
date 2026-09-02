@@ -2452,6 +2452,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/threadlocal.c"
+name = "threadlocal-live-rezalloc-malloc-capability-lifetime-checkpoint"
+source_region = "mi_thread_locals_expand, mi_thread_local_set_expand, mi_thread_local_set_regular, and _mi_thread_locals_thread_done (src/threadlocal.c:103-162,205-214), plus _mi_meta_rezalloc and the selected Malloc dispatch in _mi_meta_free (src/subproc.c:49-81)"
+rust_module = "crabc_mimalloc::thread_local and crabc_mimalloc::meta"
+rust_item = "ThreadLocalBackingOwner::{expand,set,teardown}, DynamicThreadLocalBacking, and MetaAllocator::rezalloc_for_main_subprocess"
+intentional_difference = "This M2 checkpoint selects one child-thread current-thread owner with one pinned selected MainSubprocess only after its existing fresh 16-slot Rust image. It proves an exact direct-Malloc 16-to-32 replacement: an injected pre-allocation failure restores the old root/count/slot/capability, and one retry copies slot 15, writes slot 16 only after replacement publication, retains one live replacement capability with high-water two, then tears it down to zero. The test-only seam occurs after Rust's explicit MOVING claim and before allocation, its source-faithful ownership equivalent of C's null replacement result; it is not a production fault policy. It does not compare C's initial count-zero _mi_meta_rezalloc(NULL, ...) route with Rust's separate fresh zalloc image, normal C metadata backing, arbitrary growth, generic _mi_meta_free, complete TLS/TLD/Theap/registry lifecycle, concurrency, pthread/process lifecycle, or ABI integration."
+tests = ["crabc-mimalloc/src/thread_local.rs", "crabc-mimalloc/src/meta.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/page.c"
 name = "scalar-local-page-free-list-allocation-and-collection"
 source_region = "mi_block_next/set_next, mi_page_extend_free, mi_page_free_quick_collect, both force forms of the local half of _mi_page_free_collect, mi_page_malloc_zero scalar pop/zero, and mi_free_block_local"

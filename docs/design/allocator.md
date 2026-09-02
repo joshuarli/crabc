@@ -767,6 +767,17 @@ releases the fourth. This is not normal C metadata-backing parity, the
 exclusive-arena branch, generic metadata-free dispatch, general Theap policy,
 page ownership, concurrency, or process/thread shutdown coverage.
 
+A separate M2 live-rezalloc checkpoint begins only after the existing fresh
+16-slot current-thread image. For one child thread and selected main-subprocess
+identity, an injected pre-allocation failure preserves its Malloc root, count,
+old slot, and exact capability; one 16-to-32 retry copies slot 15, publishes
+slot 16, reaches live-one/high-water-two metadata ownership, then tears down
+to zero. It does not compare C's initial count-zero `_mi_meta_rezalloc(NULL,
+...)` route with Rust's separate fresh zalloc image, or claim arbitrary growth,
+normal C metadata backing, generic metadata-free dispatch, complete
+TLS/TLD/Theap/registry lifecycle, concurrency, pthread/process lifecycle, or
+ABI integration.
+
 `ThreadLocalDataOwner` receives that ticket internally rather than taking a
 caller-supplied sequence. Its full source-ordered TLD image names the same
 process-main identity as the detached metadata heap/TLD/theap bootstrap and

@@ -181,7 +181,17 @@ regular backing, then the Theap, then the TLD; the audit observes those
 attachment-local capabilities gone while the distinct registry bitmap remains
 for test-only quiescent shutdown. It excludes normal metadata-backing parity,
 exclusive-arena allocation, generic metadata-free dispatch, page ownership,
-concurrency, and full process/thread teardown. The generic TLD checkpoint records direct `TPIDR_EL0`,
+concurrency, and full process/thread teardown. A separate live-rezalloc
+checkpoint starts only after the existing fresh 16-slot current-thread image.
+For one child thread and selected main-subprocess identity, an injected
+pre-allocation failure preserves its Malloc root, count, old slot, and exact
+capability; one 16-to-32 retry copies slot 15, publishes slot 16, reaches
+live-one/high-water-two metadata ownership, then tears down to zero. It does
+not compare C's initial count-zero `_mi_meta_rezalloc(NULL, ...)` route with
+Rust's separate fresh zalloc image, or claim arbitrary growth, normal C
+metadata backing, generic metadata-free dispatch, complete TLS/TLD/Theap/
+registry lifecycle, concurrency, pthread/process lifecycle, or ABI
+integration. The generic TLD checkpoint records direct `TPIDR_EL0`,
 Linux NUMA, the exact Unix non-threadpool result, the same main-subprocess
 pointer as detached metadata bootstrap state, and a null theap list. Its
 metadata path remains **subprocess-attached, no-theap**. Generic construction

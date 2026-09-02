@@ -87,6 +87,12 @@
           "id": "nonexclusive-dynamic-theap-direct-malloc-capability-lifetime",
           "kind": "rust-unit",
           "target": "dynamic_theap::tests::nonexclusive_dynamic_theap_releases_its_exact_malloc_metadata_lifecycle"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "threadlocal-live-rezalloc-malloc-capability-lifetime",
+          "kind": "rust-unit",
+          "target": "thread_local::tests::current_thread_backing_rezalloc_failure_preserves_the_old_malloc_capability_then_retries"
         }
       ],
       "completion_status": "partial",
@@ -340,6 +346,7 @@
       "the selected detached-metadata checks prove only that Rust binds its static detached metadata image before global PageMap publication and, for the bounded same-subprocess, empty-head, non-threadpool input, preserves kind-only static provenance and frozen normal enabled page-reclaim, initializes a possibly-weak random context, and derives an odd cookie before first session/backing. A nonempty head, mismatched subprocess, or thread-pool input is rejected before mutation rather than claiming C's locked list/split or option-adjustment path. They do not compare the private backing route with pinned C's normal _mi_meta_zalloc backing or establish complete _mi_theap_init, metadata, initialization, mutable-options, or fault-injection parity",
       "the selected later-TLD direct-Malloc check proves only an isolated ticket-zero static teardown without a metadata capability, one injected post-ready direct-zeroed metadata failure that consumes its later sequence without a live capability or lease, and one retry's typed subprocess-attached/no-theap Malloc capability through exact-owner teardown. It does not establish pinned C normal _mi_meta_zalloc backing, full mi_tld_init/mi_tld_free lock/list behavior, arbitrary thread/ticket behavior, or generic _mi_meta_free branch parity",
       "the selected nonexclusive dynamic-Theap direct-Malloc check proves only one child-thread, caller-pinned empty-Heap lifecycle after ticket zero: a sequence-one Malloc TLD and a nonexclusive Malloc Theap have the selected one-member TLD/Heap list shape. Its no-page implementation releases regular backing, then the exact Theap, then the TLD. The audit observes four attached metadata capabilities (TLD, Theap, regular backing, and the distinct registry bitmap), one registry bitmap after attachment teardown, and test-only quiescent registry shutdown returning that audit to zero. It does not establish normal C _mi_meta_zalloc backing, the exclusive-arena _mi_arenas_alloc branch, generic _mi_meta_free dispatch, arbitrary Theap/list/refcount policy, page ownership, concurrent lifecycle, or process/thread shutdown parity",
+      "the selected thread-local live-rezalloc check proves only one isolated child-thread direct-Malloc regular-backing replacement after a first 16-slot image: an injected pre-allocation failure restores the old root, count, slots, and capability, then one 16-to-32 retry copies slot 15 and publishes slot 16. It observes one live capability with high-water two before teardown and zero live afterward. It does not establish normal C _mi_meta_zalloc backing, arbitrary growth, generic _mi_meta_free dispatch, full TLS/TLD/Theap/registry lifecycle, concurrency, pthread/process lifecycle, or ABI integration",
       "this gate does not claim a production allocator backend or any later allocator milestone",
       "this gate does not claim non-AArch64 support"
     ],
