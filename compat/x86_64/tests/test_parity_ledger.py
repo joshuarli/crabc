@@ -3361,11 +3361,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1513)
-        self.assertEqual(provider_audit["default_static_callable_count"], 1087)
+        self.assertEqual(provider_audit["default_static_callable_count"], 1105)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 379)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 361)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])

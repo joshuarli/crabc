@@ -1,11 +1,11 @@
 {
   "contract_schema": "crabc.x86_64-header-declaration-macro-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_visibility_contract_sha256": "b1fe98dc96929908506ee6895eaebe129549e072fe237ba1076501677512668a",
+    "callable_visibility_contract_sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be",
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "a4340623332db091cba61a42369885b3ef7e8e3bf59c4b6e22c7b68dd952b5af"
+    "source_abi_report_sha256": "0b24196c31e06ad1b1fb478f4000e4349922c7f3376bcfd743fc9eadd8234e1e"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -80520,7 +80520,7 @@
         "kind_counts": {
           "function": 9
         },
-        "sha256": "8bf490d674eb60145a401d1f3d36bc0d37875890f8f687e780f833a15faec7cb"
+        "sha256": "f11c295324b77b332c34bd36b62cb244ae1d669bdb059179745fac3d6601cf7a"
       },
       "candidate_status": "ok",
       "comparison": "candidate-only-pending-c-abi-policy",
@@ -80600,7 +80600,7 @@
         "kind_counts": {
           "function": 9
         },
-        "sha256": "8bf490d674eb60145a401d1f3d36bc0d37875890f8f687e780f833a15faec7cb"
+        "sha256": "f11c295324b77b332c34bd36b62cb244ae1d669bdb059179745fac3d6601cf7a"
       },
       "candidate_status": "ok",
       "comparison": "candidate-only-pending-c-abi-policy",

@@ -1,8 +1,8 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "d8db3cad84740490048547753ae69e7cc286e83cc532df732cd0254c621bc462",
-    "matrix_contract_sha256": "b1fe98dc96929908506ee6895eaebe129549e072fe237ba1076501677512668a",
+    "callable_inventory_sha256": "bf2a026995ce63172f9d32b68d93ad61609cc010d49bda723b9b2e884dd2a8f0",
+    "matrix_contract_sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -149,7 +149,7 @@
       ],
       "canonical_visibility": "stdlib.h gates the lrand48 family to X/Open, GNU, and BSD forms; this standalone path is currently unconditional.",
       "capability_owner": "random.state",
-      "cxx_linkage": "cxx-default",
+      "cxx_linkage": "extern-c",
       "cxx_surface": "callable-declarations",
       "declared_symbols": [
         "drand48",
@@ -179,7 +179,7 @@
       ],
       "origin": "standalone-alias",
       "path": "lrand48.h",
-      "provider_state": "unprovided",
+      "provider_state": "default-static",
       "removal_requires_abi_decision": true,
       "retained_profiles": [
         "c11-gnu",
