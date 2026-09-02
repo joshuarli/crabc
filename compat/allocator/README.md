@@ -46,19 +46,24 @@ in-place address-identity splitting; its dependency-owned replacement for the
 source-local weak shuffle is recorded in `known-differences.md`. Five private
 compiler-TLS roots now preserve the pinned initial images and selected teardown values,
 while the selected Linux/AArch64 thread identity reads `TPIDR_EL0` directly. A
-process-static private metadata owner now ports the successful detached-Malloc
-paths in `src/subproc.c:19-88`: it directly maps its page map and external
-arena before publishing one detached theap, never touches compiler-TLS roots,
-and uses a must-use owner-bound capability for source-ordered replacement and
-serialized cross-thread release. Its detached heap/TLD/theap and its
-pre-publication-bound registry/published arena name the same deliberately
-bounded process-main identity as the current-thread TLD checkpoint; it does
-not claim general subprocess destruction or public allocation routing.
+process-static private metadata owner now ports selected detached-Malloc paths
+in `src/subproc.c:19-88`: process startup binds its static detached
+Heap/TLD/Theap image before global PageMap publication, without mapping private
+backing or touching compiler-TLS roots. A first valid metadata request then
+forms the bounded private direct-OS PageMap/external-arena backing and issues
+its one detached session. That private first-demand route is not claimed to
+match pinned C's normal `_mi_meta_zalloc` backing route. The owner uses a
+must-use owner-bound capability for source-ordered replacement and serialized
+cross-thread release; its detached image and its later pre-publication-bound
+registry/published arena name the same deliberately bounded process-main
+identity as the current-thread TLD checkpoint. It does not claim general
+subprocess destruction or public allocation routing.
 
 `process_init.rs` owns a bounded source-order transition: static Heap
-foundation, detached metadata readiness, global PageMap publication, then the
-ticket-zero TLD/Theap roots. Its selector prevents generic TLD construction
-from consuming ticket zero while startup is active or retained, and its ready
+foundation, detached metadata-image binding without private backing, global
+PageMap publication, then the ticket-zero TLD/Theap roots. Its selector
+prevents generic TLD construction from consuming ticket zero while startup is
+active or retained, and its ready
 lease exposes only immutable map/configuration/subprocess witnesses.
 `process_page_map.rs` owns that distinct process-static map
 initialization/publication boundary. It freezes one `MemoryConfig` and selected

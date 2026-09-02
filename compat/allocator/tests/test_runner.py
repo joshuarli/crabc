@@ -2097,7 +2097,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(summary["milestone"]["status"], "partial")
         self.assertEqual(
             [component["id"] for component in summary["components"] if component["checks"]],
-            ["vm-primitives", "metadata", "page-map", "arenas"],
+            ["vm-primitives", "metadata", "page-map", "arenas", "initialization"],
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2192,6 +2192,15 @@ class ContractTests(unittest.TestCase):
                     "target": (
                         "meta::tests::paired_page_map_initial_commit_and_cleanup_failure_"
                         "retains_the_exact_mapping"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "meta-bound-first-backing-identity-and-retry",
+                    "kind": "rust-unit",
+                    "target": (
+                        "meta::tests::bound_metadata_rejects_a_foreign_subprocess_"
+                        "before_first_backing"
                     ),
                 }
             ],
@@ -2312,6 +2321,25 @@ class ContractTests(unittest.TestCase):
             page_map["remaining_conditions"],
             [],
         )
+        initialization = next(
+            component for component in summary["components"] if component["id"] == "initialization"
+        )
+        self.assertEqual(
+            initialization["checks"],
+            [
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "process-init-static-metadata-binding-before-global-page-map",
+                    "kind": "rust-unit",
+                    "target": (
+                        "process_init::tests::process_main_binds_metadata_before_global_"
+                        "page_map_failure"
+                    ),
+                }
+            ],
+        )
+        self.assertEqual(initialization["completion_status"], "partial")
+        self.assertTrue(initialization["remaining_conditions"])
         arenas = next(component for component in summary["components"] if component["id"] == "arenas")
         self.assertEqual(
             arenas["checks"],

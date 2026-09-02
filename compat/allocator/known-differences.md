@@ -264,7 +264,7 @@ registry/subprocess ownership.
 
 ### `CRABC-MI-BOUNDED-PROCESS-MAIN-INITIALIZATION` — accepted incomplete process lifecycle
 
-- **Upstream/Rust:** `src/init.c:184-214,305-360,536-592` (`mi_heap_main_init_once`,
+- **Upstream/Rust:** `src/init.c:151-214,305-360,536-592` (`mi_heap_main_init_once`,
   `_mi_thread_init_with_heap`, and `mi_process_init_once`),
   `src/libc.c:115-140` (`_mi_atomic_once_enter` and
   `_mi_atomic_once_release`), and `src/subproc.c:29-46,95-101`; represented by
@@ -276,30 +276,41 @@ registry/subprocess ownership.
 - **Category:** crate-private source-order startup boundary. It has no C ABI
   surface or valid allocation-trace differential entry.
 - **Difference:** the Rust coordinator proves the central source order—static
-  Heap, detached metadata readiness, global PageMap, then ticket-zero
-  TLD/Theap/default/fast roots—but accepts a frozen `MemoryConfig` instead of
-  running source option/OS initialization. It exposes only immutable ready
-  witnesses, does not reserve the process-shared arena, initialize pthread or
-  TLS keys, route allocations/frees, coordinate general concurrent startup, or
+  Heap, static detached metadata-image binding without backing, global PageMap,
+  then ticket-zero TLD/Theap/default/fast roots—but accepts a frozen
+  `MemoryConfig` instead of running source option/OS initialization. C forms
+  `mi_process_theap_meta` during main-heap initialization and takes metadata
+  backing only on demand. Rust likewise binds its pinned detached image before
+  the global PageMap, but a first valid Rust metadata request forms a private
+  direct-OS PageMap/external-arena backing rather than claiming C's normal
+  `_mi_meta_zalloc` backing route. It exposes only immutable ready witnesses,
+  does not reserve the process-shared arena, initialize pthread or TLS keys,
+  route allocations/frees, coordinate general concurrent startup, or
   destroy/restart the process. Identity-capable bounded `initialize` callers
   do hold the source-shaped once gate through terminal publication and private
   lock release; recursive owner entry returns the typed `Initializing` refusal
   without executing a source body, while a foreign caller waits. The Rust-only
   allocation-free preflight may cancel before source selection, retaining the
-  owner identity through unlock before reopening the gate. Metadata's private
-  map/arena stays private. A preflight rejection remains cold; any failure
-  after static selection is terminally retained rather than replaying a partial
-  static image. C's static empty PageMap root remains absent.
+  owner identity through unlock before reopening the gate. A preflight
+  rejection remains cold; any failure after static selection is terminally
+  retained rather than replaying a partial static image. C's static empty
+  PageMap root remains absent.
 - **Evidence:**
   `process_init::tests::process_main_initialization_orders_heap_metadata_map_then_ticket_zero_roots`
-  proves the source order, distinct metadata/global map identities, default-
+  proves the successful source order, bound-but-unbacked metadata, default-
   then-fast roots, and no automatic process-shared arena reservation.
+  `process_init::tests::process_main_binds_metadata_before_global_page_map_failure`
+  proves Map #1 belongs to the global PageMap after metadata is bound, with no
+  private metadata map or ticket-zero roots; `process_main_defers_private_metadata_backing_until_first_demand`
+  and `meta::tests::bound_metadata_rejects_a_foreign_subprocess_before_first_backing`
+  prove first-demand private backing, frozen identity rejection before Map #1,
+  and clean same-identity retry.
   `process_main_once_blocks_a_distinct_racer_until_release_and_refuses_reentry`,
   `process_main_once_blocks_a_terminal_ready_observer_until_once_release`, and
   `process_main_once_wakes_a_distinct_racer_with_retained_after_failure` prove
   the bounded source-shaped once envelope; the preflight and
   `cancelled_pre_body_claim_handoffs_a_waiter_to_the_reopened_once` regressions
-  prove its retryable Rust-only cancellation boundary. The metadata-failure,
+  prove its retryable Rust-only cancellation boundary. The global-map failure,
   rejected-map, and ready-lease regressions prove terminal retention and
   immutable root reuse.
   `main_theap::tests::static_heap_foundation_precedes_ticket_zero_tld_theap_and_tls_roots`

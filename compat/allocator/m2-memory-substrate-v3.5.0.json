@@ -69,15 +69,22 @@
           "id": "meta-page-map-paired-cleanup-owner",
           "kind": "rust-unit",
           "target": "meta::tests::paired_page_map_initial_commit_and_cleanup_failure_retains_the_exact_mapping"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "meta-bound-first-backing-identity-and-retry",
+          "kind": "rust-unit",
+          "target": "meta::tests::bound_metadata_rejects_a_foreign_subprocess_before_first_backing"
         }
       ],
       "completion_status": "partial",
       "id": "metadata",
       "remaining_conditions": [
-        "connect the selected exact-owner Malloc and regular-OS release witnesses to real metadata callers; complete no-free, arena registry/subprocess, huge/remap, and every remaining source memory-ID ownership branch with retry-preserving failure behavior where source ownership remains live"
+        "complete pinned C's normal _mi_meta_zalloc backing route and connect the selected exact-owner Malloc and regular-OS release witnesses to real metadata callers; complete no-free, arena registry/subprocess, huge/remap, and every remaining source memory-ID ownership branch with retry-preserving failure behavior where source ownership remains live"
       ],
       "source_units": [
         "include/mimalloc/types.h",
+        "src/init.c",
         "src/subproc.c",
         "src/arena.c"
       ]
@@ -193,16 +200,24 @@
       ]
     },
     {
-      "checks": [],
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-init-static-metadata-binding-before-global-page-map",
+          "kind": "rust-unit",
+          "target": "process_init::tests::process_main_binds_metadata_before_global_page_map_failure"
+        }
+      ],
       "completion_status": "partial",
       "id": "initialization",
       "remaining_conditions": [
-        "complete source-order process, OS, options, TLS, arena, publication, and shutdown initialization semantics"
+        "complete source-order process, OS, options, TLS, arena, publication, and shutdown initialization semantics beyond the selected static detached-metadata image/global-PageMap ordering"
       ],
       "source_units": [
         "src/init.c",
         "include/mimalloc/internal.h",
-        "src/os.c"
+        "src/os.c",
+        "src/subproc.c"
       ]
     },
     {
@@ -291,6 +306,7 @@
       "the selected aligned-overmap cleanup-owner tests prove Rust non-RAII ownership after direct or partial release failure; they do not claim C retry semantics, full aligned-allocation policy, or complete VM fault parity",
       "the selected reset-advice regression proves only the private source snapshot/retry control flow with a deterministic advisory mock; it does not claim a live-kernel EAGAIN frequency or complete purge fault parity",
       "the selected arena-purge regressions prove only default one-slice delayed-purge callback splitting at a source 64-bit bitmap-field boundary and frozen-Linux default-decommit-error consumption; they do not claim general visitor behavior, configurable purge policy, general purge fault parity, registry-wide collection, concurrent arena use, or arena lifecycle parity",
+      "the selected detached-metadata checks prove only that Rust binds its static detached metadata image before global PageMap publication and defers its private PageMap/external-arena backing to the first valid metadata request; they do not compare that private backing route with pinned C's normal _mi_meta_zalloc backing or establish complete metadata, initialization, or fault-injection parity",
       "this gate does not claim a production allocator backend or any later allocator milestone",
       "this gate does not claim non-AArch64 support"
     ],
