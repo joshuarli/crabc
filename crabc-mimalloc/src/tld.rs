@@ -721,8 +721,8 @@ mod tests {
                 assert!(tld.is_attached_to_main_subprocess(subprocess));
                 assert!(!tld.recursing());
                 assert!(
-                    tld.test_theaps_lock_is_unlocked(),
-                    "the source theap-list lock begins unlocked"
+                    tld.test_theaps_lock_starts_and_restores_unlocked(),
+                    "the source theap-list lock begins and returns unlocked"
                 );
                 assert!(
                     !tld.is_in_threadpool(),

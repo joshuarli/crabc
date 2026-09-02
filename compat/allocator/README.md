@@ -960,10 +960,22 @@ checks, binds the result to an unchanged clean Git commit, and classifies each
 component plus its explicit exclusions. It intentionally exits 3 while the
 contract says M1 is partial. A passing focused check or shared M0/M3/M4
 producer does not close a whole source unit or promote any allocator backend.
-The bootstrap component compares the actual pinned `MI_MEMID_STATIC` empty-page
-and empty-Theap memory-ID flags against the release C oracle; this is evidence
-for those two immutable images only, not a general `src/init.c` completion
-claim. The complete finite configuration-and-arithmetic component compares
+The bootstrap component compares a complete 149-key, address-independent
+release C/Rust vector for every represented field of the pinned immutable
+`mi_page_empty`, direct-page table, all 75 queues, pre-process-init
+`mi_tld_detached` source image, and `_mi_theap_empty` prefix through `memid`.
+The C reader alone defines `MI_PRIM_HAS_PROCESS_ATTACH=1`, so `prim.c` cannot
+run its automatic constructor and mutate that TLD before the comparison; the
+normal C oracle artifact retains automatic attach. Pointer fields are null/sentinel
+relationships, and the detached lock is try-locked then released rather than
+being treated as a pthread byte-layout match. The contract also records an
+explicit disposition for every 12 pinned direct `mi_atomic_do_once` call
+sites. This remains evidence for those source-initializer images only: it excludes
+stats, guarded/page-tail variants, mutable process storage, publication and
+teardown. In particular, `ProcessMainInitializationStorage` currently returns
+`Initializing` to a racing caller rather than matching C's blocking
+once-release continuation, so this bootstrap component remains partial at the
+M2/M5 lifecycle boundary. The complete finite configuration-and-arithmetic component compares
 every frozen `config.*` C/Rust record and a compact representable scalar
 vector, including `_mi_is_power_of_two(0)`, generic non-power-of-two
 `_mi_align_up`/`_mi_align_down`, division, word rounding, and slice conversion.

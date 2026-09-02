@@ -8,22 +8,26 @@
   "api_total_item_count": 336,
   "configuration_profile_count": 5,
   "format": 1,
-  "m1_foundations_contract_sha256": "f6fdf03822beee37089288be8f984cd1ebb662a6637bff69160f204a3a3ba7d7",
+  "m1_foundations_contract_sha256": "756fb4ad8198ddb6c37dbf0d4bf7d426cdc0a021c83fdf35cf0b1d098c6dd88e",
   "native_shadow_stress_contract_sha256": "cdef617f743ccd7c26283a3ce22ce17c43d6ae79b3873ac400a54fb1749139c8",
   "native_shadow_stress_fixture_count": 1,
   "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
   "port_map_counts": {
-    "differential_verified": 21,
+    "differential_verified": 23,
     "exported": 4,
-    "implemented": 153,
-    "item_count": 149,
+    "implemented": 155,
+    "item_count": 151,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 153
+    "unit_verified": 155
   },
-  "port_map_sha256": "1061e8a2aff7a0e8917b82d2419939a70bf09d9e8e3045cf2728c76a33a50497",
+  "port_map_sha256": "771f34486b17dbc6700c7cf5edcae3e8403035f15f5401275243c076898005bb",
   "port_map_true_statuses": {
+    "item:include/mimalloc/atomic.h:mi_atomic_do_once-callsite-disposition-ledger": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
       "unit_verified"
@@ -313,13 +317,19 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/init.c:immutable-static-bootstrap-image-relational-vector": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/init.c:later-thread-process-static-main-heap-no-page-attachment": [
       "implemented",
       "unit_verified"
     ],
     "item:src/init.c:mi_page_empty-and-MI_PAGE_QUEUES_EMPTY": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/init.c:private-lazy-ticket-zero-runtime-first-arena-page-owner": [
       "implemented",

@@ -1173,11 +1173,23 @@ impl ThreadLocalData {
     }
 
     /// Test-only witness that `mi_tld_init`'s private theap-list lock starts
-    /// unlocked in the complete metadata image.
+    /// unlocked and returns to that operational state after release.
+    ///
+    /// This deliberately proves acquire/release behavior rather than a
+    /// byte-for-byte `pthread_mutex_t` initializer claim.
     #[cfg(test)]
     #[inline]
-    pub(crate) fn test_theaps_lock_is_unlocked(&self) -> bool {
-        self.theaps_lock.try_lock().is_some()
+    pub(crate) fn test_theaps_lock_starts_and_restores_unlocked(&self) -> bool {
+        let Some(first) = self.theaps_lock.try_lock() else {
+            return false;
+        };
+        if first.unlock().is_err() {
+            return false;
+        }
+        let Some(second) = self.theaps_lock.try_lock() else {
+            return false;
+        };
+        second.unlock().is_ok()
     }
 
     /// Injects a private theap-list lock violation without retaining a guard
@@ -1775,6 +1787,20 @@ impl MemoryId {
             initially_committed: true,
             initially_zero: false,
         }
+    }
+
+    /// Reads the selected `MI_MEMID_STATIC` union image for the static-image
+    /// C/Rust oracle. The source macro initializes its union as `{ NULL, 0 }`;
+    /// this Rust constructor deliberately uses the matching `os` arm. Keep
+    /// the union projection test-only so production provenance APIs remain
+    /// kind-specific rather than exposing raw union state.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_static_empty_info(&self) -> (bool, usize) {
+        // SAFETY: `static_empty` initializes this union through the `os` arm,
+        // and the only callers are the immutable static-image witnesses.
+        let os = unsafe { self.info.os };
+        (os.base.is_null(), os.size)
     }
 
     #[inline]
@@ -3524,12 +3550,13 @@ impl BootstrapPage {
 
 pub(crate) static EMPTY_PAGE: BootstrapPage = BootstrapPage(Page::empty());
 
-// `src/init.c:mi_tld_detached`. It is immutable: the live default-theap
-// bootstrap owns a separate TLD after pinning. Dynamic TLD fields contain raw
-// pointers and therefore must not grant a blanket `Sync` implementation to
-// `ThreadLocalData`; this wrapper grants it only to this never-mutated static
-// source image. Keeping it separate is what lets the initial empty theap
-// avoid any TLS access.
+// `src/init.c:mi_tld_detached`'s pre-process-initialization source image. C
+// later mutates that object in `mi_heap_main_init_once`; the Rust bootstrap
+// instead owns a separate live TLD after pinning. Dynamic TLD fields contain
+// raw pointers and therefore must not grant a blanket `Sync` implementation
+// to `ThreadLocalData`; this wrapper grants it only to this never-mutated
+// source-image witness. Keeping it separate is what lets the initial empty
+// theap avoid any TLS access.
 #[repr(transparent)]
 struct DetachedThreadLocal(ThreadLocalData);
 
@@ -4558,10 +4585,15 @@ mod tests {
             "m1.provenance.create.os.memid_size",
             m1_memid_os.size().expect("OS memory has a source size")
         );
-        // These are the actual immutable images, rather than fresh temporary
-        // values: C initializes both through `MI_MEMID_STATIC` in `src/init.c`.
-        let empty_page_memid = &EMPTY_PAGE.as_ref().memid;
-        let empty_theap_memid = &crate::bootstrap::empty_default_theap().memid;
+        // These are the actual static source images, rather than fresh
+        // temporary values. C initializes them through `MI_MEMID_STATIC` in
+        // `src/init.c`; only the detached TLD becomes mutable after process
+        // initialization, which the dedicated C reader suppresses.
+        let empty_page = EMPTY_PAGE.as_ref();
+        let empty_theap = crate::bootstrap::empty_default_theap();
+        let detached_tld = &DETACHED_THREAD_LOCAL.0;
+        let empty_page_memid = &empty_page.memid;
+        let empty_theap_memid = &empty_theap.memid;
         record!(
             "m1.bootstrap.empty_page.memid.kind",
             empty_page_memid.kind as usize
@@ -4594,6 +4626,258 @@ mod tests {
             "m1.bootstrap.empty_theap.memid.zero",
             empty_theap_memid.initially_zero as usize
         );
+        // The immutable `src/init.c` images have pointer fields, so the
+        // release oracle records source relationships instead of unstable
+        // process addresses. The detached TLD lock is intentionally checked
+        // only by acquire/release behavior: `PrivateLock` is a Linux futex
+        // boundary, not a byte-layout claim about `pthread_mutex_t`.
+        let (empty_page_memid_base_is_null, empty_page_memid_size) =
+            empty_page_memid.test_static_empty_info();
+        record!(
+            "m1.bootstrap.empty_page.self_is_null",
+            empty_page.self_.load(Ordering::Relaxed).is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_page.xthread_id",
+            empty_page.xthread_id.load(Ordering::Relaxed)
+        );
+        record!(
+            "m1.bootstrap.empty_page.free_is_null",
+            empty_page.free.is_null() as usize
+        );
+        record!("m1.bootstrap.empty_page.used", empty_page.used);
+        record!(
+            "m1.bootstrap.empty_page.local_free_is_null",
+            empty_page.local_free.is_null() as usize
+        );
+        record!("m1.bootstrap.empty_page.block_size", empty_page.block_size);
+        record!("m1.bootstrap.empty_page.page_offset", empty_page.page_offset);
+        record!("m1.bootstrap.empty_page.capacity", empty_page.capacity);
+        record!("m1.bootstrap.empty_page.reserved", empty_page.reserved);
+        record!(
+            "m1.bootstrap.empty_page.slice_pcommitted",
+            empty_page.slice_pcommitted
+        );
+        record!(
+            "m1.bootstrap.empty_page.retire_expire",
+            empty_page.retire_expire
+        );
+        record!(
+            "m1.bootstrap.empty_page.free_is_zero",
+            empty_page.free_is_zero as usize
+        );
+        record!(
+            "m1.bootstrap.empty_page.xthread_free",
+            empty_page.xthread_free.load(Ordering::Relaxed)
+        );
+        record!(
+            "m1.bootstrap.empty_page.theap_is_null",
+            empty_page.theap.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_page.heap_is_null",
+            empty_page.heap.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_page.next_is_null",
+            empty_page.next.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_page.prev_is_null",
+            empty_page.prev.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_page.memid.base_is_null",
+            empty_page_memid_base_is_null as usize
+        );
+        record!("m1.bootstrap.empty_page.memid.size", empty_page_memid_size);
+
+        record!(
+            "m1.bootstrap.empty_theap.pages_free_direct.count",
+            empty_theap.pages_free_direct.len()
+        );
+        record!(
+            "m1.bootstrap.empty_theap.pages_free_direct.all_empty_page",
+            empty_theap
+                .pages_free_direct
+                .iter()
+                .all(|page| core::ptr::eq(*page, EMPTY_PAGE.as_ptr())) as usize
+        );
+
+        let (detached_tld_memid_base_is_null, detached_tld_memid_size) =
+            detached_tld.memid.test_static_empty_info();
+        record!(
+            "m1.bootstrap.detached_tld.thread_id",
+            detached_tld.thread_id
+        );
+        record!(
+            "m1.bootstrap.detached_tld.thread_seq",
+            detached_tld.thread_seq
+        );
+        record!(
+            "m1.bootstrap.detached_tld.numa_node",
+            detached_tld.numa_node
+        );
+        record!(
+            "m1.bootstrap.detached_tld.subproc_is_null",
+            detached_tld.subprocess.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.detached_tld.theaps_is_null",
+            detached_tld.theaps.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.detached_tld.lock_is_initially_acquirable",
+            detached_tld.test_theaps_lock_starts_and_restores_unlocked() as usize
+        );
+        record!("m1.bootstrap.detached_tld.recurse", detached_tld.recurse as usize);
+        record!(
+            "m1.bootstrap.detached_tld.is_in_threadpool",
+            detached_tld.is_in_threadpool as usize
+        );
+        record!(
+            "m1.bootstrap.detached_tld.memid.base_is_null",
+            detached_tld_memid_base_is_null as usize
+        );
+        record!(
+            "m1.bootstrap.detached_tld.memid.size",
+            detached_tld_memid_size
+        );
+        record!(
+            "m1.bootstrap.detached_tld.memid.kind",
+            detached_tld.memid.kind as usize
+        );
+        record!(
+            "m1.bootstrap.detached_tld.memid.pinned",
+            detached_tld.memid.is_pinned as usize
+        );
+        record!(
+            "m1.bootstrap.detached_tld.memid.committed",
+            detached_tld.memid.initially_committed as usize
+        );
+        record!(
+            "m1.bootstrap.detached_tld.memid.zero",
+            detached_tld.memid.initially_zero as usize
+        );
+
+        let (random_input_all_zero, random_output_all_zero, random_output_available, random_weak) =
+            empty_theap.random.test_static_empty_shape();
+        let queues_all_first_null = empty_theap.pages.iter().all(|queue| queue.first.is_null());
+        let queues_all_last_null = empty_theap.pages.iter().all(|queue| queue.last.is_null());
+        let queues_all_count_zero = empty_theap.pages.iter().all(|queue| queue.count == 0);
+        let (empty_theap_memid_base_is_null, empty_theap_memid_size) =
+            empty_theap_memid.test_static_empty_info();
+        record!(
+            "m1.bootstrap.empty_theap.tld_is_detached_tld",
+            core::ptr::eq(empty_theap.tld, detached_thread_local_ptr()) as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.heap_is_null",
+            empty_theap.heap.load(Ordering::Relaxed).is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.subproc_is_null",
+            empty_theap.subproc.load(Ordering::Relaxed).is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.refcount",
+            empty_theap.refcount.load(Ordering::Relaxed)
+        );
+        record!("m1.bootstrap.empty_theap.heartbeat", empty_theap.heartbeat);
+        record!("m1.bootstrap.empty_theap.cookie", empty_theap.cookie);
+        record!(
+            "m1.bootstrap.empty_theap.random.input_all_zero",
+            random_input_all_zero as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.random.output_all_zero",
+            random_output_all_zero as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.random.output_available",
+            random_output_available
+        );
+        record!("m1.bootstrap.empty_theap.random.weak", random_weak as usize);
+        record!("m1.bootstrap.empty_theap.page_count", empty_theap.page_count);
+        record!(
+            "m1.bootstrap.empty_theap.page_retired_min",
+            empty_theap.page_retired_min
+        );
+        record!(
+            "m1.bootstrap.empty_theap.page_retired_max",
+            empty_theap.page_retired_max
+        );
+        record!(
+            "m1.bootstrap.empty_theap.pages_full_size",
+            empty_theap.pages_full_size
+        );
+        record!(
+            "m1.bootstrap.empty_theap.generic_count",
+            empty_theap.generic_count as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.generic_collect_count",
+            empty_theap.generic_collect_count as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.tnext_is_null",
+            empty_theap.tnext.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.tprev_is_null",
+            empty_theap.tprev.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.hnext_is_null",
+            empty_theap.hnext.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.hprev_is_null",
+            empty_theap.hprev.is_null() as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.page_full_retain",
+            empty_theap.page_full_retain as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.allow_page_reclaim",
+            empty_theap.allow_page_reclaim as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.allow_page_abandon",
+            empty_theap.allow_page_abandon as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.is_detached",
+            empty_theap.is_detached as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.page_queues.count",
+            empty_theap.pages.len()
+        );
+        record!(
+            "m1.bootstrap.empty_theap.page_queues.all_first_null",
+            queues_all_first_null as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.page_queues.all_last_null",
+            queues_all_last_null as usize
+        );
+        record!(
+            "m1.bootstrap.empty_theap.page_queues.all_count_zero",
+            queues_all_count_zero as usize
+        );
+        for (index, queue) in empty_theap.pages.iter().enumerate() {
+            std::println!(
+                "m1.bootstrap.empty_theap.page_queues.block_size.{index}={}",
+                queue.block_size
+            );
+        }
+        record!(
+            "m1.bootstrap.empty_theap.memid.base_is_null",
+            empty_theap_memid_base_is_null as usize
+        );
+        record!("m1.bootstrap.empty_theap.memid.size", empty_theap_memid_size);
         // `LAYOUT_PROBE` has always emitted this complete C image. Keep the
         // Rust record equally complete so the release-oracle comparison owns
         // the random-context ABI rather than relying only on local asserts.
@@ -5081,6 +5365,100 @@ mod tests {
         assert!(!kind_only.is_pinned());
         assert!(!kind_only.initially_committed());
         assert!(!kind_only.initially_zero());
+    }
+
+    #[test]
+    fn static_bootstrap_images_keep_the_complete_pinned_relational_shape() {
+        // This is the Rust half of the release C/Rust static-image vector.
+        // It intentionally owns only `src/init.c`'s pre-process-initialization
+        // images through the represented `Theap::memid` prefix. C later
+        // mutates the detached TLD; `mi_stats_t`, guarded fields, alternate
+        // page key/padding tails, and mutable process-main storage are not
+        // silently folded into this witness.
+        fn assert_static_empty_memory_id(memid: &MemoryId) {
+            let (base_is_null, size) = memid.test_static_empty_info();
+            assert!(base_is_null);
+            assert_eq!(size, 0);
+            assert_eq!(memid.kind(), MemoryKind::Static);
+            assert!(memid.is_pinned());
+            assert!(memid.initially_committed());
+            assert!(!memid.initially_zero());
+        }
+
+        let empty_page = EMPTY_PAGE.as_ref();
+        assert!(empty_page.self_.load(Ordering::Relaxed).is_null());
+        assert_eq!(empty_page.xthread_id.load(Ordering::Relaxed), 0);
+        assert!(empty_page.free.is_null());
+        assert_eq!(empty_page.used, 0);
+        assert!(empty_page.local_free.is_null());
+        assert_eq!(empty_page.block_size, 0);
+        assert_eq!(empty_page.page_offset, 0);
+        assert_eq!(empty_page.capacity, 0);
+        assert_eq!(empty_page.reserved, 0);
+        assert_eq!(empty_page.slice_pcommitted, 0);
+        assert_eq!(empty_page.retire_expire, 0);
+        assert!(!empty_page.free_is_zero);
+        assert_eq!(empty_page.xthread_free.load(Ordering::Relaxed), 0);
+        assert!(empty_page.theap.is_null());
+        assert!(empty_page.heap.is_null());
+        assert!(empty_page.next.is_null());
+        assert!(empty_page.prev.is_null());
+        assert_static_empty_memory_id(&empty_page.memid);
+
+        let detached_tld = &DETACHED_THREAD_LOCAL.0;
+        assert_eq!(detached_tld.thread_id, THREAD_ID_DETACHED);
+        assert_eq!(detached_tld.thread_seq, 0);
+        assert_eq!(detached_tld.numa_node, 0);
+        assert!(detached_tld.subprocess.is_null());
+        assert!(detached_tld.theaps.is_null());
+        // The actual static lock is acquired/released by the layout vector.
+        // This fresh source-equivalent image keeps this unit regression from
+        // racing that probe while proving the same static initializer state.
+        assert!(
+            ThreadLocalData::detached().test_theaps_lock_starts_and_restores_unlocked()
+        );
+        assert!(!detached_tld.recurse);
+        assert!(!detached_tld.is_in_threadpool);
+        assert_static_empty_memory_id(&detached_tld.memid);
+
+        let empty_theap = crate::bootstrap::empty_default_theap();
+        assert_eq!(empty_theap.pages_free_direct.len(), PAGES_DIRECT);
+        assert!(empty_theap
+            .pages_free_direct
+            .iter()
+            .all(|page| core::ptr::eq(*page, EMPTY_PAGE.as_ptr())));
+        assert!(core::ptr::eq(empty_theap.tld, detached_thread_local_ptr()));
+        assert!(empty_theap.heap.load(Ordering::Relaxed).is_null());
+        assert!(empty_theap.subproc.load(Ordering::Relaxed).is_null());
+        assert_eq!(empty_theap.refcount.load(Ordering::Relaxed), 1);
+        assert_eq!(empty_theap.heartbeat, 0);
+        assert_eq!(empty_theap.cookie, 0);
+        assert_eq!(empty_theap.random.test_static_empty_shape(), (true, true, 0, true));
+        assert_eq!(empty_theap.page_count, 0);
+        assert_eq!(empty_theap.page_retired_min, BIN_FULL);
+        assert_eq!(empty_theap.page_retired_max, 0);
+        assert_eq!(empty_theap.pages_full_size, 0);
+        assert_eq!(empty_theap.generic_count, 0);
+        assert_eq!(empty_theap.generic_collect_count, 0);
+        assert!(empty_theap.tnext.is_null());
+        assert!(empty_theap.tprev.is_null());
+        assert!(empty_theap.hnext.is_null());
+        assert!(empty_theap.hprev.is_null());
+        assert_eq!(empty_theap.page_full_retain, 0);
+        assert!(!empty_theap.allow_page_reclaim);
+        assert!(empty_theap.allow_page_abandon);
+        assert!(empty_theap.is_detached);
+        assert_eq!(empty_theap.pages.len(), BIN_COUNT);
+        for (index, queue) in empty_theap.pages.iter().enumerate() {
+            assert!(queue.first.is_null(), "queue {index} first link must be null");
+            assert!(queue.last.is_null(), "queue {index} last link must be null");
+            assert_eq!(queue.count, 0, "queue {index} count must be zero");
+            assert_eq!(
+                queue.block_size, BIN_BLOCK_SIZES[index],
+                "queue {index} block size must retain the source initializer"
+            );
+        }
+        assert_static_empty_memory_id(&empty_theap.memid);
     }
 
     #[test]

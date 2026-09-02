@@ -2163,20 +2163,41 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             bootstrap["layout_keys"],
-            [
-                "m1.bootstrap.empty_page.memid.kind",
-                "m1.bootstrap.empty_page.memid.pinned",
-                "m1.bootstrap.empty_page.memid.committed",
-                "m1.bootstrap.empty_page.memid.zero",
-                "m1.bootstrap.empty_theap.memid.kind",
-                "m1.bootstrap.empty_theap.memid.pinned",
-                "m1.bootstrap.empty_theap.memid.committed",
-                "m1.bootstrap.empty_theap.memid.zero",
-            ],
+            list(RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS),
         )
         self.assertIn(
             "static-bootstrap-memid-image",
             [check["id"] for check in bootstrap["checks"]],
+        )
+        self.assertIn(
+            "static-bootstrap-relational-image",
+            [check["id"] for check in bootstrap["checks"]],
+        )
+        self.assertEqual(
+            bootstrap["once_call_site_dispositions"],
+            list(RUNNER.M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS),
+        )
+        self.assertEqual(
+            RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES,
+            ("-DMI_PRIM_HAS_PROCESS_ATTACH=1",),
+        )
+        self.assertIn(
+            'U("m1.bootstrap.detached_tld.numa_node", detached_tld->numa_node);',
+            RUNNER.STATIC_IMAGE_PROBE,
+        )
+        self.assertNotIn(
+            'U("m1.bootstrap.detached_tld.numa_node", detached_tld->numa_node);',
+            RUNNER.LAYOUT_PROBE,
+        )
+        self.assertNotIn(
+            "MI_PRIM_HAS_PROCESS_ATTACH",
+            RUNNER.LAYOUT_PROBE,
+        )
+        self.assertTrue(
+            all(
+                f'"{key}"' not in RUNNER.LAYOUT_PROBE
+                for key in RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_READER_ONLY_LAYOUT_KEY_SET
+            )
         )
         self.assertIn(
             {
@@ -2188,6 +2209,28 @@ class ContractTests(unittest.TestCase):
                     "differential_verified",
                 ],
                 "upstream": "src/init.c",
+            },
+            bootstrap["source_map_records"],
+        )
+        self.assertIn(
+            {
+                "kind": "item",
+                "name": "immutable-static-bootstrap-image-relational-vector",
+                "required_statuses": [
+                    "implemented",
+                    "unit_verified",
+                    "differential_verified",
+                ],
+                "upstream": "src/init.c",
+            },
+            bootstrap["source_map_records"],
+        )
+        self.assertIn(
+            {
+                "kind": "item",
+                "name": "mi_atomic_do_once-callsite-disposition-ledger",
+                "required_statuses": ["implemented", "unit_verified"],
+                "upstream": "include/mimalloc/atomic.h",
             },
             bootstrap["source_map_records"],
         )
@@ -2221,6 +2264,7 @@ class ContractTests(unittest.TestCase):
             ],
             list(RUNNER.M1_RAW_PRIMITIVE_DECLARATIONS),
         )
+
         self.assertEqual(
             [record["name"] for record in raw_primitives["source_map_records"]],
             [
@@ -2307,6 +2351,23 @@ class ContractTests(unittest.TestCase):
             ],
         )
 
+    def test_m1_bootstrap_contract_requires_static_image_and_once_callsite_inventory(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
+        bootstrap = next(
+            component
+            for component in contract["components"]
+            if component["id"] == "atomics-locks-once-and-bootstrap"
+        )
+
+        self.assertEqual(
+            bootstrap["layout_keys"],
+            list(RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS),
+        )
+        self.assertEqual(
+            bootstrap["once_call_site_dispositions"],
+            list(RUNNER.M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS),
+        )
+
     def test_layout_probe_reads_the_selected_source_shape_macros(self) -> None:
         # The M1 configuration boundary must observe the macros that actually
         # selected the normal-release geometry. Repeating their current
@@ -2371,7 +2432,10 @@ class ContractTests(unittest.TestCase):
         rust_layout.pop("offsetof.mi_random_ctx_t.weak")
 
         evidence = RUNNER.m1_foundations_layout_evidence(
-            summary["components"], c_layout, rust_layout
+            summary["components"],
+            c_layout,
+            rust_layout,
+            static_image_c_layout=c_layout,
         )
 
         self.assertEqual(
@@ -2407,22 +2471,16 @@ class ContractTests(unittest.TestCase):
         rust_layout["m1.bootstrap.empty_page.memid.pinned"] = 0
 
         evidence = RUNNER.m1_foundations_layout_evidence(
-            summary["components"], c_layout, rust_layout
+            summary["components"],
+            c_layout,
+            rust_layout,
+            static_image_c_layout=c_layout,
         )
 
         self.assertEqual(
             evidence["atomics-locks-once-and-bootstrap"],
             {
-                "keys": [
-                    "m1.bootstrap.empty_page.memid.kind",
-                    "m1.bootstrap.empty_page.memid.pinned",
-                    "m1.bootstrap.empty_page.memid.committed",
-                    "m1.bootstrap.empty_page.memid.zero",
-                    "m1.bootstrap.empty_theap.memid.kind",
-                    "m1.bootstrap.empty_theap.memid.pinned",
-                    "m1.bootstrap.empty_theap.memid.committed",
-                    "m1.bootstrap.empty_theap.memid.zero",
-                ],
+                "keys": list(RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS),
                 "missing_from_rust": [],
                 "mismatches": [
                     "m1.bootstrap.empty_page.memid.pinned (C=1, Rust=0)"
@@ -2480,9 +2538,23 @@ class ContractTests(unittest.TestCase):
                             "artifact": {
                                 "bytes": 1,
                                 "path": ".work/test/libmimalloc.so",
-                                "sha256": "b" * 64,
+                            "sha256": "b" * 64,
+                        },
+                            "layout": {
+                                key: 1
+                                for key in keys
+                                if key
+                                not in RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_READER_ONLY_LAYOUT_KEY_SET
                             },
-                            "layout": {key: 1 for key in keys},
+                            "m1_static_image_probe": {
+                                "defines": list(
+                                    RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES
+                                ),
+                                "layout": {
+                                    key: 1
+                                    for key in RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS
+                                },
+                            },
                         }
                     }
                 },

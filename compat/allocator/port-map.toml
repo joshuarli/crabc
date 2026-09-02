@@ -1175,15 +1175,30 @@ performance_qualified = false
 [[item]]
 upstream = "src/init.c"
 name = "mi_page_empty-and-MI_PAGE_QUEUES_EMPTY"
-source_region = "immutable empty page and all 75 default page-queue initializers"
+source_region = "immutable empty page and all 75 default page-queue initializers in src/init.c:15-92"
 rust_module = "crabc_mimalloc::types"
 rust_item = "EMPTY_PAGE/EMPTY_PAGE_QUEUES/BIN_BLOCK_SIZES"
-intentional_difference = "The immutable Page prototype has a narrow Sync wrapper because Rust raw-pointer fields do not auto-implement Sync; no mutable access is exposed."
-tests = ["crabc-mimalloc/src/types.rs"]
+intentional_difference = "The immutable Page prototype has a narrow Sync wrapper because Rust raw-pointer fields do not auto-implement Sync; no mutable access is exposed. The source-shaped C/Rust vector compares every represented scalar, null/sentinel relationship, and all 75 queue block sizes; it does not claim alternate padding/key tails."
+tests = ["crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/init.c"
+name = "immutable-static-bootstrap-image-relational-vector"
+source_region = "mi_page_empty, MI_SMALL_PAGES_EMPTY, MI_PAGE_QUEUES_EMPTY, mi_tld_detached, and _mi_theap_empty through memid in src/init.c:15-145"
+rust_module = "crabc_mimalloc::types, crabc_mimalloc::bootstrap, and crabc_mimalloc::random"
+rust_item = "EMPTY_PAGE, EMPTY_PAGE_QUEUES, detached TLD image, bootstrap::empty_default_theap, and TheapRandomImage::empty_weak"
+intentional_difference = "The vector is intentionally relational and address-independent: it compares null links, every direct slot's empty-page-sentinel relationship, every queue block size, and an initially-acquirable private lock rather than pthread mutex bytes. Its C reader alone defines MI_PRIM_HAS_PROCESS_ATTACH=1, preventing prim.c's automatic constructor from changing mi_tld_detached before it observes the src/init.c initializer; the separately built normal C artifact retains automatic attach. It covers the represented Theap prefix only; MI_GUARDED fields, Page key/padding tails, mi_stats_t, mutable process statics, publication/lifecycle, and alternate configurations remain excluded."
+tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/random.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -1976,6 +1991,21 @@ rust_module = "crabc_mimalloc::lock"
 rust_item = "PrivateLock/PrivateLockGuard"
 intentional_difference = "The no-libc allocator cannot call public pthread mutex APIs, so the active Linux/AArch64 normal process-private mutex capability is implemented as a private 0/1/2 futex state machine. Acquire/Release synchronization, nonrecursive scope, allocation-free static initialization, and explicit quiescence are retained; fork repair and once semantics are not claimed by this slice."
 tests = ["crabc-mimalloc/src/lock.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/atomic.h"
+name = "mi_atomic_do_once-callsite-disposition-ledger"
+source_region = "mi_atomic_do_once macro at include/mimalloc/atomic.h:554-557 and all 12 direct v3.5.0 invocations: src/page-map.c:361; src/init.c:211,443,589,653; src/prim/prim-tls.c:124,165,182; src/prim/osx/alloc-override-zone.c:291; and src/prim/windows/prim.c:162,610,721"
+rust_module = "crabc_mimalloc::once, crabc_mimalloc::process_init, and compat::allocator M1 contract"
+rust_item = "AllocatorOnce plus atomics-locks-once-and-bootstrap.once_call_site_dispositions"
+intentional_difference = "The ledger is an audit boundary, not a claim that all macro callers have a Rust equivalent. It records the one immutable-static-image-only init.c use, defers active Linux process/TLS lifecycle and PageMap uses to M2/M5, and marks macOS/Windows/fixed-TLS branches outside M1. In particular, ProcessMainInitializationStorage currently returns Initializing to a racing caller rather than blocking as C mi_atomic_do_once does."
+tests = ["crabc-mimalloc/src/once.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true

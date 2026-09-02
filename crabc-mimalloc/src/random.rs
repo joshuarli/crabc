@@ -118,6 +118,21 @@ impl TheapRandomImage {
     #[cfg(test)]
     pub(crate) const WEAK_OFFSET: usize = core::mem::offset_of!(Self, weak);
 
+    /// Returns the source-visible fields of the inert `_mi_theap_empty`
+    /// random image without exposing its mutable key/output arrays outside
+    /// their owner. The bootstrap C/Rust vector compares only this immutable
+    /// zero/weak shape, never a generated random value.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_static_empty_shape(&self) -> (bool, bool, i32, bool) {
+        (
+            self.input.iter().all(|word| *word == 0),
+            self.output.iter().all(|word| *word == 0),
+            self.output_available,
+            self.weak,
+        )
+    }
+
     /// Source's inert `_mi_theap_empty.random` image.
     #[inline]
     pub(crate) const fn empty_weak() -> Self {

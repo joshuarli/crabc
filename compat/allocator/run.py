@@ -308,6 +308,217 @@ M1_CONFIGURATION_AND_ARITHMETIC_LAYOUT_KEYS = (
     "m1.scalar.slice_count.one_past_slice",
     "m1.scalar.size_of_slices.3",
 )
+
+# This is the complete address-independent record for the selected Rust
+# representation of `src/init.c`'s pre-process-initialization static images.
+# Pointer-valued arrays deliberately use relationships (every direct slot is
+# the one empty-page sentinel; every queue link is null) instead of unstable
+# process addresses. Every queue block-size value remains individual so the
+# relation cannot hide one incorrect static queue initializer. The C detached
+# TLD later becomes mutable during process initialization; its source image is
+# deliberately read before that lifecycle step.
+M1_BOOTSTRAP_PAGE_QUEUE_BLOCK_SIZE_LAYOUT_KEYS = tuple(
+    f"m1.bootstrap.empty_theap.page_queues.block_size.{index}"
+    for index in range(75)
+)
+M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS = (
+    "m1.bootstrap.empty_page.self_is_null",
+    "m1.bootstrap.empty_page.xthread_id",
+    "m1.bootstrap.empty_page.free_is_null",
+    "m1.bootstrap.empty_page.used",
+    "m1.bootstrap.empty_page.local_free_is_null",
+    "m1.bootstrap.empty_page.block_size",
+    "m1.bootstrap.empty_page.page_offset",
+    "m1.bootstrap.empty_page.capacity",
+    "m1.bootstrap.empty_page.reserved",
+    "m1.bootstrap.empty_page.slice_pcommitted",
+    "m1.bootstrap.empty_page.retire_expire",
+    "m1.bootstrap.empty_page.free_is_zero",
+    "m1.bootstrap.empty_page.xthread_free",
+    "m1.bootstrap.empty_page.theap_is_null",
+    "m1.bootstrap.empty_page.heap_is_null",
+    "m1.bootstrap.empty_page.next_is_null",
+    "m1.bootstrap.empty_page.prev_is_null",
+    "m1.bootstrap.empty_page.memid.base_is_null",
+    "m1.bootstrap.empty_page.memid.size",
+    "m1.bootstrap.empty_page.memid.kind",
+    "m1.bootstrap.empty_page.memid.pinned",
+    "m1.bootstrap.empty_page.memid.committed",
+    "m1.bootstrap.empty_page.memid.zero",
+    "m1.bootstrap.empty_theap.pages_free_direct.count",
+    "m1.bootstrap.empty_theap.pages_free_direct.all_empty_page",
+    "m1.bootstrap.detached_tld.thread_id",
+    "m1.bootstrap.detached_tld.thread_seq",
+    "m1.bootstrap.detached_tld.numa_node",
+    "m1.bootstrap.detached_tld.subproc_is_null",
+    "m1.bootstrap.detached_tld.theaps_is_null",
+    "m1.bootstrap.detached_tld.lock_is_initially_acquirable",
+    "m1.bootstrap.detached_tld.recurse",
+    "m1.bootstrap.detached_tld.is_in_threadpool",
+    "m1.bootstrap.detached_tld.memid.base_is_null",
+    "m1.bootstrap.detached_tld.memid.size",
+    "m1.bootstrap.detached_tld.memid.kind",
+    "m1.bootstrap.detached_tld.memid.pinned",
+    "m1.bootstrap.detached_tld.memid.committed",
+    "m1.bootstrap.detached_tld.memid.zero",
+    "m1.bootstrap.empty_theap.tld_is_detached_tld",
+    "m1.bootstrap.empty_theap.heap_is_null",
+    "m1.bootstrap.empty_theap.subproc_is_null",
+    "m1.bootstrap.empty_theap.refcount",
+    "m1.bootstrap.empty_theap.heartbeat",
+    "m1.bootstrap.empty_theap.cookie",
+    "m1.bootstrap.empty_theap.random.input_all_zero",
+    "m1.bootstrap.empty_theap.random.output_all_zero",
+    "m1.bootstrap.empty_theap.random.output_available",
+    "m1.bootstrap.empty_theap.random.weak",
+    "m1.bootstrap.empty_theap.page_count",
+    "m1.bootstrap.empty_theap.page_retired_min",
+    "m1.bootstrap.empty_theap.page_retired_max",
+    "m1.bootstrap.empty_theap.pages_full_size",
+    "m1.bootstrap.empty_theap.generic_count",
+    "m1.bootstrap.empty_theap.generic_collect_count",
+    "m1.bootstrap.empty_theap.tnext_is_null",
+    "m1.bootstrap.empty_theap.tprev_is_null",
+    "m1.bootstrap.empty_theap.hnext_is_null",
+    "m1.bootstrap.empty_theap.hprev_is_null",
+    "m1.bootstrap.empty_theap.page_full_retain",
+    "m1.bootstrap.empty_theap.allow_page_reclaim",
+    "m1.bootstrap.empty_theap.allow_page_abandon",
+    "m1.bootstrap.empty_theap.is_detached",
+    "m1.bootstrap.empty_theap.page_queues.count",
+    "m1.bootstrap.empty_theap.page_queues.all_first_null",
+    "m1.bootstrap.empty_theap.page_queues.all_last_null",
+    "m1.bootstrap.empty_theap.page_queues.all_count_zero",
+    *M1_BOOTSTRAP_PAGE_QUEUE_BLOCK_SIZE_LAYOUT_KEYS,
+    "m1.bootstrap.empty_theap.memid.base_is_null",
+    "m1.bootstrap.empty_theap.memid.size",
+    "m1.bootstrap.empty_theap.memid.kind",
+    "m1.bootstrap.empty_theap.memid.pinned",
+    "m1.bootstrap.empty_theap.memid.committed",
+    "m1.bootstrap.empty_theap.memid.zero",
+)
+M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEY_SET = frozenset(
+    M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS
+)
+# These eight fields predate the enlarged vector and remain in the ordinary
+# layout reader: their pointed source objects are const and process attach
+# does not mutate them. The separate reader owns every newly audited mutable
+# detached-TLD relationship and all other static-image-only observations.
+M1_BOOTSTRAP_LEGACY_GENERIC_LAYOUT_KEYS = (
+    "m1.bootstrap.empty_page.memid.kind",
+    "m1.bootstrap.empty_page.memid.pinned",
+    "m1.bootstrap.empty_page.memid.committed",
+    "m1.bootstrap.empty_page.memid.zero",
+    "m1.bootstrap.empty_theap.memid.kind",
+    "m1.bootstrap.empty_theap.memid.pinned",
+    "m1.bootstrap.empty_theap.memid.committed",
+    "m1.bootstrap.empty_theap.memid.zero",
+)
+M1_BOOTSTRAP_STATIC_IMAGE_READER_ONLY_LAYOUT_KEY_SET = (
+    M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEY_SET
+    - frozenset(M1_BOOTSTRAP_LEGACY_GENERIC_LAYOUT_KEYS)
+)
+
+# `src/prim/prim.c` normally auto-attaches before C `main`, which runs
+# `mi_heap_main_init_once` and changes the mutable detached-TLD object.  The
+# static-image reader alone suppresses that constructor so it observes the
+# `src/init.c` initializer; normal C-oracle artifacts retain their production
+# automatic process-attach configuration.
+M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES = (
+    "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+)
+
+# `mi_atomic_do_once` is a macro, so its finite M1 accounting must name every
+# pinned direct invocation rather than imply that a local once unit test has
+# covered each lifecycle route.  The sole M1-covered use is deliberately
+# limited to its immutable static-image prefix; the C blocking lifecycle and
+# all later process/page-map/TLS paths remain explicitly deferred.
+M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS = (
+    {
+        "configuration": "all selected builds",
+        "disposition": "deferred-to-m2",
+        "function": "_mi_page_map_init",
+        "reason": "page-map allocation and release publication are a later memory-substrate boundary",
+        "source": "src/page-map.c:361",
+    },
+    {
+        "configuration": "all selected builds",
+        "disposition": "m1-static-image-only",
+        "function": "mi_heap_main_init_once",
+        "reason": "the immutable initial images are checked here; main-process initialization and racing-waiter behavior are not",
+        "source": "src/init.c:211",
+    },
+    {
+        "configuration": "all selected builds",
+        "disposition": "deferred-to-m5",
+        "function": "mi_process_setup_auto_thread_done",
+        "reason": "automatic thread-exit registration and teardown are lifecycle work",
+        "source": "src/init.c:443",
+    },
+    {
+        "configuration": "all selected builds",
+        "disposition": "deferred-to-m5",
+        "function": "mi_process_init",
+        "reason": "the C caller blocks until once-release while the bounded Rust process-main route reports Initializing to a racer",
+        "source": "src/init.c:589",
+    },
+    {
+        "configuration": "all selected builds",
+        "disposition": "deferred-to-m5",
+        "function": "mi_process_done",
+        "reason": "process teardown, destruction, and once lifetime are lifecycle work",
+        "source": "src/init.c:653",
+    },
+    {
+        "configuration": "MI_TLS_MODEL_WINDOWS",
+        "disposition": "outside-m1",
+        "function": "_mi_tls_slots_init",
+        "reason": "Windows TLS-slot branch is outside the Linux/AArch64 target",
+        "source": "src/prim/prim-tls.c:124",
+    },
+    {
+        "configuration": "MI_TLS_MODEL_PTHREADS",
+        "disposition": "deferred-to-m5",
+        "function": "_mi_tls_slots_init",
+        "reason": "pthread-key allocation and destruction belong to the later TLS/process lifecycle",
+        "source": "src/prim/prim-tls.c:165",
+    },
+    {
+        "configuration": "MI_TLS_MODEL_FIXED",
+        "disposition": "outside-m1",
+        "function": "_mi_tls_slots_init",
+        "reason": "fixed TLS-slot branch is not the selected Linux/AArch64 pthread model",
+        "source": "src/prim/prim-tls.c:182",
+    },
+    {
+        "configuration": "MI_OSX_INTERPOSE && MI_SHARED_LIB_EXPORT",
+        "disposition": "outside-m1",
+        "function": "mi_get_default_zone",
+        "reason": "macOS malloc-zone interposition is outside the active platform",
+        "source": "src/prim/osx/alloc-override-zone.c:291",
+    },
+    {
+        "configuration": "Windows",
+        "disposition": "outside-m1",
+        "function": "win_enable_large_os_pages",
+        "reason": "Windows large-page privilege setup is outside the active platform",
+        "source": "src/prim/windows/prim.c:162",
+    },
+    {
+        "configuration": "Windows",
+        "disposition": "outside-m1",
+        "function": "_mi_prim_process_info",
+        "reason": "Windows psapi lazy loading is outside the active platform",
+        "source": "src/prim/windows/prim.c:610",
+    },
+    {
+        "configuration": "Windows && !MI_USE_RTLGENRANDOM",
+        "disposition": "outside-m1",
+        "function": "_mi_prim_random_buf",
+        "reason": "Windows bcrypt lazy loading is outside the active platform",
+        "source": "src/prim/windows/prim.c:721",
+    },
+)
 M1_RAW_PRIMITIVE_DECLARATIONS = (
     "mi_os_mem_config_t",
     "_mi_prim_mem_init",
@@ -1390,6 +1601,160 @@ int main(void) {
     printf("bin.index.%zu.at=%zu\n", bin, _mi_bin(boundary));
     printf("bin.index.%zu.plus=%zu\n", bin, _mi_bin(boundary + 1));
   }
+  return 0;
+}
+"""
+
+
+# This reader is deliberately separate from `LAYOUT_PROBE`.  It compiles only
+# the finite M1 static image through a pre-process-initialization configuration
+# and cannot change the generic profile-layout artifact, runtime, or macro
+# evidence.  Its `MI_PRIM_HAS_PROCESS_ATTACH` define is passed only by
+# `build_m1_static_image_probe` below.
+STATIC_IMAGE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+
+static bool m1_u32_words_are_zero(const uint32_t* words, size_t count) {
+  for (size_t index = 0; index < count; index++) {
+    if (words[index] != 0) return false;
+  }
+  return true;
+}
+
+#define U(name, value) printf(name "=%llu\n", (unsigned long long)(value))
+int main(void) {
+  const mi_page_t* const empty_page = _mi_page_empty_get();
+  const mi_theap_t* const empty_theap = &_mi_theap_empty;
+  mi_tld_t* const detached_tld = empty_theap->tld;
+  const mi_memid_t empty_page_memid = empty_page->memid;
+  const mi_memid_t detached_tld_memid = detached_tld->memid;
+  const mi_memid_t empty_theap_memid = empty_theap->memid;
+
+  #if MI_PAGE_META_IS_ALIGNED
+  U("m1.bootstrap.empty_page.self_is_null",
+    mi_atomic_load_ptr_relaxed(mi_page_t, &empty_page->self) == NULL);
+  #else
+  U("m1.bootstrap.empty_page.self_is_null", 0);
+  #endif
+  U("m1.bootstrap.empty_page.xthread_id",
+    mi_atomic_load_relaxed(&empty_page->xthread_id));
+  U("m1.bootstrap.empty_page.free_is_null", empty_page->free == NULL);
+  U("m1.bootstrap.empty_page.used", empty_page->used);
+  U("m1.bootstrap.empty_page.local_free_is_null", empty_page->local_free == NULL);
+  U("m1.bootstrap.empty_page.block_size", empty_page->block_size);
+  U("m1.bootstrap.empty_page.page_offset", empty_page->page_offset);
+  U("m1.bootstrap.empty_page.capacity", empty_page->capacity);
+  U("m1.bootstrap.empty_page.reserved", empty_page->reserved);
+  U("m1.bootstrap.empty_page.slice_pcommitted", empty_page->slice_pcommitted);
+  U("m1.bootstrap.empty_page.retire_expire", empty_page->retire_expire);
+  U("m1.bootstrap.empty_page.free_is_zero", empty_page->free_is_zero);
+  U("m1.bootstrap.empty_page.xthread_free",
+    mi_atomic_load_relaxed(&empty_page->xthread_free));
+  U("m1.bootstrap.empty_page.theap_is_null", empty_page->theap == NULL);
+  U("m1.bootstrap.empty_page.heap_is_null", empty_page->heap == NULL);
+  U("m1.bootstrap.empty_page.next_is_null", empty_page->next == NULL);
+  U("m1.bootstrap.empty_page.prev_is_null", empty_page->prev == NULL);
+  U("m1.bootstrap.empty_page.memid.base_is_null", empty_page_memid.mem.os.base == NULL);
+  U("m1.bootstrap.empty_page.memid.size", empty_page_memid.mem.os.size);
+  U("m1.bootstrap.empty_page.memid.kind", empty_page_memid.memkind);
+  U("m1.bootstrap.empty_page.memid.pinned", empty_page_memid.is_pinned);
+  U("m1.bootstrap.empty_page.memid.committed", empty_page_memid.initially_committed);
+  U("m1.bootstrap.empty_page.memid.zero", empty_page_memid.initially_zero);
+
+  bool direct_all_empty_page = true;
+  for (size_t index = 0; index < MI_PAGES_DIRECT; index++) {
+    if (empty_theap->pages_free_direct[index] != empty_page) {
+      direct_all_empty_page = false;
+    }
+  }
+  U("m1.bootstrap.empty_theap.pages_free_direct.count", MI_PAGES_DIRECT);
+  U("m1.bootstrap.empty_theap.pages_free_direct.all_empty_page", direct_all_empty_page);
+
+  // The operational sequence is unlocked -> locked -> unlocked -> locked ->
+  // unlocked. It proves an initial/recovered private-lock state, not the
+  // platform-specific pthread mutex bytes used by pinned C.
+  const bool detached_tld_lock_is_initially_acquirable =
+    mi_lock_try_acquire(&detached_tld->theaps_lock);
+  bool detached_tld_lock_restored_to_unlocked = false;
+  if (detached_tld_lock_is_initially_acquirable) {
+    mi_lock_release(&detached_tld->theaps_lock);
+    detached_tld_lock_restored_to_unlocked =
+      mi_lock_try_acquire(&detached_tld->theaps_lock);
+    if (detached_tld_lock_restored_to_unlocked) {
+      mi_lock_release(&detached_tld->theaps_lock);
+    }
+  }
+  U("m1.bootstrap.detached_tld.thread_id", detached_tld->thread_id);
+  U("m1.bootstrap.detached_tld.thread_seq", detached_tld->thread_seq);
+  U("m1.bootstrap.detached_tld.numa_node", detached_tld->numa_node);
+  U("m1.bootstrap.detached_tld.subproc_is_null", detached_tld->subproc == NULL);
+  U("m1.bootstrap.detached_tld.theaps_is_null", detached_tld->theaps == NULL);
+  U("m1.bootstrap.detached_tld.lock_is_initially_acquirable",
+    detached_tld_lock_is_initially_acquirable && detached_tld_lock_restored_to_unlocked);
+  U("m1.bootstrap.detached_tld.recurse", detached_tld->recurse);
+  U("m1.bootstrap.detached_tld.is_in_threadpool", detached_tld->is_in_threadpool);
+  U("m1.bootstrap.detached_tld.memid.base_is_null", detached_tld_memid.mem.os.base == NULL);
+  U("m1.bootstrap.detached_tld.memid.size", detached_tld_memid.mem.os.size);
+  U("m1.bootstrap.detached_tld.memid.kind", detached_tld_memid.memkind);
+  U("m1.bootstrap.detached_tld.memid.pinned", detached_tld_memid.is_pinned);
+  U("m1.bootstrap.detached_tld.memid.committed", detached_tld_memid.initially_committed);
+  U("m1.bootstrap.detached_tld.memid.zero", detached_tld_memid.initially_zero);
+
+  bool queues_all_first_null = true;
+  bool queues_all_last_null = true;
+  bool queues_all_count_zero = true;
+  for (size_t index = 0; index < MI_BIN_COUNT; index++) {
+    const mi_page_queue_t* const queue = &empty_theap->pages[index];
+    if (queue->first != NULL) queues_all_first_null = false;
+    if (queue->last != NULL) queues_all_last_null = false;
+    if (queue->count != 0) queues_all_count_zero = false;
+    printf("m1.bootstrap.empty_theap.page_queues.block_size.%zu=%zu\n",
+      index, queue->block_size);
+  }
+  U("m1.bootstrap.empty_theap.tld_is_detached_tld", empty_theap->tld == detached_tld);
+  U("m1.bootstrap.empty_theap.heap_is_null",
+    mi_atomic_load_ptr_relaxed(mi_heap_t, &empty_theap->heap) == NULL);
+  U("m1.bootstrap.empty_theap.subproc_is_null",
+    mi_atomic_load_ptr_relaxed(mi_subproc_t, &empty_theap->subproc) == NULL);
+  U("m1.bootstrap.empty_theap.refcount", mi_atomic_load_relaxed(&empty_theap->refcount));
+  U("m1.bootstrap.empty_theap.heartbeat", empty_theap->heartbeat);
+  U("m1.bootstrap.empty_theap.cookie", empty_theap->cookie);
+  U("m1.bootstrap.empty_theap.random.input_all_zero",
+    m1_u32_words_are_zero(empty_theap->random.input, 16));
+  U("m1.bootstrap.empty_theap.random.output_all_zero",
+    m1_u32_words_are_zero(empty_theap->random.output, 16));
+  U("m1.bootstrap.empty_theap.random.output_available",
+    empty_theap->random.output_available);
+  U("m1.bootstrap.empty_theap.random.weak", empty_theap->random.weak);
+  U("m1.bootstrap.empty_theap.page_count", empty_theap->page_count);
+  U("m1.bootstrap.empty_theap.page_retired_min", empty_theap->page_retired_min);
+  U("m1.bootstrap.empty_theap.page_retired_max", empty_theap->page_retired_max);
+  U("m1.bootstrap.empty_theap.pages_full_size", empty_theap->pages_full_size);
+  U("m1.bootstrap.empty_theap.generic_count", empty_theap->generic_count);
+  U("m1.bootstrap.empty_theap.generic_collect_count", empty_theap->generic_collect_count);
+  U("m1.bootstrap.empty_theap.tnext_is_null", empty_theap->tnext == NULL);
+  U("m1.bootstrap.empty_theap.tprev_is_null", empty_theap->tprev == NULL);
+  U("m1.bootstrap.empty_theap.hnext_is_null", empty_theap->hnext == NULL);
+  U("m1.bootstrap.empty_theap.hprev_is_null", empty_theap->hprev == NULL);
+  U("m1.bootstrap.empty_theap.page_full_retain", empty_theap->page_full_retain);
+  U("m1.bootstrap.empty_theap.allow_page_reclaim", empty_theap->allow_page_reclaim);
+  U("m1.bootstrap.empty_theap.allow_page_abandon", empty_theap->allow_page_abandon);
+  U("m1.bootstrap.empty_theap.is_detached", empty_theap->is_detached);
+  U("m1.bootstrap.empty_theap.page_queues.count", MI_BIN_COUNT);
+  U("m1.bootstrap.empty_theap.page_queues.all_first_null", queues_all_first_null);
+  U("m1.bootstrap.empty_theap.page_queues.all_last_null", queues_all_last_null);
+  U("m1.bootstrap.empty_theap.page_queues.all_count_zero", queues_all_count_zero);
+  U("m1.bootstrap.empty_theap.memid.base_is_null", empty_theap_memid.mem.os.base == NULL);
+  U("m1.bootstrap.empty_theap.memid.size", empty_theap_memid.mem.os.size);
+  U("m1.bootstrap.empty_theap.memid.kind", empty_theap_memid.memkind);
+  U("m1.bootstrap.empty_theap.memid.pinned", empty_theap_memid.is_pinned);
+  U("m1.bootstrap.empty_theap.memid.committed", empty_theap_memid.initially_committed);
+  U("m1.bootstrap.empty_theap.memid.zero", empty_theap_memid.initially_zero);
   return 0;
 }
 """
@@ -3755,6 +4120,8 @@ def validate_m1_foundations_contract(
             "remaining_conditions",
             "source_map_records",
         }
+        if component_id == "atomics-locks-once-and-bootstrap":
+            expected_component_keys.add("once_call_site_dispositions")
         if component_id == "linux-raw-primitives":
             expected_component_keys.add("prim_h_declaration_inventory")
         if set(raw_component) != expected_component_keys:
@@ -3801,6 +4168,31 @@ def validate_m1_foundations_contract(
                 "M1 configuration-and-arithmetic must retain the complete "
                 "frozen configuration and scalar layout inventory"
             )
+        if (
+            component_id == "atomics-locks-once-and-bootstrap"
+            and raw_layout_keys != list(M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS)
+        ):
+            raise HarnessError(
+                "M1 bootstrap must retain the complete immutable static-image "
+                "relational vector"
+            )
+
+        once_call_site_dispositions: list[dict[str, str]] = []
+        if component_id == "atomics-locks-once-and-bootstrap":
+            raw_once_call_site_dispositions = raw_component.get(
+                "once_call_site_dispositions"
+            )
+            if raw_once_call_site_dispositions != list(
+                M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS
+            ):
+                raise HarnessError(
+                    "M1 bootstrap must retain every pinned mi_atomic_do_once "
+                    "call-site disposition"
+                )
+            once_call_site_dispositions = [
+                dict(disposition)
+                for disposition in M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS
+            ]
 
         raw_references = raw_component.get("source_map_records")
         if not isinstance(raw_references, list) or not raw_references:
@@ -3980,6 +4372,8 @@ def validate_m1_foundations_contract(
             "remaining_conditions": list(raw_remaining_conditions),
             "source_map_records": references,
         }
+        if component_id == "atomics-locks-once-and-bootstrap":
+            component["once_call_site_dispositions"] = once_call_site_dispositions
         if component_id == "linux-raw-primitives":
             component["prim_h_declaration_inventory"] = declaration_inventory
         components.append(component)
@@ -4146,8 +4540,10 @@ def m1_foundations_layout_evidence(
     components: Sequence[Mapping[str, Any]],
     c_layout: Mapping[str, int],
     rust_layout: Mapping[str, int],
+    *,
+    static_image_c_layout: Mapping[str, int],
 ) -> dict[str, dict[str, Any]]:
-    """Classify only the layout keys declared by the M1 component contract."""
+    """Classify declared M1 keys against their exact C reader boundary."""
 
     evidence: dict[str, dict[str, Any]] = {}
     for component in components:
@@ -4158,17 +4554,22 @@ def m1_foundations_layout_evidence(
                 "status": "not-applicable",
             }
             continue
-        missing_from_c = sorted(key for key in keys if key not in c_layout)
+        component_c_layout = (
+            static_image_c_layout
+            if component["id"] == "atomics-locks-once-and-bootstrap"
+            else c_layout
+        )
+        missing_from_c = sorted(key for key in keys if key not in component_c_layout)
         if missing_from_c:
             raise HarnessError(
-                "M1 foundations required C release layout keys are absent for "
+                "M1 foundations required C layout keys are absent for "
                 f"{component['id']}: {', '.join(missing_from_c)}"
             )
         missing_from_rust = sorted(key for key in keys if key not in rust_layout)
         mismatches = [
-            f"{key} (C={c_layout[key]}, Rust={rust_layout[key]})"
+            f"{key} (C={component_c_layout[key]}, Rust={rust_layout[key]})"
             for key in keys
-            if key in rust_layout and c_layout[key] != rust_layout[key]
+            if key in rust_layout and component_c_layout[key] != rust_layout[key]
         ]
         evidence[component["id"]] = {
             "keys": list(keys),
@@ -4230,8 +4631,19 @@ def m1_foundations_report(
     rust_layout = rust_release_layout.get("layout")
     if not isinstance(c_layout, Mapping) or not isinstance(rust_layout, Mapping):
         raise HarnessError("M1 foundations shared oracle release layout is invalid")
+    static_image_probe = release.get("m1_static_image_probe")
+    if not isinstance(static_image_probe, Mapping):
+        raise HarnessError("M1 foundations shared oracle lacks the static-image reader")
+    static_image_c_layout = static_image_probe.get("layout")
+    if not isinstance(static_image_c_layout, Mapping):
+        raise HarnessError("M1 foundations static-image reader layout is invalid")
+    if static_image_probe.get("defines") != list(M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES):
+        raise HarnessError("M1 foundations static-image reader define boundary changed")
     layout_evidence = m1_foundations_layout_evidence(
-        summary["components"], c_layout, rust_layout
+        summary["components"],
+        c_layout,
+        rust_layout,
+        static_image_c_layout=static_image_c_layout,
     )
 
     compiler_tls = shared_oracle.get("compiler_tls_codegen")
@@ -4276,6 +4688,10 @@ def m1_foundations_report(
             "source_map_records": list(component["source_map_records"]),
             "status": "complete" if complete else "partial",
         }
+        if component_id == "atomics-locks-once-and-bootstrap":
+            report_component["once_call_site_dispositions"] = list(
+                component["once_call_site_dispositions"]
+            )
         if component_id == "linux-raw-primitives":
             report_component["prim_h_declaration_inventory"] = list(
                 component["prim_h_declaration_inventory"]
@@ -4288,6 +4704,7 @@ def m1_foundations_report(
     release_layout_artifact = release.get("artifact")
     if not isinstance(release_layout_artifact, Mapping):
         raise HarnessError("M1 foundations shared release profile lacks its artifact record")
+    generic_rust_layout = generic_layout_without_m1_static_reader_fields(rust_layout)
     return {
         "components": components,
         "contract": m1_foundations_contract_record(contract, pin),
@@ -4311,11 +4728,24 @@ def m1_foundations_report(
             "release_c_rust_layout": {
                 "c_layout_key_count": len(c_layout),
                 "c_release_artifact": dict(release_layout_artifact),
-                "rust_layout_key_count": len(rust_layout),
+                "rust_layout_key_count": len(generic_rust_layout),
                 "rust_subset_comparison": rust_release_layout.get("comparison"),
                 "scope": (
-                    "M1 consumes only the component-declared layout keys; the shared "
-                    "oracle's broader M0/M3/M4 traces are supporting producers, not M1 closure."
+                    "The ordinary release artifact and generic layout reader retain their "
+                    "normal automatic-attach configuration. M1 consumes only the "
+                    "component-declared generic keys; the shared oracle's broader M0/M3/M4 "
+                    "traces are supporting producers, not M1 closure."
+                ),
+            },
+            "release_static_bootstrap_image": {
+                "c_layout_key_count": len(static_image_c_layout),
+                "defines": list(M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES),
+                "rust_layout_key_count": len(M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS),
+                "scope": (
+                    "A separate static-image-only C reader defines "
+                    "MI_PRIM_HAS_PROCESS_ATTACH=1 only to observe the src/init.c "
+                    "initializer before prim.c auto-attach; it is not an artifact, "
+                    "generic-layout, runtime, or lifecycle claim."
                 ),
             },
         },
@@ -8797,6 +9227,69 @@ def pending_fundamental_trace_comparison() -> dict[str, str]:
     }
 
 
+def build_m1_static_image_probe(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    flags: Sequence[str],
+) -> dict[str, Any]:
+    """Read only the M1 pre-process-initialization static image.
+
+    This is intentionally not a `build_profile` layout variant. Its one
+    constructor-suppression define is limited to the generated reader, so the
+    normal profile artifact, generic layout reader, macro probe, and runtime
+    traces retain the pinned ordinary automatic-attach configuration.
+    """
+
+    probe_source = profile_dir / "m1-static-image-probe.c"
+    probe_binary = profile_dir / "m1-static-image-probe"
+    probe_source.write_text(STATIC_IMAGE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        *M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES,
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *flags,
+        str(probe_source),
+        *(str(source / item) for item in ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(probe_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M1 static-image reader build")
+    run = command_record((str(probe_binary),), cwd=source)
+    require_success(run, "pinned C M1 static-image reader execution")
+    layout = parse_layout(str(run["stdout"]))
+    actual_keys = set(layout)
+    expected_keys = set(M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS)
+    if actual_keys != expected_keys:
+        missing = sorted(expected_keys - actual_keys)
+        unexpected = sorted(actual_keys - expected_keys)
+        problems: list[str] = []
+        if missing:
+            problems.append("missing " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected " + ", ".join(unexpected))
+        raise HarnessError(
+            "pinned C M1 static-image reader does not emit the frozen vector: "
+            + "; ".join(problems)
+        )
+    return {
+        "command": command,
+        "defines": list(M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES),
+        "layout": layout,
+    }
+
+
 def build_profile(
     compiler: str,
     readelf: str,
@@ -8806,6 +9299,7 @@ def build_profile(
     *,
     artifact_root: Path = ORACLE_ARTIFACT_ROOT,
     architecture: str = "aarch64",
+    include_m1_static_image_probe: bool = False,
 ) -> dict[str, Any]:
     profile_dir = artifact_root / name
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -8839,6 +9333,15 @@ def build_profile(
     require_success(probe_build, f"pinned C layout probe {name} build")
     probe_run = command_record((str(probe_binary),), cwd=source)
     require_success(probe_run, f"pinned C layout probe {name} execution")
+    layout = parse_layout(str(probe_run["stdout"]))
+    reader_only_keys_in_generic_layout = sorted(
+        set(layout) & M1_BOOTSTRAP_STATIC_IMAGE_READER_ONLY_LAYOUT_KEY_SET
+    )
+    if reader_only_keys_in_generic_layout:
+        raise HarnessError(
+            "generic C layout reader unexpectedly contains M1 static-image-only keys: "
+            + ", ".join(reader_only_keys_in_generic_layout)
+        )
     macro_probe = command_record(
         [compiler, "-std=c11", "-dM", "-E", "-I", str(source / "include"), *flags, "-"],
         cwd=source,
@@ -8853,10 +9356,14 @@ def build_profile(
         "build": {"command": command, "stderr": build["stderr"]},
         "configuration_macros": parse_macros(str(macro_probe["stdout"])),
         "flags": list(flags),
-        "layout": parse_layout(str(probe_run["stdout"])),
+        "layout": layout,
         "profile": name,
         "symbols": dynamic_symbols(readelf, artifact),
     }
+    if include_m1_static_image_probe:
+        result["m1_static_image_probe"] = build_m1_static_image_probe(
+            compiler, source, profile_dir, flags
+        )
     if name == "release":
         result["single_thread_small_trace"] = build_small_trace(
             compiler, source, profile_dir, flags
@@ -9332,6 +9839,23 @@ def fundamental_trace_architecture_for_rust_target(rust_target: str | None) -> s
     )
 
 
+def generic_layout_without_m1_static_reader_fields(
+    layout: Mapping[str, int],
+) -> dict[str, int]:
+    """Keep the ordinary C/Rust layout comparison outside the new reader.
+
+    The legacy eight const-image memid fields remain ordinary layout evidence;
+    the newly audited relational fields are compared only against the separate
+    pre-process-initialization C reader.
+    """
+
+    return {
+        key: value
+        for key, value in layout.items()
+        if key not in M1_BOOTSTRAP_STATIC_IMAGE_READER_ONLY_LAYOUT_KEY_SET
+    }
+
+
 def rust_layout_probe(
     c_release_layout: Mapping[str, int],
     c_release_small_trace: Mapping[str, int],
@@ -9382,11 +9906,12 @@ def rust_layout_probe(
     require_success(record, "Rust allocator layout probe")
     output = str(record["stdout"]) + "\n" + str(record["stderr"])
     rust_layout = parse_rust_layout(output)
+    generic_rust_layout = generic_layout_without_m1_static_reader_fields(rust_layout)
     rust_small_trace = parse_small_trace(output)
     rust_fundamental_trace = parse_fundamental_trace(output)
     result = {
         "command": command,
-        "comparison": compare_rust_layout(c_release_layout, rust_layout),
+        "comparison": compare_rust_layout(c_release_layout, generic_rust_layout),
         "layout": rust_layout,
         "passed_test_count": parse_rust_test_count(output),
         "single_thread_small_trace": {
@@ -11912,7 +12437,16 @@ def run_milestone0(
         compiler = require_tool("musl-gcc")
         readelf = require_tool("readelf")
         profiles = {
-            name: build_profile(compiler, readelf, source, name, flags)
+            name: build_profile(
+                compiler,
+                readelf,
+                source,
+                name,
+                flags,
+                include_m1_static_image_probe=(
+                    architecture == "aarch64" and name == "release"
+                ),
+            )
             for name, flags in CONFIGURATION_PROFILES.items()
         }
         release_symbol_contract = validate_release_symbol_contract(
