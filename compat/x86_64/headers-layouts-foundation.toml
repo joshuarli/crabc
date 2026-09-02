@@ -2,7 +2,7 @@
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
 # `headers-layouts.toml` remains the v1 inventory of fifty-three direct probes.
-# This v13 manifest accounts for every pinned public header and every project-
+# This v14 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
 # event-descriptor, timeval-transitive, direct sys/time, and access-header profile ABI slices
@@ -13,7 +13,7 @@
 # `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
 # x86 `headers_install` identity; it is repeated here and in the Docker build
 # because those independent consumers cannot load TOML from one another.
-schema = "crabc.x86_64-headers-layouts-foundation/v13"
+schema = "crabc.x86_64-headers-layouts-foundation/v14"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -29,6 +29,7 @@ native_execution_only = true
 project_headers_first = true
 inventory_accounting = true
 candidate_transitive_include_closure = true
+selected_header_install_projection = true
 full_c11_consumer_matrix = true
 full_cxx17_consumer_matrix = true
 feature_visibility_matrix = true
@@ -68,6 +69,7 @@ sys_time_direct_header_profile_matrix_slice = true
 access_header_profile_matrix_slice = true
 xattr_header_profile_matrix_slice = true
 candidate_transitive_include_closure = true
+selected_header_install_projection = true
 c11_consumer_matrix = true
 cxx17_consumer_matrix = true
 feature_visibility_matrix = true
@@ -98,6 +100,23 @@ full_callable_closure = false
 family_promotion = false
 public_support = false
 description = "The native selected-provider audit builds the no-feature default archive plus isolated exact Cargo feature requests, uses ordinary archive extraction for all declared default and verified feature providers, checks each declared replacement symbol is extractable from both profiles, proves weak same-address alias contracts, and retains the named crypt/allocator composition's intentionally rejected direct baseline through its dedicated evidence. Dedicated environment and resolver evidence retains replacement-provider selection and behavior. It records the finite unprovided complement instead of claiming full callable closure, runtime behavior, header-family promotion, or public x86 support."
+
+[selected_header_install_projection]
+id = "x86-selected-header-install-projection"
+state = "partial-verified"
+owner = "libc.headers-layouts"
+target_obligation = "project-only-extension-policy"
+command = "./scripts/dev-x86_64.sh selected-header-install-projection"
+selected_public_header_count = 183
+excluded_project_only_header_count = 8
+profile_count = 7
+projection_row_count = 1281
+bits_policy = "retain-all-project-bits-private-headers"
+source_tree_mutation = false
+callable_provider_closure = false
+family_promotion = false
+public_support = false
+description = "The private selected x86 install projection materializes exactly the 183 pinned-musl public paths plus project-private bits/** headers, rejects all eight classified source-only non-bits paths, and compiles the resulting 1,281 C11/C++17 empty-TU rows under isolated raw-GCC roots. It preserves the shared source include tree and does not select declarations, callable providers, archive linkage, runtime behavior, a complete sysroot, family promotion, or public x86 support."
 
 [profile_matrix]
 # A row is one resolved header pathname in one language/feature profile. The
@@ -1715,11 +1734,11 @@ description = "The three direct Linux-UAPI wrappers compile with selected consta
 
 [[abi_facet]]
 id = "project-only-extension-policy"
-state = "planned"
+state = "partial-verified"
 scope = "project-only-extensions"
 owner = "libc.c-abi-compat"
-evidence = ["project-only-header-classification"]
-description = "Each project-only public header needs an explicit retained-profile or removal decision before final C ABI compatibility."
+evidence = ["project-only-header-classification", "x86-selected-header-install-projection"]
+description = "The eight project-only source headers remain classified in the shared tree and are explicitly absent from the private x86 selected install projection; declaration/provider decisions for their retained source-tree surfaces remain outside this partial policy slice."
 
 [[abi_facet]]
 id = "candidate-transitive-closure"

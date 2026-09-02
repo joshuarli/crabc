@@ -1,0 +1,107 @@
+# Private x86 installed-header projection for the pinned musl pathname surface.
+#
+# The repository `include/` tree remains shared source material.  It contains
+# eight project-only non-bits paths which remain present there for their named
+# in-tree callers, but do not enter this x86 selected installation surface.
+# This is an isolated header-consumer proof, not a C ABI/provider, runtime,
+# sysroot, product, family-promotion, or public-support claim.
+schema = "crabc.x86_64-selected-header-install-projection/v1"
+family = "libc.headers-layouts"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6"
+source_header_root = "include"
+pinned_public_inventory = "compat/x86_64/public_headers.txt"
+selected_public_header_count = 183
+excluded_project_only_header_count = 8
+profile_count = 7
+projection_row_count = 1281
+bits_policy = "retain-all-project-bits-private-headers"
+source_tree_mutation = false
+negative_scope = "This private projection materializes only the pinned 183-path x86 selected header surface plus project bits/** implementation headers, and compiles empty C11/C++17 consumers. It neither removes the eight source-only paths from the shared repository include tree nor proves declarations, layouts, callable providers, archive linkage, runtime behavior, a complete sysroot, product closure, family promotion, or public x86 support."
+
+[work_package]
+target_family = "libc.headers-layouts"
+target_obligation = "project-only-extension-policy"
+blocker = "The shared source include tree has eight project-only non-bits paths beyond the pinned musl 183-path public inventory, so a private x86 selected install surface must classify and exclude them before it can be consumed as a target-owned header input."
+prerequisites = ["oracle.musl-toolchain", "libc.errno-tls"]
+dependents = ["libc.headers-layouts", "static product header/sysroot prerequisites"]
+baseline = "Pinned musl 1.2.6 public_headers.txt has 183 paths; repository include/ has those paths plus eight source-only non-bits headers; Linux 5.10 UAPI remains hash-pinned."
+ownership = ["compat/x86_64/selected-header-install-projection.toml", "compat/x86_64/selected_header_install_projection.py", "compat/x86_64/run_selected_header_install_projection.sh"]
+focused_evidence_command = "./scripts/dev-x86_64.sh selected-header-install-projection"
+family_aggregate = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
+product_command = "./scripts/dev-x86_64.sh campaign-static"
+negative_scope = "This excludes source-only project headers from one private x86 installed-header projection only; it does not delete them, select providers, change the shared source-tree diagnostic, or claim ABI/runtime/sysroot/product closure."
+expected_transition = "project-only-extension-policy moves from planned to partial-verified while libc.headers-layouts remains planned."
+
+[[excluded_header]]
+path = "daemon.h"
+disposition = "excluded-from-x86-selected-install-surface"
+origin = "project-only standalone alias"
+canonical_surface = "unistd.h conditional declaration"
+capability_family = "process.control"
+provider_state = "unprovided"
+reason = "The standalone alias is not a pinned musl public pathname; unistd.h owns the canonical conditional declaration."
+
+[[excluded_header]]
+path = "dn_expand.h"
+disposition = "excluded-from-x86-selected-install-surface"
+origin = "project-only standalone alias"
+canonical_surface = "arpa/nameser.h"
+capability_family = "network.resolver"
+provider_state = "default static"
+reason = "The resolver declaration is canonically exposed through arpa/nameser.h, which remains selected."
+
+[[excluded_header]]
+path = "linux/capability.h"
+disposition = "excluded-from-x86-selected-install-surface"
+origin = "project-local Linux capability ABI"
+canonical_surface = "no pinned musl public wrapper"
+capability_family = "system.kernel-admin"
+provider_state = "unprovided"
+reason = "This local Linux ABI header has no pinned-musl public-wrapper counterpart."
+
+[[excluded_header]]
+path = "lrand48.h"
+disposition = "excluded-from-x86-selected-install-surface"
+origin = "project-only standalone alias"
+canonical_surface = "stdlib.h conditional declarations"
+capability_family = "random.state"
+provider_state = "default static"
+reason = "stdlib.h owns the feature-gated random-state declarations; the alias is not selected by musl."
+
+[[excluded_header]]
+path = "pthread_atfork.h"
+disposition = "excluded-from-x86-selected-install-surface"
+origin = "project-only standalone alias"
+canonical_surface = "pthread.h C++ linkage declarations"
+capability_family = "process.atfork-exit-hooks"
+provider_state = "default static"
+reason = "pthread.h remains the canonical public C++ linkage surface for the atfork declarations."
+
+[[excluded_header]]
+path = "stdatomic.h"
+disposition = "excluded-from-x86-selected-install-surface"
+origin = "project-only C11 vocabulary"
+canonical_surface = "no pinned musl public pathname or C++ callable surface"
+capability_family = "process.atfork-exit-hooks"
+provider_state = "unprovided"
+reason = "The shared source header remains available to its in-tree callers, but it is outside the pinned musl selected surface."
+
+[[excluded_header]]
+path = "strverscmp.h"
+disposition = "excluded-from-x86-selected-install-surface"
+origin = "project-only standalone extension"
+canonical_surface = "string.h GNU conditional declaration"
+capability_family = "text.byte-strings-stateful"
+provider_state = "default static"
+reason = "string.h retains the GNU-gated canonical declaration, while the standalone extension is not selected."
+
+[[excluded_header]]
+path = "sys/module.h"
+disposition = "excluded-from-x86-selected-install-surface"
+origin = "project-local Linux module syscall extension"
+canonical_surface = "no pinned musl public wrapper"
+capability_family = "system.kernel-admin"
+provider_state = "unprovided"
+reason = "This project Linux syscall extension has no pinned-musl public-wrapper counterpart."

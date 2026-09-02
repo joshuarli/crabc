@@ -56,6 +56,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   public-header-surface  inventory all pinned x86 public headers for C consumability
   candidate-header-closure  require isolated C11/C++17 public-header include closure
   installed-header-tree-closure  verify the materialized target-owned x86 public-header closure
+  selected-header-install-projection  verify the private pinned-path x86 installed-header projection
   header-callable-visibility-matrix  check all-header callable feature-visibility evidence
   header-abi-matrix  check all-header callable and named noncallable ABI evidence
   header-declaration-macro-visibility-matrix  check all-header declaration/macro feature-visibility evidence
@@ -2543,6 +2544,10 @@ run_candidate_header_closure() {
 
 run_installed_header_tree_closure() {
     run_in_container bash /workspace/compat/x86_64/run_installed_header_tree_closure.sh
+}
+
+run_selected_header_install_projection() {
+    run_in_container bash /workspace/compat/x86_64/run_selected_header_install_projection.sh
 }
 
 run_header_callable_visibility_matrix() {
@@ -5055,6 +5060,7 @@ case "$command" in
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     installed-header-tree-closure) ;;
+    selected-header-install-projection) ;;
     header-callable-visibility-matrix) ;;
     header-abi-matrix) ;;
     header-declaration-macro-visibility-matrix) ;;
@@ -5201,6 +5207,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "installed-header-tree-closure takes no arguments"
         ensure_image
         run_installed_header_tree_closure
+        ;;
+    selected-header-install-projection)
+        [ "$#" -eq 0 ] || fail "selected-header-install-projection takes no arguments"
+        ensure_image
+        run_selected_header_install_projection
         ;;
     header-callable-visibility-matrix)
         [ "$#" -eq 0 ] || fail "header-callable-visibility-matrix takes no arguments"

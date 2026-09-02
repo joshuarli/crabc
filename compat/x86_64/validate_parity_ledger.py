@@ -46,6 +46,10 @@ from header_declaration_macro_visibility_matrix import (  # noqa: E402
     load_contract as load_declaration_macro_visibility_contract,
     validate_checked_report as validate_declaration_macro_visibility_report,
 )
+from selected_header_install_projection import (  # noqa: E402
+    ProjectionError,
+    load_contract as load_selected_header_install_projection_contract,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -101,6 +105,15 @@ CANDIDATE_HEADER_CLOSURE_RUNNER_PATH = (
 INSTALLED_HEADER_TREE_CLOSURE_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_installed_header_tree_closure.sh"
 )
+SELECTED_HEADER_INSTALL_PROJECTION_CONTRACT_PATH = (
+    ROOT / "compat" / "x86_64" / "selected-header-install-projection.toml"
+)
+SELECTED_HEADER_INSTALL_PROJECTION_VALIDATOR_PATH = (
+    ROOT / "compat" / "x86_64" / "selected_header_install_projection.py"
+)
+SELECTED_HEADER_INSTALL_PROJECTION_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_selected_header_install_projection.sh"
+)
 UAPI_WRAPPER_MATRIX_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_uapi_wrapper_matrix.sh"
 )
@@ -133,7 +146,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v13"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v14"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -347,6 +360,9 @@ EXPECTED_CANDIDATE_HEADER_CLOSURE_ORACLE_NOT_APPLICABLE_ROWS = (
 )
 EXPECTED_INSTALLED_HEADER_TREE_CLOSURE_COMMAND = (
     "./scripts/dev-x86_64.sh installed-header-tree-closure"
+)
+EXPECTED_SELECTED_HEADER_INSTALL_PROJECTION_COMMAND = (
+    "./scripts/dev-x86_64.sh selected-header-install-projection"
 )
 EXPECTED_HEADER_ABI_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi-matrix"
 EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
@@ -782,10 +798,13 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         (EXPECTED_UAPI_WRAPPER_MATRIX_ID,),
     ),
     "project-only-extension-policy": (
-        "planned",
+        "partial-verified",
         "project-only-extensions",
         "libc.c-abi-compat",
-        ("project-only-header-classification",),
+        (
+            "project-only-header-classification",
+            "x86-selected-header-install-projection",
+        ),
     ),
     "candidate-transitive-closure": (
         "partial-verified",
@@ -2948,7 +2967,7 @@ def validate_header_layout_foundation_manifest(
 ) -> dict[str, int]:
     """Validate the planned all-header accounting contract without promoting it.
 
-    The v13 contract resolves every current pathname into one class and expands
+    The v14 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
     Linux-UAPI input, resolves selected UAPI-wrapper, ioctl-header, x86 sys/io
     inline-port-I/O, epoll-header, timeval-transitive, direct sys/time, and
@@ -2992,6 +3011,7 @@ def validate_header_layout_foundation_manifest(
         "callable_feature_visibility_matrix",
         "prototype_layout_matrix",
         "selected_callable_provider_linkage_audit",
+        "selected_header_install_projection",
         "language_profile",
         "profile_obligation",
         "header_class",
@@ -3026,6 +3046,7 @@ def validate_header_layout_foundation_manifest(
             "project_headers_first": True,
             "inventory_accounting": True,
             "candidate_transitive_include_closure": True,
+            "selected_header_install_projection": True,
             "full_c11_consumer_matrix": True,
             "full_cxx17_consumer_matrix": True,
             "feature_visibility_matrix": True,
@@ -3065,6 +3086,7 @@ def validate_header_layout_foundation_manifest(
             "access_header_profile_matrix_slice": True,
             "xattr_header_profile_matrix_slice": True,
             "candidate_transitive_include_closure": True,
+            "selected_header_install_projection": True,
             "c11_consumer_matrix": True,
             "cxx17_consumer_matrix": True,
             "feature_visibility_matrix": True,
@@ -3141,6 +3163,65 @@ def validate_header_layout_foundation_manifest(
         "header-foundation selected provider audit description drifted",
     )
 
+    selected_install_projection = manifest["selected_header_install_projection"]
+    require(
+        isinstance(selected_install_projection, Mapping),
+        "header-foundation selected install projection must be a table",
+    )
+    require(
+        set(selected_install_projection)
+        == {
+            "id",
+            "state",
+            "owner",
+            "target_obligation",
+            "command",
+            "selected_public_header_count",
+            "excluded_project_only_header_count",
+            "profile_count",
+            "projection_row_count",
+            "bits_policy",
+            "source_tree_mutation",
+            "callable_provider_closure",
+            "family_promotion",
+            "public_support",
+            "description",
+        },
+        "header-foundation selected install projection keys drifted",
+    )
+    require(
+        dict(selected_install_projection)
+        == {
+            "id": "x86-selected-header-install-projection",
+            "state": "partial-verified",
+            "owner": "libc.headers-layouts",
+            "target_obligation": "project-only-extension-policy",
+            "command": EXPECTED_SELECTED_HEADER_INSTALL_PROJECTION_COMMAND,
+            "selected_public_header_count": 183,
+            "excluded_project_only_header_count": 8,
+            "profile_count": 7,
+            "projection_row_count": 1281,
+            "bits_policy": "retain-all-project-bits-private-headers",
+            "source_tree_mutation": False,
+            "callable_provider_closure": False,
+            "family_promotion": False,
+            "public_support": False,
+            "description": selected_install_projection["description"],
+        },
+        "header-foundation selected install projection contract drifted",
+    )
+    description = selected_install_projection["description"]
+    require(
+        isinstance(description, str)
+        and "183 pinned-musl public paths" in description
+        and "eight classified source-only" in description
+        and "1,281 C11/C++17" in description
+        and "shared source include tree" in description
+        and "callable providers" in description
+        and "public x86 support" in description,
+        "header-foundation selected install projection description drifted",
+    )
+
     require(
         family.get("status") == "planned",
         "libc.headers-layouts must remain planned while header foundation is incomplete",
@@ -3214,6 +3295,10 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/header_callable_provider_linkage_audit.py",
         "compat/x86_64/run_header_callable_provider_linkage_audit.sh",
         "compat/x86_64/public_headers.txt",
+        "compat/x86_64/selected-header-install-projection.toml",
+        "compat/x86_64/selected_header_install_projection.py",
+        "compat/x86_64/selected_header_install_projection_cxx.cpp",
+        "compat/x86_64/run_selected_header_install_projection.sh",
         "compat/x86_64/run_linux_5_10_uapi.sh",
         "compat/x86_64/run_uapi_wrapper_matrix.sh",
         "compat/x86_64/uapi_wrappers_header_abi_probe.c",
@@ -3249,6 +3334,7 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/header_cxx_closure.cpp",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/tests/test_candidate_header_closure.py",
+        "compat/x86_64/tests/test_selected_header_install_projection.py",
         "compat/x86_64/tests/test_feature_archive_roster.py",
         "compat/x86_64/tests/test_header_callable_inventory.py",
         "compat/x86_64/tests/test_header_callable_provider_linkage_audit.py",
@@ -6232,6 +6318,171 @@ def require_all_header_prototype_layout_artifact(
         and "source-form differences" in scope
         and "not ABI-classification, record-byte-layout, archive, runtime, promotion, or public-support evidence" in scope,
         "prototype/layout artifact evidence scope drifted",
+    )
+
+
+def require_selected_header_install_projection_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep the selected x86 installation surface below header-family closure.
+
+    The older candidate and installed-tree diagnostics intentionally retain the
+    shared 191-path source surface.  This separate artifact names the exact
+    183-path target materialization and the eight source-only exclusions; it
+    must not turn that installation decision into a provider or runtime claim.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "selected-header-install-projection"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one selected-header-install-projection artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "selected-header-install-projection must remain a private artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "Private native x86 selected installed-header projection artifact",
+        "still-planned `libc.headers-layouts`",
+        "183 pinned-musl public paths",
+        "eight classified source-only",
+        "project-private `bits/**`",
+        "seven-profile 1,281-row",
+        "shared repository `include/` tree",
+        "not declaration/layout parity, callable-provider linkage, archive/runtime behavior, complete sysroot, product closure, family promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"selected-header-install-projection description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "selected-header-install-projection.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/x86_64/public_headers.txt",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/selected-header-install-projection.toml",
+        "compat/x86_64/selected_header_install_projection.py",
+        "compat/x86_64/selected_header_install_projection_cxx.cpp",
+        "compat/x86_64/run_musl_oracle.sh",
+        "compat/x86_64/run_linux_5_10_uapi.sh",
+        "compat/x86_64/run_selected_header_install_projection.sh",
+        "compat/x86_64/tests/test_selected_header_install_projection.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"selected-header-install-projection omits {owner}")
+
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("183" in item and "seven" in item and "1,281" in item for item in prerequisites),
+        "selected-header-install-projection must state its closed row arithmetic",
+    )
+    require(
+        any("eight" in item and "source-only" in item for item in prerequisites),
+        "selected-header-install-projection must name all eight source-only exclusions",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    require(
+        any(
+            "bits/**" in item and "shared" in item and "not delete" in item
+            for item in header_prerequisites
+        ),
+        "selected-header-install-projection must preserve the shared source tree",
+    )
+    require(
+        any("-nostdinc" in item and "Linux 5.10 UAPI" in item for item in header_prerequisites),
+        "selected-header-install-projection must retain its isolated header roots",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        [entry["command"] for entry in evidence]
+        == [EXPECTED_SELECTED_HEADER_INSTALL_PROJECTION_COMMAND],
+        "selected-header-install-projection must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    require(
+        isinstance(scope, str)
+        and "183 selected paths" in scope
+        and "eight source-only exclusions" in scope
+        and "source/ambient/path-leak rejection" in scope
+        and "not declaration/layout parity, callable-provider linkage, archive/runtime, complete sysroot, product closure, family promotion, or public x86 support" in scope,
+        "selected-header-install-projection evidence scope drifted",
+    )
+
+    try:
+        projection = load_selected_header_install_projection_contract(
+            SELECTED_HEADER_INSTALL_PROJECTION_CONTRACT_PATH
+        )
+    except ProjectionError as error:
+        raise LedgerError(f"selected-header-install-projection contract is invalid: {error}") from error
+    require(
+        projection.target_family == "libc.headers-layouts"
+        and projection.target_obligation == "project-only-extension-policy"
+        and len(projection.selected_headers) == 183
+        and len(projection.exclusions) == 8
+        and projection.profile_count == 7
+        and projection.projection_row_count == 1281,
+        "selected-header-install-projection contract summary drifted",
+    )
+    require(
+        SELECTED_HEADER_INSTALL_PROJECTION_VALIDATOR_PATH.is_file(),
+        "selected-header-install-projection validator is missing",
+    )
+    require(
+        SELECTED_HEADER_INSTALL_PROJECTION_RUNNER_PATH.is_file(),
+        "selected-header-install-projection runner is missing",
+    )
+    require(
+        SELECTED_HEADER_INSTALL_PROJECTION_RUNNER_PATH.stat().st_mode & 0o777 == 0o755,
+        "selected-header-install-projection runner must be executable",
+    )
+    runner = SELECTED_HEADER_INSTALL_PROJECTION_RUNNER_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        "readonly EXPECTED_SELECTED_PUBLIC_HEADER_COUNT=183",
+        "readonly EXPECTED_EXCLUDED_PROJECT_ONLY_HEADER_COUNT=8",
+        "readonly EXPECTED_PROFILE_COUNT=7",
+        "readonly EXPECTED_PROJECTION_RECORD_COUNT=1281",
+        "materialize_selected_tree",
+        "selected header projection differs from the source selection",
+        "excluded project-only header entered the selected install tree",
+        "candidate include trace reached source include tree",
+        "candidate include trace escaped selected install/builtin/Linux-5.10 roots",
+        "run_linux_5_10_uapi.sh",
+        "-nostdinc",
+        "-nostdinc++",
+        "selected_header_install_projection_cxx.cpp",
+    ):
+        require(
+            phrase in runner,
+            f"selected-header-install-projection runner omits {phrase}",
+        )
+    dispatch_source = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    require(
+        "selected-header-install-projection)" in dispatch_source,
+        "selected-header-install-projection command is absent from the native dispatcher",
     )
 
 
@@ -74235,6 +74486,7 @@ def validate_ledger(
         by_id["libc.headers-layouts"]
     )
     require_all_header_prototype_layout_artifact(by_id["libc.headers-layouts"])
+    require_selected_header_install_projection_artifact(by_id["libc.headers-layouts"])
     require_installed_header_tree_closure_artifact(by_id["libc.headers-layouts"])
     if header_layout_foundation_manifest is None:
         header_layout_foundation_manifest = load_toml(HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH)

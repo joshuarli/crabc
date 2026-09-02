@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 357)
+        self.assertEqual(report["verified_artifact_count"], 358)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -3208,7 +3208,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v13"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v14"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -4357,7 +4357,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 12
+        assert isinstance(artifacts, list) and len(artifacts) == 13
         artifact = next(
             entry
             for entry in artifacts
@@ -4410,7 +4410,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 12
+        assert isinstance(artifacts, list) and len(artifacts) == 13
         artifact = next(
             entry
             for entry in artifacts
@@ -4474,7 +4474,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 12
+        assert isinstance(artifacts, list) and len(artifacts) == 13
         artifact = next(
             entry
             for entry in artifacts
@@ -4523,12 +4523,92 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "dedicated native command"):
             ledger.validate_ledger(changed)
 
+    def test_selected_header_install_projection_is_a_private_source_preserving_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        self.assertEqual(headers_layouts["status"], "planned")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 13
+        matching = [
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "selected-header-install-projection"
+        ]
+        self.assertEqual(len(matching), 1)
+        artifact = matching[0]
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh selected-header-install-projection"},
+        )
+        for owner in (
+            "compat/upstreams.toml",
+            "compat/x86_64/public_headers.txt",
+            "compat/x86_64/headers-layouts-foundation.toml",
+            "compat/x86_64/selected-header-install-projection.toml",
+            "compat/x86_64/selected_header_install_projection.py",
+            "compat/x86_64/selected_header_install_projection_cxx.cpp",
+            "compat/x86_64/run_musl_oracle.sh",
+            "compat/x86_64/run_linux_5_10_uapi.sh",
+            "compat/x86_64/run_selected_header_install_projection.sh",
+            "compat/x86_64/tests/test_selected_header_install_projection.py",
+            "compat/x86_64/tests/test_parity_ledger.py",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "still-planned `libc.headers-layouts`",
+            "183 pinned-musl public paths",
+            "eight classified source-only",
+            "project-private `bits/**`",
+            "seven-profile 1,281-row",
+            "shared repository `include/` tree",
+            "not declaration/layout parity, callable-provider linkage, archive/runtime behavior, complete sysroot, product closure, family promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        projection = manifest["selected_header_install_projection"]
+        assert isinstance(projection, dict)
+        self.assertEqual(projection["state"], "partial-verified")
+        self.assertEqual(projection["target_obligation"], "project-only-extension-policy")
+        self.assertEqual(projection["selected_public_header_count"], 183)
+        self.assertEqual(projection["excluded_project_only_header_count"], 8)
+        self.assertEqual(projection["profile_count"], 7)
+        self.assertEqual(projection["projection_row_count"], 1281)
+        self.assertFalse(projection["source_tree_mutation"])
+        facet = next(
+            entry
+            for entry in manifest["abi_facet"]
+            if isinstance(entry, dict) and entry["id"] == "project-only-extension-policy"
+        )
+        self.assertEqual(facet["state"], "partial-verified")
+        self.assertEqual(
+            facet["evidence"],
+            ["project-only-header-classification", "x86-selected-header-install-projection"],
+        )
+
+        changed = self.data()
+        changed_artifact = next(
+            entry
+            for entry in self.family(changed, "libc.headers-layouts")["verified_artifact"]
+            if isinstance(entry, dict) and entry["id"] == "selected-header-install-projection"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh installed-header-tree-closure"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "dedicated native command"):
+            ledger.validate_ledger(changed)
+
     def test_installed_header_tree_closure_is_a_private_materialized_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 12
+        assert isinstance(artifacts, list) and len(artifacts) == 13
         matching = [
             entry
             for entry in artifacts
@@ -4593,7 +4673,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 12
+        assert isinstance(artifacts, list) and len(artifacts) == 13
         artifact = next(
             entry
             for entry in artifacts
@@ -4664,7 +4744,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 12
+        assert isinstance(artifacts, list) and len(artifacts) == 13
         artifact = next(
             entry
             for entry in artifacts
@@ -13151,7 +13231,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(detail, socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 12
+        assert isinstance(artifacts, list) and len(artifacts) == 13
         bootstrap = next(
             entry
             for entry in artifacts
@@ -17533,7 +17613,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 12
+        assert isinstance(artifacts, list) and len(artifacts) == 13
         artifact = next(
             entry
             for entry in artifacts
@@ -17547,7 +17627,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 12
+        assert isinstance(artifacts, list) and len(artifacts) == 13
         artifact = next(
             entry
             for entry in artifacts

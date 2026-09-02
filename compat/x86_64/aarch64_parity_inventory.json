@@ -1422,7 +1422,7 @@
       "capability_count": 0,
       "contract_state": "selected-private",
       "id": "libc.headers-layouts",
-      "verified_artifact_count": 12,
+      "verified_artifact_count": 13,
       "verified_slice_count": 0
     },
     {
@@ -1918,6 +1918,10 @@
     {
       "family": "libc.headers-layouts",
       "id": "selected-header-callable-provider-linkage-audit"
+    },
+    {
+      "family": "libc.headers-layouts",
+      "id": "selected-header-install-projection"
     },
     {
       "family": "libc.headers-layouts",
@@ -3112,7 +3116,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "fb24e2f3004c61ae5c6a71d886f682a5ca40057bb9dd121adb6fead6fdecaf67",
+    "x86_parity_ledger": "38aa9f8ab871744610007c18e587213a93781a29e565106343366055ef70b592",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "3f0a015bd0fc34d845c97aca5531d4c14be47b2c7ddf74b5868b577e3105bc8d"
   },

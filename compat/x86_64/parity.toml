@@ -1491,7 +1491,7 @@ id = "libc.headers-layouts"
 order = 60
 depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
-description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. The checked declaration/macro identity matrix derives generic feature visibility from that compiler-generated source-form report: it records 1,072 current comparable identity-mismatch rows and 208 matched rows, while the one aio.h oracle-not-applicable row and 56 project-only rows retain checked candidate fact summaries and digests; 22,208 same-identity source-form differences remain separately accounted. The compiler-derived callable inventory now partitions every declared external among the default archive, verified feature archives, declared unverified feature profiles, and no-provider work. A selected-provider audit ordinarily extracts all 1,054 current default-static and 47 verified feature-provider members through isolated exact Cargo profiles, while retaining the 411-name unprovided complement and full callable closure as red work. Its all-header matrix records direct callable name/class visibility differences and the eight project-only current surfaces without treating either as prototype, noncallable ABI, linkage, or runtime parity. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Declaration-form equality, record byte layouts, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
+description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. Its separate selected install projection materializes the 183 pinned paths and project-private bits/** inputs while explicitly excluding the eight shared source-only headers; that private source-preserving policy does not complete callable providers. The checked declaration/macro identity matrix derives generic feature visibility from that compiler-generated source-form report: it records 1,072 current comparable identity-mismatch rows and 208 matched rows, while the one aio.h oracle-not-applicable row and 56 project-only rows retain checked candidate fact summaries and digests; 22,208 same-identity source-form differences remain separately accounted. The compiler-derived callable inventory now partitions every declared external among the default archive, verified feature archives, declared unverified feature profiles, and no-provider work. A selected-provider audit ordinarily extracts all 1,054 current default-static and 47 verified feature-provider members through isolated exact Cargo profiles, while retaining the 411-name unprovided complement and full callable closure as red work. Its all-header matrix records direct callable name/class visibility differences and the eight project-only current surfaces without treating either as prototype, noncallable ABI, linkage, or runtime parity. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Declaration-form equality, record byte layouts, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
 aarch64_gates = ["abi-probe", "build", "test"]
 source_owners = [
   "docker/Dockerfile.x86_64",
@@ -1519,6 +1519,10 @@ source_owners = [
   "compat/x86_64/header_callable_provider_linkage_audit.py",
   "compat/x86_64/run_header_callable_provider_linkage_audit.sh",
   "compat/x86_64/public_headers.txt",
+  "compat/x86_64/selected-header-install-projection.toml",
+  "compat/x86_64/selected_header_install_projection.py",
+  "compat/x86_64/selected_header_install_projection_cxx.cpp",
+  "compat/x86_64/run_selected_header_install_projection.sh",
   "compat/x86_64/run_public_header_surface.sh",
   "compat/x86_64/run_linux_5_10_uapi.sh",
   "compat/x86_64/run_uapi_wrapper_matrix.sh",
@@ -1554,6 +1558,7 @@ source_owners = [
   "compat/x86_64/run_candidate_header_closure.sh",
   "compat/x86_64/header_cxx_closure.cpp",
   "compat/x86_64/tests/test_candidate_header_closure.py",
+  "compat/x86_64/tests/test_selected_header_install_projection.py",
   "compat/x86_64/tests/test_feature_archive_roster.py",
   "compat/x86_64/tests/test_header_callable_inventory.py",
   "compat/x86_64/tests/test_header_callable_provider_linkage_audit.py",
@@ -2173,6 +2178,35 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh installed-header-tree-closure", scope = "Native materialized temporary usr/include seven-profile header-tree closure. It requires source-tree manifest equality, 191 candidate/183 pinned-musl headers, 1,337 rows, exactly the two aio strict oracle-not-applicable rows after candidate compilation, and source/ambient/path-leak rejection with the hash-pinned Linux 5.10 UAPI input. It is header-tree closure only; not declaration/layout parity, callable linkage, archive/runtime, CRT, loader, driver, sysroot, family promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-header tree", role = "Pinned public-header pathname and isolated C/C++ consumer applicability oracle; its two strict aio.h rows are explicitly oracle-not-applicable." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 UAPI headers", role = "Hash-pinned UAPI include input for the isolated materialized installed-tree candidate." }]
+
+[[family.verified_artifact]]
+id = "selected-header-install-projection"
+description = "Private native x86 selected installed-header projection artifact within still-planned `libc.headers-layouts`. It materializes exactly the 183 pinned-musl public paths plus project-private `bits/**` implementation headers, while rejecting the eight classified source-only non-bits paths from its disposable target tree. Its isolated seven-profile 1,281-row C11/C++17 consumer matrix admits only that selected tree, raw-GCC builtin headers, and the hash-pinned Linux 5.10 UAPI input; it preserves the shared repository `include/` tree rather than deleting or reclassifying its source-only headers. It is not declaration/layout parity, callable-provider linkage, archive/runtime behavior, complete sysroot, product closure, family promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/x86_64/public_headers.txt",
+  "compat/x86_64/headers-layouts-foundation.toml",
+  "compat/x86_64/selected-header-install-projection.toml",
+  "compat/x86_64/selected_header_install_projection.py",
+  "compat/x86_64/selected_header_install_projection_cxx.cpp",
+  "compat/x86_64/run_musl_oracle.sh",
+  "compat/x86_64/run_linux_5_10_uapi.sh",
+  "compat/x86_64/run_selected_header_install_projection.sh",
+  "compat/x86_64/tests/test_selected_header_install_projection.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The closed selected consumer arithmetic is 183 pinned-musl public paths * seven C11/C++17 profiles = 1,281 rows; this projection selects no declaration ABI, archive member, or callable provider.",
+  "Exactly eight source-only non-bits headers remain classified as excluded from this x86 selected installation surface, while their shared-source declarations and provider dispositions stay explicit work.",
+]
+x86_header_prerequisites = [
+  "The temporary target tree retains project-private bits/** dependencies but does not delete or mutate the shared repository include/** source tree; it must contain every selected path and none of the eight exclusions.",
+  "Candidate compilation uses -nostdinc and only the selected temporary tree, raw-GCC builtin headers, and the hash-pinned Linux 5.10 UAPI input; source, musl, ambient, and path leaks fail the artifact.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh selected-header-install-projection", scope = "Native private selected-header installation projection. It materializes 183 selected paths plus private bits/**, rejects eight source-only exclusions, compiles 1,281 isolated C11/C++17 rows, and requires source/ambient/path-leak rejection with the hash-pinned Linux 5.10 UAPI input. It is not declaration/layout parity, callable-provider linkage, archive/runtime, complete sysroot, product closure, family promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-header tree", role = "Exact selected public pathname inventory for the private x86 projection; source-only project headers remain explicitly excluded rather than treated as musl paths." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 UAPI headers", role = "Hash-pinned UAPI include input for the isolated selected candidate tree." }]
 
 [[family.verified_artifact]]
 id = "dirent-header-profile-matrix"

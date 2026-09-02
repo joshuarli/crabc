@@ -268,6 +268,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh header-abi-reference
 ./scripts/dev-x86_64.sh public-header-surface
 ./scripts/dev-x86_64.sh installed-header-tree-closure
+./scripts/dev-x86_64.sh selected-header-install-projection
 ./scripts/dev-x86_64.sh header-abi-project
 ./scripts/dev-x86_64.sh math-complex-header-abi
 ./scripts/dev-x86_64.sh math-complex-complete-header-abi
@@ -1759,6 +1760,16 @@ success. This is an installed-header-tree closure artifact distinct from the
 source-tree closure, not full declaration, layout, feature-visibility, or
 linkage parity; an archive or runtime artifact; CRT, loader, driver, or
 owned-sysroot evidence; promotion; or public x86 support.
+
+`selected-header-install-projection` is a distinct private x86 installation
+policy. It leaves the shared repository `include/` tree unchanged, materializes
+only the 183 pinned-musl public paths plus project-private `bits/**` headers,
+and rejects the eight classified source-only non-bits paths. Its 1,281
+seven-profile C11/C++17 empty-TU rows allow only that temporary selection,
+raw-GCC builtin headers, and the fixed Linux 5.10 UAPI root. It does not select
+declarations or callable providers for the excluded source-tree paths, and is
+not declaration/layout, linkage, runtime, complete-sysroot, product,
+promotion, or public-x86-support evidence.
 
 `header-abi-project` places the project headers first and compile-checks only
 the staged x86 `fenv`, `float`, and fundamental-type declarations, in both SSE

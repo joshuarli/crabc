@@ -1671,6 +1671,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    linux-5-10-uapi) ;;", source)
         self.assertIn("    candidate-header-closure) ;;", source)
         self.assertIn("    installed-header-tree-closure) ;;", source)
+        self.assertIn("    selected-header-install-projection) ;;", source)
         self.assertIn("    header-callable-visibility-matrix) ;;", source)
         self.assertIn("    header-abi-matrix) ;;", source)
         self.assertIn("    header-declaration-macro-visibility-matrix) ;;", source)
@@ -1800,6 +1801,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "linux-5-10-uapi",
             "candidate-header-closure",
             "installed-header-tree-closure",
+            "selected-header-install-projection",
             "header-callable-visibility-matrix",
             "header-abi-matrix",
             "header-declaration-macro-visibility-matrix",
