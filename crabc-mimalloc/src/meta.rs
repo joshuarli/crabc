@@ -39,7 +39,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::mem::{MaybeUninit, align_of, size_of};
 use core::pin::Pin;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 use crabc_core::Errno;
 
@@ -52,7 +52,7 @@ use crate::compiler_tls::DynamicThreadLocalBacking;
 use crate::config::{ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MIN_SIZE, MAX_VABITS};
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MapAccess, Mapping, MemoryConfig};
-use crate::page_map::PageMap;
+use crate::page_map::{PageMap, PageMapInitializationError};
 use crate::single_thread::{FreeError, SingleThreadAllocator};
 use crate::size_class;
 use crate::types::{
@@ -882,6 +882,12 @@ pub(crate) struct MetaAllocator {
     config: UnsafeCell<MaybeUninit<MemoryConfig>>,
     mapping: UnsafeCell<MaybeUninit<Mapping>>,
     page_map: UnsafeCell<MaybeUninit<PageMap>>,
+    /// The exact private PageMap mapping retained if page-map bootstrap's
+    /// cleanup release fails. This is not the later detached arena `mapping`:
+    /// no PageMap or arena was formed on this branch, so it needs its own
+    /// final owner before the metadata allocator enters FAILED.
+    retained_page_map_initialization_mapping: UnsafeCell<MaybeUninit<Mapping>>,
+    has_retained_page_map_initialization_mapping: AtomicBool,
     bootstrap: UnsafeCell<MaybeUninit<ExclusiveTheapBootstrap>>,
     allocator: UnsafeCell<MaybeUninit<SingleThreadAllocator<'static, 'static, 'static>>>,
     subprocess: AtomicPtr<MainSubprocess>,
@@ -957,6 +963,8 @@ impl MetaAllocator {
             config: UnsafeCell::new(MaybeUninit::uninit()),
             mapping: UnsafeCell::new(MaybeUninit::uninit()),
             page_map: UnsafeCell::new(MaybeUninit::uninit()),
+            retained_page_map_initialization_mapping: UnsafeCell::new(MaybeUninit::uninit()),
+            has_retained_page_map_initialization_mapping: AtomicBool::new(false),
             bootstrap: UnsafeCell::new(MaybeUninit::uninit()),
             allocator: UnsafeCell::new(MaybeUninit::uninit()),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
@@ -1014,6 +1022,60 @@ impl MetaAllocator {
         let stored_config = unsafe { *(*this.config.get()).assume_init_ref() };
         stored_config == config
             && core::ptr::eq(this.subprocess.load(Ordering::Acquire), subprocess.as_ptr())
+    }
+
+    /// Test-only observation of the PageMap bootstrap mapping retained before
+    /// this metadata allocator formed any PageMap or arena owner.
+    #[cfg(test)]
+    pub(crate) fn test_has_retained_page_map_initialization_mapping(
+        self: Pin<&'static Self>,
+    ) -> bool {
+        self.get_ref()
+            .has_retained_page_map_initialization_mapping
+            .load(Ordering::Acquire)
+    }
+
+    /// Releases the exact retained bootstrap mapping after a test removes its
+    /// injected cleanup fault. A failed retry puts the same live owner back.
+    #[cfg(test)]
+    pub(crate) fn test_release_retained_page_map_initialization_mapping(
+        self: Pin<&'static Self>,
+    ) -> Result<(), Errno> {
+        let this = self.get_ref();
+        let guard = this.lock.lock()?;
+        if !this
+            .has_retained_page_map_initialization_mapping
+            .load(Ordering::Acquire)
+        {
+            return match guard.unlock() {
+                Ok(()) => Err(Errno::INVAL),
+                Err(error) => Err(error),
+            };
+        }
+        // SAFETY: this private lock serializes retained-slot access, and the
+        // Acquire flag follows the initialization path's final-slot write.
+        let mut mapping = unsafe {
+            (*this.retained_page_map_initialization_mapping.get()).assume_init_read()
+        };
+        let release = match mapping.unmap() {
+            Ok(()) => {
+                this.has_retained_page_map_initialization_mapping
+                    .store(false, Ordering::Release);
+                Ok(())
+            }
+            Err(error) => {
+                // SAFETY: failed `unmap` preserves this exact Mapping, and
+                // the private lock still excludes another retained owner.
+                unsafe { this.write_retained_page_map_initialization_mapping(mapping) };
+                Err(error)
+            }
+        };
+        let unlock = guard.unlock();
+        match (release, unlock) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Ok(()),
+        }
     }
 
     /// Returns the final private PageMap slot address after metadata readiness
@@ -1399,7 +1461,20 @@ impl MetaAllocator {
         let this = self.get_ref();
         let page_map = match PageMap::initialize(config, MAX_VABITS, false) {
             Ok(page_map) => page_map,
-            Err(_) => return Err(MetaError::InitializationFailed),
+            Err(PageMapInitializationError::Failed { .. }) => {
+                return Err(MetaError::InitializationFailed);
+            }
+            Err(PageMapInitializationError::Retained { mapping, .. }) => {
+                // SAFETY: `entry` owns the initialization lock, COLD excludes
+                // every reader, and the private PageMap never reached its
+                // final PageMap slot. Preserve the still-live mapping in its
+                // distinct terminal owner before publishing FAILED.
+                unsafe { this.write_retained_page_map_initialization_mapping(mapping) };
+                this.has_retained_page_map_initialization_mapping
+                    .store(true, Ordering::Release);
+                this.status.store(FAILED, Ordering::Release);
+                return Err(MetaError::InitializationRetained);
+            }
         };
         // SAFETY: `entry` owns the sole initialization lock and COLD prevents
         // any reader from projecting this final static slot.
@@ -1501,6 +1576,18 @@ impl MetaAllocator {
         this.status.store(READY, Ordering::Release);
         let _ = entry;
         Ok(())
+    }
+
+    /// Writes the exact private PageMap bootstrap mapping into the metadata
+    /// owner's terminal slot.
+    ///
+    /// # Safety
+    ///
+    /// `initialize` still owns the metadata private lock, status is COLD, no
+    /// PageMap or arena was published, and this final slot is uninitialized.
+    #[inline]
+    unsafe fn write_retained_page_map_initialization_mapping(&self, mapping: Mapping) {
+        unsafe { (*self.retained_page_map_initialization_mapping.get()).write(mapping) };
     }
 
     fn cleanup_page_map_after_failed_init(self: Pin<&'static Self>) -> Result<(), MetaError> {
@@ -2075,6 +2162,35 @@ mod tests {
             allocator.zalloc(config(), 8),
             Err(MetaError::InitializationRetained)
         ));
+    }
+
+    #[test]
+    fn paired_page_map_initial_commit_and_cleanup_failure_retains_the_exact_mapping() {
+        let allocator = static_allocator();
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Commit,
+            1,
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::InitializationRetained)
+        ));
+        assert_eq!(allocator.status.load(Ordering::Acquire), FAILED);
+        assert!(allocator.test_has_retained_page_map_initialization_mapping());
+
+        fault.set(fault::Plan::disabled());
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::InitializationRetained)
+        ));
+        allocator
+            .test_release_retained_page_map_initialization_mapping()
+            .expect("the retained PageMap mapping releases after the injected fault is removed");
+        assert!(!allocator.test_has_retained_page_map_initialization_mapping());
     }
 
     #[test]

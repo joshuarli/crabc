@@ -395,10 +395,14 @@ registry/subprocess ownership.
   A future change may alter the representation only with a source-order,
   ownership, differential, and performance review. This entry does not waive
   the remaining M2 PageMap failure, cold-root, concurrent-lifetime, or
-  allocator-integration conditions.
-  In particular, `PageMap::initialize` currently discards its local
-  `Mapping` if either initial commit fails and the cleanup `unmap` fails; that
-  paired-failure owner is an open M2 condition, not an accepted difference.
+  allocator-integration conditions. The previously open paired initial
+  commit/cleanup-release owner is now explicit: `PageMapInitializationError`
+  carries the live `Mapping`, `ProcessPageMapStorage` retains it before
+  terminal poison for both initial commit branches, and `MetaAllocator` uses
+  a distinct terminal slot for its caller path. The paired regressions release
+  that exact owner only after the injected cleanup fault is disabled. This is
+  a Rust safety strengthening over C's void/best-effort release boundary, not
+  a source-equivalent retry claim.
 
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 

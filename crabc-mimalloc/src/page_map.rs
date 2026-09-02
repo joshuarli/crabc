@@ -10,6 +10,7 @@
 // publication, range registration/rollback, lookup, and destruction).
 
 use core::cell::UnsafeCell;
+use core::fmt;
 use core::mem::size_of;
 use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
@@ -197,6 +198,68 @@ impl PageMapRoot {
     }
 }
 
+/// A PageMap bootstrap failure before the map can become a published owner.
+///
+/// The source's `_mi_os_free` does not return a release error. Rust's
+/// [`Mapping::unmap`] does, and a failed release leaves the mapping live.
+/// The retained branch therefore carries that exact mapping to the
+/// process-lifetime caller instead of letting a non-RAII owner leave scope.
+/// Callers must either move it into a final retained-owner slot or prove their
+/// selected initialization shape cannot produce this branch.
+#[must_use = "a retained PageMap initialization mapping must remain with an explicit owner"]
+pub(crate) enum PageMapInitializationError {
+    /// No mapping remains after the failed initialization attempt.
+    Failed { error: Errno },
+    /// The initialization failed and its private mapping could not be
+    /// released. `mapping` remains the sole exact owner and must not be
+    /// discarded.
+    Retained {
+        initialization: Errno,
+        cleanup: Errno,
+        mapping: Mapping,
+    },
+}
+
+impl PageMapInitializationError {
+    #[inline]
+    fn failed(error: Errno) -> Self { Self::Failed { error } }
+
+    /// Releases a private bootstrap mapping after a later initialization
+    /// transition failed. A failed release transfers the still-live mapping
+    /// into the error rather than silently forgetting it.
+    #[inline]
+    fn after_private_mapping_failure(mut mapping: Mapping, initialization: Errno) -> Self {
+        match mapping.unmap() {
+            Ok(()) => Self::Failed { error: initialization },
+            Err(cleanup) => Self::Retained {
+                initialization,
+                cleanup,
+                mapping,
+            },
+        }
+    }
+}
+
+impl fmt::Debug for PageMapInitializationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Failed { error } => formatter
+                .debug_struct("PageMapInitializationError::Failed")
+                .field("error", error)
+                .finish(),
+            Self::Retained {
+                initialization,
+                cleanup,
+                ..
+            } => formatter
+                .debug_struct("PageMapInitializationError::Retained")
+                .field("initialization", initialization)
+                .field("cleanup", cleanup)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
 /// An explicitly owned, non-RAII two-level page map.
 ///
 /// The top-level mapping includes the source's trailing, eagerly available
@@ -243,52 +306,86 @@ impl PageMap {
         config: MemoryConfig,
         configured_virtual_bits: usize,
         force_commit: bool,
-    ) -> Result<Self> {
+    ) -> core::result::Result<Self, PageMapInitializationError> {
         let virtual_bits = effective_virtual_address_bits(
             configured_virtual_bits,
             config.virtual_address_bits(),
         );
-        let virtual_reserve_count = reserve_count(virtual_bits).ok_or(Errno::INVAL)?;
-        let header_bytes = mapped_size_for_count(virtual_reserve_count).ok_or(Errno::NOMEM)?;
+        let virtual_reserve_count = reserve_count(virtual_bits)
+            .ok_or(Errno::INVAL)
+            .map_err(PageMapInitializationError::failed)?;
+        let header_bytes = mapped_size_for_count(virtual_reserve_count)
+            .ok_or(Errno::NOMEM)
+            .map_err(PageMapInitializationError::failed)?;
         let reserved_size = invariants::align_up(header_bytes, config.page_size().bytes())
-            .ok_or(Errno::NOMEM)?;
+            .ok_or(Errno::NOMEM)
+            .map_err(PageMapInitializationError::failed)?;
         let reserved_count = page_map_count_of_size(reserved_size);
         let extra_reserve_size = reserved_size
             .checked_add(PAGE_MAP_SUB_SIZE)
-            .ok_or(Errno::NOMEM)?;
+            .ok_or(Errno::NOMEM)
+            .map_err(PageMapInitializationError::failed)?;
         let commit_all = virtual_bits == crate::config::MIN_VABITS
             || reserved_size <= 64 * 1024
             || force_commit
             || config.has_overcommit();
+        let initial_commit_bytes = if commit_all {
+            None
+        } else {
+            let minimum_count = reserve_count(crate::config::MIN_VABITS)
+                .ok_or(Errno::INVAL)
+                .map_err(PageMapInitializationError::failed)?;
+            Some(
+                mapped_size_for_count(minimum_count)
+                    .and_then(|bytes| invariants::align_up(bytes, config.page_size().bytes()))
+                    .ok_or(Errno::NOMEM)
+                    .map_err(PageMapInitializationError::failed)?,
+            )
+        };
         let access = if commit_all { MapAccess::Committed } else { MapAccess::Reserved };
-        let mut mapping = Mapping::map_aligned_for_allocator(
+        let mapping = Mapping::map_aligned_for_allocator(
             config,
             extra_reserve_size,
             config.page_size().bytes(),
             access,
-        )?;
-        let base = mapping.base()?;
-        let header = NonNull::new(base.cast::<PageMapHeader>()).ok_or(Errno::NOMEM)?;
-
-        let committed_count = if commit_all {
-            page_map_count_of_size(reserved_size)
-        } else {
-            let minimum_count = reserve_count(crate::config::MIN_VABITS).ok_or(Errno::INVAL)?;
-            let minimum_bytes = mapped_size_for_count(minimum_count)
-                .and_then(|bytes| invariants::align_up(bytes, config.page_size().bytes()))
-                .ok_or(Errno::NOMEM)?;
-            if let Err(error) = mapping.commit(0, minimum_bytes) {
-                let _ = mapping.unmap();
-                return Err(error);
+        )
+        .map_err(PageMapInitializationError::failed)?;
+        let base = match mapping.base() {
+            Ok(base) => base,
+            Err(error) => {
+                return Err(PageMapInitializationError::after_private_mapping_failure(
+                    mapping, error,
+                ));
             }
-            page_map_count_of_size(minimum_bytes)
+        };
+        let header = match NonNull::new(base.cast::<PageMapHeader>()) {
+            Some(header) => header,
+            None => {
+                return Err(PageMapInitializationError::after_private_mapping_failure(
+                    mapping,
+                    Errno::NOMEM,
+                ));
+            }
+        };
+
+        let committed_count = match initial_commit_bytes {
+            None => page_map_count_of_size(reserved_size),
+            Some(minimum_bytes) => {
+                if let Err(error) = mapping.commit(0, minimum_bytes) {
+                    return Err(PageMapInitializationError::after_private_mapping_failure(
+                        mapping, error,
+                    ));
+                }
+                page_map_count_of_size(minimum_bytes)
+            }
         };
 
         let sub0 = base.wrapping_add(reserved_size).cast::<PageEntry>();
         if !commit_all {
             if let Err(error) = mapping.commit(reserved_size, PAGE_MAP_SUB_SIZE) {
-                let _ = mapping.unmap();
-                return Err(error);
+                return Err(PageMapInitializationError::after_private_mapping_failure(
+                    mapping, error,
+                ));
             }
         }
         // SAFETY: the trailing submap is committed, exclusively owned, and is

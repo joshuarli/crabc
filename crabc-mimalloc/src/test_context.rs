@@ -19,7 +19,7 @@ use crate::arena::{manage_external_in_place, ArenaId, ArenaRegistry, ArenaView};
 use crate::bootstrap::ExclusiveTheapBootstrap;
 use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
 use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize, StartupInput};
-use crate::page_map::{PageMap, PageMapRoot};
+use crate::page_map::{PageMap, PageMapInitializationError, PageMapRoot};
 use crate::rust_alloc::boxed::Box;
 use crate::single_thread::{FreeError, SingleThreadAllocator};
 use crate::types::{LiveThreadId, PAGE_FLAG_BITS};
@@ -556,10 +556,20 @@ impl TestAllocatorContext {
             .ok_or(TestContextInitError::PageSizeUnavailable)?;
         let page_size = PageSize::new(raw_page_size).ok_or(TestContextInitError::InvalidPageSize)?;
         let config = MemoryConfig::detect(StartupInput::new(page_size));
-        let mut page_map = Box::new(
-            PageMap::initialize(config, 0, true)
-                .map_err(|_| TestContextInitError::PageMapInitialization)?,
-        );
+        let mut page_map = Box::new(match PageMap::initialize(config, 0, true) {
+            Ok(page_map) => page_map,
+            Err(PageMapInitializationError::Failed { .. }) => {
+                return Err(TestContextInitError::PageMapInitialization);
+            }
+            Err(PageMapInitializationError::Retained { .. }) => {
+                // `force_commit` makes PageMap's `commit_all` unconditional,
+                // so this adapter does not perform either initial commit whose
+                // failed cleanup could retain a mapping. A retained result here
+                // would violate that source-shape invariant; the adapter has
+                // no process-static owner slot because it has not formed one.
+                unreachable!("forced PageMap initialization cannot require cleanup")
+            }
+        });
         let mut arena_mapping = match Mapping::map_aligned_for_allocator(
             config,
             ARENA_MIN_SIZE,

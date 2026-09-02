@@ -2097,7 +2097,22 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(summary["milestone"]["status"], "partial")
         self.assertEqual(
             [component["id"] for component in summary["components"] if component["checks"]],
-            ["page-map"],
+            ["metadata", "page-map"],
+        )
+        metadata = next(component for component in summary["components"] if component["id"] == "metadata")
+        self.assertEqual(
+            metadata["checks"],
+            [
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "meta-page-map-paired-cleanup-owner",
+                    "kind": "rust-unit",
+                    "target": (
+                        "meta::tests::paired_page_map_initial_commit_and_cleanup_failure_"
+                        "retains_the_exact_mapping"
+                    ),
+                }
+            ],
         )
         page_map = next(component for component in summary["components"] if component["id"] == "page-map")
         self.assertEqual(
@@ -2114,12 +2129,34 @@ class ContractTests(unittest.TestCase):
             "process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace",
         )
         self.assertEqual(
+            page_map["checks"][2],
+            {
+                "expected_passed_test_count": 1,
+                "id": "process-page-map-paired-initial-cleanup-owner",
+                "kind": "rust-unit",
+                "target": (
+                    "process_page_map::tests::paired_initial_commit_and_cleanup_unmap_"
+                    "failure_retains_the_exact_mapping"
+                ),
+            },
+        )
+        self.assertEqual(
+            page_map["checks"][3],
+            {
+                "expected_passed_test_count": 1,
+                "id": "process-page-map-paired-trailing-submap-cleanup-owner",
+                "kind": "rust-unit",
+                "target": (
+                    "process_page_map::tests::paired_initial_trailing_submap_commit_and_"
+                    "cleanup_unmap_failure_retains_the_exact_mapping"
+                ),
+            },
+        )
+        self.assertEqual(
             page_map["remaining_conditions"],
             [
                 "cover lazy PageMap extension and destruction release failure-injection branches with "
                 "ownership-preserving evidence",
-                "resolve PageMap initialization cleanup when an initial commit failure is "
-                "followed by failed unmap, retaining the exact mapping instead of dropping it",
                 "resolve the directly witnessed C static-empty-root versus Rust "
                 "poisoned cold-root safety divergence when a complete "
                 "process-lifecycle owner can supply source-equivalent cold lookup "

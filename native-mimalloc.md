@@ -2379,7 +2379,7 @@ advance this AArch64 allocator ledger.
 | --- | --- | --- |
 | M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. `./scripts/dev.sh allocator --quick` passes on Linux/AArch64. This is inventory/skeleton completion only, not engine parity. |
 | M1 — pure foundations | complete (6/6 bounded components) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. The compiler-TLS component retains its 32-field pinned-C/Rust image, regular-reset, and cached-reference trace and adds a distinct 40-field normal-artifact C/Rust trace of one page-free same-TLD `D`/`A` call to the file-static `src/init.c:mi_thread_theaps_done` body: C's A→D collector calls; Rust's A→D generic queue-half empty branch with ordered empty-prepass witnesses; default then cached reset; heap detach; TLD-list final loop; and logical final release. It compares actual `D` membership/absence rather than whole main-Heap shape: C has metadata+D then metadata-only, while the selected Rust static image has D then empty. A clean native `./scripts/dev.sh allocator-m1` report is the closure evidence. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes the eight required categories—VM primitives, metadata, bitmaps, PageMap, arenas, initialization, fault injection, and allocator recursion—and records their remaining conditions and exclusions. `./scripts/dev.sh allocator-m2` runs source-private pinned-C/Rust PageMap success and failed-first-initialization differentials and writes `m2-memory-substrate-latest.json` only for a clean, unchanged native commit; it intentionally exits 3 while any category remains partial. The success record compares controlled partial commitment, two-submap extension, a two-slice clear, boundary rollback, and absent post-destruction root. The distinct cold-init record proves one failed body/no dynamic root/no replay on both sides, then records C's static empty-root/null-lookup/later-success behavior versus Rust's absent-root/no-cold-lookup-route/typed-poison safety boundary without normalizing it to equality. That semantic divergence remains a PageMap M2 closure condition. So does the current `PageMap::initialize` cleanup hole: if either initial commit fails and its `unmap` also fails, the local Rust `Mapping` is dropped without a retained owner. The metadata substrate also has a narrow typed-release witness: `MetaRelease` accepts only an exact Malloc capability or a regular anonymous `Mapping`; failed Malloc release is explicitly terminal/diagnostic and failed regular unmap returns the exact mapping for retry. It deliberately represents neither no-free nor arena, huge, or remap branches. The PageMap report retains header-dependent raw counts and root-ownership differences as explicit report data rather than claiming byte-layout equality. |
+| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes the eight required categories—VM primitives, metadata, bitmaps, PageMap, arenas, initialization, fault injection, and allocator recursion—and records their remaining conditions and exclusions. `./scripts/dev.sh allocator-m2` runs source-private pinned-C/Rust PageMap success and failed-first-initialization differentials plus focused paired-cleanup ownership regressions, and writes `m2-memory-substrate-latest.json` only for a clean, unchanged native commit; it intentionally exits 3 while any category remains partial. The success record compares controlled partial commitment, two-submap extension, a two-slice clear, boundary rollback, and absent post-destruction root. The distinct cold-init record proves one failed body/no dynamic root/no replay on both sides, then records C's static empty-root/null-lookup/later-success behavior versus Rust's absent-root/no-cold-lookup-route/typed-poison safety boundary without normalizing it to equality. That semantic divergence remains a PageMap M2 closure condition. `PageMapInitializationError::Retained` now preserves an exact mapping when either initial commit and its cleanup `unmap` fail: `ProcessPageMapStorage` retains it before poisoning, while `MetaAllocator` has a distinct terminal owner slot. This is a Rust safety strengthening because the pinned C release boundary is void/best-effort, not a claim of matching retry semantics. The metadata substrate also has a narrow typed-release witness: `MetaRelease` accepts only an exact Malloc capability or a regular anonymous `Mapping`; failed Malloc release is explicitly terminal/diagnostic and failed regular unmap returns the exact mapping for retry. It deliberately represents neither no-free nor arena, huge, or remap branches. The PageMap report retains header-dependent raw counts and root-ownership differences as explicit report data rather than claiming byte-layout equality. |
 | M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri; forced `cfg(miri)` is smoke evidence, not a Miri pass. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
@@ -2453,12 +2453,17 @@ route in its absent-root/poisoned state, and reports terminal typed poison.
 Those values are a recorded safety divergence and an open M2 semantic
 condition, not exact-equality or full-initialization claims.
 
-The selected Rust PageMap has a separate unresolved ownership defect before a
-root is published: its two initial commit-failure branches call
-`let _ = mapping.unmap()`. If that cleanup `unmap` fails, the local non-RAII
-`Mapping` is dropped without a retained owner. No PageMap completion claim may
-include initialization, extension, or release fault handling until an exact
-owner survives that paired failure and its cleanup path has direct evidence.
+The selected Rust PageMap now carries a paired initial-commit/cleanup failure
+through `PageMapInitializationError::Retained` rather than dropping its
+non-RAII `Mapping`. `ProcessPageMapStorage` stores that exact unpublished
+owner before terminal poison; `MetaAllocator` has a separate final slot for
+the same failure before it publishes `FAILED`. The process-owner regressions
+cover both the initial top-level and trailing-submap commit branches, and the
+metadata regression proves the independent metadata caller cannot collapse a
+retained mapping into a scalar error. They explicitly release the retained
+owner after disabling the injected fault. This closes only that local Rust
+ownership defect; it does not close PageMap extension/destruction fault
+coverage or the C static-empty-root cold-init semantic gap.
 
 The record deliberately does not equate source representations that are not
 the same: the pinned C header contains the Linux/musl `pthread_mutex_t`, while
@@ -2490,8 +2495,16 @@ report with that exit documents the active gap rather than advancing M2.
 At `33e9fc801935c02ac30bc50c82674ece93ebca95`, that clean native command
 exited 3 after both PageMap checks passed: the success lifecycle remained
 `matched`, while the cold-init check recorded three shared failure facts as
-`modeled-safety-divergence`. The report retains all eight categories and both
-PageMap conditions as unmet.
+`modeled-safety-divergence`. The report retains all eight categories and the
+remaining PageMap conditions as unmet.
+
+At `0e68bcdf8255104eb982852fc3cd0602f62eaf12`, the same clean native command
+again exited 3 as designed, with an unchanged source tree. Its five executed
+M2 checks all passed: the metadata caller, the success and cold-init
+PageMap differentials, and both initial-commit cleanup-owner branches. The
+PageMap component now has exactly two remaining conditions: lazy
+extension/destruction release fault evidence and the documented C
+static-empty-root versus Rust typed-poison cold-root semantic gap.
 
 ## Active boundary and priority rule
 
