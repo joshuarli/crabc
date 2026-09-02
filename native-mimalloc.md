@@ -2449,6 +2449,12 @@ control and transition fields for initial partial commitment, lazy extension
 across two submaps, one two-slice unregister, final-boundary rollback, and an
 absent root after destruction.
 
+The current selected set contains 24 native checks: eight VM-primitives
+checks, two metadata checks, ten PageMap checks, two arena checks, and two
+initialization checks. `page-map` is complete within this M2 contract; the
+other seven required components remain partial under their explicit remaining
+conditions.
+
 A separate fresh C process makes only `src/page-map.c`'s first aligned PageMap
 allocation fail, so the source `mi_atomic_do_once` state cannot contaminate
 the success producer. Its Rust partner injects the first `FaultPoint::Map` in
@@ -2579,6 +2585,17 @@ until a token can retain and validate its registry/subprocess identity. Huge,
 remap, sanitizer-tracking, integration, and allocator-recursion coverage
 remain M2 conditions.
 
+The second selected initialization witness observes the detached metadata
+Theap before it can issue a session or acquire private backing. It proves only
+the `mi_process_theap_meta` pre-demand fields that pinned
+`mi_heap_main_init_once`/`_mi_theap_init` establish: kind-only
+`_mi_memid_create(MI_MEM_STATIC)` provenance (zero union and flags) and the
+frozen normal `page_reclaim_on_free = 0` result (`allow_page_reclaim = true`).
+It does not claim the rest of `_mi_theap_init`, mutable option processing,
+random/cookie initialization, TLD/Heap list relations, actual-main-Heap or
+subprocess publication, normal `_mi_meta_zalloc` backing parity, or complete
+process initialization.
+
 Run `./scripts/dev.sh allocator-m2` from a clean native checkout to write the
 current-commit `.work/reports/allocator/m2-memory-substrate-latest.json`
 report. Its expected exit is 3 until all eight categories are complete; a
@@ -2681,6 +2698,20 @@ documented private direct-OS PageMap/external-arena backing rather than a claim
 of C normal `_mi_meta_zalloc` backing parity. M2 remains partial and does not
 advance M3 or any later milestone.
 
+At `d89155128e00cb47c12269665bc5c3636f178ce5`, a clean detached native
+checkout reran `./scripts/dev.sh allocator-m2` after matching the detached
+metadata-Theap's source provenance and frozen page-reclaim image. Its
+`m2-memory-substrate-latest.json` attests an unchanged clean source tree
+before and after execution, with 24 passing selected checks: eight
+VM-primitives checks, two metadata checks, all ten PageMap checks, two arena
+checks, and two initialization checks. The new initialization witness runs
+before any metadata session/backing and proves only the kind-only static
+MemoryId (including zero union) plus enabled frozen normal page-reclaim image.
+The command exited 3 as designed; its unmet IDs remain exactly
+`vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`,
+`fault-injection`, and `allocator-recursion`. This advances neither M2
+completion nor M3 or any later milestone.
+
 ## Active boundary and priority rule
 
 The integrated owner-local mapped-abandoned medium reclaim slice is a narrowly
@@ -2689,9 +2720,10 @@ shadow, or promotion claim. Keep its source map, regression, and exact test
 result, but do not use it to advance M5.
 
 M0 and M1 are closed predecessors. M2 is now the current closure gate; its
-selected PageMap component is complete, while the other seven required
-components remain partial (including the selected-but-incomplete arena
-component). Do not advance M3, M4, or later milestones until
+current clean native evidence has 24 selected checks, its selected PageMap
+component is complete, and the other seven required components remain partial
+(including the selected-but-incomplete arena and initialization components).
+Do not advance M3, M4, or later milestones until
 M2 has its own complete current-commit contract and evidence. The narrowly
 scoped M5 work around the bounded process-once envelope does not advance M5.
 Existing M3/M4 bounded evidence remains regression evidence, not permission to
