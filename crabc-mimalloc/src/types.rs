@@ -1999,9 +1999,10 @@ impl MemoryId {
     /// Creates exactly `_mi_memid_create(MI_MEM_STATIC)`: a zero union and
     /// zero flags with only the source memory kind set.
     ///
-    /// `mi_heap_main_init_once` uses this kind-only provenance for the static
-    /// process heap. It deliberately does not claim concrete image extent,
-    /// pinning, or initial commitment; `_mi_memid_create_static` is separate.
+    /// `mi_heap_main_init_once` uses this kind-only provenance for its static
+    /// detached TLD, process heap, and detached metadata Theap. It
+    /// deliberately does not claim concrete image extent, pinning, or initial
+    /// commitment; `_mi_memid_create_static` is separate.
     #[inline]
     pub(crate) const fn static_kind_only() -> Self {
         Self::empty_with_kind(MemoryKind::Static)
@@ -3886,6 +3887,32 @@ impl Theap {
         }
     }
 
+    /// Records the kind-only static provenance that
+    /// `mi_heap_main_init_once` assigns to `mi_process_theap_meta` before
+    /// `_mi_theap_init` copies the immutable empty image.
+    ///
+    /// This is deliberately distinct from [`Self::set_main_static_memid`]:
+    /// the source uses `_mi_memid_create(MI_MEM_STATIC)`, not the pinned,
+    /// initially-committed concrete-static-image provenance. It accepts only
+    /// the untouched `Theap::empty` static image before heap publication.
+    #[inline]
+    fn set_detached_main_metadata_static_memid(&mut self) -> bool {
+        let Some(static_memory) = self.memid.static_memory() else {
+            return false;
+        };
+        if self.is_initialized()
+            || !self.memid.is_pinned()
+            || !self.memid.initially_committed()
+            || self.memid.initially_zero()
+            || !static_memory.base.is_null()
+            || static_memory.size != 0
+        {
+            return false;
+        }
+        self.memid = MemoryId::static_kind_only();
+        true
+    }
+
     /// Installs the concrete static allocation provenance that source
     /// `_mi_thread_init_with_heap` records before `_mi_theap_init` copies the
     /// empty image. The following initializer saves and restores this value.
@@ -4343,10 +4370,19 @@ impl Theap {
             return false;
         }
 
+        if owner.is_detached() && !self.set_detached_main_metadata_static_memid() {
+            return false;
+        }
+
         self.tld = core::ptr::from_mut(tld);
         self.refcount.store(1, core::sync::atomic::Ordering::Release);
         self.subproc
             .store(heap.subprocess, core::sync::atomic::Ordering::Release);
+        // `theap.c:mi_theap_options_init` snapshots the frozen normal-release
+        // `mi_option_page_reclaim_on_free == 0` as enabled before the heap
+        // Release publication. The detached metadata special case changes
+        // abandonment below, not this reclaim option image.
+        self.allow_page_reclaim = true;
         self.is_detached = owner.is_detached();
         // `theap.c:mi_theap_options_init` snapshots the default
         // `mi_option_page_full_retain == 2` into each initialized theap. This

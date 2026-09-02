@@ -6,9 +6,12 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:99-173`
 // (`_mi_theap_empty`, the detached TLD relationship, and empty-theap
-// predicate), `src/init.c:305-360` (main default-theap wiring order),
+// predicate), `src/init.c:184-205` (the kind-only static provenance and
+// detached-metadata special case in `mi_heap_main_init_once`),
+// `src/init.c:305-360` (main default-theap wiring order),
 // `src/theap.c:228-306` (`_mi_theap_init`'s initialized-predicate publication
-// order), and `include/mimalloc/internal.h:626-664` (theap initialized and
+// order and option image), `src/options.c:161-162` (frozen normal defaults),
+// and `include/mimalloc/internal.h:626-664` (theap initialized and
 // thread-identity predicates).
 //
 // This is deliberately only an allocation-free, exclusive single-thread
@@ -784,6 +787,27 @@ mod tests {
             assert!(state.is_detached_for_main_subprocess(subprocess));
             assert!(state.theap.is_initialized());
             assert_eq!(state.active_thread(), None);
+            assert!(
+                state.theap.allows_page_reclaim(),
+                "the frozen source page-reclaim default is present before first metadata demand"
+            );
+            let fields = state.theap.test_main_static_fields();
+            assert_eq!(fields.memid.kind(), MemoryKind::Static);
+            let static_memory = fields
+                .memid
+                .static_memory()
+                .expect("the static source image projects its zero union");
+            assert!(
+                !fields.memid.is_pinned()
+                    && !fields.memid.initially_committed()
+                    && !fields.memid.initially_zero(),
+                "the detached metadata Theap preserves init.c's kind-only \
+                 _mi_memid_create(MI_MEM_STATIC) provenance before first demand"
+            );
+            assert!(
+                static_memory.base.is_null() && static_memory.size == 0,
+                "the detached metadata Theap preserves _mi_memid_create's zero union"
+            );
             assert!(!state.session_issued);
         }
         assert!(matches!(
