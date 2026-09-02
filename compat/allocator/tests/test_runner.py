@@ -2115,7 +2115,8 @@ class ContractTests(unittest.TestCase):
             ],
         )
         page_map = next(component for component in summary["components"] if component["id"] == "page-map")
-        self.assertEqual(len(page_map["checks"]), 9)
+        self.assertEqual(page_map["completion_status"], "complete")
+        self.assertEqual(len(page_map["checks"]), 10)
         self.assertEqual(
             page_map["checks"][0]["kind"],
             "c-rust-page-map-success-differential",
@@ -2214,18 +2215,31 @@ class ContractTests(unittest.TestCase):
             },
         )
         self.assertEqual(
+            page_map["checks"][9],
+            {
+                "expected_passed_test_count": 1,
+                "id": "process-page-map-cold-terminal-owner",
+                "kind": "rust-unit",
+                "target": (
+                    "process_init::tests::rejected_page_map_after_heap_and_metadata_"
+                    "retains_ticket_zero_without_tls_publication"
+                ),
+            },
+        )
+        self.assertEqual(
             page_map["remaining_conditions"],
-            [
-                "resolve the directly witnessed C static-empty-root versus Rust "
-                "poisoned cold-root safety divergence when a complete "
-                "process-lifecycle owner can supply source-equivalent cold lookup "
-                "or explicitly close the semantic gap",
-            ],
+            [],
         )
         self.assertTrue(summary["exclusions"])
         self.assertTrue(
             any(
                 "cold-init differential records" in nonclaim
+                for nonclaim in summary["milestone"]["nonclaims"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "intentionally accepted bounded safety divergence" in nonclaim
                 for nonclaim in summary["milestone"]["nonclaims"]
             )
         )

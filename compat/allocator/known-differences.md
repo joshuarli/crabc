@@ -311,7 +311,7 @@ registry/subprocess ownership.
   proved owners. It does not authorize treating this coordinator as a complete
   process initializer or public allocator startup API.
 
-### `CRABC-MI-PROCESS-PAGE-MAP-COLD-ROOT` — accepted incomplete process-owner boundary
+### `CRABC-MI-PROCESS-PAGE-MAP-COLD-ROOT` — accepted bounded cold-root safety divergence
 
 - **Upstream/Rust:** `src/page-map.c:228-365`, especially static
   `mi_page_map_empty`, `__mi_page_map`, `mi_page_map_init_once`, and
@@ -324,19 +324,24 @@ registry/subprocess ownership.
   without selecting general allocation routing.
 - **Difference:** C begins with a non-null static empty page map so early
   `free(NULL)` lookup remains valid, then its once body swaps in the mapped
-  root. The Rust owner begins cold with no root and has no free/lookup route
-  while cold. It freezes one `MemoryConfig` and selected `MainSubprocess`,
-  constructs the map in its final slot, and Release-publishes its root exactly
-  once. Its current entry consumers are typed ticket-zero and later-thread
-  page engines: `ProcessPageMapMutationLease` holds a nonrecursive private lock
-  for one complete engine and joined scoped-producer lifetime, so no second
-  Rust route may overlap plain map entries. That is a deliberate bounded
-  substitute for neither C's empty root nor its general concurrent consumers. C's once
-  helper consumes an allocation failure yet later calls cannot report that
-  failed body through a typed result; Rust instead terminally poisons the
-  unpublished owner and rejects later initialization. Dropping an unfinished
-  mutation lease likewise poisons the root rather than allowing a later owner
-  to treat retained entries as a fresh map.
+  root. After a failed once body, the C sentinel remains and a later call
+  reports success, but that sentinel only gives the null lookup its safe-null
+  result; it is not a valid dynamic map or a safe registration/mutation
+  continuation. The Rust owner begins cold with no root and has no free/lookup
+  route while cold. It freezes one `MemoryConfig` and selected
+  `MainSubprocess`, constructs the map in its final slot, and Release-publishes
+  its root exactly once. Its current entry consumers are typed ticket-zero and
+  later-thread page engines: `ProcessPageMapMutationLease` holds a
+  nonrecursive private lock for one complete engine and joined scoped-producer
+  lifetime, so no second Rust route may overlap plain map entries. That is a
+  deliberate bounded substitute for neither C's empty root nor its general
+  concurrent consumers. C's once helper consumes an allocation failure yet
+  later calls cannot report that failed body through a typed result; Rust
+  instead terminally poisons the unpublished owner and rejects later
+  initialization. A later PageMap-only retry could not safely restart the
+  Rust process coordinator after its Heap and detached-metadata predecessors
+  have run. Dropping an unfinished mutation lease likewise poisons the root
+  rather than allowing a later owner to treat retained entries as a fresh map.
 - **Evidence:**
   `process_page_map::tests::process_map_publishes_one_stable_root_for_its_selected_main_subprocess`
   proves frozen identity/configuration and stable root reuse;
@@ -350,8 +355,13 @@ registry/subprocess ownership.
   first PageMap allocation failure. They agree that the body fails once, no
   dynamic map publishes, and the body is not replayed; they intentionally
   record C's static empty root/null lookup/later-success result separately
-  from Rust's absent root/no-cold-lookup-route/typed poison. This is a safety
-  divergence witness, not a C ABI or full-process-lifecycle comparison.
+  from Rust's absent root/no-cold-lookup-route/typed poison.
+  `process_init::tests::rejected_page_map_after_heap_and_metadata_retains_ticket_zero_without_tls_publication`
+  proves the coordinator observes that terminal PageMap boundary only after
+  its Heap and detached-metadata predecessors, retains startup, leaves
+  ticket-zero roots unpublished, and rejects later generic-thread admission.
+  This is a safety-divergence witness, not a C ABI or full-process-lifecycle
+  comparison.
   `process_init::tests::process_main_initialization_orders_heap_metadata_map_then_ticket_zero_roots`
   proves the coordinator publishes this distinct root before ticket-zero TLS
   roots. `main_static_page::tests::unfinished_static_page_engine_poison_retains_the_page_and_process_map_owner`
@@ -359,13 +369,16 @@ registry/subprocess ownership.
   additionally prove that a poisoned root retains a live registration rather
   than erasing it. General process-lifecycle and allocator-ABI comparison
   remain inapplicable until their owners exist.
-- **Decision/removal:** accepted until the remaining full process lifecycle
-  supplies the C empty-root behavior where required, general map concurrency,
-  the remaining page/producer owners, and process-main quiescence/root
-  clear/destruction. It does not authorize a
-  null-root lookup, a retryable global mapping owner, a private alternate map
-  for shared threads, or page-bearing runtime integration beyond the recorded
-  bounded ticket-zero and sequential later-thread slices.
+- **Decision/removal:** this is an intentionally accepted bounded M2 PageMap
+  safety divergence, not source-equivalent cold-root parity. It closes only
+  the M2 component's documented cold-root condition: Rust must not fabricate a
+  live `PageMap` or successful process continuation from C's lookup-only
+  sentinel. A future public C allocator ABI or complete process lifecycle that
+  needs cold `free(NULL)` semantics must reopen this boundary with a distinct
+  cold-sentinel owner, a lookup-only API, and lifecycle tests. It does not
+  authorize a null-root lookup, a retryable global mapping owner, a private
+  alternate map for shared threads, or page-bearing runtime integration beyond
+  the recorded bounded ticket-zero and sequential later-thread slices.
 
 ### `CRABC-MI-PAGE-MAP-HEADER-AND-ROOT-OWNER` — recorded M2 success-differential boundary
 
@@ -394,8 +407,9 @@ registry/subprocess ownership.
 - **Decision/removal:** accepted for this selected no_std PageMap witness.
   A future change may alter the representation only with a source-order,
   ownership, differential, and performance review. This entry does not waive
-  the remaining M2 PageMap failure, cold-root, concurrent-lifetime, or
-  allocator-integration conditions. The previously open paired initial
+  the remaining M2 concurrent-lifetime or allocator-integration conditions.
+  The M2 PageMap component's cold-root difference is separately and explicitly
+  closed only as the bounded safety divergence above. The previously open paired initial
   commit/cleanup-release owner is now explicit: `PageMapInitializationError`
   carries the live `Mapping`, `ProcessPageMapStorage` retains it before
   terminal poison for both initial commit branches, and `MetaAllocator` uses
