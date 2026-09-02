@@ -2520,6 +2520,14 @@ PageMap component now has exactly two remaining conditions: lazy
 extension/destruction release fault evidence and the documented C
 static-empty-root versus Rust typed-poison cold-root semantic gap.
 
+At `e979923306e2c6e9ab0af724dfd0eb2b8b84af54`, the clean native command again
+exited 3 as designed with an unchanged source tree. It passed the metadata
+caller plus all nine PageMap checks: both differentials, both bootstrap
+cleanup-owner branches, lazy commit and map retry, lazy-submap and top-level
+release retry, and the four-contender private-lock publication witness. The
+PageMap component has one remaining condition: the documented C
+static-empty-root versus Rust typed-poison cold-root semantic gap.
+
 ## Active boundary and priority rule
 
 The integrated owner-local mapped-abandoned medium reclaim slice is a narrowly
