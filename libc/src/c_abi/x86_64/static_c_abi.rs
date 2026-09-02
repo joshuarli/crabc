@@ -757,6 +757,8 @@ mod posix_spawnattr_setschedpolicy;
 mod posix_spawn_file_actions_init;
 #[path = "endservent.rs"]
 mod endservent;
+#[path = "service_lifecycle.rs"]
+mod service_lifecycle;
 #[path = "protocol_database.rs"]
 mod protocol_database;
 #[path = "numeric_netdb.rs"]

@@ -1,0 +1,21 @@
+# Linux/x86-64 static legacy service lifecycle provider work package.
+schema = "crabc.x86_64-service-lifecycle-provider/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+
+[work_package]
+target_family = "libc.resolver"
+target_verified_slice = "static-c-service-lifecycle"
+blocker = "Resolved by this source-closed provider: unconditional pinned-musl <netdb.h> setservent/getservent declarations had no x86 static provider distinct from the already-selected endservent no-op leaf."
+prerequisites = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.posix-runtime"]
+dependent_work = ["libc.resolver bounded resolver profile", "legacy service lookup/enumeration decision", "x86 static product qualification"]
+musl_source_mapping = ["src/network/serv.c::setservent", "src/network/serv.c::getservent"]
+baseline_contract = "setservent ignores stayopen and returns normally; getservent returns a null struct servent pointer. Both preserve errno by performing no operation. The separately-owned endservent leaf completes the lifecycle trio; getservbyname/getservbyport and /etc/services parsing remain blocked."
+source_owners = ["compat/x86_64/service-lifecycle-provider.toml", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/service_lifecycle.rs", "include/netdb.h", "compat/x86_64/service_lifecycle_header_abi_probe.c", "compat/x86_64/service_lifecycle_header_abi_probe.cpp", "compat/x86_64/run_service_lifecycle_header_abi.sh", "compat/x86_64/libc_service_lifecycle_probe.c", "compat/x86_64/libc_service_lifecycle_start.S", "compat/x86_64/run_libc_service_lifecycle.sh", "compat/x86_64/static_c_abi_exports.txt", "compat/x86_64/parity.toml", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "scripts/dev-x86_64.sh"]
+focused_evidence_command = "./scripts/dev-x86_64.sh libc-service-lifecycle"
+family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.resolver"
+product_command = "./scripts/dev-x86_64.sh campaign-static"
+negative_scope = "This package owns only source-closed no-op/null legacy lifecycle entries. It excludes getservbyname/getservbyport, service enumeration state, /etc/services, DNS, resolver configuration, NSS/plugins, sockets, errno/h_errno/TLS storage, allocation, global state, syscalls, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+expected_transition = "One verified artifact is added to planned libc.resolver. The completed slice neither changes a family status nor promotes any capability, product gate, platform support, generated dashboard, or global count."
+evidence = ["pinned-musl/project strict/POSIX/X/Open/GNU/BSD C/C++ netdb declaration matrix", "pinned-musl no-op/null and errno-preservation reference", "one-object archive and true-static ELF purity check", "x86 parity-ledger validation"]

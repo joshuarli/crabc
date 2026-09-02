@@ -225,6 +225,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname/dn_expand/_ns_flagdata/ns_get16/ns_get32/ns_put16 declarations
   quota-header-abi  verify the complete x86 sys/quota.h through C/C++ profiles
   endservent-header-abi  verify staged x86 legacy service-terminator C/C++ declaration
+  service-lifecycle-header-abi  verify staged x86 no-op/null service lifecycle C/C++ declarations
   inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
@@ -589,6 +590,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-hstrerror  run the static x86 crabc-libc h_errno message-string slice
   libc-h-errno  run the opt-in static x86 crabc-libc h_errno status-slot slice
   libc-endservent  run the archive-free static x86 crabc-libc legacy service-terminator slice
+  libc-service-lifecycle  run the archive-free static x86 crabc-libc no-op/null service lifecycle slice
   libc-numeric-netdb  run the static x86 crabc-libc deterministic numeric netdb slice
   libc-resolver-runtime  run the hermetic static x86 C resolver-runtime slice
   libc-interface-discovery  run the static x86 C interface index/address discovery slice
@@ -3608,6 +3610,10 @@ run_endservent_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_endservent_header_abi.sh
 }
 
+run_service_lifecycle_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_service_lifecycle_header_abi.sh
+}
+
 run_protocol_database_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_protocol_database_header_abi.sh
 }
@@ -5087,7 +5093,7 @@ case "$command" in
     dynamic-main-thread-runtime-v1-target-root) ;;
     math-special-header-abi|libc-math-special) ;;
     math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
-    inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi) ;;
+    inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi|service-lifecycle-header-abi) ;;
     libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
@@ -5197,7 +5203,7 @@ case "$command" in
     libc-timer-settime) ;;
     libc-tee|libc-splice) ;;
     libc-sync-file-range|libc-copy-file-range) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-crypt-allocator-composition|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
+libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-crypt-allocator-composition|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-service-lifecycle|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -6172,6 +6178,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "endservent-header-abi takes no arguments"
         ensure_image
         run_endservent_header_abi
+        ;;
+    service-lifecycle-header-abi)
+        [ "$#" -eq 0 ] || fail "service-lifecycle-header-abi takes no arguments"
+        ensure_image
+        run_service_lifecycle_header_abi
         ;;
     protocol-database-header-abi)
         [ "$#" -eq 0 ] || fail "protocol-database-header-abi takes no arguments"
@@ -8135,6 +8146,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-endservent takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_endservent.sh
+        ;;
+    libc-service-lifecycle)
+        [ "$#" -eq 0 ] || fail "libc-service-lifecycle takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_service_lifecycle.sh
         ;;
     libc-protocol-database)
         [ "$#" -eq 0 ] || fail "libc-protocol-database takes no arguments"

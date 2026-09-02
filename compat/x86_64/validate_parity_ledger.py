@@ -47088,14 +47088,8 @@ def require_endservent_artifact(family: Mapping[str, Any]) -> None:
         "static-c-endservent must retain its selected export",
     )
     require(
-        not exports
-        & {
-            "getservent",
-            "setservent",
-            "getservbyname",
-            "getservbyport",
-        },
-        "static-c-endservent must not expose an unselected service entry",
+        not exports & {"getservbyname", "getservbyport"},
+        "static-c-endservent must not expose service lookup",
     )
 
     static_root = (

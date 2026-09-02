@@ -14430,8 +14430,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertFalse(
             static_exports
             & {
-                "getservent",
-                "setservent",
                 "getservbyname",
                 "getservbyport",
                 "endprotoent",

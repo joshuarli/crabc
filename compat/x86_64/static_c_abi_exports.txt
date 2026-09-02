@@ -434,6 +434,7 @@ getresgid
 getresuid
 getrlimit
 getrusage
+getservent
 getsid
 getsockname
 getsockopt
@@ -921,6 +922,7 @@ setresgid
 setresuid
 setreuid
 setrlimit
+setservent
 setsid
 setsockopt
 setuid
