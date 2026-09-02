@@ -1,0 +1,21 @@
+# Linux/x86-64 static C POSIX spawn-attribute signal-field work package.
+schema = "crabc.x86_64-posix-spawnattr-signal-fields-provider/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+
+[work_package]
+target_family = "libc.posix-runtime"
+target_capability = "process.signal"
+target_verified_slice = "static-c-posix-spawnattr-signal-fields"
+blocker = "Resolved by this selected artifact: five unconditional <spawn.h> record-field declarations had no dependency-free x86 static provider, despite exact pinned-musl sources that require only flag validation or complete caller-owned sigset_t copying."
+musl_source_mapping = ["src/process/posix_spawnattr_setflags.c::posix_spawnattr_setflags", "src/process/posix_spawnattr_setsigmask.c::posix_spawnattr_setsigmask", "src/process/posix_spawnattr_getsigmask.c::posix_spawnattr_getsigmask", "src/process/posix_spawnattr_setsigdefault.c::posix_spawnattr_setsigdefault", "src/process/posix_spawnattr_getsigdefault.c::posix_spawnattr_getsigdefault"]
+prerequisites = ["oracle.musl-toolchain"]
+dependent_work = ["libc.posix-runtime complete spawn/process-control closure", "process.signal full lifecycle and delivery contract", "x86 static product qualification"]
+source_owners = ["compat/x86_64/posix-spawnattr-signal-fields-provider.toml", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/posix_spawnattr_signal_fields.rs", "include/spawn.h", "compat/x86_64/posix_spawnattr_signal_fields_header_abi_probe.c", "compat/x86_64/posix_spawnattr_signal_fields_header_abi_probe.cpp", "compat/x86_64/run_posix_spawnattr_signal_fields_header_abi.sh", "compat/x86_64/libc_posix_spawnattr_signal_fields_probe.c", "compat/x86_64/libc_posix_spawnattr_signal_fields_start.S", "compat/x86_64/run_libc_posix_spawnattr_signal_fields.sh", "compat/x86_64/static_c_abi_exports.txt", "compat/x86_64/parity.toml", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/aarch64_parity_inventory.json", "scripts/dev-x86_64.sh"]
+focused_evidence_command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-signal-fields"
+family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.posix-runtime"
+product_command = "./scripts/dev-x86_64.sh campaign-static"
+negative_scope = "This package owns only five caller-owned posix_spawnattr_t record fields. It excludes posix_spawn/posix_spawnp, all file actions, initialization/destruction and every unselected accessor, fork/vfork/clone, exec, child lifecycle, signal mask installation/default disposition or delivery, scheduler behavior, errno/TLS mutation, allocation, syscall, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+expected_transition = "One verified_artifact is added to planned libc.posix-runtime. The generated inventory increments only that family’s verified_artifact_count and selected_static_export_count by five; no frozen capability state, family status, product gate, promotion state, or public-support boundary changes."
+evidence = ["pinned-musl/project spawn.h C/C++ declaration and layout matrix", "pinned-musl versus true-static crabc validation/copy differential", "archive/ELF dependency and peer-export closure", "x86 parity-ledger and derived-inventory validation"]

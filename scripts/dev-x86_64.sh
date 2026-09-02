@@ -436,6 +436,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-posix-exit  run the static x86 crabc-libc POSIX _exit forwarding slice
   libc-posix-spawnattr-init  run the static x86 crabc-libc spawn-attribute initialization slice
   libc-posix-spawnattr-getpgroup  run the static x86 crabc-libc spawn-attribute process-group readback slice
+  libc-posix-spawnattr-signal-fields  run the static x86 crabc-libc spawn-attribute signal-field slice
   libc-posix-spawnattr-getschedparam  run the static x86 crabc-libc spawn-attribute scheduler-parameter compatibility slice
   libc-posix-spawnattr-getschedpolicy  run the static x86 crabc-libc spawn-attribute scheduler-policy compatibility slice
   libc-bsearch  run the static x86 crabc-libc standalone bsearch slice
@@ -2361,6 +2362,7 @@ general facade admission, or C ABI support claim.
   libc-setfsuid  run the static x86 filesystem-credential setfsuid slice
   personality-header-abi  compile x86 sys/personality.h C/C++ declarations
   posix-spawnattr-getpgroup-header-abi  verify x86 C/C++ spawn-attribute process-group ABI
+  posix-spawnattr-signal-fields-header-abi  verify x86 C/C++ spawn-attribute signal-field ABI
   posix-spawnattr-getschedparam-header-abi  verify x86 C/C++ spawn-attribute scheduler-parameter ABI
   posix-spawnattr-getschedpolicy-header-abi  verify x86 C/C++ spawn-attribute scheduler-policy ABI
   posix-spawnattr-init-header-abi  verify x86 C/C++ spawn-attribute initialization ABI
@@ -2785,6 +2787,10 @@ run_posix_spawnattr_getpgroup_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_getpgroup_header_abi.sh
 }
 
+run_posix_spawnattr_signal_fields_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_signal_fields_header_abi.sh
+}
+
 run_posix_spawnattr_getschedpolicy_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_getschedpolicy_header_abi.sh
 }
@@ -2863,6 +2869,10 @@ run_libc_posix_spawnattr_init() {
 
 run_libc_posix_spawnattr_getpgroup() {
     run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh
+}
+
+run_libc_posix_spawnattr_signal_fields() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_signal_fields.sh
 }
 
 run_libc_posix_spawnattr_getschedpolicy() {
@@ -5105,7 +5115,7 @@ case "$command" in
     umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|crypt-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|wait-extensions-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
-    posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi|posix-spawnattr-getschedparam-header-abi|posix-spawnattr-getschedpolicy-header-abi) ;;
+    posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi|posix-spawnattr-signal-fields-header-abi|posix-spawnattr-getschedparam-header-abi|posix-spawnattr-getschedpolicy-header-abi) ;;
     ffs-header-abi) ;;
     memory-special-header-abi) ;;
     memccpy-header-abi) ;;
@@ -5157,7 +5167,7 @@ case "$command" in
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
-    libc-posix-exit|libc-posix-spawnattr-init|libc-posix-spawnattr-getpgroup|libc-posix-spawnattr-getschedparam|libc-posix-spawnattr-getschedpolicy) ;;
+    libc-posix-exit|libc-posix-spawnattr-init|libc-posix-spawnattr-getpgroup|libc-posix-spawnattr-signal-fields|libc-posix-spawnattr-getschedparam|libc-posix-spawnattr-getschedpolicy) ;;
     libc-clock-adjtime) ;;
     libc-clock-settime) ;;
     libc-timer-getoverrun) ;;
@@ -5655,6 +5665,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "posix-spawnattr-getpgroup-header-abi takes no arguments"
         ensure_image
         run_posix_spawnattr_getpgroup_header_abi
+        ;;
+    posix-spawnattr-signal-fields-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawnattr-signal-fields-header-abi takes no arguments"
+        ensure_image
+        run_posix_spawnattr_signal_fields_header_abi
         ;;
     posix-spawnattr-getschedpolicy-header-abi)
         [ "$#" -eq 0 ] || fail "posix-spawnattr-getschedpolicy-header-abi takes no arguments"
@@ -7513,6 +7528,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-getpgroup takes no arguments"
         ensure_image
         run_libc_posix_spawnattr_getpgroup
+        ;;
+    libc-posix-spawnattr-signal-fields)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-signal-fields takes no arguments"
+        ensure_image
+        run_libc_posix_spawnattr_signal_fields
         ;;
     libc-posix-spawnattr-getschedpolicy)
         [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-getschedpolicy takes no arguments"

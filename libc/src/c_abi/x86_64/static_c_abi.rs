@@ -510,6 +510,8 @@ mod posix_spawnattr_init;
 mod posix_spawnattr_getpgroup;
 #[path = "posix_spawnattr_getschedpolicy.rs"]
 mod posix_spawnattr_getschedpolicy;
+#[path = "posix_spawnattr_signal_fields.rs"]
+mod posix_spawnattr_signal_fields;
 #[path = "posix_spawnattr_getschedparam.rs"]
 mod posix_spawnattr_getschedparam;
 #[path = "static_startup.rs"]

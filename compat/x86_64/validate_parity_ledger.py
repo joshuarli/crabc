@@ -42623,6 +42623,53 @@ def require_hstrerror_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_posix_spawnattr_signal_fields_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep the five-source spawn-attribute signal block closed and private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-posix-spawnattr-signal-fields"
+    ]
+    require(len(matching) == 1, "libc.posix-runtime needs one signal-field artifact")
+    require(family.get("status") == "planned", "signal-field artifact must not promote libc.posix-runtime")
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "signal-field artifact needs description")
+    for phrase in ("posix_spawnattr_setflags", "posix_spawnattr_setsigmask", "posix_spawnattr_getsigmask", "posix_spawnattr_setsigdefault", "posix_spawnattr_getsigdefault", "EINVAL=22", "128-byte `sigset_t`", "signal delivery", "public x86 support"):
+        require(phrase in description, f"signal-field artifact omits {phrase}")
+    owners = nonempty_strings(artifact.get("source_owners"), "signal-field artifact.source_owners")
+    for owner in ("compat/x86_64/posix-spawnattr-signal-fields-provider.toml", "libc/src/c_abi/x86_64/posix_spawnattr_signal_fields.rs", "compat/x86_64/run_libc_posix_spawnattr_signal_fields.sh", "compat/x86_64/static_c_abi_exports.txt"):
+        require(owner in owners, f"signal-field artifact source owners omit {owner}")
+    prerequisites = nonempty_strings(artifact.get("x86_abi_prerequisites"), "signal-field artifact.x86_abi_prerequisites")
+    require(any("rdi/esi" in item and "rdi/rsi" in item and "offset zero" in item and "136" in item for item in prerequisites), "signal-field artifact must retain its AMD64 field ABI")
+    require(any("9fa28ece75d8a2191de7c5bb53bed224c5947417" in item and "five exact source functions" in item for item in prerequisites), "signal-field artifact must retain its pinned-musl source mapping")
+    exports = set(static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"))
+    symbols = {"posix_spawnattr_setflags", "posix_spawnattr_setsigmask", "posix_spawnattr_getsigmask", "posix_spawnattr_setsigdefault", "posix_spawnattr_getsigdefault"}
+    require(symbols <= exports, "static C ABI export contract omits signal-field symbols")
+    static_root = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs").read_text(encoding="utf-8")
+    require('#[path = "posix_spawnattr_signal_fields.rs"]\nmod posix_spawnattr_signal_fields;' in static_root, "x86 static C ABI must compose the signal-field provider")
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_signal_fields.rs").read_text(encoding="utf-8")
+    for snippet in (*symbols, "POSIX_SPAWNATTR_VALID_FLAGS", "EINVAL: c_int = 22", "copy_sigset_words", "generic AArch64 exports and behavior remain unchanged"):
+        require(snippet in source, f"signal-field provider omits {snippet}")
+    for forbidden in ("raw_syscall::", "errno::", "static_tls::", "crabc_core", "crabc_mimalloc", "fork(", "execve"):
+        require(forbidden not in source, f"signal-field provider widens into {forbidden}")
+    manifest = (ROOT / "compat" / "x86_64" / "posix-spawnattr-signal-fields-provider.toml").read_text(encoding="utf-8")
+    for snippet in ("target_verified_slice = \"static-c-posix-spawnattr-signal-fields\"", "focused_evidence_command = \"./scripts/dev-x86_64.sh libc-posix-spawnattr-signal-fields\"", "family_aggregate_command", "product_command", "negative_scope", "expected_transition"):
+        require(snippet in manifest, f"signal-field package manifest omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_signal_fields.sh").read_text(encoding="utf-8")
+    for snippet in ("run_posix_spawnattr_signal_fields_header_abi.sh", "five signal-field exports must share one bounded provider object", "-nostdlib -static", "--no-undefined", "candidate unexpectedly retains errno or TLS", "for unselected in posix_spawn", "fork vfork clone execve wait4"):
+        require(snippet in runner, f"signal-field runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require("posix-spawnattr-signal-fields-header-abi)" in dispatcher and "libc-posix-spawnattr-signal-fields)" in dispatcher, "signal-field dispatcher binding is missing")
+
+
 def require_qsort_artifact(family: Mapping[str, Any]) -> None:
     """Keep the standalone musl qsort artifact capability-free."""
 
@@ -75681,6 +75728,7 @@ def validate_ledger(
     )
     require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getpgroup_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawnattr_signal_fields_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getschedparam_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getschedpolicy_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])

@@ -3780,6 +3780,52 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-posix-spawnattr-signal-fields"
+description = "Private native x86 selected-static-archive POSIX spawn-attribute signal-field block within still-planned `libc.posix-runtime`. One bounded Rust provider exports only `posix_spawnattr_setflags`, `posix_spawnattr_setsigmask`, `posix_spawnattr_getsigmask`, `posix_spawnattr_setsigdefault`, and `posix_spawnattr_getsigdefault`; its five extracted function sections have no undefined symbol, helper call, syscall, errno/TLS, allocator, or final-ELF runtime dependency. Pinned musl 1.2.6 validates flags against bits 1 through 128, returning the positive error number `EINVAL=22` without writing an invalid record, and directly assigns its complete 128-byte `sigset_t` __mask/__def fields for the remaining accessors. The shared fixture proves valid zero/all-bit flags, invalid negative and bit-256 rejections (including null only in the invalid branch), exact default/mask copying, intact adjacent guards, and stale errno on the ordinary musl route. It does not select posix_spawn/posix_spawnp, file actions, initialization/destruction or unselected attributes, fork/vfork/clone, exec, child lifecycle, signal delivery, scheduler behavior, family completion, promotion, or public x86 support; generic AArch64 exports remain unchanged."
+source_owners = [
+  "compat/x86_64/posix-spawnattr-signal-fields-provider.toml",
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_signal_fields.rs",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "include/spawn.h",
+  "include/errno.h",
+  "compat/x86_64/posix_spawnattr_signal_fields_header_abi_probe.c",
+  "compat/x86_64/posix_spawnattr_signal_fields_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_spawnattr_signal_fields_header_abi.sh",
+  "compat/x86_64/libc_posix_spawnattr_signal_fields_probe.c",
+  "compat/x86_64/libc_posix_spawnattr_signal_fields_start.S",
+  "compat/x86_64/run_libc_posix_spawnattr_signal_fields.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 ABI passes `int posix_spawnattr_setflags(posix_spawnattr_t *, short)` in rdi/esi and the four sigset accessor pointer pairs in rdi/rsi, returning each signed result in eax. The complete x86 record is 336-byte/eight-byte-aligned with __flags at offset zero, __def at eight, and __mask at 136; sigset_t is 128-byte/eight-byte-aligned. Valid field objects must be distinct for musl's restrict-qualified signal assignments.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps the five exact source functions `posix_spawnattr_setflags.c::posix_spawnattr_setflags`, `posix_spawnattr_setsigmask.c::posix_spawnattr_setsigmask`, `posix_spawnattr_getsigmask.c::posix_spawnattr_getsigmask`, `posix_spawnattr_setsigdefault.c::posix_spawnattr_setsigdefault`, and `posix_spawnattr_getsigdefault.c::posix_spawnattr_getsigdefault` to the flags validation/store and four direct sigset assignments. The pinned AArch64 static rows fix their individual .lo ownership; this x86-only composition keeps those values/results while the generic AArch64 exports remain unchanged.",
+  "The true `-nostdlib -static --gc-sections` candidate extracts exactly five sections from one bounded Rust provider, one for each named export, with no undefined symbols, helper call, syscall, errno/TLS, allocator, PT_TLS, dynamic-TLS model, PLT, interpreter, DT_NEEDED, or ambient runtime dependency. It rejects every peer spawn/process export and contains no general memory helper.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<spawn.h>` matrix proves all five unconditional declarations under strict, POSIX, X/Open, and GNU profiles, exact function-pointer ABIs, 336-byte/eight-byte-aligned attribute and 128-byte/eight-byte-aligned sigset_t layouts, __flags/__def/__mask offsets 0/8/136, project-header provenance, and unmangled C++ linkage through the installed `extern \"C\"` guards.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-signal-fields", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer valid flags, invalid EINVAL=22 no-write validation, complete 128-byte sigset default/mask field copying, byte-filled 336-byte caller-owned posix_spawnattr_t storage, intact guards, and stale errno preservation. It ratchets five pinned-musl .lo/AArch64 ownership rows, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and five fixed no-call/no-syscall sections from one provider while rejecting peer spawn and process extraction. It does not select spawn execution, file actions, attribute initialization/destruction or unselected queries, fork/vfork/clone, exec, child lifecycle, signal delivery, scheduler behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declarations, setflags EINVAL validation/no-write result, direct sigset field assignment, and stale-errno behavior oracle." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static objects", role = "Short/pointer signed-int C ABI, C++ C linkage, record layout, and true-static ET_EXEC closure contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-posix-spawnattr-getschedparam"
 description = "Private native x86 selected-static-archive POSIX spawn-attribute scheduler-parameter compatibility-return leaf within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `posix_spawnattr_getschedparam`, with no undefined symbol, helper call, syscall, errno/TLS, allocator, or final-ELF runtime dependency. Pinned musl 1.2.6 `src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedparam` has the complete body `return ENOSYS;`: every selected direct and function-pointer call returns the positive error number `ENOSYS=38`, leaves stale errno unchanged, and neither reads nor writes byte-filled 336-byte caller-owned `posix_spawnattr_t` or 48-byte `struct sched_param` records. The fixture covers nonnull arguments, null attribute, null scheduler parameter, and both-null pointers, preserving all supplied caller storage. The private x86 object materializes only that immediate result; it does not validate or dereference either pointer. This leaf does not select `posix_spawn`, `posix_spawnp`, attribute initialization/destruction/mutation or other queries, file actions, fork/vfork/clone, exec, child lifecycle, signal delivery, scheduler policy or parameter behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. The generic AArch64 `posix_spawnattr_getschedparam` export remains unchanged."
 source_owners = [
