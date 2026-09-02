@@ -242,7 +242,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            351,
+            352,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -289,7 +289,14 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         headers_layouts = next(
             row for row in report["families"] if row["id"] == "libc.headers-layouts"
         )
-        self.assertEqual(headers_layouts["verified_artifact_count"], 10)
+        self.assertEqual(headers_layouts["verified_artifact_count"], 11)
+        self.assertIn(
+            {
+                "family": "libc.headers-layouts",
+                "id": "all-header-declaration-macro-feature-visibility-matrix",
+            },
+            report["selected_private_artifacts"],
+        )
         self.assertIn(
             {
                 "family": "libc.headers-layouts",

@@ -40,6 +40,12 @@ from header_abi_matrix import (  # noqa: E402
     load_contract as load_header_abi_matrix_contract,
     validate_checked_report as validate_header_abi_matrix_report,
 )
+from header_declaration_macro_visibility_matrix import (  # noqa: E402
+    HeaderDeclarationMacroVisibilityMatrixError,
+    canonical_json as canonical_declaration_macro_visibility_json,
+    load_contract as load_declaration_macro_visibility_contract,
+    validate_checked_report as validate_declaration_macro_visibility_report,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +72,20 @@ HEADER_ABI_MATRIX_REPORT_PATH = (
     ROOT / "compat" / "x86_64" / "generated" / "header_abi_matrix" / "report.json"
 )
 HEADER_ABI_MATRIX_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_header_abi_matrix.sh"
+HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_CONTRACT_PATH = (
+    ROOT / "compat" / "x86_64" / "header_declaration_macro_visibility_matrix.toml"
+)
+HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_REPORT_PATH = (
+    ROOT
+    / "compat"
+    / "x86_64"
+    / "generated"
+    / "header_declaration_macro_visibility_matrix"
+    / "report.json"
+)
+HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_header_declaration_macro_visibility_matrix.sh"
+)
 PUBLIC_HEADER_INVENTORY_PATH = ROOT / "compat" / "x86_64" / "public_headers.txt"
 PUBLIC_HEADER_SURFACE_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_public_header_surface.sh"
 LINUX_5_10_UAPI_VERIFIER_PATH = ROOT / "compat" / "x86_64" / "run_linux_5_10_uapi.sh"
@@ -107,7 +127,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v11"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v12"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -347,6 +367,63 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
+}
+EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_COMMAND = (
+    "./scripts/dev-x86_64.sh header-declaration-macro-visibility-matrix"
+)
+EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
+    "candidate_only_identity_count": 41632,
+    "candidate_only_identity_kind_counts": {
+        "function": 6835,
+        "macro": 17988,
+        "record": 980,
+        "typedef": 15432,
+        "variable": 397,
+    },
+    "candidate_public_header_count": 191,
+    "comparable_row_count": 1280,
+    "comparison_counts": {
+        "candidate-only-pending-c-abi-policy": 56,
+        "matched": 173,
+        "mismatch": 1107,
+        "oracle-not-applicable": 1,
+    },
+    "complete": False,
+    "incomplete_reasons": [
+        "1107 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "1 pinned-musl header/profile rows are oracle-not-applicable",
+        "56 project-only header/profile rows remain pending C ABI policy",
+        "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
+    ],
+    "matched_identity_count": 209423,
+    "mismatch_row_count": 1107,
+    "oracle_not_applicable_candidate_fact_count": 243,
+    "oracle_not_applicable_row_count": 1,
+    "pinned_public_header_count": 183,
+    "pinned_row_count": 1281,
+    "profile_count": 7,
+    "project_only_candidate_fact_count": 1964,
+    "project_only_header_count": 8,
+    "project_only_row_count": 56,
+    "reference_only_identity_count": 85941,
+    "reference_only_identity_kind_counts": {
+        "enum": 66,
+        "function": 1189,
+        "macro": 82171,
+        "record": 929,
+        "typedef": 1549,
+        "variable": 37,
+    },
+    "row_count": 1337,
+    "source_form_comparison_counts": {
+        "candidate-only-pending-c-abi-policy": 56,
+        "matched": 159,
+        "mismatch": 1121,
+        "oracle-not-applicable": 1,
+    },
+    "source_form_difference_count": 22215,
+    "source_form_difference_row_count": 766,
+    "source_form_only_difference_row_count": 14,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -714,10 +791,10 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         ("isolated-candidate-header-closure",),
     ),
     "feature-visibility": (
-        "planned",
+        "partial-verified",
         "all-pinned-and-project-only-public-headers",
         "libc.headers-layouts",
-        ("strict-posix-xopen-gnu-bsd-matrix",),
+        ("all-header-declaration-macro-feature-visibility-matrix",),
     ),
     "callable-feature-visibility": (
         "partial-verified",
@@ -2690,6 +2767,172 @@ def require_header_abi_matrix(manifest: Mapping[str, Any]) -> int:
     return int(summary["row_count"])
 
 
+def require_header_declaration_macro_visibility_matrix(
+    manifest: Mapping[str, Any],
+) -> int:
+    """Bind the derived generic visibility report below header-family promotion."""
+
+    matrix = manifest["feature_visibility_matrix"]
+    require(
+        isinstance(matrix, Mapping),
+        "header-foundation declaration/macro visibility matrix must be a table",
+    )
+    require(
+        set(matrix)
+        == {
+            "id",
+            "state",
+            "contract",
+            "generated_report",
+            "command",
+            "required_result",
+            "profiles",
+            "pinned_public_header_count",
+            "candidate_public_header_count",
+            "record_count",
+            "comparison_counts",
+            "identity_difference_counts",
+            "source_form_difference_count",
+            "source_form_difference_row_count",
+            "source_form_only_difference_row_count",
+            "scope",
+        },
+        "header-foundation declaration/macro visibility matrix keys drifted",
+    )
+    require(
+        matrix["id"] == "all-header-declaration-macro-feature-visibility-matrix"
+        and matrix["state"] == "partial-verified"
+        and matrix["required_result"] == "checked-finite-report",
+        "header-foundation declaration/macro visibility matrix identity drifted",
+    )
+    contract_path = repository_path(
+        str(matrix["contract"]), "header-foundation declaration/macro visibility matrix contract"
+    )
+    report_path = repository_path(
+        str(matrix["generated_report"]), "header-foundation declaration/macro visibility matrix report"
+    )
+    require(
+        contract_path == HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_CONTRACT_PATH
+        and report_path == HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_REPORT_PATH,
+        "header-foundation declaration/macro visibility matrix paths drifted",
+    )
+    require(
+        matrix["command"] == EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_COMMAND,
+        "header-foundation declaration/macro visibility matrix command drifted",
+    )
+    require(
+        tuple(
+            string_list(matrix["profiles"], "header-foundation declaration/macro visibility profiles")
+        )
+        == EXPECTED_HEADER_FOUNDATION_CLOSURE_PROFILES,
+        "header-foundation declaration/macro visibility profile roster drifted",
+    )
+    require(
+        matrix["pinned_public_header_count"] == EXPECTED_PUBLIC_HEADER_COUNT
+        and matrix["candidate_public_header_count"]
+        == EXPECTED_PUBLIC_HEADER_COUNT + len(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY)
+        and matrix["record_count"] == EXPECTED_CANDIDATE_HEADER_CLOSURE_RECORD_COUNT
+        and matrix["comparison_counts"]
+        == EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY["comparison_counts"]
+        and matrix["identity_difference_counts"]
+        == {
+            "candidate_only": EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY[
+                "candidate_only_identity_count"
+            ],
+            "reference_only": EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY[
+                "reference_only_identity_count"
+            ],
+        }
+        and matrix["source_form_difference_count"]
+        == EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY[
+            "source_form_difference_count"
+        ]
+        and matrix["source_form_difference_row_count"]
+        == EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY[
+            "source_form_difference_row_count"
+        ]
+        and matrix["source_form_only_difference_row_count"]
+        == EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY[
+            "source_form_only_difference_row_count"
+        ],
+        "header-foundation declaration/macro visibility matrix count contract drifted",
+    )
+    scope = matrix["scope"]
+    require(
+        isinstance(scope, str)
+        and "named function, typedef, record, enum, variable, and macro identities" in scope
+        and "same-identity source-form differences" in scope
+        and "checked candidate fact summaries and digests" in scope
+        and "declaration-form equality, macro replacements, record byte layouts" in scope
+        and "archive linkage, runtime behavior, family promotion, and public support" in scope,
+        "header-foundation declaration/macro visibility matrix must retain its partial scope",
+    )
+
+    try:
+        contract = load_declaration_macro_visibility_contract()
+        checked = report_path.read_text(encoding="utf-8")
+        report = json.loads(checked)
+        require(isinstance(report, Mapping), "checked declaration/macro visibility report must be a table")
+        validate_declaration_macro_visibility_report(report, contract)
+    except (
+        HeaderDeclarationMacroVisibilityMatrixError,
+        OSError,
+        json.JSONDecodeError,
+    ) as error:
+        raise LedgerError(f"declaration/macro visibility matrix input is invalid: {error}") from error
+    require(
+        contract.source_abi_contract == HEADER_ABI_MATRIX_CONTRACT_PATH
+        and contract.source_abi_report == HEADER_ABI_MATRIX_REPORT_PATH
+        and contract.callable_visibility_contract == HEADER_CALLABLE_VISIBILITY_MATRIX_CONTRACT_PATH
+        and contract.public_headers == PUBLIC_HEADER_INVENTORY_PATH
+        and contract.generated_report == report_path
+        and contract.profiles == EXPECTED_HEADER_FOUNDATION_CLOSURE_PROFILES,
+        "declaration/macro visibility matrix contract inputs drifted",
+    )
+    require(
+        checked == canonical_declaration_macro_visibility_json(report),
+        "checked declaration/macro visibility report is not canonical",
+    )
+    summary = report["summary"]
+    require(
+        summary == EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY,
+        "declaration/macro visibility matrix finite baseline drifted",
+    )
+    scope_report = report["scope"]
+    require(
+        isinstance(scope_report, Mapping)
+        and scope_report.get("derived_from_checked_declaration_form_matrix") is True
+        and scope_report.get("compiler_derived_source") is True
+        and scope_report.get("named_declaration_and_macro_identity") is True
+        and scope_report.get("declaration_form_equality") is False
+        and scope_report.get("record_byte_layouts") is False
+        and scope_report.get("archive_linkage") is False
+        and scope_report.get("runtime") is False
+        and scope_report.get("family_promotion") is False
+        and scope_report.get("public_support") is False,
+        "declaration/macro visibility matrix scope drifted",
+    )
+    require(
+        HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_RUNNER_PATH.is_file(),
+        "declaration/macro visibility matrix runner is missing",
+    )
+    runner = HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_RUNNER_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        "run_header_abi_matrix.sh",
+        "header_declaration_macro_visibility_matrix.py",
+        "--check",
+        "identity report",
+        "requires native Linux",
+    ):
+        require(phrase in runner, f"declaration/macro visibility matrix runner omits {phrase}")
+    dispatch = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    require(
+        "header-declaration-macro-visibility-matrix)" in dispatch,
+        "declaration/macro visibility matrix is absent from the native dispatcher",
+    )
+    return int(summary["row_count"])
+
+
 def validate_header_layout_foundation_manifest(
     family: Mapping[str, Any],
     legacy_manifest: Mapping[str, Any],
@@ -2697,7 +2940,7 @@ def validate_header_layout_foundation_manifest(
 ) -> dict[str, int]:
     """Validate the planned all-header accounting contract without promoting it.
 
-    The v9 contract resolves every current pathname into one class and expands
+    The v12 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
     Linux-UAPI input, resolves selected UAPI-wrapper, ioctl-header, x86 sys/io
     inline-port-I/O, epoll-header, timeval-transitive, direct sys/time, and
@@ -2705,8 +2948,9 @@ def validate_header_layout_foundation_manifest(
     verifies a seven-profile empty-TU closure diagnostic with two explicit
     pinned-musl aio.h strict-profile applicability results. It now records an
     explicit default/feature/unprovided callable provider partition while
-    keeping complete archive extraction, feature visibility, and general
-    declaration/layout comparisons in planned evidence lanes.
+    keeps complete archive extraction and general declaration/layout closure
+    planned while the checked derived declaration/macro identity matrix makes
+    the remaining generic feature-visibility differences finite.
     """
     require(isinstance(manifest, Mapping), "header-foundation manifest must be a table")
     expected_manifest_keys = {
@@ -2736,6 +2980,7 @@ def validate_header_layout_foundation_manifest(
         "access_header_profile_matrix",
         "xattr_header_profile_matrix",
         "closure_diagnostic",
+        "feature_visibility_matrix",
         "callable_feature_visibility_matrix",
         "prototype_layout_matrix",
         "language_profile",
@@ -2774,7 +3019,7 @@ def validate_header_layout_foundation_manifest(
             "candidate_transitive_include_closure": True,
             "full_c11_consumer_matrix": True,
             "full_cxx17_consumer_matrix": True,
-            "feature_visibility_matrix": False,
+            "feature_visibility_matrix": True,
             "callable_feature_visibility_matrix": True,
             "prototype_layout_matrix": True,
             "abi_facet_matrix": False,
@@ -2812,7 +3057,7 @@ def validate_header_layout_foundation_manifest(
             "candidate_transitive_include_closure": True,
             "c11_consumer_matrix": True,
             "cxx17_consumer_matrix": True,
-            "feature_visibility_matrix": False,
+            "feature_visibility_matrix": True,
             "callable_feature_visibility_matrix": True,
             "prototype_layout_matrix": True,
             "abi_facet_matrix": False,
@@ -2888,6 +3133,10 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/header_abi_matrix.py",
         "compat/x86_64/generated/header_abi_matrix/report.json",
         "compat/x86_64/run_header_abi_matrix.sh",
+        "compat/x86_64/header_declaration_macro_visibility_matrix.toml",
+        "compat/x86_64/header_declaration_macro_visibility_matrix.py",
+        "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
+        "compat/x86_64/run_header_declaration_macro_visibility_matrix.sh",
         "compat/x86_64/header_callable_linkage_audit.py",
         "compat/x86_64/run_header_callable_linkage_audit.sh",
         "compat/x86_64/public_headers.txt",
@@ -2930,6 +3179,7 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/tests/test_header_callable_inventory.py",
         "compat/x86_64/tests/test_header_callable_visibility_matrix.py",
         "compat/x86_64/tests/test_header_abi_matrix.py",
+        "compat/x86_64/tests/test_header_declaration_macro_visibility_matrix.py",
         "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
         "compat/x86_64/tests/test_ioctl_header_abi.py",
         "compat/x86_64/tests/test_epoll_header_abi.py",
@@ -3205,6 +3455,9 @@ def validate_header_layout_foundation_manifest(
             f"candidate-header closure runner omits fixed seven-profile contract: {phrase}",
         )
 
+    feature_visibility_matrix_row_count = require_header_declaration_macro_visibility_matrix(
+        manifest
+    )
     callable_visibility_matrix_row_count = require_header_callable_visibility_matrix(manifest)
     prototype_layout_matrix_row_count = require_header_abi_matrix(manifest)
 
@@ -5354,6 +5607,7 @@ def validate_header_layout_foundation_manifest(
         "access_header_profile_matrix_row_count": len(observed_access_header_rows),
         "xattr_header_profile_matrix_row_count": len(observed_xattr_header_rows),
         "callable_feature_visibility_matrix_row_count": callable_visibility_matrix_row_count,
+        "feature_visibility_matrix_row_count": feature_visibility_matrix_row_count,
         "prototype_layout_matrix_row_count": prototype_layout_matrix_row_count,
         "language_profile_count": len(profile_ids),
         "profile_obligation_count": len(obligation_keys),
@@ -5606,6 +5860,82 @@ def require_public_header_profile_consumability_artifact(
     require(
         "candidate-header-closure)" in dispatch_source,
         "public-header-profile-consumability command is absent from the native dispatcher",
+    )
+
+
+def require_all_header_declaration_macro_feature_visibility_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep generic named visibility distinct from declaration-form parity."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "all-header-declaration-macro-feature-visibility-matrix"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one all-header declaration/macro visibility artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "1,337-row direct-public-include C11/C++17 identity matrix",
+        "1,107 current comparable declaration-or-macro identity mismatch rows",
+        "173 matched identity rows",
+        "one current oracle-not-applicable `aio.h:c11-strict` row",
+        "56 project-only header/profile rows",
+        "checked candidate fact summaries and digests",
+        "22,215 same-identity source-form differences across 766 rows",
+        "14 form-only rows",
+        "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
+    ):
+        require(phrase in description, f"declaration/macro visibility artifact description omits {phrase}")
+    owners = set(
+        string_list(artifact["source_owners"], "all-header declaration/macro visibility artifact source owners")
+    )
+    for owner in (
+        "compat/x86_64/header_declaration_macro_visibility_matrix.toml",
+        "compat/x86_64/header_declaration_macro_visibility_matrix.py",
+        "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
+        "compat/x86_64/run_header_declaration_macro_visibility_matrix.sh",
+        "compat/x86_64/tests/test_header_declaration_macro_visibility_matrix.py",
+        "compat/x86_64/header_abi_matrix.toml",
+        "compat/x86_64/header_abi_matrix.py",
+        "compat/x86_64/generated/header_abi_matrix/report.json",
+        "compat/x86_64/header_callable_visibility_matrix.toml",
+        "compat/x86_64/header_callable_visibility_matrix.py",
+        "compat/x86_64/header_callable_inventory.toml",
+        "compat/x86_64/header_callable_inventory.py",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/public_headers.txt",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"declaration/macro visibility artifact must own {owner}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        [entry["command"] for entry in evidence]
+        == [EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_COMMAND],
+        "declaration/macro visibility artifact must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    require(
+        isinstance(scope, str)
+        and "compiler-derived declaration-form source report" in scope
+        and "finite named identity report" in scope
+        and "not declaration-form equality, layout, archive, runtime, promotion, or public-support evidence" in scope,
+        "declaration/macro visibility artifact evidence scope drifted",
     )
 
 
@@ -72687,6 +73017,9 @@ def validate_ledger(
     require_public_header_profile_consumability_artifact(
         by_id["libc.headers-layouts"]
     )
+    require_all_header_declaration_macro_feature_visibility_artifact(
+        by_id["libc.headers-layouts"]
+    )
     require_all_header_callable_feature_visibility_artifact(
         by_id["libc.headers-layouts"]
     )
@@ -73273,6 +73606,9 @@ def validate_ledger(
         ],
         "header_foundation_callable_feature_visibility_matrix_row_count": header_layout_foundation_report[
             "callable_feature_visibility_matrix_row_count"
+        ],
+        "header_foundation_feature_visibility_matrix_row_count": header_layout_foundation_report[
+            "feature_visibility_matrix_row_count"
         ],
         "header_foundation_prototype_layout_matrix_row_count": header_layout_foundation_report[
             "prototype_layout_matrix_row_count"

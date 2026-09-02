@@ -807,7 +807,7 @@ headers. The report is generated under `compat/reports/`; it is a
 consumability/accounting artifact, not declaration, layout, linkage, runtime,
 installed-header completion, or public x86 support evidence.
 
-`headers-layouts-foundation.toml` is the planned v8 contract that turns those
+`headers-layouts-foundation.toml` is the planned all-public-header accounting contract that turns those
 separate inventories into a reviewable closure plan without claiming family
 completion. It partitions all 183 pinned paths plus eight project-only
 extensions, fixes the three `sys/*` dependencies to one Linux 5.10 x86 UAPI
@@ -1705,6 +1705,18 @@ Its current 1,121 comparable red source-form rows, one
 evidence to review—not parity waivers or ABI classifications. It excludes byte
 layouts, anonymous declarations, inline behavior, archive linkage, runtime,
 family promotion, and public x86 support.
+
+`header-declaration-macro-visibility-matrix` derives a checked identity report
+from that same refreshed compiler collection, rather than collecting another
+header cross-product. It compares only named `(kind, name)` declaration and
+macro visibility across all 1,337 rows: 1,107 current identity-mismatch rows,
+173 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
+and 56 project-only rows retain checked candidate fact summaries and digests.
+Its 22,215 same-identity source-form
+differences across 766 rows—including 14 form-only rows—remain separately
+accounted and are not an ABI-equality claim. This is generic feature-visibility
+evidence only; declaration-form equality, layouts, linkage, runtime, family
+promotion, and public x86 support remain outside it.
 
 The private `installed-header-tree-closure` artifact separately materializes
 the 191 candidate headers into a temporary `usr/include` tree, then resolves

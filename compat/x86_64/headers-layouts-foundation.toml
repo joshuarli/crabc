@@ -2,7 +2,7 @@
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
 # `headers-layouts.toml` remains the v1 inventory of fifty-three direct probes.
-# This v11 manifest accounts for every pinned public header and every project-
+# This v12 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
 # event-descriptor, timeval-transitive, direct sys/time, and access-header profile ABI slices
@@ -13,7 +13,7 @@
 # `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
 # x86 `headers_install` identity; it is repeated here and in the Docker build
 # because those independent consumers cannot load TOML from one another.
-schema = "crabc.x86_64-headers-layouts-foundation/v11"
+schema = "crabc.x86_64-headers-layouts-foundation/v12"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -31,7 +31,7 @@ inventory_accounting = true
 candidate_transitive_include_closure = true
 full_c11_consumer_matrix = true
 full_cxx17_consumer_matrix = true
-feature_visibility_matrix = false
+feature_visibility_matrix = true
 callable_feature_visibility_matrix = true
 prototype_layout_matrix = true
 abi_facet_matrix = false
@@ -65,7 +65,7 @@ xattr_header_profile_matrix_slice = true
 candidate_transitive_include_closure = true
 c11_consumer_matrix = true
 cxx17_consumer_matrix = true
-feature_visibility_matrix = false
+feature_visibility_matrix = true
 callable_feature_visibility_matrix = true
 prototype_layout_matrix = true
 abi_facet_matrix = false
@@ -1258,6 +1258,24 @@ scope = "Raw-GCC project-header-first and pinned-musl reference empty-TU C11/C++
 # than general header ABI parity. It compares direct consumer visibility by
 # callable name and class only; its checked finite red report is evidence, not
 # a waiver or a family promotion.
+[feature_visibility_matrix]
+id = "all-header-declaration-macro-feature-visibility-matrix"
+state = "partial-verified"
+contract = "compat/x86_64/header_declaration_macro_visibility_matrix.toml"
+generated_report = "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json"
+command = "./scripts/dev-x86_64.sh header-declaration-macro-visibility-matrix"
+required_result = "checked-finite-report"
+profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+pinned_public_header_count = 183
+candidate_public_header_count = 191
+record_count = 1337
+comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 173, mismatch = 1107, oracle-not-applicable = 1 }
+identity_difference_counts = { candidate_only = 41632, reference_only = 85941 }
+source_form_difference_count = 22215
+source_form_difference_row_count = 766
+source_form_only_difference_row_count = 14
+scope = "Derived from the checked compiler-generated declaration-form report, this all-header direct-public-include C11/C++17 matrix compares named function, typedef, record, enum, variable, and macro identities only for comparable rows. It preserves same-identity source-form differences as separately accounted context, records every current comparable identity gap, and accounts for project-only and oracle-not-applicable rows through checked candidate fact summaries and digests. It excludes declaration-form equality, macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, and public support."
+
 [callable_feature_visibility_matrix]
 id = "all-header-callable-feature-visibility-matrix"
 state = "partial-verified"
@@ -1696,11 +1714,11 @@ description = "The seven-profile closure measures C++17 GNU and macro-free consu
 
 [[abi_facet]]
 id = "feature-visibility"
-state = "planned"
+state = "partial-verified"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
-evidence = ["strict-posix-xopen-gnu-bsd-matrix"]
-description = "Feature-test visibility requires an oracle-derived C and C++ matrix, not a single GNU include pass."
+evidence = ["all-header-declaration-macro-feature-visibility-matrix"]
+description = "The checked derived 1,337-row matrix compares compiler-visible named declaration and macro identities across the full C11/C++17 profile cross-product. It keeps 22,215 same-identity source-form differences separately accounted, records all 1,107 comparable identity mismatch rows, and accounts for project-only and oracle-not-applicable surface dispositions through checked candidate fact summaries and digests. It excludes declaration-form equality, layouts, linkage, runtime, and promotion closure."
 
 [[abi_facet]]
 id = "callable-feature-visibility"

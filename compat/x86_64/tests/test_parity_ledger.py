@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 351)
+        self.assertEqual(report["verified_artifact_count"], 352)
         self.assertEqual(report["feature_archive_count"], 20)
         self.assertEqual(report["verified_feature_archive_count"], 20)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -107,6 +107,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             report["header_foundation_xattr_header_profile_matrix_row_count"],
             11,
+        )
+        self.assertEqual(
+            report["header_foundation_feature_visibility_matrix_row_count"],
+            1337,
         )
         self.assertEqual(
             report["header_foundation_prototype_layout_matrix_row_count"],
@@ -2810,6 +2814,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
+        self.assertIn(
+            "./scripts/dev-x86_64.sh header-declaration-macro-visibility-matrix",
+            {entry["command"] for entry in headers_layouts["native_evidence"]},
+        )
         for owner in (
             "include/arpa/inet.h",
             "include/stddef.h",
@@ -3151,7 +3159,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v11"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v12"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -3247,8 +3255,32 @@ class X86ParityLedgerTests(unittest.TestCase):
             1337,
         )
         self.assertEqual(
+            report["header_foundation_feature_visibility_matrix_row_count"],
+            1337,
+        )
+        self.assertEqual(
             report["header_foundation_prototype_layout_matrix_row_count"],
             1337,
+        )
+        feature_visibility = manifest["feature_visibility_matrix"]
+        assert isinstance(feature_visibility, dict)
+        self.assertEqual(
+            feature_visibility["command"],
+            "./scripts/dev-x86_64.sh header-declaration-macro-visibility-matrix",
+        )
+        self.assertEqual(feature_visibility["required_result"], "checked-finite-report")
+        self.assertEqual(
+            feature_visibility["comparison_counts"],
+            {
+                "candidate-only-pending-c-abi-policy": 56,
+                "matched": 173,
+                "mismatch": 1107,
+                "oracle-not-applicable": 1,
+            },
+        )
+        self.assertEqual(
+            feature_visibility["identity_difference_counts"],
+            {"candidate_only": 41632, "reference_only": 85941},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3770,7 +3802,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(policy["candidate_transitive_include_closure"])
         self.assertTrue(policy["full_c11_consumer_matrix"])
         self.assertTrue(policy["full_cxx17_consumer_matrix"])
-        self.assertFalse(policy["feature_visibility_matrix"])
+        self.assertTrue(policy["feature_visibility_matrix"])
         self.assertTrue(completion["uapi_wrapper_profile_matrix_slice"])
         self.assertTrue(completion["ioctl_header_profile_matrix_slice"])
         self.assertTrue(completion["sys_io_header_profile_matrix_slice"])
@@ -3785,6 +3817,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(completion["candidate_transitive_include_closure"])
         self.assertTrue(completion["c11_consumer_matrix"])
         self.assertTrue(completion["cxx17_consumer_matrix"])
+        self.assertTrue(completion["feature_visibility_matrix"])
         self.assertFalse(completion["family_promotion"])
         self.assertFalse(completion["public_support"])
 
@@ -4147,6 +4180,16 @@ class X86ParityLedgerTests(unittest.TestCase):
 
         data = self.data()
         manifest = self.header_foundation_manifest()
+        feature_visibility = manifest["feature_visibility_matrix"]
+        assert isinstance(feature_visibility, dict)
+        feature_visibility["record_count"] = 1336
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "declaration/macro visibility matrix count contract drifted"
+        ):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
         callable_visibility["record_count"] = 1336
@@ -4225,7 +4268,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 10
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts
@@ -4273,12 +4316,76 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "closed candidate-header-closure command"):
             ledger.validate_ledger(data)
 
+    def test_all_header_declaration_macro_visibility_is_a_reviewable_non_abi_artifact(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        self.assertEqual(headers_layouts["status"], "planned")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 11
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "all-header-declaration-macro-feature-visibility-matrix"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh header-declaration-macro-visibility-matrix"},
+        )
+        for owner in (
+            "compat/x86_64/header_declaration_macro_visibility_matrix.toml",
+            "compat/x86_64/header_declaration_macro_visibility_matrix.py",
+            "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
+            "compat/x86_64/run_header_declaration_macro_visibility_matrix.sh",
+            "compat/x86_64/tests/test_header_declaration_macro_visibility_matrix.py",
+            "compat/x86_64/header_abi_matrix.toml",
+            "compat/x86_64/header_abi_matrix.py",
+            "compat/x86_64/generated/header_abi_matrix/report.json",
+            "compat/x86_64/header_callable_visibility_matrix.toml",
+            "compat/x86_64/header_callable_visibility_matrix.py",
+            "compat/x86_64/header_callable_inventory.toml",
+            "compat/x86_64/header_callable_inventory.py",
+            "compat/x86_64/header_callable_inventory.json",
+            "compat/x86_64/public_headers.txt",
+            "compat/x86_64/headers-layouts-foundation.toml",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "still-planned `libc.headers-layouts`",
+            "1,337-row direct-public-include C11/C++17 identity matrix",
+            "1,107 current comparable declaration-or-macro identity mismatch rows",
+            "173 matched identity rows",
+            "`aio.h:c11-strict`",
+            "56 project-only header/profile rows",
+            "checked candidate fact summaries and digests",
+            "22,215 same-identity source-form differences across 766 rows",
+            "14 form-only rows",
+            "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifact = next(
+            entry
+            for entry in self.family(changed, "libc.headers-layouts")["verified_artifact"]
+            if isinstance(entry, dict)
+            and entry["id"] == "all-header-declaration-macro-feature-visibility-matrix"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh header-abi-matrix"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "dedicated native command"):
+            ledger.validate_ledger(changed)
+
     def test_all_header_prototype_layout_matrix_is_a_reviewable_non_abi_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 10
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts
@@ -4332,7 +4439,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 10
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         matching = [
             entry
             for entry in artifacts
@@ -4397,7 +4504,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 10
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts
@@ -4468,7 +4575,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 10
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts
@@ -12955,7 +13062,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(detail, socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 10
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         bootstrap = next(
             entry
             for entry in artifacts
@@ -17292,7 +17399,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 10
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts
@@ -17306,7 +17413,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 10
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts

@@ -57,6 +57,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   installed-header-tree-closure  verify the materialized target-owned x86 public-header closure
   header-callable-visibility-matrix  check all-header callable feature-visibility evidence
   header-abi-matrix  check all-header callable and named noncallable ABI evidence
+  header-declaration-macro-visibility-matrix  check all-header declaration/macro feature-visibility evidence
   header-callable-linkage-audit  audit declared x86 header callables against the static archive
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
   epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
@@ -2534,6 +2535,10 @@ run_header_callable_visibility_matrix() {
 
 run_header_abi_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_header_abi_matrix.sh
+}
+
+run_header_declaration_macro_visibility_matrix() {
+    run_in_container bash /workspace/compat/x86_64/run_header_declaration_macro_visibility_matrix.sh
 }
 
 run_header_callable_linkage_audit() {
@@ -5015,6 +5020,7 @@ case "$command" in
     installed-header-tree-closure) ;;
     header-callable-visibility-matrix) ;;
     header-abi-matrix) ;;
+    header-declaration-macro-visibility-matrix) ;;
     header-callable-linkage-audit) ;;
     uapi-wrapper-matrix) ;;
     epoll-header-abi) ;;
@@ -5167,6 +5173,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "header-abi-matrix takes no arguments"
         ensure_image
         run_header_abi_matrix
+        ;;
+    header-declaration-macro-visibility-matrix)
+        [ "$#" -eq 0 ] || fail "header-declaration-macro-visibility-matrix takes no arguments"
+        ensure_image
+        run_header_declaration_macro_visibility_matrix
         ;;
     header-callable-linkage-audit)
         [ "$#" -eq 0 ] || fail "header-callable-linkage-audit takes no arguments"
