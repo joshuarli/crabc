@@ -241,6 +241,7 @@ dcngettext
 dgettext
 difftime
 dirfd
+dirname
 div
 dl_iterate_phdr
 dladdr
@@ -971,6 +972,7 @@ stpcpy
 stpncpy
 strcasecmp
 strcasecmp_l
+strcasestr
 strcat
 strchr
 strchrnul
@@ -1003,6 +1005,7 @@ strtof
 strtof_l
 strtoimax
 strtok
+strtok_r
 strtol
 strtold
 strtold_l

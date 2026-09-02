@@ -245,6 +245,8 @@ mod string_copy;
 mod strsep;
 #[path = "strtok.rs"]
 mod strtok;
+#[path = "stateful_byte_strings.rs"]
+mod stateful_byte_strings;
 #[path = "error_strings.rs"]
 mod error_strings;
 #[path = "locale_error_strings.rs"]

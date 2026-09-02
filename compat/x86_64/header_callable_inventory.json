@@ -183,6 +183,7 @@
         "dgettext",
         "difftime",
         "dirfd",
+        "dirname",
         "div",
         "dl_iterate_phdr",
         "dladdr",
@@ -893,6 +894,7 @@
         "stpncpy",
         "strcasecmp",
         "strcasecmp_l",
+        "strcasestr",
         "strcat",
         "strchr",
         "strchrnul",
@@ -925,6 +927,7 @@
         "strtof_l",
         "strtoimax",
         "strtok",
+        "strtok_r",
         "strtol",
         "strtold",
         "strtold_l",
@@ -1168,7 +1171,6 @@
         "cuserid",
         "daemon",
         "delete_module",
-        "dirname",
         "dprintf",
         "drand48",
         "endgrent",
@@ -1432,13 +1434,11 @@
         "srand48",
         "srandom",
         "stime",
-        "strcasestr",
         "strfmon",
         "strfmon_l",
         "strftime",
         "strftime_l",
         "strptime",
-        "strtok_r",
         "swapcontext",
         "swapoff",
         "swapon",
@@ -424028,8 +424028,8 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "57806b6150e311c7f3e5e1c82cfff9c67b80a476081b387fd0ec934bcbf79352",
-    "static_c_abi_exports_sha256": "3ab260b59246e130f9a3585abf4ec52d12b2b29451d192c4f3bf1a158a44b64b"
+    "parity_ledger_sha256": "5c9b7f148fc2571c8c271f1fd854e25145cf47d57c4f53e1929e04a80679f592",
+    "static_c_abi_exports_sha256": "0944ab51a0ab27b1993f97c7fda6067631b1d82419c3eee575f3789e4ba5d9fa"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -442489,7 +442489,6 @@
       "cuserid",
       "daemon",
       "delete_module",
-      "dirname",
       "dn_comp",
       "dprintf",
       "drand48",
@@ -442787,7 +442786,6 @@
       "srand48",
       "srandom",
       "stime",
-      "strcasestr",
       "strdup",
       "strfmon",
       "strfmon_l",
@@ -442795,7 +442793,6 @@
       "strftime_l",
       "strndup",
       "strptime",
-      "strtok_r",
       "swab",
       "swapcontext",
       "swapoff",
@@ -442866,8 +442863,8 @@
     },
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
-      "default_static": 1084,
-      "unprovided": 382,
+      "default_static": 1087,
+      "unprovided": 379,
       "verified_feature_archives": 47
     },
     "candidate_external_callable_count": 1513,
@@ -442882,7 +442879,7 @@
       "ok": 2617,
       "oracle-not-applicable": 1
     },
-    "static_export_complement_count": 429
+    "static_export_complement_count": 426
   },
   "target": "x86_64-unknown-linux-musl"
 }

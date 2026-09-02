@@ -152,6 +152,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   mempcpy-header-abi  compile the staged x86 C/C++ string.h mempcpy declaration
   strsep-header-abi  compile the staged x86 C/C++ string.h strsep declaration
   strtok-header-abi  verify staged x86 C/C++ string.h strtok declaration and linkage
+  stateful-byte-strings-header-abi  verify x86 C/C++ dirname/strcasestr/strtok_r declarations
   string-copy-header-abi  compile the staged x86 C/C++ C-string-copy declarations
   string-duplication-header-abi  compile the staged x86 C/C++ C-string-duplication declarations
   error-strings-header-abi  compile the staged x86 C/C++ error-string declarations
@@ -569,6 +570,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-mempcpy  run the static x86 crabc-libc mempcpy slice
   libc-strsep  run the static x86 crabc-libc strsep slice
   libc-strtok  run the static x86 crabc-libc strtok slice
+  libc-stateful-byte-strings  run the static x86 caller-owned byte-string provider slice
   libc-network-byte-order  run the static x86 crabc-libc network byte-order slice
   libc-in6addr-any  run the archive-free static x86 crabc-libc IPv6 unspecified-address object slice
   libc-in6addr-loopback  run the archive-free static x86 crabc-libc IPv6 loopback-address object slice
@@ -3015,6 +3017,10 @@ run_libc_strtok() {
     run_in_container bash /workspace/compat/x86_64/run_libc_strtok.sh
 }
 
+run_libc_stateful_byte_strings() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_stateful_byte_strings.sh
+}
+
 run_libc_rand_r() {
     run_in_container bash /workspace/compat/x86_64/run_libc_rand_r.sh
 }
@@ -3273,6 +3279,10 @@ run_strsep_header_abi() {
 
 run_strtok_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_strtok_header_abi.sh
+}
+
+run_stateful_byte_strings_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_stateful_byte_strings_header_abi.sh
 }
 
 run_string_copy_header_abi() {
@@ -5125,7 +5135,7 @@ case "$command" in
     memccpy-header-abi) ;;
     mempcpy-header-abi) ;;
     strsep-header-abi) ;;
-    strtok-header-abi) ;;
+    strtok-header-abi|stateful-byte-strings-header-abi) ;;
     string-copy-header-abi) ;;
     error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi) ;;
     string-duplication-header-abi) ;;
@@ -5157,7 +5167,7 @@ case "$command" in
     libc-memccpy) ;;
     libc-mempcpy) ;;
     libc-strsep) ;;
-    libc-strtok) ;;
+    libc-strtok|libc-stateful-byte-strings) ;;
     libc-allocator-runtime) ;;
     libc-allocator-basic-runtime-v1) ;;
     libc-allocator-string-duplication) ;;
@@ -5795,6 +5805,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "strtok-header-abi takes no arguments"
         ensure_image
         run_strtok_header_abi
+        ;;
+    stateful-byte-strings-header-abi)
+        [ "$#" -eq 0 ] || fail "stateful-byte-strings-header-abi takes no arguments"
+        ensure_image
+        run_stateful_byte_strings_header_abi
         ;;
     string-copy-header-abi)
         [ "$#" -eq 0 ] || fail "string-copy-header-abi takes no arguments"
@@ -8003,6 +8018,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-strtok takes no arguments"
         ensure_image
         run_libc_strtok
+        ;;
+    libc-stateful-byte-strings)
+        [ "$#" -eq 0 ] || fail "libc-stateful-byte-strings takes no arguments"
+        ensure_image
+        run_libc_stateful_byte_strings
         ;;
     libc-rand-r)
         [ "$#" -eq 0 ] || fail "libc-rand-r takes no arguments"
