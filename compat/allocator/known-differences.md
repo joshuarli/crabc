@@ -299,13 +299,14 @@ registry/subprocess ownership.
   `types::ThreadLocalData::{is_subprocess_attached_no_theap,is_in_threadpool}`,
   `types::Theap::{set_detached_main_metadata_static_memid,bind_exclusive_detached}`,
   `random::TheapRandomImage::{initialize,next}`,
-  `process_page_map::ProcessPageMapStorage`, and the
-  `subproc::MainStaticBootstrapSelection` selector.
+  `process_page_map::ProcessPageMapStorage`, and
+  `subproc::{MainStaticBootstrapSelection,MainSubprocess::publish_detached_metadata_theap,MainSubprocess::matches_published_detached_metadata_theap}`.
 - **Category:** crate-private source-order startup boundary. It has no C ABI
   surface or valid allocation-trace differential entry.
 - **Difference:** the Rust coordinator proves the central source order—static
-  Heap, static detached metadata-image binding without backing, global PageMap,
-  then ticket-zero TLD/Theap/default/fast roots—but accepts a frozen
+  Heap, static detached metadata-image binding without backing, one-way
+  detached-Theap identity admission publication, global PageMap, then
+  ticket-zero TLD/Theap/default/fast roots—but accepts a frozen
   `MemoryConfig` instead of running source option/OS initialization. C forms
   `mi_process_theap_meta` during main-heap initialization, gives it
   `_mi_memid_create(MI_MEM_STATIC)`, preserves that kind-only zero-union/flag
@@ -321,11 +322,19 @@ registry/subprocess ownership.
   instead of claiming those routes. C applies the detached non-abandoning and
   retain-two fields after `_mi_theap_init` publishes and links; Rust writes its
   bounded final image before publication because it does not model those lists.
-  It does not claim the rest of `_mi_theap_init`, mutable option/OS processing,
-  TLD/Heap list relations or locking, guarded initialization/statistics,
-  random-split parity, actual-main-Heap identity, or
-  `subproc_main->theap_meta` publication. A first valid Rust metadata request
-  forms a private direct-OS PageMap/external-arena backing rather than claiming
+  After the selected Rust image is fully bound, `MetaAllocator` makes one
+  Release-CAS publication of its exact address through a private
+  `MainSubprocess` atomic; COLD direct `zalloc`, aligned `zalloc`, and
+  `rezalloc(None)` reject with `TheapMetaUnpublished` before the metadata lock,
+  mapping, or capability creation, while a collision or mismatched image fails
+  closed. This maps only the identity role of
+  `subproc_main->theap_meta = &mi_process_theap_meta`, not the actual
+  `mi_subproc_t` field/layout, `theap_meta_lock`, a dereference-capable
+  subprocess API, actual main-Heap linkage, or general Theap API. It does not
+  claim the rest of `_mi_theap_init`, mutable option/OS processing, TLD/Heap
+  list relations or locking, guarded initialization/statistics, or random-split
+  parity. A first valid prepared Rust metadata request forms a private
+  direct-OS PageMap/external-arena backing rather than claiming
   C's normal `_mi_meta_zalloc` backing route. It exposes
   only immutable ready witnesses, does not reserve the process-shared arena,
   initialize pthread or TLS keys, route allocations/frees, coordinate general
@@ -356,7 +365,11 @@ registry/subprocess ownership.
   private metadata map or ticket-zero roots; `process_main_defers_private_metadata_backing_until_first_demand`
   and `meta::tests::bound_metadata_rejects_a_foreign_subprocess_before_first_backing`
   prove first-demand private backing, frozen identity rejection before Map #1,
-  and clean same-identity retry.
+  and clean same-identity retry. `meta::tests::cold_direct_metadata_demand_requires_prepared_theap_publication`
+  proves the three COLD demand forms refuse before lock/map/capability work;
+  preparation publishes the selected identity without consuming a map fault,
+  then a prepared demand consumes the pending map failure and a later retry
+  succeeds.
   `process_main_once_blocks_a_distinct_racer_until_release_and_refuses_reentry`,
   `process_main_once_blocks_a_terminal_ready_observer_until_once_release`, and
   `process_main_once_wakes_a_distinct_racer_with_retained_after_failure` prove
@@ -513,7 +526,7 @@ registry/subprocess ownership.
   cover every native cleanup edge and a successful complete trim. The M2
   manifest additionally selects
   `os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner`,
-  `meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_before_publication`,
+  `meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_before_private_backing_publication`,
   and
   `process_arena::tests::explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup`.
   `test_context::tests::initialization_failure_retains_then_retries_the_aligned_map_and_page_map_owners`

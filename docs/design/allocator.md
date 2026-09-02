@@ -49,15 +49,23 @@ process-main identity. Its generic metadata branch remains no-theap, while
 heap/default-Theap attachment and publishes its compiler-TLS default then fast
 roots. `process_init.rs` now owns one deliberately bounded source-order
 transition: it reserves the static ticket-zero branch, initializes the static
-Heap, and binds the static detached metadata image without private backing.
+Heap, binds the static detached metadata image without private backing, and
+one-way Release-CAS publishes that exact fully formed Theap identity through a
+comparison-only `MainSubprocess` admission slot before `BOUND` and before the
+distinct global PageMap.
 For only its bounded same-subprocess, empty-head, non-threadpool input, that
 image preserves kind-only `MI_MEM_STATIC` provenance, the frozen normal enabled
 page-reclaim field, an initialized possibly-weak random context, and an odd
 cookie before Release heap publication. A nonempty head, mismatched
 subprocess, or thread-pool input is rejected before mutation rather than
-claiming C's locked list/split or option-adjustment route. It then publishes
+claiming C's locked list/split or option-adjustment route. A COLD direct
+metadata `zalloc`, aligned `zalloc`, or `rezalloc(None)` rejects with a typed
+unpublished-identity error before the private metadata lock, mapping, or
+capability creation. This atomic identity gate is not the actual
+`mi_subproc_t::theap_meta` field/layout, `theap_meta_lock`, a
+dereference-capable subprocess API, or main-Heap linkage. It then publishes
 the distinct global PageMap and only then attaches the static TLD/Theap roots.
-The first valid metadata request later forms this bounded port's private
+The first valid prepared metadata request later forms this bounded port's private
 PageMap/external-arena backing; it does not claim the pinned C normal
 metadata-backing route or complete `_mi_theap_init` state. Its selector prevents a generic
 TLD constructor from consuming ticket zero while that transition is active or
@@ -245,14 +253,22 @@ claimed as C fault-injection parity. The C oracle sets
 fallback behavior.
 
 The bounded metadata prerequisite from `src/subproc.c:19-88` is now also
-present. `MetaAllocator` is one process-static, `!Unpin` owner: its internal
-operations require `Pin<&'static MetaAllocator>`, validate the current live
-AArch64 thread-pointer identity before taking a nonrecursive `PrivateLock`,
-then lazily build a direct-OS page map and aligned external arena in their
-final static slots before Release-publishing a detached `ExclusiveTheap`.
-Before that arena is published, the metadata owner selects the same bounded
-main-subprocess identity for its arena registry, so its registry and published
-arena agree with the detached heap/TLD/theap image.
+present. `MetaAllocator` is one process-static, `!Unpin` owner. Its preparation
+first binds the selected static detached Heap/TLD/Theap image, then one-way
+Release-CAS publishes that exact pinned Theap identity through the selected
+`MainSubprocess` before `BOUND`; the allocator keeps a second atomic only as a
+comparison-only mirror. A COLD direct `zalloc`, aligned `zalloc`, or
+`rezalloc(None)` returns `TheapMetaUnpublished` before the metadata lock,
+mapping, or capability creation. Once prepared, internal operations require
+`Pin<&'static MetaAllocator>`, validate the current live AArch64 thread-pointer
+identity before taking a nonrecursive `PrivateLock`, then lazily build a
+direct-OS page map and aligned external arena in their final static slots. The
+identity atom is a bounded Rust safety strengthening of C's non-null metadata
+precondition; it is not an actual `mi_subproc_t` field/layout,
+`theap_meta_lock`, dereference-capable subprocess API, main-Heap linkage, or
+normal C metadata backing. Before that arena is published, the metadata owner
+selects the same bounded main-subprocess identity for its arena registry, so
+its registry and published arena agree with the detached heap/TLD/theap image.
 The ordinary page lifecycle supplies the first and later metadata blocks; no
 `alloc`, libc, public pthread API, compiler-TLS root, separate metadata slab,
 or mmap-per-block path participates. Its must-use, non-Copy
@@ -732,11 +748,15 @@ ownership; allocation failures before commit preserve the old image and
 generation.
 
 `subproc.rs` now represents the deliberately small process-static identity of
-`mi_process_subproc_main`: it owns only the relaxed source
-`thread_total_count` sequence, relaxed live `thread_count`, and the real
-static `mi_process_tld_main` slot. It is explicitly not a Rust layout claim
-for full `mi_subproc_t`; subprocess lists, heaps, arenas, statistics, and M6
-subprocess APIs remain absent. A linear non-Send ticket records the old value
+`mi_process_subproc_main`: it owns the relaxed source `thread_total_count`
+sequence, relaxed live `thread_count`, the real static `mi_process_tld_main`
+slot, and one private one-way atomic detached-Theap identity admission slot.
+The latter maps only the selected identity role of
+`subproc_main->theap_meta = &mi_process_theap_meta`: it is compared but never
+dereferenced. It is explicitly not a Rust layout claim for full `mi_subproc_t`,
+the source field/`theap_meta_lock`, main-Heap linkage, or normal C backing;
+subprocess lists, heaps, arenas, statistics, and M6 subprocess APIs remain
+absent. A linear non-Send ticket records the old value
 from `thread_total_count.fetch_add(Relaxed)` before any static/metadata storage
 choice. Ticket zero initializes the actual `MemoryKind::Static` TLD slot with
 its own source base and `size_of::<ThreadLocalData>()` image size, without

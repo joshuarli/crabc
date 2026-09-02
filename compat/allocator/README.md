@@ -48,8 +48,10 @@ compiler-TLS roots now preserve the pinned initial images and selected teardown 
 while the selected Linux/AArch64 thread identity reads `TPIDR_EL0` directly. A
 process-static private metadata owner now ports selected detached-Malloc paths
 in `src/subproc.c:19-88`: process startup binds its static detached
-Heap/TLD/Theap image before global PageMap publication, without mapping private
-backing or touching compiler-TLS roots. For only its bounded same-subprocess,
+Heap/TLD/Theap image, then one-way Release-CAS publishes that exact fully
+formed Theap identity through a comparison-only `MainSubprocess` admission
+slot before global PageMap publication, without mapping private backing or
+touching compiler-TLS roots. For only its bounded same-subprocess,
 empty-head, non-threadpool input, that detached Theap preserves
 `mi_process_theap_meta`'s kind-only `_mi_memid_create(MI_MEM_STATIC)`
 provenance, the frozen normal enabled `page_reclaim_on_free` image, an
@@ -57,10 +59,15 @@ initialized possibly-weak random context, and an odd cookie before Release
 heap publication. A nonempty head, mismatched subprocess, or thread-pool
 input is rejected before mutation rather than claiming C's locked list/split
 or option-adjustment route. This is not a complete `_mi_theap_init` or
-mutable-options claim. A first valid metadata request then forms the bounded
-private direct-OS PageMap/external-arena backing and issues its one detached
-session. That private first-demand route is not claimed to match pinned C's
-normal `_mi_meta_zalloc` backing route. The owner uses a
+mutable-options claim. A COLD direct `zalloc`, aligned `zalloc`, or
+`rezalloc(None)` refuses before the metadata lock, mapping, or capability
+creation; this is a bounded Rust safety strengthening of C's non-null
+precondition. The admission slot is not the actual `mi_subproc_t::theap_meta`
+field/layout, `theap_meta_lock`, a dereference-capable subprocess API, or
+main-Heap linkage. A first valid prepared metadata request then forms the
+bounded private direct-OS PageMap/external-arena backing and issues its one
+detached session. That private first-demand route is not claimed to match
+pinned C's normal `_mi_meta_zalloc` backing route. The owner uses a
 must-use owner-bound capability for source-ordered replacement and serialized
 cross-thread release; its detached image and its later pre-publication-bound
 registry/published arena name the same deliberately bounded process-main
@@ -68,8 +75,9 @@ identity as the current-thread TLD checkpoint. It does not claim general
 subprocess destruction or public allocation routing.
 
 `process_init.rs` owns a bounded source-order transition: static Heap
-foundation, detached metadata-image binding without private backing, global
-PageMap publication, then the ticket-zero TLD/Theap roots. Its selector
+foundation, detached metadata-image binding without private backing, one-way
+detached-Theap identity publication, global PageMap publication, then the
+ticket-zero TLD/Theap roots. Its selector
 prevents generic TLD construction from consuming ticket zero while startup is
 active or retained, and its ready
 lease exposes only immutable map/configuration/subprocess witnesses.
