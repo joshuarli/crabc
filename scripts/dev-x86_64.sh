@@ -2354,6 +2354,7 @@ general facade admission, or C ABI support claim.
   libc-ns-put32  run the archive-free static x86 crabc-libc DNS 32-bit wire-write slice
   libc-ns-skiprr  run the static x86 crabc-libc DNS resource-record span slice
   libc-nameser-wire-aggregate  run the static x86 crabc-libc nameser wire/data composition slice
+  libc-nameser-message-parser  run the static x86 crabc-libc nameserver message-parser slice
   libc-io-permissions  run the opt-in static x86 iopl/ioperm negative-path slice
   libc-personality  run the static x86 process-personality slice
   libc-sched-getaffinity  run the static x86 GNU scheduler-affinity observation slice
@@ -5087,7 +5088,7 @@ case "$command" in
     math-special-header-abi|libc-math-special) ;;
     math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
     inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi) ;;
-    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate) ;;
+    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
     libc-math-minmax) ;;
@@ -8844,6 +8845,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-nameser-wire-aggregate takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_nameser_wire_aggregate.sh
+        ;;
+    libc-nameser-message-parser)
+        [ "$#" -eq 0 ] || fail "libc-nameser-message-parser takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_nameser_message_parser.sh
         ;;
     libc-io-permissions)
         [ "$#" -eq 0 ] || fail "libc-io-permissions takes no arguments"

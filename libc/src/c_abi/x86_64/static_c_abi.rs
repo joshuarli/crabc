@@ -865,6 +865,8 @@ mod math_pow;
 mod ns_put32;
 #[path = "ns_skiprr.rs"]
 mod ns_skiprr;
+#[path = "nameser_message_parser.rs"]
+mod nameser_message_parser;
 #[path = "inet_netof.rs"]
 mod inet_netof;
 #[path = "inet_network.rs"]

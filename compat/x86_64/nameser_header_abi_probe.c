@@ -19,6 +19,10 @@ typedef void (*ns_put16_signature)(unsigned, unsigned char *);
 typedef void (*ns_put32_signature)(unsigned long, unsigned char *);
 typedef int (*ns_skiprr_signature)(const unsigned char *, const unsigned char *,
     ns_sect, int);
+typedef int (*ns_initparse_signature)(const unsigned char *, int, ns_msg *);
+typedef int (*ns_parserr_signature)(ns_msg *, ns_sect, int, ns_rr *);
+typedef int (*ns_name_uncompress_signature)(const unsigned char *,
+    const unsigned char *, const unsigned char *, char *, size_t);
 
 _Static_assert(NS_CMPRSFLGS == 0xc0 && NS_MAXLABEL == 63 &&
     NS_MAXCDNAME == 255 && NS_MAXDNAME == 1025,
@@ -92,6 +96,25 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&ns_put32),
     ns_put32_signature), "ns_put32 declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&ns_skiprr),
     ns_skiprr_signature), "ns_skiprr declaration");
+_Static_assert(sizeof(ns_msg) == 80 && _Alignof(ns_msg) == 8,
+    "nameserver message layout");
+_Static_assert(offsetof(ns_msg, _msg) == 0 && offsetof(ns_msg, _eom) == 8 &&
+    offsetof(ns_msg, _id) == 16 && offsetof(ns_msg, _flags) == 18 &&
+    offsetof(ns_msg, _counts) == 20 && offsetof(ns_msg, _sections) == 32 &&
+    offsetof(ns_msg, _sect) == 64 && offsetof(ns_msg, _rrnum) == 68 &&
+    offsetof(ns_msg, _msg_ptr) == 72, "nameserver message offsets");
+_Static_assert(sizeof(ns_rr) == 1048 && _Alignof(ns_rr) == 8,
+    "nameserver record layout");
+_Static_assert(offsetof(ns_rr, name) == 0 && offsetof(ns_rr, type) == 1026 &&
+    offsetof(ns_rr, rr_class) == 1028 && offsetof(ns_rr, ttl) == 1032 &&
+    offsetof(ns_rr, rdlength) == 1036 && offsetof(ns_rr, rdata) == 1040,
+    "nameserver record offsets");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&ns_initparse),
+    ns_initparse_signature), "ns_initparse declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&ns_parserr),
+    ns_parserr_signature), "ns_parserr declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&ns_name_uncompress),
+    ns_name_uncompress_signature), "ns_name_uncompress declaration");
 
 static dn_skipname_signature dn_skipname_function = dn_skipname;
 static dn_expand_signature dn_expand_function = dn_expand;
@@ -101,6 +124,9 @@ static ns_get32_signature ns_get32_function = ns_get32;
 static ns_put16_signature ns_put16_function = ns_put16;
 static ns_put32_signature ns_put32_function = ns_put32;
 static ns_skiprr_signature ns_skiprr_function = ns_skiprr;
+static ns_initparse_signature ns_initparse_function = ns_initparse;
+static ns_parserr_signature ns_parserr_function = ns_parserr;
+static ns_name_uncompress_signature ns_name_uncompress_function = ns_name_uncompress;
 
 int crabc_x86_64_nameser_header_abi_probe(void)
 {
@@ -108,6 +134,9 @@ int crabc_x86_64_nameser_header_abi_probe(void)
         ns_flagdata_table == _ns_flagdata &&
         ns_get16_function == &ns_get16 &&
         ns_get32_function == &ns_get32 && ns_put16_function == &ns_put16 &&
-        ns_put32_function == &ns_put32 && ns_skiprr_function == &ns_skiprr ? 0 : 1;
+        ns_put32_function == &ns_put32 && ns_skiprr_function == &ns_skiprr &&
+        ns_initparse_function == &ns_initparse &&
+        ns_parserr_function == &ns_parserr &&
+        ns_name_uncompress_function == &ns_name_uncompress ? 0 : 1;
 }
 #endif

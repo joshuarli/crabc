@@ -41,7 +41,10 @@ unsafe extern "C" {
 /// RDLENGTH, then RDATA. This entry neither follows DNS compression pointers
 /// nor retains the range; it delegates name span rules to the selected
 /// `dn_skipname` C ABI and reads RDLENGTH through the selected `ns_get16` C ABI.
+// Keep this parser precursor as a direct archive dependency when the selected
+// message-parser block advances a caller-chosen record index.
 #[no_mangle]
+#[inline(never)]
 pub unsafe extern "C" fn ns_skiprr(
     ptr: *const u8,
     eom: *const u8,

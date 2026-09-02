@@ -17186,6 +17186,58 @@ oracle = [
   { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static objects", role = "LP64 pointer/integer C-call ABI, immutable flag-data object layout, hidden `__dn_expand`/weak-default dn_expand same-address alias pair, direct initial-exec errno, and true-static ET_EXEC selected-member plus ordinary-archive closure contract." },
 ]
 
+[[family.verified_artifact]]
+id = "static-c-nameser-message-parser"
+description = "Private native x86 static caller-owned nameserver message-parser C ABI artifact inside still-planned `libc.resolver`, not resolver-network behavior or a complete DNS runtime. One project-header C fixture first executes through pinned musl 1.2.6 and then through one true `-nostdlib -static` candidate. It exposes exactly `ns_initparse`, `ns_parserr`, and `ns_name_uncompress`: it initializes an `ns_msg` from one bounded caller packet, parses caller-selected question/resource records into caller-owned `ns_rr` storage with musl's section/cursor/record-number transitions, and expands one bounded wire name. The selected parser object imports only the already-selected `ns_skiprr`, `ns_get16`, `ns_get32`, `dn_expand`, and initial-TLS errno closure; it owns no resolver state. The final link begins with exactly one extracted parser-trio object and then admits ordinary demand-driven `libc.a` closure for those helpers and errno/TLS support, never force-linking the archive. It does not select `__res_state`, `_res`, resolver configuration/state, `/etc/hosts`, `/etc/resolv.conf`, DNS packet I/O, sockets, netdb/database behavior, h_errno, allocation, libc.so, CRT, loader, sysroot, resolver-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/x86_64/nameser-message-parser-provider.toml",
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/nameser_message_parser.rs",
+  "libc/src/c_abi/x86_64/dn_expand.rs",
+  "libc/src/c_abi/x86_64/ns_get16.rs",
+  "libc/src/c_abi/x86_64/ns_get32.rs",
+  "libc/src/c_abi/x86_64/ns_skiprr.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/resolv.h",
+  "include/arpa/nameser.h",
+  "include/arpa/nameser_compat.h",
+  "include/netinet/in.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/socket.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/nameser_header_abi_probe.c",
+  "compat/x86_64/nameser_header_abi_probe.cpp",
+  "compat/x86_64/run_nameser_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_nameser_message_parser_probe.c",
+  "compat/x86_64/libc_nameser_message_parser_start.S",
+  "compat/x86_64/run_libc_nameser_message_parser.sh",
+  "compat/x86_64/parity.toml",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The selected C boundaries use SysV AMD64 LP64: `ns_initparse(const unsigned char *, int, ns_msg *)` receives message/length/handle in rdi/esi/rdx; `ns_parserr(ns_msg *, ns_sect, int, ns_rr *)` receives handle/section/record index/record in rdi/esi/edx/rcx; and `ns_name_uncompress(const unsigned char *, const unsigned char *, const unsigned char *, char *, size_t)` receives message/eom/source/destination/size in rdi/rsi/rdx/rcx/r8. The project headers require an 80-byte align-8 `ns_msg` with section pointers at offset 32 and parser state at offsets 64/68/72, plus a 1,048-byte align-8 `ns_rr` with name/type/class/ttl/rdlength/rdata at offsets 0/1026/1028/1032/1036/1040.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps exactly `ns_initparse`, `ns_parserr`, and `ns_name_uncompress` to `src/network/ns_parse.c` and the pinned AArch64 static inventory maps all three globals to `ns_parse.lo`. `ns_initparse` builds caller-owned section pointers through selected ns_skiprr; ns_parserr preserves musl's section/record cursor transitions and reads fixed fields only through selected ns_get16/ns_get32; ns_name_uncompress delegates bounded compression expansion to selected dn_expand and normalizes its failure to EMSGSIZE.",
+  "The true static final link begins with exactly one extracted parser-trio object and then uses ordinary demand-driven `libc.a` only for selected dn_expand/ns_skiprr/ns_get16/ns_get32 and direct initial-TLS errno closure. The final ET_EXEC has no interpreter, DT_NEEDED, unresolved symbol, dynamic-TLS model, resolver import, allocation import, or parser syscall; its three selected bodies retain direct helper calls and no syscall.",
+]
+x86_header_prerequisites = [
+  "The shared pinned-musl/project C11/C++17 `<resolv.h>` nameser declaration matrix proves the exact three parser function-pointer types, unmangled C++ C linkage, all seven strict/POSIX/XOPEN/GNU/BSD/C++ frozen profiles, and the `ns_msg`/`ns_rr` LP64 record layouts. It proves headers only, not resolver state, DNS transport, netdb behavior, installed-header completion, family completion, or public x86 support.",
+  "The focused fixture preprocesses only project errno/resolv/arpa-nameser/netinet/stddef/stdint/socket/type/alltypes headers and compares two-answer parser cursor seeking/reset/resume, question/A/AAAA record fields, malformed fixed/RDATA/trailing/compressed-name input, ENODEV, and EMSGSIZE with pinned musl and the candidate.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-nameser-message-parser", scope = "Pinned-musl/project C/C++ nameser header proof plus equivalent pinned-musl C execution and one true x86 `-nostdlib -static` candidate. The gate ratchets the pinned-musl ns_parse.lo/ns_parse.c mapping for exactly ns_initparse/ns_parserr/ns_name_uncompress, the exact static export surface, and one extracted parser-trio object with ordinary demand-driven dn_expand/ns_skiprr/ns_get16/ns_get32/direct-initial-TLS-errno closure. It proves 80-byte ns_msg and 1,048-byte ns_rr LP64 layouts, two-answer seek/reset/resume parser transitions, direct/compressed name expansion, malformed header/RDATA/trailing/compressed-name EMSGSIZE, invalid section/index ENODEV, no interpreter/DT_NEEDED/unresolved symbol/dynamic-TLS model, direct fs initial TLS, selected helper calls, and no syscall in the parser bodies. It rejects resolver configuration/state, hosts/resolv.conf, DNS packet I/O, socket, netdb/database, h_errno, allocation, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, declaration, static-member, and caller-owned state-machine oracle for src/network/ns_parse.c::{ns_initparse,ns_parserr,ns_name_uncompress}: ns_msg section/cursor initialization, ns_rr seek/reset/resume parsing, selected helper use, ENODEV, and EMSGSIZE. Resolver state/files, DNS transport, sockets, netdb, h_errno, allocation, and broader resolver behavior remain unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "LP64 parser argument/record layouts, one selected parser-trio object, direct initial-exec errno, and true-static ET_EXEC ordinary-archive helper closure without interpreter, dynamic dependency, unresolved symbol, or dynamic TLS." },
+]
+
 [[family]]
 id = "libc.c-abi-compat"
 order = 110

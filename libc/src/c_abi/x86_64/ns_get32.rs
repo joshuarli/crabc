@@ -24,7 +24,10 @@ use core::ffi::c_ulong;
 /// input; it reads exactly those four bytes and does not write memory or
 /// consult nameserver state. The returned LP64 C `unsigned long` has only the
 /// decoded low 32 bits set.
+// Keep this selected C ABI helper as a direct archive dependency for the
+// caller-owned nameserver parser block; its wire behavior remains unchanged.
 #[no_mangle]
+#[inline(never)]
 pub unsafe extern "C" fn ns_get32(bytes: *const u8) -> c_ulong {
     let first = unsafe { core::ptr::read(bytes) } as c_ulong;
     let second = unsafe { core::ptr::read(bytes.add(1)) } as c_ulong;
