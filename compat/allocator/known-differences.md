@@ -264,15 +264,20 @@ registry/subprocess ownership.
 
 ### `CRABC-MI-BOUNDED-PROCESS-MAIN-INITIALIZATION` — accepted incomplete process lifecycle
 
-- **Upstream/Rust:** `src/init.c:151-214,305-360,536-592` (`mi_heap_main_init_once`,
-  `_mi_thread_init_with_heap`, and `mi_process_init_once`),
+- **Upstream/Rust:** `src/init.c:151-214,236-250,305-360,536-592`
+  (`mi_heap_main_init_once`, detached `mi_tld_init`, `_mi_thread_init_with_heap`,
+  and `mi_process_init_once`), `src/theap.c:228-296,343`, `src/random.c`,
+  and `src/options.c:161-162` (the bounded detached metadata-Theap image,
+  first-head random/cookie transition, and normal option image),
   `src/libc.c:115-140` (`_mi_atomic_once_enter` and
   `_mi_atomic_once_release`), and `src/subproc.c:29-46,95-101`; represented by
   `process_init::ProcessMainInitializationStorage`, `once::AllocatorOnce`,
   `main_theap::MainStaticHeapFoundation`,
   `meta::MetaAllocator::prepare_for_main_subprocess`,
   `bootstrap::ExclusiveTheapBootstrap::bind_detached_for_main_subprocess`,
-  `types::Theap::set_detached_main_metadata_static_memid`,
+  `types::ThreadLocalData::{is_subprocess_attached_no_theap,is_in_threadpool}`,
+  `types::Theap::{set_detached_main_metadata_static_memid,bind_exclusive_detached}`,
+  `random::TheapRandomImage::{initialize,next}`,
   `process_page_map::ProcessPageMapStorage`, and the
   `subproc::MainStaticBootstrapSelection` selector.
 - **Category:** crate-private source-order startup boundary. It has no C ABI
@@ -284,14 +289,23 @@ registry/subprocess ownership.
   `mi_process_theap_meta` during main-heap initialization, gives it
   `_mi_memid_create(MI_MEM_STATIC)`, preserves that kind-only zero-union/flag
   image through `_mi_theap_init`, and takes metadata backing only on demand.
-  Rust likewise binds its pinned detached image before the global PageMap and
+  Rust likewise binds its pinned detached image before the global PageMap.
+  For only its bounded same-subprocess, empty-head, non-threadpool input, it
   preserves those kind-only provenance fields plus the frozen normal
-  `page_reclaim_on_free = 0` result (`allow_page_reclaim = true`) before first
-  demand. It does not claim the rest of `_mi_theap_init`, mutable option/OS
-  processing, random/cookie state, TLD/Heap list relations, actual-main-Heap
-  identity, or `subproc_main->theap_meta` publication. A first valid Rust
-  metadata request forms a private direct-OS PageMap/external-arena backing
-  rather than claiming C's normal `_mi_meta_zalloc` backing route. It exposes
+  `page_reclaim_on_free = 0` result (`allow_page_reclaim = true`), initializes
+  its possibly-weak random image, and derives an odd cookie before Release
+  heap publication. C first locks/inserts into the TLD list, then chooses
+  normal initialization or a head snapshot/`_mi_random_split`; Rust rejects a
+  nonempty head, mismatched subprocess, or thread-pool input before mutation
+  instead of claiming those routes. C applies the detached non-abandoning and
+  retain-two fields after `_mi_theap_init` publishes and links; Rust writes its
+  bounded final image before publication because it does not model those lists.
+  It does not claim the rest of `_mi_theap_init`, mutable option/OS processing,
+  TLD/Heap list relations or locking, guarded initialization/statistics,
+  random-split parity, actual-main-Heap identity, or
+  `subproc_main->theap_meta` publication. A first valid Rust metadata request
+  forms a private direct-OS PageMap/external-arena backing rather than claiming
+  C's normal `_mi_meta_zalloc` backing route. It exposes
   only immutable ready witnesses, does not reserve the process-shared arena,
   initialize pthread or TLS keys, route allocations/frees, coordinate general
   concurrent startup, or destroy/restart the process. Identity-capable bounded `initialize` callers
@@ -306,8 +320,13 @@ registry/subprocess ownership.
 - **Evidence:**
   `bootstrap::tests::detached_binding_initializes_the_static_image_before_issuing_its_one_session`
   proves the selected pre-demand detached metadata-Theap kind-only static
-  provenance (including zero union) and frozen normal enabled page-reclaim
-  image before it can issue a session or acquire backing.
+  provenance (including zero union), frozen normal enabled page-reclaim image,
+  initialized random state, and odd cookie before it can issue a session or
+  acquire backing; it does not compare entropy strength or cookie bytes.
+  `types::tests::detached_exclusive_binding_rejects_an_invalid_fresh_tld_checkpoint_before_mutation`
+  proves that nonempty-head, mismatched-subprocess, and thread-pool inputs
+  leave the candidate static image untouched rather than pretending to model
+  C's list/split or option-adjustment paths.
   `process_init::tests::process_main_initialization_orders_heap_metadata_map_then_ticket_zero_roots`
   proves the successful source order, bound-but-unbacked metadata, default-
   then-fast roots, and no automatic process-shared arena reservation.

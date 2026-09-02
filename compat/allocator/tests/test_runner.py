@@ -2329,11 +2329,20 @@ class ContractTests(unittest.TestCase):
             [
                 {
                     "expected_passed_test_count": 1,
-                    "id": "detached-metadata-theap-kind-only-provenance-and-page-reclaim-image",
+                    "id": "detached-metadata-theap-pre-demand-first-head-image",
                     "kind": "rust-unit",
                     "target": (
                         "bootstrap::tests::detached_binding_initializes_the_static_image_"
                         "before_issuing_its_one_session"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "detached-metadata-theap-rejects-invalid-first-head-input-before-mutation",
+                    "kind": "rust-unit",
+                    "target": (
+                        "types::tests::detached_exclusive_binding_rejects_an_invalid_fresh_"
+                        "tld_checkpoint_before_mutation"
                     ),
                 },
                 {
