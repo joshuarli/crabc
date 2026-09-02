@@ -1778,6 +1778,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "header-abi-matrix",
             "header-declaration-macro-visibility-matrix",
             "header-callable-linkage-audit",
+            "header-callable-provider-linkage-audit",
             "uapi-wrapper-matrix",
             "epoll-header-abi",
             "event-descriptors-header-abi",

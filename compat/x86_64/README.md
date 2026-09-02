@@ -1693,9 +1693,18 @@ matrix, not feature-visibility, declaration/layout, callable-linkage,
 archive, runtime, installed-header, family-promotion, or public-x86 evidence.
 The wider candidate visibility for those `aio.h` rows remains a tracked parity
 question rather than being silently treated as equivalent. The static-export
-list is only an input to that linkage audit: unlisted public callables remain owned by planned
-`libc.c-abi-compat`, while noncallable header ABI remains owned by
-`libc.headers-layouts`.
+list is only an input to the default archive linkage audit: unlisted public
+callables remain owned by planned `libc.c-abi-compat`, while noncallable header
+ABI remains owned by `libc.headers-layouts`.
+
+`header-callable-provider-linkage-audit` separately uses the checked inventory
+to ordinarily extract the 1,048 current default-static and 47 verified
+feature-provider callable members from isolated exact Cargo profiles. It checks
+replacement-symbol extractability and weak same-address aliases, while the
+dedicated environment and resolver runners retain replacement-provider
+selection and behavior. Its 417-name unprovided complement remains explicit:
+this is selected-provider archive evidence, not full callable closure, runtime
+behavior, family promotion, or public x86 support.
 
 `header-abi-matrix` adds a separate checked Clang-derived 1,337-row report for
 function source declaration forms and emitted linkage spellings plus named

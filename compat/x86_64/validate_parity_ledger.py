@@ -86,6 +86,12 @@ HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_REPORT_PATH = (
 HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_header_declaration_macro_visibility_matrix.sh"
 )
+HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_PATH = (
+    ROOT / "compat" / "x86_64" / "header_callable_provider_linkage_audit.py"
+)
+HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_header_callable_provider_linkage_audit.sh"
+)
 PUBLIC_HEADER_INVENTORY_PATH = ROOT / "compat" / "x86_64" / "public_headers.txt"
 PUBLIC_HEADER_SURFACE_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_public_header_surface.sh"
 LINUX_5_10_UAPI_VERIFIER_PATH = ROOT / "compat" / "x86_64" / "run_linux_5_10_uapi.sh"
@@ -127,7 +133,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v12"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v13"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -370,6 +376,9 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
 }
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_COMMAND = (
     "./scripts/dev-x86_64.sh header-declaration-macro-visibility-matrix"
+)
+EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND = (
+    "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "candidate_only_identity_count": 41632,
@@ -2940,7 +2949,7 @@ def validate_header_layout_foundation_manifest(
 ) -> dict[str, int]:
     """Validate the planned all-header accounting contract without promoting it.
 
-    The v12 contract resolves every current pathname into one class and expands
+    The v13 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
     Linux-UAPI input, resolves selected UAPI-wrapper, ioctl-header, x86 sys/io
     inline-port-I/O, epoll-header, timeval-transitive, direct sys/time, and
@@ -2983,6 +2992,7 @@ def validate_header_layout_foundation_manifest(
         "feature_visibility_matrix",
         "callable_feature_visibility_matrix",
         "prototype_layout_matrix",
+        "selected_callable_provider_linkage_audit",
         "language_profile",
         "profile_obligation",
         "header_class",
@@ -3023,6 +3033,7 @@ def validate_header_layout_foundation_manifest(
             "callable_feature_visibility_matrix": True,
             "prototype_layout_matrix": True,
             "abi_facet_matrix": False,
+            "selected_callable_provider_linkage_audit": True,
             "callable_linkage_audit": False,
             "aggregate_family_completion": False,
             "runtime_completion": False,
@@ -3061,12 +3072,74 @@ def validate_header_layout_foundation_manifest(
             "callable_feature_visibility_matrix": True,
             "prototype_layout_matrix": True,
             "abi_facet_matrix": False,
+            "selected_callable_provider_linkage_audit": True,
             "callable_linkage_audit": False,
             "runtime_completion": False,
             "family_promotion": False,
             "public_support": False,
         },
         "header-foundation manifest completion drifted",
+    )
+
+    selected_provider_audit = manifest["selected_callable_provider_linkage_audit"]
+    require(
+        isinstance(selected_provider_audit, Mapping),
+        "header-foundation selected provider audit must be a table",
+    )
+    require(
+        set(selected_provider_audit)
+        == {
+            "id",
+            "state",
+            "owner",
+            "command",
+            "candidate_external_callable_count",
+            "default_static_callable_count",
+            "verified_feature_callable_count",
+            "verified_feature_profile_count",
+            "declared_unverified_feature_callable_count",
+            "unprovided_callable_count",
+            "topology_only_profile_count",
+            "ordinary_archive_extraction",
+            "uses_whole_archive",
+            "full_callable_closure",
+            "family_promotion",
+            "public_support",
+            "description",
+        },
+        "header-foundation selected provider audit keys drifted",
+    )
+    require(
+        dict(selected_provider_audit)
+        == {
+            "id": "selected-header-callable-provider-linkage-audit",
+            "state": "partial-verified",
+            "owner": "libc.headers-layouts",
+            "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
+            "candidate_external_callable_count": 1512,
+            "default_static_callable_count": 1048,
+            "verified_feature_callable_count": 47,
+            "verified_feature_profile_count": 21,
+            "declared_unverified_feature_callable_count": 0,
+            "unprovided_callable_count": 417,
+            "topology_only_profile_count": 1,
+            "ordinary_archive_extraction": True,
+            "uses_whole_archive": False,
+            "full_callable_closure": False,
+            "family_promotion": False,
+            "public_support": False,
+            "description": selected_provider_audit["description"],
+        },
+        "header-foundation selected provider audit contract drifted",
+    )
+    description = selected_provider_audit["description"]
+    require(
+        isinstance(description, str)
+        and "ordinary" in description
+        and "unprovided complement" in description
+        and "full callable closure" in description
+        and "public x86 support" in description,
+        "header-foundation selected provider audit description drifted",
     )
 
     require(
@@ -3139,6 +3212,8 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/run_header_declaration_macro_visibility_matrix.sh",
         "compat/x86_64/header_callable_linkage_audit.py",
         "compat/x86_64/run_header_callable_linkage_audit.sh",
+        "compat/x86_64/header_callable_provider_linkage_audit.py",
+        "compat/x86_64/run_header_callable_provider_linkage_audit.sh",
         "compat/x86_64/public_headers.txt",
         "compat/x86_64/run_linux_5_10_uapi.sh",
         "compat/x86_64/run_uapi_wrapper_matrix.sh",
@@ -3177,6 +3252,7 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/tests/test_candidate_header_closure.py",
         "compat/x86_64/tests/test_feature_archive_roster.py",
         "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_header_callable_provider_linkage_audit.py",
         "compat/x86_64/tests/test_header_callable_visibility_matrix.py",
         "compat/x86_64/tests/test_header_abi_matrix.py",
         "compat/x86_64/tests/test_header_declaration_macro_visibility_matrix.py",
@@ -5988,6 +6064,114 @@ def require_all_header_callable_feature_visibility_artifact(
         {entry["command"] for entry in evidence}
         == {"./scripts/dev-x86_64.sh header-callable-visibility-matrix"},
         "callable visibility artifact must use the dedicated native command",
+    )
+
+
+def require_selected_header_callable_provider_linkage_audit_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep selected archive extraction below full callable-closure claims."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "selected-header-callable-provider-linkage-audit"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one selected provider linkage audit artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "no-feature default static archive",
+        "isolated exact Cargo requests",
+        "ordinary archive extraction",
+        "1,048 current default-static",
+        "47 verified feature-provider",
+        "weak same-address aliases",
+        "`x86-crypt-allocator-composition`",
+        "topology-only",
+        "417-name unprovided complement",
+        "not full callable closure",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"selected provider linkage audit description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "selected provider linkage audit source owners",
+        )
+    )
+    for owner in (
+        "compat/x86_64/feature_archive_roster.py",
+        "compat/x86_64/header_callable_inventory.toml",
+        "compat/x86_64/header_callable_inventory.py",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_provider_linkage_audit.py",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/run_header_callable_provider_linkage_audit.sh",
+        "compat/x86_64/run_libc_crypt_allocator_composition.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/tests/test_header_callable_provider_linkage_audit.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"selected provider linkage audit must own {owner}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        [entry["command"] for entry in evidence]
+        == [EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND],
+        "selected provider linkage audit must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    require(
+        isinstance(scope, str)
+        and "ordinary extraction" in scope
+        and "unprovided complement" in scope
+        and "rejecting full closure" in scope
+        and "public-support claims" in scope,
+        "selected provider linkage audit evidence scope drifted",
+    )
+    require(
+        HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_PATH.is_file()
+        and HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_RUNNER_PATH.is_file(),
+        "selected provider linkage audit implementation is missing",
+    )
+    runner = HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_RUNNER_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        "header_callable_provider_linkage_audit.py",
+        "feature_archive_roster.py",
+        "ordinary archive extraction",
+        "selected provider closure",
+        "unprovided complement",
+        "run_libc_crypt_allocator_composition.sh",
+    ):
+        require(phrase in runner, f"selected provider linkage audit runner omits {phrase}")
+    require(
+        "--whole-archive" not in runner,
+        "selected provider linkage audit must not retain every archive member",
+    )
+    dispatch = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    require(
+        "header-callable-provider-linkage-audit)" in dispatch,
+        "selected provider linkage audit is absent from the native dispatcher",
     )
 
 
@@ -73574,6 +73758,9 @@ def validate_ledger(
         by_id["libc.headers-layouts"]
     )
     require_all_header_callable_feature_visibility_artifact(
+        by_id["libc.headers-layouts"]
+    )
+    require_selected_header_callable_provider_linkage_audit_artifact(
         by_id["libc.headers-layouts"]
     )
     require_all_header_prototype_layout_artifact(by_id["libc.headers-layouts"])

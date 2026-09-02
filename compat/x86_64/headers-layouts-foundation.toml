@@ -2,7 +2,7 @@
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
 # `headers-layouts.toml` remains the v1 inventory of fifty-three direct probes.
-# This v12 manifest accounts for every pinned public header and every project-
+# This v13 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
 # event-descriptor, timeval-transitive, direct sys/time, and access-header profile ABI slices
@@ -13,7 +13,7 @@
 # `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
 # x86 `headers_install` identity; it is repeated here and in the Docker build
 # because those independent consumers cannot load TOML from one another.
-schema = "crabc.x86_64-headers-layouts-foundation/v12"
+schema = "crabc.x86_64-headers-layouts-foundation/v13"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -35,6 +35,11 @@ feature_visibility_matrix = true
 callable_feature_visibility_matrix = true
 prototype_layout_matrix = true
 abi_facet_matrix = false
+# The selected-provider audit proves ordinary extraction for the present
+# default and verified feature providers only. The separate full audit remains
+# false until every candidate callable, including the explicit unprovided set,
+# has a complete archive-linkage contract.
+selected_callable_provider_linkage_audit = true
 callable_linkage_audit = false
 aggregate_family_completion = false
 runtime_completion = false
@@ -69,10 +74,30 @@ feature_visibility_matrix = true
 callable_feature_visibility_matrix = true
 prototype_layout_matrix = true
 abi_facet_matrix = false
+selected_callable_provider_linkage_audit = true
 callable_linkage_audit = false
 runtime_completion = false
 family_promotion = false
 public_support = false
+
+[selected_callable_provider_linkage_audit]
+id = "selected-header-callable-provider-linkage-audit"
+state = "partial-verified"
+owner = "libc.headers-layouts"
+command = "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
+candidate_external_callable_count = 1512
+default_static_callable_count = 1048
+verified_feature_callable_count = 47
+verified_feature_profile_count = 21
+declared_unverified_feature_callable_count = 0
+unprovided_callable_count = 417
+topology_only_profile_count = 1
+ordinary_archive_extraction = true
+uses_whole_archive = false
+full_callable_closure = false
+family_promotion = false
+public_support = false
+description = "The native selected-provider audit builds the no-feature default archive plus isolated exact Cargo feature requests, uses ordinary archive extraction for all declared default and verified feature providers, checks each declared replacement symbol is extractable from both profiles, proves weak same-address alias contracts, and retains the named crypt/allocator composition's intentionally rejected direct baseline through its dedicated evidence. Dedicated environment and resolver evidence retains replacement-provider selection and behavior. It records the finite unprovided complement instead of claiming full callable closure, runtime behavior, header-family promotion, or public x86 support."
 
 [profile_matrix]
 # A row is one resolved header pathname in one language/feature profile. The

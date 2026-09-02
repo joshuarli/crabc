@@ -59,6 +59,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   header-abi-matrix  check all-header callable and named noncallable ABI evidence
   header-declaration-macro-visibility-matrix  check all-header declaration/macro feature-visibility evidence
   header-callable-linkage-audit  audit declared x86 header callables against the static archive
+  header-callable-provider-linkage-audit  audit selected default/feature callable archive providers
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
   epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
   event-descriptors-header-abi  verify selected x86 eventfd/inotify C/C++ ABI profiles
@@ -2547,6 +2548,10 @@ run_header_callable_linkage_audit() {
     run_in_container bash /workspace/compat/x86_64/run_header_callable_linkage_audit.sh
 }
 
+run_header_callable_provider_linkage_audit() {
+    run_in_container bash /workspace/compat/x86_64/run_header_callable_provider_linkage_audit.sh
+}
+
 run_uapi_wrapper_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_uapi_wrapper_matrix.sh
 }
@@ -5024,6 +5029,7 @@ case "$command" in
     header-abi-matrix) ;;
     header-declaration-macro-visibility-matrix) ;;
     header-callable-linkage-audit) ;;
+    header-callable-provider-linkage-audit) ;;
     uapi-wrapper-matrix) ;;
     epoll-header-abi) ;;
     event-descriptors-header-abi) ;;
@@ -5185,6 +5191,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "header-callable-linkage-audit takes no arguments"
         ensure_image
         run_header_callable_linkage_audit
+        ;;
+    header-callable-provider-linkage-audit)
+        [ "$#" -eq 0 ] || fail "header-callable-provider-linkage-audit takes no arguments"
+        ensure_image
+        run_header_callable_provider_linkage_audit
         ;;
     uapi-wrapper-matrix)
         [ "$#" -eq 0 ] || fail "uapi-wrapper-matrix takes no arguments"
