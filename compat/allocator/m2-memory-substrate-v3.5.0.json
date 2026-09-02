@@ -28,6 +28,12 @@
         },
         {
           "expected_passed_test_count": 1,
+          "id": "reset-advice-retry-snapshot",
+          "kind": "rust-unit",
+          "target": "os::tests::reset_retries_the_initial_advice_after_a_concurrent_global_fallback"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "aligned-map-os-page-claim-owner",
           "kind": "rust-unit",
           "target": "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner"
@@ -48,7 +54,7 @@
       "completion_status": "partial",
       "id": "vm-primitives",
       "remaining_conditions": [
-        "complete the remaining Linux/AArch64 reserve, commit, decommit, purge, protect, unmap, reuse, huge-page, hint, NUMA, and aligned-overmap substrate with fault-injection evidence beyond the selected direct/prefix/suffix cleanup-owner slice"
+        "complete the remaining Linux/AArch64 reserve, commit, decommit, purge, protect, unmap, reuse, huge-page, hint, NUMA, and aligned-overmap substrate with fault-injection evidence beyond the selected direct/prefix/suffix cleanup-owner and reset-advice retry-snapshot slices"
       ],
       "source_units": [
         "include/mimalloc/prim.h",
@@ -268,6 +274,7 @@
       "the selected PageMap success differential compares source-relative transitions only, records header-layout and root-owner differences, and does not cover PageMap extension or release fault injection",
       "the separate PageMap cold-init differential records the C static-empty-root/later-success behavior and the Rust absent-root/typed-poison result as an intentionally accepted bounded safety divergence; it does not claim a common cold lookup, public C ABI behavior, or full process-initialization parity",
       "the selected aligned-overmap cleanup-owner tests prove Rust non-RAII ownership after direct or partial release failure; they do not claim C retry semantics, full aligned-allocation policy, or complete VM fault parity",
+      "the selected reset-advice regression proves only the private source snapshot/retry control flow with a deterministic advisory mock; it does not claim a live-kernel EAGAIN frequency or complete purge fault parity",
       "this gate does not claim a production allocator backend or any later allocator milestone",
       "this gate does not claim non-AArch64 support"
     ],

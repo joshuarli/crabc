@@ -2143,6 +2143,15 @@ class ContractTests(unittest.TestCase):
                 },
                 {
                     "expected_passed_test_count": 1,
+                    "id": "reset-advice-retry-snapshot",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os::tests::reset_retries_the_initial_advice_after_a_concurrent_"
+                        "global_fallback"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
                     "id": "aligned-map-os-page-claim-owner",
                     "kind": "rust-unit",
                     "target": (

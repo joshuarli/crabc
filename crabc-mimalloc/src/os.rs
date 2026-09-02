@@ -72,6 +72,34 @@ const NUMA_NODE_PATH_CAPACITY: usize =
 // after decommit, so this static is the only raw Unix reset policy retained.
 static RESET_ADVICE: AtomicUsize = AtomicUsize::new(MADV_FREE as usize);
 
+/// Drives one Unix reset advisory sequence without introducing an OS fallback.
+///
+/// Pinned `src/prim/unix/prim.c:_mi_prim_reset` snapshots the process-wide
+/// advice before retrying `EAGAIN`. A concurrent caller can permanently change
+/// the cache after its own `EINVAL`, but that must not change this in-flight
+/// retry. The caller provides the one raw advisory edge so the production path
+/// stays allocation-free and focused tests can exercise the advice-state
+/// transition without requiring a kernel to produce a particular transient
+/// errno.
+#[inline]
+fn reset_with_advice(
+    advice_state: &AtomicUsize,
+    mut madvise: impl FnMut(u32) -> Result<()>,
+) -> Result<()> {
+    let advice = advice_state.load(Ordering::Relaxed) as u32;
+    loop {
+        match madvise(advice) {
+            Ok(()) => return Ok(()),
+            Err(Errno::AGAIN) => continue,
+            Err(Errno::INVAL) if advice == MADV_FREE => {
+                advice_state.store(MADV_DONTNEED as usize, Ordering::Release);
+                return madvise(MADV_DONTNEED);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 /// One configured Linux base-page size supplied by the process-start owner.
 ///
 /// The AArch64 profile accepts 4, 16, and 64 KiB; the x86-64 profile accepts
@@ -864,28 +892,14 @@ impl Mapping {
             return Ok(true);
         };
 
-        loop {
-            let advice = RESET_ADVICE.load(Ordering::Relaxed) as u32;
+        reset_with_advice(&RESET_ADVICE, |advice| {
             fault_before(FaultPoint::Purge)?;
             // SAFETY: `range` is a complete-page subrange of this live mapping.
             // The advisory may discard contents but does not yield references
             // or alter this boundary's ownership state.
-            match unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) } {
-                Ok(()) => return Ok(true),
-                Err(Errno::AGAIN) => continue,
-                Err(Errno::INVAL) if advice == MADV_FREE => {
-                    RESET_ADVICE.store(MADV_DONTNEED as usize, Ordering::Release);
-                    fault_before(FaultPoint::Purge)?;
-                    // SAFETY: The range contract is unchanged for the explicit
-                    // source-defined MADV_DONTNEED fallback.
-                    return unsafe {
-                        crabc_core::mm::madvise_raw(range.address, range.length, MADV_DONTNEED)
-                    }
-                    .map(|_| true);
-                }
-                Err(error) => return Err(error),
-            }
-        }
+            unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) }
+        })
+        .map(|()| true)
     }
 
     /// Makes complete pages inside the requested range inaccessible.
@@ -1610,6 +1624,36 @@ mod tests {
         );
         assert!(mapping.purge(0, page).expect("purge a full mapped page"));
         mapping.unmap().expect("release the mapped page");
+    }
+
+    #[test]
+    fn reset_retries_the_initial_advice_after_a_concurrent_global_fallback() {
+        let advice_state = AtomicUsize::new(MADV_FREE as usize);
+        let mut calls = [0u32; 2];
+        let mut call_count = 0;
+
+        let result = reset_with_advice(&advice_state, |advice| {
+            calls[call_count] = advice;
+            call_count += 1;
+            if call_count == 1 {
+                assert_eq!(advice, MADV_FREE);
+                // Simulate a different reset caller discovering that
+                // `MADV_FREE` is unsupported while this caller is retrying.
+                advice_state.store(MADV_DONTNEED as usize, Ordering::Release);
+                Err(Errno::AGAIN)
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(call_count, 2);
+        assert_eq!(calls, [MADV_FREE, MADV_FREE]);
+        assert_eq!(
+            advice_state.load(Ordering::Acquire),
+            MADV_DONTNEED as usize,
+            "the concurrent fallback remains visible to later reset callers"
+        );
     }
 
     #[test]
