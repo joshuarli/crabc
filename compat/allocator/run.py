@@ -12,6 +12,9 @@ also records the reviewed Milestone 5 lifecycle gate, distinguishing executed
 bounded evidence from acceptance work that remains blocked. It does not claim
 that a Rust allocator operation, adapter symbol, differential trace, or
 performance comparison exists before its owning implementation milestone.
+Its `--m2` mode records the deliberately partial native memory-substrate gate;
+the selected PageMap check is success-lifecycle evidence only and is not C/Rust
+fault or cold-root parity.
 """
 
 from __future__ import annotations
@@ -180,6 +183,9 @@ M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/compiler-t
 M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m1-foundations/compiler-tls-same-tld-trace"
 )
+M2_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-v3.5.0.json"
+M2_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "m2-memory-substrate-latest.json"
+M2_MEMORY_SUBSTRATE_CARGO_TARGET = ARTIFACT_ROOT / "m2-memory-substrate/cargo-target"
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -226,6 +232,36 @@ M1_FOUNDATIONS_GLOBAL_EVIDENCE = (
     "compiler-tls-same-tld-terminal-c-rust-trace",
     "compiler-tls-codegen",
     "production-dependency-graph",
+)
+
+# M2 is an intentionally partial memory-substrate gate.  The eight categories
+# are the closure boundary from native-mimalloc.md; a report may record focused
+# evidence for one category without silently promoting the other seven.
+M2_MEMORY_SUBSTRATE_COMPONENT_IDS = (
+    "vm-primitives",
+    "metadata",
+    "bitmaps",
+    "page-map",
+    "arenas",
+    "initialization",
+    "fault-injection",
+    "allocator-recursion",
+)
+M2_MEMORY_SUBSTRATE_COMPONENT_STATUSES = frozenset({"partial", "complete"})
+M2_MEMORY_SUBSTRATE_EXCLUSION_DISPOSITIONS = frozenset(
+    {"deferred-to-m3", "deferred-to-m8", "outside-m2"}
+)
+M2_PAGE_MAP_TRACE_KEYS = (
+    "m2.page_map.initial.root_present",
+    "m2.page_map.initial.committed_nonzero",
+    "m2.page_map.initial.committed_le_reserved",
+    "m2.page_map.initial.submap_zero_present",
+    "m2.page_map.registration.committed_non_decreasing",
+    "m2.page_map.registration.lookup_matches",
+    "m2.page_map.unregister.lookup_absent",
+    "m2.page_map.reregister.ok",
+    "m2.page_map.reregister.lookup_matches",
+    "m2.page_map.reregister.committed_non_decreasing",
 )
 M1_FOUNDATIONS_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
@@ -4827,6 +4863,465 @@ def _m1_foundations_source_test_exists(target: str, check_id: str) -> None:
         )
 
 
+def _m2_memory_substrate_source_test_exists(target: str, check_id: str) -> None:
+    """Refuse the M2 filter if its current PageMap witness disappears."""
+
+    target_parts = target.split("::")
+    if len(target_parts) != 3 or target_parts[1] != "tests":
+        raise HarnessError(
+            f"M2 memory-substrate check {check_id} has an unsupported source test filter: {target}"
+        )
+    source = ROOT / "crabc-mimalloc" / "src" / f"{target_parts[0]}.rs"
+    if not source.is_file():
+        raise HarnessError(
+            f"M2 memory-substrate check {check_id} names no current source test filter: {target}"
+        )
+    source_text = source.read_text(encoding="utf-8")
+    if not re.search(
+        rf"(?m)^\s*fn\s+{re.escape(target_parts[2])}\s*(?:<[^>]*>)?\s*\(",
+        source_text,
+    ):
+        raise HarnessError(
+            f"M2 memory-substrate check {check_id} names no current source test filter: {target}"
+        )
+
+
+def validate_m2_memory_substrate_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Validate the fixed, deliberately partial M2 memory-substrate contract."""
+
+    expected_keys = {
+        "components",
+        "exclusions",
+        "execution",
+        "format",
+        "milestone",
+        "schema",
+        "target",
+        "upstream",
+    }
+    if set(contract) != expected_keys or contract.get("format") != 1 or contract.get(
+        "schema"
+    ) != "crabc-mimalloc-m2-memory-substrate":
+        raise HarnessError("unsupported M2 memory-substrate contract")
+
+    upstream = contract.get("upstream")
+    expected_upstream = {
+        "archive_sha256": pin["sha256"],
+        "revision": pin["revision"],
+        "version": pin["version"],
+    }
+    if not isinstance(upstream, Mapping) or dict(upstream) != expected_upstream:
+        raise HarnessError("M2 memory-substrate contract upstream identity mismatch")
+
+    target = contract.get("target")
+    expected_target = {
+        "architecture": "aarch64",
+        "endianness": "little",
+        "kernel_baseline": "5.10",
+        "os": "linux",
+        "rust_target": "aarch64-unknown-linux-musl",
+    }
+    if not isinstance(target, Mapping) or dict(target) != expected_target:
+        raise HarnessError("M2 memory-substrate contract target changed")
+
+    execution = contract.get("execution")
+    expected_execution = {
+        "features": [],
+        "package": "crabc-mimalloc",
+        "test_threads": 1,
+        "timeout_seconds": 300,
+    }
+    if not isinstance(execution, Mapping) or dict(execution) != expected_execution:
+        raise HarnessError("M2 memory-substrate execution contract changed")
+
+    milestone = contract.get("milestone")
+    if not isinstance(milestone, Mapping) or set(milestone) != {
+        "completion_rule",
+        "id",
+        "nonclaims",
+        "status",
+    }:
+        raise HarnessError("M2 memory-substrate contract lacks a milestone record")
+    if milestone.get("id") != "m2" or milestone.get("status") not in M2_MEMORY_SUBSTRATE_COMPONENT_STATUSES:
+        raise HarnessError("M2 memory-substrate milestone identity or status is invalid")
+    if not isinstance(milestone.get("completion_rule"), str) or not milestone["completion_rule"]:
+        raise HarnessError("M2 memory-substrate milestone lacks a completion rule")
+    nonclaims = milestone.get("nonclaims")
+    if (
+        not isinstance(nonclaims, list)
+        or not nonclaims
+        or not all(isinstance(nonclaim, str) and nonclaim for nonclaim in nonclaims)
+        or len(set(nonclaims)) != len(nonclaims)
+    ):
+        raise HarnessError("M2 memory-substrate milestone lacks a valid nonclaim inventory")
+
+    raw_components = contract.get("components")
+    if not isinstance(raw_components, list) or len(raw_components) != len(
+        M2_MEMORY_SUBSTRATE_COMPONENT_IDS
+    ):
+        raise HarnessError("M2 memory-substrate component inventory changed")
+    components: list[dict[str, Any]] = []
+    for index, raw_component in enumerate(raw_components):
+        if not isinstance(raw_component, Mapping) or set(raw_component) != {
+            "checks",
+            "completion_status",
+            "id",
+            "remaining_conditions",
+            "source_units",
+        }:
+            raise HarnessError(f"M2 memory-substrate component {index} has unexpected fields")
+        component_id = raw_component.get("id")
+        if component_id != M2_MEMORY_SUBSTRATE_COMPONENT_IDS[index]:
+            raise HarnessError("M2 memory-substrate component order or identity changed")
+        status = raw_component.get("completion_status")
+        if status not in M2_MEMORY_SUBSTRATE_COMPONENT_STATUSES:
+            raise HarnessError(f"M2 memory-substrate component {component_id} has an invalid status")
+        remaining = raw_component.get("remaining_conditions")
+        if (
+            not isinstance(remaining, list)
+            or not all(isinstance(condition, str) and condition for condition in remaining)
+            or len(set(remaining)) != len(remaining)
+        ):
+            raise HarnessError(
+                f"M2 memory-substrate component {component_id} must name unique remaining conditions"
+            )
+        if status == "partial" and not remaining:
+            raise HarnessError(
+                f"M2 memory-substrate partial component {component_id} must name remaining conditions"
+            )
+        if status == "complete" and remaining:
+            raise HarnessError(
+                f"M2 memory-substrate complete component {component_id} retains conditions"
+            )
+        source_units = raw_component.get("source_units")
+        if (
+            not isinstance(source_units, list)
+            or not source_units
+            or not all(isinstance(unit, str) and unit for unit in source_units)
+            or len(set(source_units)) != len(source_units)
+        ):
+            raise HarnessError(f"M2 memory-substrate component {component_id} has invalid source units")
+        raw_checks = raw_component.get("checks")
+        if not isinstance(raw_checks, list):
+            raise HarnessError(f"M2 memory-substrate component {component_id} has invalid checks")
+        checks: list[dict[str, Any]] = []
+        check_ids: set[str] = set()
+        for raw_check in raw_checks:
+            if not isinstance(raw_check, Mapping) or set(raw_check) != {
+                "expected_passed_test_count",
+                "id",
+                "kind",
+                "target",
+            }:
+                raise HarnessError(f"M2 memory-substrate component {component_id} has an invalid check")
+            check_id = raw_check.get("id")
+            target_name = raw_check.get("target")
+            if (
+                not isinstance(check_id, str)
+                or not re.fullmatch(r"[a-z][a-z0-9-]*", check_id)
+                or check_id in check_ids
+                or raw_check.get("kind") not in {"rust-unit", "rust-page-map-success-trace"}
+                or not isinstance(target_name, str)
+                or not isinstance(raw_check.get("expected_passed_test_count"), int)
+                or isinstance(raw_check.get("expected_passed_test_count"), bool)
+                or raw_check["expected_passed_test_count"] <= 0
+            ):
+                raise HarnessError(f"M2 memory-substrate component {component_id} has an invalid check")
+            _m2_memory_substrate_source_test_exists(target_name, check_id)
+            check_ids.add(check_id)
+            checks.append(
+                {
+                    "expected_passed_test_count": raw_check["expected_passed_test_count"],
+                    "id": check_id,
+                    "kind": raw_check["kind"],
+                    "target": target_name,
+                }
+            )
+        components.append(
+            {
+                "checks": checks,
+                "completion_status": status,
+                "id": component_id,
+                "remaining_conditions": list(remaining),
+                "source_units": list(source_units),
+            }
+        )
+
+    if (milestone["status"] == "complete") != all(
+        component["completion_status"] == "complete" and not component["remaining_conditions"]
+        for component in components
+    ):
+        raise HarnessError("M2 memory-substrate milestone status must match component completion states")
+
+    raw_exclusions = contract.get("exclusions")
+    if not isinstance(raw_exclusions, list) or not raw_exclusions:
+        raise HarnessError("M2 memory-substrate contract lacks explicit exclusions")
+    exclusions: list[dict[str, Any]] = []
+    exclusion_ids: set[str] = set()
+    for index, raw_exclusion in enumerate(raw_exclusions):
+        if not isinstance(raw_exclusion, Mapping) or set(raw_exclusion) != {
+            "disposition",
+            "id",
+            "reason",
+            "source_units",
+        }:
+            raise HarnessError(f"M2 memory-substrate exclusion {index} has unexpected fields")
+        exclusion_id = raw_exclusion.get("id")
+        disposition = raw_exclusion.get("disposition")
+        reason = raw_exclusion.get("reason")
+        source_units = raw_exclusion.get("source_units")
+        if (
+            not isinstance(exclusion_id, str)
+            or not re.fullmatch(r"[a-z][a-z0-9-]*", exclusion_id)
+            or exclusion_id in exclusion_ids
+            or exclusion_id in M2_MEMORY_SUBSTRATE_COMPONENT_IDS
+            or disposition not in M2_MEMORY_SUBSTRATE_EXCLUSION_DISPOSITIONS
+            or not isinstance(reason, str)
+            or not reason
+            or not isinstance(source_units, list)
+            or not source_units
+            or not all(isinstance(unit, str) and unit for unit in source_units)
+            or len(set(source_units)) != len(source_units)
+        ):
+            raise HarnessError(f"M2 memory-substrate exclusion {index} is invalid")
+        exclusion_ids.add(exclusion_id)
+        exclusions.append(
+            {
+                "disposition": disposition,
+                "id": exclusion_id,
+                "reason": reason,
+                "source_units": list(source_units),
+            }
+        )
+    return {
+        "components": components,
+        "exclusions": exclusions,
+        "execution": expected_execution,
+        "milestone": {
+            "completion_rule": milestone["completion_rule"],
+            "id": "m2",
+            "nonclaims": list(nonclaims),
+            "status": milestone["status"],
+        },
+        "target": expected_target,
+    }
+
+
+def m2_memory_substrate_contract_record(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Bind an M2 report to the checked contract and pinned source."""
+
+    return {
+        "format": contract["format"],
+        "path": relative(M2_MEMORY_SUBSTRATE_CONTRACT),
+        "schema": contract["schema"],
+        "sha256": file_digest(M2_MEMORY_SUBSTRATE_CONTRACT),
+        "upstream": {
+            "archive_sha256": pin["sha256"],
+            "revision": pin["revision"],
+            "version": pin["version"],
+        },
+    }
+
+
+def m2_memory_substrate_check_command(
+    execution: Mapping[str, Any], check: Mapping[str, Any]
+) -> list[str]:
+    """Build one focused M2 Rust unit-test invocation."""
+
+    command = ["cargo", "test", "-p", str(execution["package"])]
+    if execution["features"]:
+        command.extend(("--features", ",".join(str(feature) for feature in execution["features"])))
+    command.extend(("--locked", "--lib", str(check["target"])))
+    command.extend(("--", f"--test-threads={execution['test_threads']}", "--nocapture"))
+    return command
+
+
+def run_m2_memory_substrate_checks(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Run only the explicitly selected M2 checks in a private target directory."""
+
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    records: list[dict[str, Any]] = []
+    for component in summary["components"]:
+        for check in component["checks"]:
+            command = m2_memory_substrate_check_command(summary["execution"], check)
+            result = command_record(
+                command,
+                cwd=ROOT,
+                env=environment,
+                timeout_seconds=summary["execution"]["timeout_seconds"],
+            )
+            require_success(result, f"M2 memory-substrate check {check['id']}")
+            output = str(result["stdout"]) + "\n" + str(result["stderr"])
+            passed_test_count = parse_rust_test_count(output)
+            if passed_test_count != check["expected_passed_test_count"]:
+                raise HarnessError(
+                    f"M2 memory-substrate check {check['id']} passed {passed_test_count} tests; "
+                    f"expected {check['expected_passed_test_count']}"
+                )
+            trace: dict[str, int] | None = None
+            if check["kind"] == "rust-page-map-success-trace":
+                trace = parse_address_independent_trace(
+                    output,
+                    begin="CRABC_MI_M2_PAGE_MAP_TRACE_BEGIN",
+                    end="CRABC_MI_M2_PAGE_MAP_TRACE_END",
+                    description="M2 PageMap success trace",
+                )
+                if set(trace) != set(M2_PAGE_MAP_TRACE_KEYS):
+                    raise HarnessError(
+                        "M2 PageMap success trace keys differ from the fixed contract"
+                    )
+                if any(value != 1 for value in trace.values()):
+                    raise HarnessError("M2 PageMap success trace contains an unmet relation")
+            records.append(
+                {
+                    "component": component["id"],
+                    "command": command,
+                    "evidence_scope": (
+                        "Rust PageMap success lifecycle only"
+                        if check["kind"] == "rust-page-map-success-trace"
+                        else "focused source test"
+                    ),
+                    "id": check["id"],
+                    "passed_test_count": passed_test_count,
+                    "target": check["target"],
+                }
+            )
+            if trace is not None:
+                records[-1]["trace"] = trace
+    return records
+
+
+def m2_memory_substrate_source_state() -> dict[str, Any]:
+    """Capture a clean current commit before or after the M2 gate."""
+
+    state = runtime_ticket_zero_soak_source_state()
+    return validate_runtime_ticket_zero_soak_source_state(state, "M2 memory-substrate source")
+
+
+def m2_memory_substrate_source_attestation(before: object, after: object) -> dict[str, Any]:
+    """Require the report to bind every M2 observation to one clean commit."""
+
+    source_before = validate_runtime_ticket_zero_soak_source_state(
+        before, "M2 memory-substrate source before"
+    )
+    source_after = validate_runtime_ticket_zero_soak_source_state(
+        after, "M2 memory-substrate source after"
+    )
+    if not source_before["worktree_clean"] or not source_after["worktree_clean"]:
+        raise HarnessError("M2 memory-substrate requires a clean Git source")
+    if source_before != source_after:
+        raise HarnessError("M2 memory-substrate source changed during execution")
+    return {
+        "after": source_after,
+        "before": source_before,
+        "git_read_environment": dict(RUNTIME_TICKET_ZERO_SOAK_GIT_READ_ENVIRONMENT),
+        "unchanged_during_execution": True,
+    }
+
+
+def m2_memory_substrate_report(
+    *,
+    contract: Mapping[str, Any],
+    pin: Mapping[str, str],
+    summary: Mapping[str, Any],
+    source_attestation: Mapping[str, Any],
+    focused_checks: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Render partial M2 evidence without promoting unproved categories."""
+
+    checks_by_component: dict[str, list[dict[str, Any]]] = {
+        component["id"]: [] for component in summary["components"]
+    }
+    for check in focused_checks:
+        component_id = check.get("component")
+        if component_id not in checks_by_component:
+            raise HarnessError("M2 memory-substrate focused check has an unknown component")
+        checks_by_component[component_id].append(dict(check))
+    components: list[dict[str, Any]] = []
+    unmet: list[str] = []
+    for component in summary["components"]:
+        component_id = component["id"]
+        checks = checks_by_component[component_id]
+        expected_checks = component["checks"]
+        if len(checks) != len(expected_checks):
+            raise HarnessError(f"M2 memory-substrate component {component_id} lacks an executed focused check")
+        complete = (
+            component["completion_status"] == "complete"
+            and not component["remaining_conditions"]
+        )
+        if not complete:
+            unmet.append(component_id)
+        components.append(
+            {
+                "completion_status": component["completion_status"],
+                "executed_checks": checks,
+                "id": component_id,
+                "remaining_conditions": list(component["remaining_conditions"]),
+                "source_units": list(component["source_units"]),
+                "status": "complete" if complete else "partial",
+            }
+        )
+    milestone_complete = summary["milestone"]["status"] == "complete" and not unmet
+    return {
+        "components": components,
+        "contract": m2_memory_substrate_contract_record(contract, pin),
+        "exclusions": list(summary["exclusions"]),
+        "format": 1,
+        "milestone": {
+            "completion_rule": summary["milestone"]["completion_rule"],
+            "id": "m2",
+            "nonclaims": list(summary["milestone"]["nonclaims"]),
+            "status": "complete" if milestone_complete else "partial",
+            "unmet_component_ids": unmet,
+        },
+        "schema": "crabc-mimalloc-m2-memory-substrate-report",
+        "source": dict(source_attestation),
+        "target": dict(summary["target"]),
+    }
+
+
+def m2_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
+    """Explain an intentional partial M2 result."""
+
+    milestone = report.get("milestone")
+    if not isinstance(milestone, Mapping):
+        return "M2 memory-substrate report is invalid"
+    components = milestone.get("unmet_component_ids")
+    if not isinstance(components, list) or not all(isinstance(component, str) for component in components):
+        return "M2 memory-substrate report has no valid unmet-component record"
+    return (
+        "M2 memory substrate remains partial for "
+        + ", ".join(components)
+        + f"; review {relative(M2_MEMORY_SUBSTRATE_REPORT)}"
+    )
+
+
+def run_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
+    """Execute the current partial M2 gate and bind it to one clean commit."""
+
+    del offline  # The focused Rust check needs only the already-built workspace.
+    source_before = m2_memory_substrate_source_state()
+    pin = load_pin()
+    contract = read_json(M2_MEMORY_SUBSTRATE_CONTRACT)
+    summary = validate_m2_memory_substrate_contract(contract, pin)
+    focused_checks = run_m2_memory_substrate_checks(summary)
+    source_after = m2_memory_substrate_source_state()
+    report = m2_memory_substrate_report(
+        contract=contract,
+        pin=pin,
+        summary=summary,
+        source_attestation=m2_memory_substrate_source_attestation(source_before, source_after),
+        focused_checks=focused_checks,
+    )
+    write_json(M2_MEMORY_SUBSTRATE_REPORT, report)
+    return report
+
+
 def validate_m1_foundations_contract(
     contract: Mapping[str, Any], pin: Mapping[str, str], port_map: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -8884,6 +9379,7 @@ def ratchet_payload(port_map: Mapping[str, Any]) -> dict[str, Any]:
         "native_shadow_stress_fixture_count": len(native_shadow_stress["source_hashes"]),
         "native_shadow_stress_contract_sha256": file_digest(NATIVE_SHADOW_STRESS_CONTRACT),
         "m1_foundations_contract_sha256": file_digest(M1_FOUNDATIONS_CONTRACT),
+        "m2_memory_substrate_contract_sha256": file_digest(M2_MEMORY_SUBSTRATE_CONTRACT),
         "owner_exit_publication_contract_sha256": file_digest(
             OWNER_EXIT_PUBLICATION_CONTRACT
         ),
@@ -8939,6 +9435,7 @@ def check_ratchet(port_map: Mapping[str, Any]) -> None:
         "adapted_stress_test_contract_sha256",
         "native_shadow_stress_contract_sha256",
         "m1_foundations_contract_sha256",
+        "m2_memory_substrate_contract_sha256",
         "owner_exit_publication_contract_sha256",
         "api_contract_sha256",
         "port_map_sha256",
@@ -14231,6 +14728,11 @@ def parse_arguments() -> argparse.Namespace:
         help="run the current-commit finite M1 foundations evidence gate",
     )
     mode.add_argument(
+        "--m2",
+        action="store_true",
+        help="run the current-commit partial M2 memory-substrate evidence gate",
+    )
+    mode.add_argument(
         "--m1-tls-terminal-prototype",
         action="store_true",
         help="run the standalone pinned-C half of the same-TLD M1 terminal trace",
@@ -14284,13 +14786,14 @@ def parse_arguments() -> argparse.Namespace:
         )
     )
     arguments = parser.parse_args()
-    if not any((arguments.quick, arguments.m1, arguments.m1_tls_terminal_prototype, arguments.full, arguments.churn, arguments.soak, arguments.native_shadow_stress, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
-        parser.error("choose --quick, --m1, --m1-tls-terminal-prototype, --full, --churn, --soak, --native-shadow-stress, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
+    if not any((arguments.quick, arguments.m1, arguments.m2, arguments.m1_tls_terminal_prototype, arguments.full, arguments.churn, arguments.soak, arguments.native_shadow_stress, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
+        parser.error("choose --quick, --m1, --m2, --m1-tls-terminal-prototype, --full, --churn, --soak, --native-shadow-stress, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
     if arguments.generate_contracts or arguments.snapshot_ratchet:
-        if arguments.quick or arguments.m1 or arguments.m1_tls_terminal_prototype or arguments.full or arguments.churn or arguments.soak or arguments.native_shadow_stress or arguments.perf_smoke or arguments.perf_full:
+        if arguments.quick or arguments.m1 or arguments.m2 or arguments.m1_tls_terminal_prototype or arguments.full or arguments.churn or arguments.soak or arguments.native_shadow_stress or arguments.perf_smoke or arguments.perf_full:
             parser.error("contract generation/snapshot cannot be combined with a gate mode")
     if arguments.architecture == "x86_64" and (
         arguments.m1
+        or arguments.m2
         or arguments.m1_tls_terminal_prototype
         or arguments.full
         or arguments.perf_smoke
@@ -14335,6 +14838,11 @@ def main() -> int:
                 check_only=True,
                 architecture=arguments.architecture,
             )
+            if arguments.architecture == "aarch64":
+                m2_contract = read_json(M2_MEMORY_SUBSTRATE_CONTRACT)
+                result["m2_memory_substrate_contract"] = (
+                    validate_m2_memory_substrate_contract(m2_contract, load_pin())
+                )
             print(json.dumps(result, sort_keys=True))
             return 0
         if arguments.m1:
@@ -14342,6 +14850,12 @@ def main() -> int:
             print(M1_FOUNDATIONS_REPORT)
             if report["milestone"]["status"] != "complete":
                 raise MilestoneUnavailable(m1_foundations_unmet_message(report))
+            return 0
+        if arguments.m2:
+            report = run_m2_memory_substrate(offline=arguments.offline)
+            print(M2_MEMORY_SUBSTRATE_REPORT)
+            if report["milestone"]["status"] != "complete":
+                raise MilestoneUnavailable(m2_memory_substrate_unmet_message(report))
             return 0
         if arguments.m1_tls_terminal_prototype:
             print(json.dumps(run_m1_compiler_tls_terminal_prototype(offline=arguments.offline), sort_keys=True))

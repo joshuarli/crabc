@@ -2086,6 +2086,58 @@ class ContractTests(unittest.TestCase):
                 stress_seed=1 << 64,
             )
 
+    def test_m2_memory_substrate_contract_has_fixed_partial_eight_component_boundary(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M2_MEMORY_SUBSTRATE_CONTRACT)
+        summary = RUNNER.validate_m2_memory_substrate_contract(contract, RUNNER.load_pin())
+
+        self.assertEqual(
+            [component["id"] for component in summary["components"]],
+            list(RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS),
+        )
+        self.assertEqual(summary["milestone"]["status"], "partial")
+        self.assertEqual(
+            [component["id"] for component in summary["components"] if component["checks"]],
+            ["page-map"],
+        )
+        page_map = next(component for component in summary["components"] if component["id"] == "page-map")
+        self.assertEqual(page_map["checks"][0]["target"], "page_map::tests::emit_m2_page_map_init_c_rust_trace")
+        self.assertIn(
+            "documented C static-empty-root",
+            page_map["remaining_conditions"][1],
+        )
+        self.assertTrue(summary["exclusions"])
+        self.assertIn("the successful Rust PageMap trace is not C/Rust differential parity", summary["milestone"]["nonclaims"])
+
+    def test_m2_parser_is_native_only_and_mutually_exclusive(self) -> None:
+        with mock.patch.object(sys, "argv", ["run.py", "--m2"]):
+            arguments = RUNNER.parse_arguments()
+        self.assertTrue(arguments.m2)
+        self.assertEqual(arguments.architecture, "aarch64")
+        with mock.patch.object(
+            sys, "argv", ["run.py", "--m2", "--architecture", "x86_64"]
+        ):
+            with self.assertRaises(SystemExit):
+                RUNNER.parse_arguments()
+
+    def test_m2_unmet_message_keeps_partial_status_explicit(self) -> None:
+        message = RUNNER.m2_memory_substrate_unmet_message(
+            {"milestone": {"unmet_component_ids": ["vm-primitives", "page-map"]}}
+        )
+        self.assertIn("M2 memory substrate remains partial", message)
+        self.assertIn("m2-memory-substrate-latest.json", message)
+
+    def test_m2_main_writes_report_then_returns_intentional_unmet_status(self) -> None:
+        report = {
+            "milestone": {
+                "status": "partial",
+                "unmet_component_ids": ["vm-primitives", "page-map"],
+            }
+        }
+        with mock.patch.object(sys, "argv", ["run.py", "--m2"]), mock.patch.object(
+            RUNNER, "run_m2_memory_substrate", return_value=report
+        ):
+            self.assertEqual(RUNNER.main(), 3)
+
     def test_m5_gate_contract_names_the_current_full_lane_and_open_gates(self) -> None:
         contract = RUNNER.read_json(RUNNER.M5_GATE_CONTRACT)
         summary = RUNNER.validate_m5_gate_contract(contract, RUNNER.load_pin())
@@ -3349,6 +3401,10 @@ class ContractTests(unittest.TestCase):
             baseline["adapted_test_contract_sha256"],
             RUNNER.file_digest(RUNNER.ADAPTED_TEST_CONTRACT),
         )
+        self.assertEqual(
+            baseline["m2_memory_substrate_contract_sha256"],
+            RUNNER.file_digest(RUNNER.M2_MEMORY_SUBSTRATE_CONTRACT),
+        )
         RUNNER.check_ratchet(RUNNER.load_port_map())
 
     def test_ratchet_check_rejects_unreviewed_port_map_digest_drift(self) -> None:
@@ -3362,6 +3418,7 @@ class ContractTests(unittest.TestCase):
             "adapted_stress_test_contract_sha256": "adapted-stress",
             "native_shadow_stress_contract_sha256": "native-shadow-stress",
             "m1_foundations_contract_sha256": "m1-foundations",
+            "m2_memory_substrate_contract_sha256": "m2-memory-substrate",
             "owner_exit_publication_contract_sha256": "owner-exit-publication",
             "api_contract_sha256": "api",
             "port_map_sha256": "current-port-map",

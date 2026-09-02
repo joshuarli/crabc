@@ -1,10 +1,9 @@
 # Allocator-port evidence contract
 
-> **Status: paused.** This document preserves fixed-mimalloc source,
-> contracts, and native evidence as a handoff. Its commands reproduce existing
-> private evidence; they are not an active allocator backlog. Resume
-> implementation, ledger expansion, differential work, performance work, or
-> backend integration only after an explicit reprioritization.
+> **Status: active native-mimalloc work.** `native-mimalloc.md` is the live
+> AArch64 allocator ledger. M2 is its current closure gate: its commands
+> produce evidence only, and do not promote the backend, later milestones, or
+> non-AArch64 support.
 
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the Linux/AArch64 production-oriented semantic port of

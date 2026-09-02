@@ -855,6 +855,115 @@ mod tests {
         assert_eq!(unsafe { page_map.destroy() }, Err(Errno::INVAL));
     }
 
+    /// Emits the address-free M2 PageMap success record reserved for a future
+    /// pinned-C `src/page-map.c` differential. Until that producer is part of
+    /// the M2 gate, this is Rust-only evidence. The test uses `EMPTY_PAGE` as
+    /// a stable marker, so its claim is only root/commit/submap and exact
+    /// registration/unregistration behavior, not allocation routing.
+    #[test]
+    fn emit_m2_page_map_init_c_rust_trace() {
+        let mut page_map = std::boxed::Box::new(
+            PageMap::initialize(memory_config(false), MAX_VABITS, false)
+                .expect("initialize the selected partial two-level page map"),
+        );
+        let root = PageMapRoot::empty();
+        let initial_committed = page_map
+            .committed_count()
+            .expect("the initialized PageMap exposes its committed prefix");
+        let initial_root_present = {
+            // SAFETY: the boxed map stays live until this test clears the
+            // root after all observations and registrations finish.
+            unsafe { root.publish(&page_map) };
+            root.load().is_some()
+        };
+        let initial_submap_zero_present = page_map
+            .submap_at(0)
+            .expect("submap-zero observation is in the committed prefix")
+            .is_some();
+        let initial_committed_nonzero = initial_committed != 0;
+        let initial_committed_le_reserved = initial_committed <= page_map.reserved_count();
+        let map_index = initial_committed + 1;
+        assert!(map_index < page_map.reserved_count());
+        let address = map_index * PAGE_MAP_SUB_COUNT * ARENA_SLICE_SIZE;
+        let start = core::ptr::without_provenance::<u8>(address);
+        let page = NonNull::from(EMPTY_PAGE.as_ref());
+
+        // SAFETY: this test is the only map client and writes a valid stable
+        // marker over one two-slice range, so the source plain-entry contract
+        // is satisfied.
+        unsafe {
+            page_map
+                .register_range(start, 2 * ARENA_SLICE_SIZE, page)
+                .expect("selected registration extends and publishes one submap");
+        }
+        let after_registration_committed = page_map
+            .committed_count()
+            .expect("registration leaves the map live");
+        let registration_committed_non_decreasing =
+            after_registration_committed >= initial_committed;
+        let registration_lookup_matches = unsafe { page_map.checked_lookup(start) == page.as_ptr() };
+
+        // SAFETY: this remains the test's sole synchronized map transition.
+        unsafe {
+            page_map
+                .unregister_range(start, 2 * ARENA_SLICE_SIZE)
+                .expect("exact registration range unregisters");
+        }
+        let unregister_lookup_absent = unsafe { page_map.checked_lookup(start).is_null() };
+
+        // SAFETY: this test reclaims the same sole source range after its
+        // successful explicit unregistration.
+        let reregister_ok = unsafe {
+            page_map.register_range(start, 2 * ARENA_SLICE_SIZE, page).is_ok()
+        };
+        let reregister_lookup_matches = unsafe { page_map.checked_lookup(start) == page.as_ptr() };
+        let after_reregister_committed = page_map
+            .committed_count()
+            .expect("re-registration leaves the map live");
+        let reregister_committed_non_decreasing =
+            after_reregister_committed >= after_registration_committed;
+
+        assert!(initial_root_present);
+        assert!(initial_committed_nonzero);
+        assert!(initial_committed_le_reserved);
+        assert!(initial_submap_zero_present);
+        assert!(registration_committed_non_decreasing);
+        assert!(registration_lookup_matches);
+        assert!(unregister_lookup_absent);
+        assert!(reregister_ok);
+        assert!(reregister_lookup_matches);
+        assert!(reregister_committed_non_decreasing);
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+        std::println!("CRABC_MI_M2_PAGE_MAP_TRACE_BEGIN");
+        emit!("m2.page_map.initial.root_present", initial_root_present);
+        emit!("m2.page_map.initial.committed_nonzero", initial_committed_nonzero);
+        emit!("m2.page_map.initial.committed_le_reserved", initial_committed_le_reserved);
+        emit!("m2.page_map.initial.submap_zero_present", initial_submap_zero_present);
+        emit!(
+            "m2.page_map.registration.committed_non_decreasing",
+            registration_committed_non_decreasing
+        );
+        emit!("m2.page_map.registration.lookup_matches", registration_lookup_matches);
+        emit!("m2.page_map.unregister.lookup_absent", unregister_lookup_absent);
+        emit!("m2.page_map.reregister.ok", reregister_ok);
+        emit!("m2.page_map.reregister.lookup_matches", reregister_lookup_matches);
+        emit!(
+            "m2.page_map.reregister.committed_non_decreasing",
+            reregister_committed_non_decreasing
+        );
+        std::println!("CRABC_MI_M2_PAGE_MAP_TRACE_END");
+
+        assert!(root.clear().is_some());
+        // SAFETY: the root is cleared and the test owns the only page-map
+        // client, so the selected destruction precondition holds.
+        unsafe { page_map.destroy() }.expect("the test map destroys after root clear");
+    }
+
     #[test]
     fn failed_cross_boundary_registration_rolls_back_every_written_entry() {
         let mut page_map = PageMap::initialize(memory_config(false), MIN_VABITS, false)

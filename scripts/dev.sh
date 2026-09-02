@@ -195,6 +195,7 @@ Commands:
   allocator --quick|--full|--churn|--soak|--tls-terminal-prototype
                       build/check the pinned mimalloc v3.5.0 C-oracle baseline
   allocator-m1        run the current-commit M1 foundations evidence gate
+  allocator-m2        run the current-commit partial M2 memory-substrate gate
   allocator-upstream [options]
                       run exact pinned upstream pthread stress on the native shadow libc
   allocator-shadow    run the nondefault native-mimalloc libc ABI/pthread shadow gate
@@ -705,6 +706,17 @@ case "$command" in
         # allocator milestone. It returns the runner's intentional unmet-M1
         # status while the checked contract has remaining conditions.
         run_allocator_evidence --m1
+        ;;
+    allocator-m2)
+        ensure_image
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        # This is an acceptance-record producer, not a synonym for a green
+        # allocator milestone. It returns the runner's intentional unmet-M2
+        # status while the checked substrate contract has remaining conditions.
+        run_allocator_evidence --m2
         ;;
     allocator-upstream)
         ensure_image
