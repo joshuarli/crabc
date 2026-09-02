@@ -350,7 +350,7 @@ registry/subprocess ownership.
   first PageMap allocation failure. They agree that the body fails once, no
   dynamic map publishes, and the body is not replayed; they intentionally
   record C's static empty root/null lookup/later-success result separately
-  from Rust's absent root/rejected lookup/typed poison. This is a safety
+  from Rust's absent root/no-cold-lookup-route/typed poison. This is a safety
   divergence witness, not a C ABI or full-process-lifecycle comparison.
   `process_init::tests::process_main_initialization_orders_heap_metadata_map_then_ticket_zero_roots`
   proves the coordinator publishes this distinct root before ticket-zero TLS
@@ -396,6 +396,9 @@ registry/subprocess ownership.
   ownership, differential, and performance review. This entry does not waive
   the remaining M2 PageMap failure, cold-root, concurrent-lifetime, or
   allocator-integration conditions.
+  In particular, `PageMap::initialize` currently discards its local
+  `Mapping` if either initial commit fails and the cleanup `unmap` fails; that
+  paired-failure owner is an open M2 condition, not an accepted difference.
 
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 

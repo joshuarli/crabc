@@ -2116,8 +2116,10 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             page_map["remaining_conditions"],
             [
-                "cover PageMap extension and release failure-injection branches with "
+                "cover lazy PageMap extension and destruction release failure-injection branches with "
                 "ownership-preserving evidence",
+                "resolve PageMap initialization cleanup when an initial commit failure is "
+                "followed by failed unmap, retaining the exact mapping instead of dropping it",
                 "resolve the directly witnessed C static-empty-root versus Rust "
                 "poisoned cold-root safety divergence when a complete "
                 "process-lifecycle owner can supply source-equivalent cold lookup "
