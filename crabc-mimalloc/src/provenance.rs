@@ -164,6 +164,10 @@ mod tests {
         assert!(MemoryKind::External.needs_no_free());
         assert!(MemoryKind::Static.needs_no_free());
         assert!(!MemoryKind::Os.needs_no_free());
+        assert!(!MemoryKind::OsHuge.needs_no_free());
+        assert!(!MemoryKind::OsRemap.needs_no_free());
+        assert!(!MemoryKind::Arena.needs_no_free());
+        assert!(!MemoryKind::Malloc.needs_no_free());
     }
 
     #[test]
@@ -214,5 +218,53 @@ mod tests {
         assert_eq!(os_id.os_base(), Some(Address::from_ptr(bytes.as_ptr())));
         assert!(!os_id.initially_committed());
         assert!(os_id.initially_zero());
+    }
+
+    #[test]
+    fn memory_id_constructors_keep_the_pinned_union_and_size_rules() {
+        let mut byte = 0_u8;
+        let pointer = core::ptr::from_mut(&mut byte);
+
+        let none = MemoryId::none();
+        assert_eq!(none.kind(), MemoryKind::None);
+        assert!(!none.is_pinned());
+        assert!(!none.initially_committed());
+        assert!(!none.initially_zero());
+        assert_eq!(none.size(), Some(0));
+
+        let static_kind_only = MemoryId::static_kind_only();
+        let static_memory = static_kind_only.static_memory().unwrap();
+        assert_eq!(static_memory.base, core::ptr::null_mut());
+        assert_eq!(static_memory.size, 0);
+        assert_eq!(static_kind_only.size(), Some(0));
+
+        let static_allocation = MemoryId::static_allocation(pointer, 37);
+        let static_memory = static_allocation.static_memory().unwrap();
+        assert_eq!(static_memory.base, pointer);
+        assert_eq!(static_memory.size, 37);
+        assert!(static_allocation.is_pinned());
+        assert!(static_allocation.initially_committed());
+        assert!(!static_allocation.initially_zero());
+        assert_eq!(static_allocation.size(), Some(0));
+
+        let malloc = MemoryId::malloc(pointer, 41, true);
+        let malloc_memory = malloc.malloc_memory().unwrap();
+        assert_eq!(malloc.kind(), MemoryKind::Malloc);
+        assert_eq!(malloc_memory.base, pointer);
+        assert_eq!(malloc_memory.size, 41);
+        assert!(malloc.is_pinned());
+        assert!(malloc.initially_committed());
+        assert!(malloc.initially_zero());
+        assert_eq!(malloc.size(), Some(41));
+
+        let os = MemoryId::os(pointer, 43, false, true, true);
+        let os_memory = os.os_memory().unwrap();
+        assert_eq!(os.kind(), MemoryKind::Os);
+        assert_eq!(os_memory.base, pointer);
+        assert_eq!(os_memory.size, 43);
+        assert!(os.is_pinned());
+        assert!(!os.initially_committed());
+        assert!(os.initially_zero());
+        assert_eq!(os.size(), Some(43));
     }
 }

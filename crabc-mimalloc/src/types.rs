@@ -4312,9 +4312,76 @@ mod tests {
         record!("value.MI_MEM_OS_REMAP", MemoryKind::OsRemap as usize);
         record!("value.MI_MEM_ARENA", MemoryKind::Arena as usize);
         record!("value.MI_MEM_MALLOC", MemoryKind::Malloc as usize);
+        record!("sizeof.mi_memid_t.mem", size_of::<MemoryInfo>());
+        record!("alignof.mi_memid_t.mem", align_of::<MemoryInfo>());
+        record!("sizeof.mi_memid_os_info_t", size_of::<OsMemory>());
+        record!("alignof.mi_memid_os_info_t", align_of::<OsMemory>());
+        record!(
+            "offsetof.mi_memid_os_info_t.base",
+            offset_of!(OsMemory, base)
+        );
+        record!(
+            "offsetof.mi_memid_os_info_t.size",
+            offset_of!(OsMemory, size)
+        );
+        record!("sizeof.mi_memid_arena_info_t", size_of::<ArenaMemory>());
+        record!("alignof.mi_memid_arena_info_t", align_of::<ArenaMemory>());
+        record!(
+            "offsetof.mi_memid_arena_info_t.arena",
+            offset_of!(ArenaMemory, arena)
+        );
+        record!(
+            "offsetof.mi_memid_arena_info_t.slice_index",
+            offset_of!(ArenaMemory, slice_index)
+        );
+        record!(
+            "offsetof.mi_memid_arena_info_t.slice_count",
+            offset_of!(ArenaMemory, slice_count)
+        );
+        record!("sizeof.mi_memid_malloc_info_t", size_of::<MallocMemory>());
+        record!(
+            "alignof.mi_memid_malloc_info_t",
+            align_of::<MallocMemory>()
+        );
+        record!(
+            "offsetof.mi_memid_malloc_info_t.base",
+            offset_of!(MallocMemory, base)
+        );
+        record!(
+            "offsetof.mi_memid_malloc_info_t.size",
+            offset_of!(MallocMemory, size)
+        );
         record!("sizeof.mi_memid_t", size_of::<MemoryId>());
         record!("alignof.mi_memid_t", align_of::<MemoryId>());
         record!("offsetof.mi_memid_t.mem", offset_of!(MemoryId, info));
+        record!(
+            "offsetof.mi_memid_t.mem.os.base",
+            offset_of!(MemoryId, info) + offset_of!(OsMemory, base)
+        );
+        record!(
+            "offsetof.mi_memid_t.mem.os.size",
+            offset_of!(MemoryId, info) + offset_of!(OsMemory, size)
+        );
+        record!(
+            "offsetof.mi_memid_t.mem.arena.arena",
+            offset_of!(MemoryId, info) + offset_of!(ArenaMemory, arena)
+        );
+        record!(
+            "offsetof.mi_memid_t.mem.arena.slice_index",
+            offset_of!(MemoryId, info) + offset_of!(ArenaMemory, slice_index)
+        );
+        record!(
+            "offsetof.mi_memid_t.mem.arena.slice_count",
+            offset_of!(MemoryId, info) + offset_of!(ArenaMemory, slice_count)
+        );
+        record!(
+            "offsetof.mi_memid_t.mem.malloc.base",
+            offset_of!(MemoryId, info) + offset_of!(MallocMemory, base)
+        );
+        record!(
+            "offsetof.mi_memid_t.mem.malloc.size",
+            offset_of!(MemoryId, info) + offset_of!(MallocMemory, size)
+        );
         record!("offsetof.mi_memid_t.memkind", offset_of!(MemoryId, kind));
         record!("offsetof.mi_memid_t.is_pinned", offset_of!(MemoryId, is_pinned));
         record!(
@@ -4324,6 +4391,172 @@ mod tests {
         record!(
             "offsetof.mi_memid_t.initially_zero",
             offset_of!(MemoryId, initially_zero)
+        );
+        let memory_kinds = [
+            MemoryKind::None,
+            MemoryKind::External,
+            MemoryKind::Static,
+            MemoryKind::Os,
+            MemoryKind::OsHuge,
+            MemoryKind::OsRemap,
+            MemoryKind::Arena,
+            MemoryKind::Malloc,
+        ];
+        let mut memory_kind_is_os_mask = 0usize;
+        let mut memory_kind_needs_no_free_mask = 0usize;
+        for (index, kind) in memory_kinds.iter().copied().enumerate() {
+            if kind.is_os() {
+                memory_kind_is_os_mask |= 1usize << index;
+            }
+            if kind.needs_no_free() {
+                memory_kind_needs_no_free_mask |= 1usize << index;
+            }
+        }
+        record!("m1.provenance.memkind.is_os.mask", memory_kind_is_os_mask);
+        record!(
+            "m1.provenance.memkind.needs_no_free.mask",
+            memory_kind_needs_no_free_mask
+        );
+        let mut m1_memid_anchor = 0_u8;
+        let m1_memid_anchor = core::ptr::from_mut(&mut m1_memid_anchor);
+        let m1_memid_none = MemoryId::none();
+        let m1_memid_static = MemoryId::static_kind_only();
+        let m1_memid_static_allocation = MemoryId::static_allocation(m1_memid_anchor, 37);
+        let m1_memid_malloc = MemoryId::malloc(m1_memid_anchor, 41, true);
+        let m1_memid_os = MemoryId::os(m1_memid_anchor, 43, false, true, true);
+        record!("m1.provenance.create.none.kind", m1_memid_none.kind as usize);
+        record!(
+            "m1.provenance.create.none.pinned",
+            m1_memid_none.is_pinned as usize
+        );
+        record!(
+            "m1.provenance.create.none.committed",
+            m1_memid_none.initially_committed as usize
+        );
+        record!(
+            "m1.provenance.create.none.zero",
+            m1_memid_none.initially_zero as usize
+        );
+        record!(
+            "m1.provenance.create.none.memid_size",
+            m1_memid_none.size().expect("none has a source size")
+        );
+        let m1_static_memory = m1_memid_static
+            .static_memory()
+            .expect("kind-only static memory projects its zero union");
+        record!(
+            "m1.provenance.create.static.kind",
+            m1_memid_static.kind as usize
+        );
+        record!(
+            "m1.provenance.create.static.pinned",
+            m1_memid_static.is_pinned as usize
+        );
+        record!(
+            "m1.provenance.create.static.committed",
+            m1_memid_static.initially_committed as usize
+        );
+        record!(
+            "m1.provenance.create.static.zero",
+            m1_memid_static.initially_zero as usize
+        );
+        record!(
+            "m1.provenance.create.static.base_is_null",
+            m1_static_memory.base.is_null() as usize
+        );
+        record!(
+            "m1.provenance.create.static.stored_size",
+            m1_static_memory.size
+        );
+        record!(
+            "m1.provenance.create.static.memid_size",
+            m1_memid_static.size().expect("static has a source size")
+        );
+        let m1_static_allocation_memory = m1_memid_static_allocation
+            .static_memory()
+            .expect("concrete static memory projects the malloc union");
+        record!(
+            "m1.provenance.create.static_allocation.kind",
+            m1_memid_static_allocation.kind as usize
+        );
+        record!(
+            "m1.provenance.create.static_allocation.pinned",
+            m1_memid_static_allocation.is_pinned as usize
+        );
+        record!(
+            "m1.provenance.create.static_allocation.committed",
+            m1_memid_static_allocation.initially_committed as usize
+        );
+        record!(
+            "m1.provenance.create.static_allocation.zero",
+            m1_memid_static_allocation.initially_zero as usize
+        );
+        record!(
+            "m1.provenance.create.static_allocation.base_is_input",
+            (m1_static_allocation_memory.base == m1_memid_anchor) as usize
+        );
+        record!(
+            "m1.provenance.create.static_allocation.stored_size",
+            m1_static_allocation_memory.size
+        );
+        record!(
+            "m1.provenance.create.static_allocation.memid_size",
+            m1_memid_static_allocation
+                .size()
+                .expect("static allocation has a source size")
+        );
+        let m1_malloc_memory = m1_memid_malloc
+            .malloc_memory()
+            .expect("malloc memory projects its source union");
+        record!(
+            "m1.provenance.create.malloc.kind",
+            m1_memid_malloc.kind as usize
+        );
+        record!(
+            "m1.provenance.create.malloc.pinned",
+            m1_memid_malloc.is_pinned as usize
+        );
+        record!(
+            "m1.provenance.create.malloc.committed",
+            m1_memid_malloc.initially_committed as usize
+        );
+        record!(
+            "m1.provenance.create.malloc.zero",
+            m1_memid_malloc.initially_zero as usize
+        );
+        record!(
+            "m1.provenance.create.malloc.base_is_input",
+            (m1_malloc_memory.base == m1_memid_anchor) as usize
+        );
+        record!(
+            "m1.provenance.create.malloc.stored_size",
+            m1_malloc_memory.size
+        );
+        record!(
+            "m1.provenance.create.malloc.memid_size",
+            m1_memid_malloc.size().expect("malloc has a source size")
+        );
+        let m1_os_memory = m1_memid_os
+            .os_memory()
+            .expect("OS memory projects its source union");
+        record!("m1.provenance.create.os.kind", m1_memid_os.kind as usize);
+        record!(
+            "m1.provenance.create.os.pinned",
+            m1_memid_os.is_pinned as usize
+        );
+        record!(
+            "m1.provenance.create.os.committed",
+            m1_memid_os.initially_committed as usize
+        );
+        record!("m1.provenance.create.os.zero", m1_memid_os.initially_zero as usize);
+        record!(
+            "m1.provenance.create.os.base_is_input",
+            (m1_os_memory.base == m1_memid_anchor) as usize
+        );
+        record!("m1.provenance.create.os.stored_size", m1_os_memory.size);
+        record!(
+            "m1.provenance.create.os.memid_size",
+            m1_memid_os.size().expect("OS memory has a source size")
         );
         // These are the actual immutable images, rather than fresh temporary
         // values: C initializes both through `MI_MEMID_STATIC` in `src/init.c`.
@@ -4469,10 +4702,57 @@ mod tests {
             "m1.random.reinit.strong.fingerprint",
             random_trace.strong_reinit_fingerprint as usize
         );
+        record!("sizeof.mi_encoded_t", size_of::<Encoded>());
+        record!("alignof.mi_encoded_t", align_of::<Encoded>());
+        record!("sizeof.mi_threadid_t", size_of::<ThreadId>());
+        record!("alignof.mi_threadid_t", align_of::<ThreadId>());
+        record!("sizeof.mi_thread_free_t", size_of::<ThreadFree>());
+        record!("alignof.mi_thread_free_t", align_of::<ThreadFree>());
+        record!("sizeof.mi_used_t", size_of::<usize>());
+        record!("alignof.mi_used_t", align_of::<usize>());
+        record!("sizeof.mi_page_flags_t", size_of::<PageFlags>());
+        record!("alignof.mi_page_flags_t", align_of::<PageFlags>());
+        record!("value.MI_PAGE_IN_FULL_QUEUE", PAGE_IN_FULL_QUEUE);
+        record!(
+            "value.MI_PAGE_HAS_INTERIOR_POINTERS",
+            PAGE_HAS_INTERIOR_POINTERS
+        );
+        record!("value.MI_PAGE_FLAG_MASK", PAGE_FLAG_MASK);
+        record!("value.MI_PAGE_FLAG_BITS", PAGE_FLAG_BITS);
+        record!("value.MI_THREADID_ABANDONED", THREAD_ID_ABANDONED);
+        record!(
+            "value.MI_THREADID_ABANDONED_MAPPED",
+            THREAD_ID_ABANDONED_MAPPED
+        );
+        record!("value.MI_THREADID_DETACHED", THREAD_ID_DETACHED);
+        record!("sizeof.mi_block_t", size_of::<Block>());
+        record!("alignof.mi_block_t", align_of::<Block>());
+        record!("offsetof.mi_block_t.next", offset_of!(Block, next));
         record!("sizeof.mi_page_t", size_of::<Page>());
         record!("alignof.mi_page_t", align_of::<Page>());
+        record!("offsetof.mi_page_t.self", offset_of!(Page, self_));
+        record!("offsetof.mi_page_t.xthread_id", offset_of!(Page, xthread_id));
+        record!("offsetof.mi_page_t.free", offset_of!(Page, free));
+        record!("offsetof.mi_page_t.used", offset_of!(Page, used));
+        record!("offsetof.mi_page_t.local_free", offset_of!(Page, local_free));
+        record!("offsetof.mi_page_t.block_size", offset_of!(Page, block_size));
+        record!("offsetof.mi_page_t.page_offset", offset_of!(Page, page_offset));
+        record!("offsetof.mi_page_t.capacity", offset_of!(Page, capacity));
+        record!("offsetof.mi_page_t.reserved", offset_of!(Page, reserved));
+        record!(
+            "offsetof.mi_page_t.slice_pcommitted",
+            offset_of!(Page, slice_pcommitted)
+        );
+        record!(
+            "offsetof.mi_page_t.retire_expire",
+            offset_of!(Page, retire_expire)
+        );
+        record!("offsetof.mi_page_t.free_is_zero", offset_of!(Page, free_is_zero));
         record!("offsetof.mi_page_t.xthread_free", offset_of!(Page, xthread_free));
         record!("offsetof.mi_page_t.theap", offset_of!(Page, theap));
+        record!("offsetof.mi_page_t.heap", offset_of!(Page, heap));
+        record!("offsetof.mi_page_t.next", offset_of!(Page, next));
+        record!("offsetof.mi_page_t.prev", offset_of!(Page, prev));
         record!("offsetof.mi_page_t.memid", offset_of!(Page, memid));
         record!("sizeof.mi_page_kind_t", size_of::<PageKind>());
         record!("alignof.mi_page_kind_t", align_of::<PageKind>());
@@ -4806,8 +5086,22 @@ mod tests {
     #[test]
     fn metadata_layout_matches_the_default_release_c_contract() {
         assert_eq!(size_of::<MemoryKind>(), 4);
+        assert_eq!(align_of::<MemoryKind>(), 4);
         assert_eq!(size_of::<MemoryInfo>(), 16);
         assert_eq!(align_of::<MemoryInfo>(), 8);
+        assert_eq!(size_of::<OsMemory>(), 16);
+        assert_eq!(align_of::<OsMemory>(), 8);
+        assert_eq!(offset_of!(OsMemory, base), 0);
+        assert_eq!(offset_of!(OsMemory, size), 8);
+        assert_eq!(size_of::<ArenaMemory>(), 16);
+        assert_eq!(align_of::<ArenaMemory>(), 8);
+        assert_eq!(offset_of!(ArenaMemory, arena), 0);
+        assert_eq!(offset_of!(ArenaMemory, slice_index), 8);
+        assert_eq!(offset_of!(ArenaMemory, slice_count), 12);
+        assert_eq!(size_of::<MallocMemory>(), 16);
+        assert_eq!(align_of::<MallocMemory>(), 8);
+        assert_eq!(offset_of!(MallocMemory, base), 0);
+        assert_eq!(offset_of!(MallocMemory, size), 8);
         assert_eq!(size_of::<MemoryId>(), 24);
         assert_eq!(align_of::<MemoryId>(), 8);
         assert_eq!(offset_of!(MemoryId, info), 0);
@@ -4817,8 +5111,35 @@ mod tests {
         assert_eq!(offset_of!(MemoryId, initially_zero), 22);
 
         assert_eq!(size_of::<Block>(), 8);
+        assert_eq!(align_of::<Block>(), 8);
+        assert_eq!(offset_of!(Block, next), 0);
+        assert_eq!(size_of::<ThreadId>(), 8);
+        assert_eq!(align_of::<ThreadId>(), 8);
+        assert_eq!(size_of::<ThreadFree>(), 8);
+        assert_eq!(align_of::<ThreadFree>(), 8);
+        assert_eq!(size_of::<PageFlags>(), 8);
+        assert_eq!(align_of::<PageFlags>(), 8);
+        assert_eq!(size_of::<Encoded>(), 8);
+        assert_eq!(align_of::<Encoded>(), 8);
+        assert_eq!(PAGE_IN_FULL_QUEUE, 1);
+        assert_eq!(PAGE_HAS_INTERIOR_POINTERS, 2);
+        assert_eq!(PAGE_FLAG_MASK, 3);
+        assert_eq!(PAGE_FLAG_BITS, 2);
+        assert_eq!(THREAD_ID_ABANDONED, 0);
+        assert_eq!(THREAD_ID_ABANDONED_MAPPED, 4);
+        assert_eq!(THREAD_ID_DETACHED, 8);
+        assert_eq!(size_of::<PageKind>(), 4);
+        assert_eq!(align_of::<PageKind>(), 4);
+        assert_eq!(PageKind::Small as usize, 0);
+        assert_eq!(PageKind::Medium as usize, 1);
+        assert_eq!(PageKind::Large as usize, 2);
+        assert_eq!(PageKind::Singleton as usize, 3);
         assert_eq!(size_of::<PageQueue>(), 32);
         assert_eq!(align_of::<PageQueue>(), 8);
+        assert_eq!(offset_of!(PageQueue, first), 0);
+        assert_eq!(offset_of!(PageQueue, last), 8);
+        assert_eq!(offset_of!(PageQueue, count), 16);
+        assert_eq!(offset_of!(PageQueue, block_size), 24);
         assert_eq!(size_of::<Page>(), 128);
         assert_eq!(align_of::<Page>(), 8);
         assert_eq!(offset_of!(Page, self_), 0);
@@ -4829,9 +5150,15 @@ mod tests {
         assert_eq!(offset_of!(Page, block_size), 40);
         assert_eq!(offset_of!(Page, page_offset), 48);
         assert_eq!(offset_of!(Page, capacity), 56);
+        assert_eq!(offset_of!(Page, reserved), 58);
+        assert_eq!(offset_of!(Page, slice_pcommitted), 60);
+        assert_eq!(offset_of!(Page, retire_expire), 62);
         assert_eq!(offset_of!(Page, free_is_zero), 63);
         assert_eq!(offset_of!(Page, xthread_free), 64);
         assert_eq!(offset_of!(Page, theap), 72);
+        assert_eq!(offset_of!(Page, heap), 80);
+        assert_eq!(offset_of!(Page, next), 88);
+        assert_eq!(offset_of!(Page, prev), 96);
         assert_eq!(offset_of!(Page, memid), 104);
     }
 

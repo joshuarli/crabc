@@ -60,6 +60,153 @@ M1_RANDOM_IMAGE_KEYS = (
 )
 
 
+# M1's representation boundary is deliberately finite: the default-release
+# `types.h:288-541` scalar/metadata records and `internal.h:1316-1369`
+# memory-ID constructors. Keep every C/Rust witness in source order here so a
+# future manifest edit cannot shrink the evidence back to selected endpoint
+# offsets while still claiming the represented-layout component is complete.
+M1_REPRESENTED_LAYOUT_KEYS = (
+    "sizeof.mi_memkind_t",
+    "alignof.mi_memkind_t",
+    "value.MI_MEM_NONE",
+    "value.MI_MEM_EXTERNAL",
+    "value.MI_MEM_STATIC",
+    "value.MI_MEM_OS",
+    "value.MI_MEM_OS_HUGE",
+    "value.MI_MEM_OS_REMAP",
+    "value.MI_MEM_ARENA",
+    "value.MI_MEM_MALLOC",
+    "sizeof.mi_memid_t.mem",
+    "alignof.mi_memid_t.mem",
+    "sizeof.mi_memid_os_info_t",
+    "alignof.mi_memid_os_info_t",
+    "offsetof.mi_memid_os_info_t.base",
+    "offsetof.mi_memid_os_info_t.size",
+    "sizeof.mi_memid_arena_info_t",
+    "alignof.mi_memid_arena_info_t",
+    "offsetof.mi_memid_arena_info_t.arena",
+    "offsetof.mi_memid_arena_info_t.slice_index",
+    "offsetof.mi_memid_arena_info_t.slice_count",
+    "sizeof.mi_memid_malloc_info_t",
+    "alignof.mi_memid_malloc_info_t",
+    "offsetof.mi_memid_malloc_info_t.base",
+    "offsetof.mi_memid_malloc_info_t.size",
+    "sizeof.mi_memid_t",
+    "alignof.mi_memid_t",
+    "offsetof.mi_memid_t.mem",
+    "offsetof.mi_memid_t.mem.os.base",
+    "offsetof.mi_memid_t.mem.os.size",
+    "offsetof.mi_memid_t.mem.arena.arena",
+    "offsetof.mi_memid_t.mem.arena.slice_index",
+    "offsetof.mi_memid_t.mem.arena.slice_count",
+    "offsetof.mi_memid_t.mem.malloc.base",
+    "offsetof.mi_memid_t.mem.malloc.size",
+    "offsetof.mi_memid_t.memkind",
+    "offsetof.mi_memid_t.is_pinned",
+    "offsetof.mi_memid_t.initially_committed",
+    "offsetof.mi_memid_t.initially_zero",
+    "m1.provenance.memkind.is_os.mask",
+    "m1.provenance.memkind.needs_no_free.mask",
+    "m1.provenance.create.none.kind",
+    "m1.provenance.create.none.pinned",
+    "m1.provenance.create.none.committed",
+    "m1.provenance.create.none.zero",
+    "m1.provenance.create.none.memid_size",
+    "m1.provenance.create.static.kind",
+    "m1.provenance.create.static.pinned",
+    "m1.provenance.create.static.committed",
+    "m1.provenance.create.static.zero",
+    "m1.provenance.create.static.base_is_null",
+    "m1.provenance.create.static.stored_size",
+    "m1.provenance.create.static.memid_size",
+    "m1.provenance.create.static_allocation.kind",
+    "m1.provenance.create.static_allocation.pinned",
+    "m1.provenance.create.static_allocation.committed",
+    "m1.provenance.create.static_allocation.zero",
+    "m1.provenance.create.static_allocation.base_is_input",
+    "m1.provenance.create.static_allocation.stored_size",
+    "m1.provenance.create.static_allocation.memid_size",
+    "m1.provenance.create.malloc.kind",
+    "m1.provenance.create.malloc.pinned",
+    "m1.provenance.create.malloc.committed",
+    "m1.provenance.create.malloc.zero",
+    "m1.provenance.create.malloc.base_is_input",
+    "m1.provenance.create.malloc.stored_size",
+    "m1.provenance.create.malloc.memid_size",
+    "m1.provenance.create.os.kind",
+    "m1.provenance.create.os.pinned",
+    "m1.provenance.create.os.committed",
+    "m1.provenance.create.os.zero",
+    "m1.provenance.create.os.base_is_input",
+    "m1.provenance.create.os.stored_size",
+    "m1.provenance.create.os.memid_size",
+    "sizeof.mi_encoded_t",
+    "alignof.mi_encoded_t",
+    "sizeof.mi_threadid_t",
+    "alignof.mi_threadid_t",
+    "sizeof.mi_thread_free_t",
+    "alignof.mi_thread_free_t",
+    "sizeof.mi_used_t",
+    "alignof.mi_used_t",
+    "sizeof.mi_page_flags_t",
+    "alignof.mi_page_flags_t",
+    "value.MI_PAGE_IN_FULL_QUEUE",
+    "value.MI_PAGE_HAS_INTERIOR_POINTERS",
+    "value.MI_PAGE_FLAG_MASK",
+    "value.MI_PAGE_FLAG_BITS",
+    "value.MI_THREADID_ABANDONED",
+    "value.MI_THREADID_ABANDONED_MAPPED",
+    "value.MI_THREADID_DETACHED",
+    "sizeof.mi_block_t",
+    "alignof.mi_block_t",
+    "offsetof.mi_block_t.next",
+    "sizeof.mi_page_t",
+    "alignof.mi_page_t",
+    "offsetof.mi_page_t.self",
+    "offsetof.mi_page_t.xthread_id",
+    "offsetof.mi_page_t.free",
+    "offsetof.mi_page_t.used",
+    "offsetof.mi_page_t.local_free",
+    "offsetof.mi_page_t.block_size",
+    "offsetof.mi_page_t.page_offset",
+    "offsetof.mi_page_t.capacity",
+    "offsetof.mi_page_t.reserved",
+    "offsetof.mi_page_t.slice_pcommitted",
+    "offsetof.mi_page_t.retire_expire",
+    "offsetof.mi_page_t.free_is_zero",
+    "offsetof.mi_page_t.xthread_free",
+    "offsetof.mi_page_t.theap",
+    "offsetof.mi_page_t.heap",
+    "offsetof.mi_page_t.next",
+    "offsetof.mi_page_t.prev",
+    "offsetof.mi_page_t.memid",
+    "sizeof.mi_page_kind_t",
+    "alignof.mi_page_kind_t",
+    "value.MI_PAGE_SMALL",
+    "value.MI_PAGE_MEDIUM",
+    "value.MI_PAGE_LARGE",
+    "value.MI_PAGE_SINGLETON",
+    "sizeof.mi_page_queue_t",
+    "alignof.mi_page_queue_t",
+    "offsetof.mi_page_queue_t.first",
+    "offsetof.mi_page_queue_t.last",
+    "offsetof.mi_page_queue_t.count",
+    "offsetof.mi_page_queue_t.block_size",
+)
+
+# A complete representation vector must retain the paired exclusions. These
+# source shapes have fields adjacent to the selected records, but need a live
+# arena or a nondefault configuration image and therefore cannot be smuggled
+# into a default-release M1 layout claim.
+M1_REPRESENTATION_EXCLUSION_IDS = {
+    "arena-and-external-memory-id-lifecycle",
+    "heap-theap-subprocess-and-tld-layout-lifecycles",
+    "nondefault-page-layout-modes",
+    "statistics-representations-and-operations",
+    "whole-types-and-internal-units",
+}
+
+
 class WorkRootTests(unittest.TestCase):
     def test_work_root_routes_all_runner_owned_outputs(self) -> None:
         work_root = RUNNER.default_work_root()
@@ -1936,6 +2083,57 @@ class ContractTests(unittest.TestCase):
                 "upstream": "include/mimalloc/internal.h",
             },
             configuration_and_arithmetic["source_map_records"],
+        )
+        represented_layouts = next(
+            component
+            for component in summary["components"]
+            if component["id"] == "provenance-and-represented-layouts"
+        )
+        self.assertEqual(represented_layouts["completion_status"], "complete")
+        self.assertEqual(represented_layouts["remaining_conditions"], [])
+        self.assertEqual(
+            represented_layouts["layout_keys"], list(M1_REPRESENTED_LAYOUT_KEYS)
+        )
+        self.assertIn(
+            {
+                "kind": "item",
+                "name": "_mi_memid_create_os-and-_mi_memid_size",
+                "required_statuses": [
+                    "implemented",
+                    "unit_verified",
+                    "differential_verified",
+                ],
+                "upstream": "include/mimalloc/internal.h",
+            },
+            represented_layouts["source_map_records"],
+        )
+        self.assertIn(
+            {
+                "kind": "item",
+                "name": "_mi_memid_create_static-and-malloc",
+                "required_statuses": [
+                    "implemented",
+                    "unit_verified",
+                    "differential_verified",
+                ],
+                "upstream": "include/mimalloc/internal.h",
+            },
+            represented_layouts["source_map_records"],
+        )
+        self.assertTrue(
+            M1_REPRESENTATION_EXCLUSION_IDS
+            <= {exclusion["id"] for exclusion in summary["exclusions"]}
+        )
+        # The C probe must query the anonymous union member and selected page
+        # member directly. A type-arm proxy or a synthetic zero offset for an
+        # absent nondefault field would falsely broaden the release claim.
+        self.assertIn(
+            '__alignof__(((mi_memid_t*)0)->mem)',
+            RUNNER.LAYOUT_PROBE,
+        )
+        self.assertNotIn(
+            'U("offsetof.mi_page_t.self", 0);',
+            RUNNER.LAYOUT_PROBE,
         )
         random_image = next(
             component

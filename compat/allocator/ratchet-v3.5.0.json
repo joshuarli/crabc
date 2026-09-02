@@ -8,21 +8,21 @@
   "api_total_item_count": 336,
   "configuration_profile_count": 5,
   "format": 1,
-  "m1_foundations_contract_sha256": "32deab16bff093873b18c0a7f90d9802bf6925cc259fdb9a97861b15c2faa3a0",
+  "m1_foundations_contract_sha256": "f6fdf03822beee37089288be8f984cd1ebb662a6637bff69160f204a3a3ba7d7",
   "native_shadow_stress_contract_sha256": "cdef617f743ccd7c26283a3ce22ce17c43d6ae79b3873ac400a54fb1749139c8",
   "native_shadow_stress_fixture_count": 1,
   "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
   "port_map_counts": {
-    "differential_verified": 19,
+    "differential_verified": 21,
     "exported": 4,
-    "implemented": 152,
-    "item_count": 148,
+    "implemented": 153,
+    "item_count": 149,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 152
+    "unit_verified": 153
   },
-  "port_map_sha256": "24d5bcd404305f17a3e06e6b37b0d76fcd61368af7283db8e2f3b24442a2dbcd",
+  "port_map_sha256": "1061e8a2aff7a0e8917b82d2419939a70bf09d9e8e3045cf2728c76a33a50497",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -62,7 +62,13 @@
     ],
     "item:include/mimalloc/internal.h:_mi_memid_create_os-and-_mi_memid_size": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:include/mimalloc/internal.h:_mi_memid_create_static-and-malloc": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:include/mimalloc/internal.h:_mi_page_map_index": [
       "implemented",

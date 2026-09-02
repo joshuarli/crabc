@@ -988,6 +988,29 @@ static uint64_t m1_random_state_fingerprint(const mi_random_ctx_t* ctx) {
   return fingerprint * UINT64_C(0x00000100000001b3);
 }
 
+static uint64_t m1_memkind_predicate_mask(bool is_os) {
+  const mi_memkind_t kinds[] = {
+    MI_MEM_NONE,
+    MI_MEM_EXTERNAL,
+    MI_MEM_STATIC,
+    MI_MEM_OS,
+    MI_MEM_OS_HUGE,
+    MI_MEM_OS_REMAP,
+    MI_MEM_ARENA,
+    MI_MEM_MALLOC,
+  };
+  uint64_t mask = 0;
+  for (size_t index = 0; index < sizeof(kinds) / sizeof(kinds[0]); index++) {
+    const bool selected = (is_os
+      ? mi_memkind_is_os(kinds[index])
+      : mi_memkind_needs_no_free(kinds[index]));
+    if (selected) {
+      mask |= (UINT64_C(1) << index);
+    }
+  }
+  return mask;
+}
+
 #define U(name, value) printf(name "=%llu\n", (unsigned long long)(value))
 int main(void) {
   U("pointer.size", sizeof(void*));
@@ -1004,13 +1027,79 @@ int main(void) {
   U("value.MI_MEM_OS_REMAP", MI_MEM_OS_REMAP);
   U("value.MI_MEM_ARENA", MI_MEM_ARENA);
   U("value.MI_MEM_MALLOC", MI_MEM_MALLOC);
+  U("sizeof.mi_memid_t.mem", sizeof(((mi_memid_t*)0)->mem));
+  U("alignof.mi_memid_t.mem", __alignof__(((mi_memid_t*)0)->mem));
+  U("sizeof.mi_memid_os_info_t", sizeof(mi_memid_os_info_t));
+  U("alignof.mi_memid_os_info_t", _Alignof(mi_memid_os_info_t));
+  U("offsetof.mi_memid_os_info_t.base", offsetof(mi_memid_os_info_t, base));
+  U("offsetof.mi_memid_os_info_t.size", offsetof(mi_memid_os_info_t, size));
+  U("sizeof.mi_memid_arena_info_t", sizeof(mi_memid_arena_info_t));
+  U("alignof.mi_memid_arena_info_t", _Alignof(mi_memid_arena_info_t));
+  U("offsetof.mi_memid_arena_info_t.arena", offsetof(mi_memid_arena_info_t, arena));
+  U("offsetof.mi_memid_arena_info_t.slice_index", offsetof(mi_memid_arena_info_t, slice_index));
+  U("offsetof.mi_memid_arena_info_t.slice_count", offsetof(mi_memid_arena_info_t, slice_count));
+  U("sizeof.mi_memid_malloc_info_t", sizeof(mi_memid_malloc_info_t));
+  U("alignof.mi_memid_malloc_info_t", _Alignof(mi_memid_malloc_info_t));
+  U("offsetof.mi_memid_malloc_info_t.base", offsetof(mi_memid_malloc_info_t, base));
+  U("offsetof.mi_memid_malloc_info_t.size", offsetof(mi_memid_malloc_info_t, size));
   U("sizeof.mi_memid_t", sizeof(mi_memid_t));
   U("alignof.mi_memid_t", _Alignof(mi_memid_t));
   U("offsetof.mi_memid_t.mem", offsetof(mi_memid_t, mem));
+  U("offsetof.mi_memid_t.mem.os.base", offsetof(mi_memid_t, mem.os.base));
+  U("offsetof.mi_memid_t.mem.os.size", offsetof(mi_memid_t, mem.os.size));
+  U("offsetof.mi_memid_t.mem.arena.arena", offsetof(mi_memid_t, mem.arena.arena));
+  U("offsetof.mi_memid_t.mem.arena.slice_index", offsetof(mi_memid_t, mem.arena.slice_index));
+  U("offsetof.mi_memid_t.mem.arena.slice_count", offsetof(mi_memid_t, mem.arena.slice_count));
+  U("offsetof.mi_memid_t.mem.malloc.base", offsetof(mi_memid_t, mem.malloc.base));
+  U("offsetof.mi_memid_t.mem.malloc.size", offsetof(mi_memid_t, mem.malloc.size));
   U("offsetof.mi_memid_t.memkind", offsetof(mi_memid_t, memkind));
   U("offsetof.mi_memid_t.is_pinned", offsetof(mi_memid_t, is_pinned));
   U("offsetof.mi_memid_t.initially_committed", offsetof(mi_memid_t, initially_committed));
   U("offsetof.mi_memid_t.initially_zero", offsetof(mi_memid_t, initially_zero));
+  U("m1.provenance.memkind.is_os.mask", m1_memkind_predicate_mask(true));
+  U("m1.provenance.memkind.needs_no_free.mask", m1_memkind_predicate_mask(false));
+  uint8_t m1_memid_anchor = 0;
+  const mi_memid_t m1_memid_none = _mi_memid_none();
+  const mi_memid_t m1_memid_static = _mi_memid_create(MI_MEM_STATIC);
+  const mi_memid_t m1_memid_static_allocation =
+      _mi_memid_create_static(&m1_memid_anchor, 37);
+  const mi_memid_t m1_memid_malloc =
+      _mi_memid_create_malloc(&m1_memid_anchor, 41, true);
+  const mi_memid_t m1_memid_os =
+      _mi_memid_create_os(&m1_memid_anchor, 43, false, true, true);
+  U("m1.provenance.create.none.kind", m1_memid_none.memkind);
+  U("m1.provenance.create.none.pinned", m1_memid_none.is_pinned);
+  U("m1.provenance.create.none.committed", m1_memid_none.initially_committed);
+  U("m1.provenance.create.none.zero", m1_memid_none.initially_zero);
+  U("m1.provenance.create.none.memid_size", _mi_memid_size(m1_memid_none));
+  U("m1.provenance.create.static.kind", m1_memid_static.memkind);
+  U("m1.provenance.create.static.pinned", m1_memid_static.is_pinned);
+  U("m1.provenance.create.static.committed", m1_memid_static.initially_committed);
+  U("m1.provenance.create.static.zero", m1_memid_static.initially_zero);
+  U("m1.provenance.create.static.base_is_null", m1_memid_static.mem.malloc.base == NULL);
+  U("m1.provenance.create.static.stored_size", m1_memid_static.mem.malloc.size);
+  U("m1.provenance.create.static.memid_size", _mi_memid_size(m1_memid_static));
+  U("m1.provenance.create.static_allocation.kind", m1_memid_static_allocation.memkind);
+  U("m1.provenance.create.static_allocation.pinned", m1_memid_static_allocation.is_pinned);
+  U("m1.provenance.create.static_allocation.committed", m1_memid_static_allocation.initially_committed);
+  U("m1.provenance.create.static_allocation.zero", m1_memid_static_allocation.initially_zero);
+  U("m1.provenance.create.static_allocation.base_is_input", m1_memid_static_allocation.mem.malloc.base == &m1_memid_anchor);
+  U("m1.provenance.create.static_allocation.stored_size", m1_memid_static_allocation.mem.malloc.size);
+  U("m1.provenance.create.static_allocation.memid_size", _mi_memid_size(m1_memid_static_allocation));
+  U("m1.provenance.create.malloc.kind", m1_memid_malloc.memkind);
+  U("m1.provenance.create.malloc.pinned", m1_memid_malloc.is_pinned);
+  U("m1.provenance.create.malloc.committed", m1_memid_malloc.initially_committed);
+  U("m1.provenance.create.malloc.zero", m1_memid_malloc.initially_zero);
+  U("m1.provenance.create.malloc.base_is_input", m1_memid_malloc.mem.malloc.base == &m1_memid_anchor);
+  U("m1.provenance.create.malloc.stored_size", m1_memid_malloc.mem.malloc.size);
+  U("m1.provenance.create.malloc.memid_size", _mi_memid_size(m1_memid_malloc));
+  U("m1.provenance.create.os.kind", m1_memid_os.memkind);
+  U("m1.provenance.create.os.pinned", m1_memid_os.is_pinned);
+  U("m1.provenance.create.os.committed", m1_memid_os.initially_committed);
+  U("m1.provenance.create.os.zero", m1_memid_os.initially_zero);
+  U("m1.provenance.create.os.base_is_input", m1_memid_os.mem.os.base == &m1_memid_anchor);
+  U("m1.provenance.create.os.stored_size", m1_memid_os.mem.os.size);
+  U("m1.provenance.create.os.memid_size", _mi_memid_size(m1_memid_os));
   const mi_memid_t empty_page_memid = _mi_page_empty_get()->memid;
   const mi_memid_t empty_theap_memid = _mi_theap_empty.memid;
   U("m1.bootstrap.empty_page.memid.kind", empty_page_memid.memkind);
@@ -1099,10 +1188,47 @@ int main(void) {
   U("offsetof.mi_page_map_t.memid", offsetof(mi_page_map_t, memid));
   U("offsetof.mi_page_map_t.lock", offsetof(mi_page_map_t, lock));
   U("offsetof.mi_page_map_t.submaps", offsetof(mi_page_map_t, submaps));
+  U("sizeof.mi_encoded_t", sizeof(mi_encoded_t));
+  U("alignof.mi_encoded_t", _Alignof(mi_encoded_t));
+  U("sizeof.mi_threadid_t", sizeof(mi_threadid_t));
+  U("alignof.mi_threadid_t", _Alignof(mi_threadid_t));
+  U("sizeof.mi_thread_free_t", sizeof(mi_thread_free_t));
+  U("alignof.mi_thread_free_t", _Alignof(mi_thread_free_t));
+  U("sizeof.mi_used_t", sizeof(mi_used_t));
+  U("alignof.mi_used_t", _Alignof(mi_used_t));
+  U("sizeof.mi_page_flags_t", sizeof(mi_page_flags_t));
+  U("alignof.mi_page_flags_t", _Alignof(mi_page_flags_t));
+  U("value.MI_PAGE_IN_FULL_QUEUE", MI_PAGE_IN_FULL_QUEUE);
+  U("value.MI_PAGE_HAS_INTERIOR_POINTERS", MI_PAGE_HAS_INTERIOR_POINTERS);
+  U("value.MI_PAGE_FLAG_MASK", MI_PAGE_FLAG_MASK);
+  U("value.MI_PAGE_FLAG_BITS", MI_PAGE_FLAG_BITS);
+  U("value.MI_THREADID_ABANDONED", MI_THREADID_ABANDONED);
+  U("value.MI_THREADID_ABANDONED_MAPPED", MI_THREADID_ABANDONED_MAPPED);
+  U("value.MI_THREADID_DETACHED", MI_THREADID_DETACHED);
+  U("sizeof.mi_block_t", sizeof(mi_block_t));
+  U("alignof.mi_block_t", _Alignof(mi_block_t));
+  U("offsetof.mi_block_t.next", offsetof(mi_block_t, next));
   U("sizeof.mi_page_t", sizeof(mi_page_t));
   U("alignof.mi_page_t", _Alignof(mi_page_t));
+#if MI_PAGE_META_IS_ALIGNED
+  U("offsetof.mi_page_t.self", offsetof(mi_page_t, self));
+#endif
+  U("offsetof.mi_page_t.xthread_id", offsetof(mi_page_t, xthread_id));
+  U("offsetof.mi_page_t.free", offsetof(mi_page_t, free));
+  U("offsetof.mi_page_t.used", offsetof(mi_page_t, used));
+  U("offsetof.mi_page_t.local_free", offsetof(mi_page_t, local_free));
+  U("offsetof.mi_page_t.block_size", offsetof(mi_page_t, block_size));
+  U("offsetof.mi_page_t.page_offset", offsetof(mi_page_t, page_offset));
+  U("offsetof.mi_page_t.capacity", offsetof(mi_page_t, capacity));
+  U("offsetof.mi_page_t.reserved", offsetof(mi_page_t, reserved));
+  U("offsetof.mi_page_t.slice_pcommitted", offsetof(mi_page_t, slice_pcommitted));
+  U("offsetof.mi_page_t.retire_expire", offsetof(mi_page_t, retire_expire));
+  U("offsetof.mi_page_t.free_is_zero", offsetof(mi_page_t, free_is_zero));
   U("offsetof.mi_page_t.xthread_free", offsetof(mi_page_t, xthread_free));
   U("offsetof.mi_page_t.theap", offsetof(mi_page_t, theap));
+  U("offsetof.mi_page_t.heap", offsetof(mi_page_t, heap));
+  U("offsetof.mi_page_t.next", offsetof(mi_page_t, next));
+  U("offsetof.mi_page_t.prev", offsetof(mi_page_t, prev));
   U("offsetof.mi_page_t.memid", offsetof(mi_page_t, memid));
   U("sizeof.mi_page_kind_t", sizeof(mi_page_kind_t));
   U("alignof.mi_page_kind_t", _Alignof(mi_page_kind_t));

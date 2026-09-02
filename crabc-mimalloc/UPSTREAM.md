@@ -169,6 +169,52 @@ no-immediate shapes, and full-origin routes remain client-free-only.
 > only their sole-page classes and do not narrow these separate aggregate
 > boundaries.
 
+### M1 represented-layout boundary
+
+`provenance-and-represented-layouts` is a finite default-release metadata
+claim, not completion of either `types.h` or `internal.h`. Its C/Rust vector
+uses the selected Linux/AArch64 release preprocessing image and records only
+the following source-shaped representations and pure initializers:
+
+- `mi_memkind_t`: all eight discriminants, plus the direct
+  `mi_memkind_is_os` and `mi_memkind_needs_no_free` predicates. These decide
+  which `mi_memid_t` union interpretation is meaningful without allocating or
+  releasing memory.
+- `mi_memid_t`: the anonymous `mem` union itself; every field of its three
+  named arms (`os`, `arena`, and `malloc`); and the enclosing kind and three
+  flags. `mi_memid_t` is included because it is the provenance field embedded
+  by value in the selected `mi_page_t` image. Recording the `arena` arm proves
+  its representation only; it does not validate an arena pointer or construct
+  a live arena ID.
+- `mi_encoded_t`, `mi_threadid_t`, `mi_thread_free_t`, `mi_used_t`,
+  `mi_page_flags_t`, `mi_block_t::next`, and the page/thread flag constants:
+  these are the exact field types and bit values used by the selected page
+  record, not standalone allocation behavior.
+- `mi_page_t`: every field present after default-release preprocessing, from
+  `self` through `memid`, including all pointer, atomic, count, flag, and link
+  fields; and the complete `mi_page_kind_t` and `mi_page_queue_t` records.
+  They are fixed metadata representations needed before later page ownership
+  work can be assessed, not evidence of any page mutation, queue operation,
+  or allocation route.
+- `_mi_memid_create`, `_mi_memid_none`, `_mi_memid_create_static`,
+  `_mi_memid_create_malloc`, `_mi_memid_create_os`, and the selected
+  none/static/OS/malloc branches of `_mi_memid_size`. The trace observes their
+  actual returned kind, flags, union payload, and size result; pointer inputs
+  are compared only for identity, never serialized as addresses.
+
+The boundary is deliberately explicit. `MI_MEMID_STATIC` is a separate
+bootstrap-image witness owned by the still-partial bootstrap component.
+`mi_memid_arena`, arena-ID construction, external-memory ownership
+transitions, and the arena branch of `_mi_memid_size` need a live arena or its
+slice policy and remain M2 work. `mi_heap_t`, `mi_theap_t`, `mi_subproc_t`,
+`mi_tld_t`, `mi_arena_t`, `mi_arena_pages_t`, and statistics are later
+representation/lifecycle work. The conditional `mi_page_t::keys` tail and
+`mi_padding_t` are absent from the selected `MI_ENCODE_FREELIST=0`,
+`MI_PADDING=0` default image; testing nondefault layout modes is not implied
+by this M1 completion. These exclusions are duplicated in
+`compat/allocator/m1-foundations-v3.5.0.json` so a green vector cannot be
+read as a broader source-unit claim.
+
 | Upstream path and function group | Rust module | Provenance/notice status |
 | --- | --- | --- |
 
@@ -197,7 +243,7 @@ no-immediate shapes, and full-origin routes remain client-free-only.
 | `include/mimalloc/bits.h`: `mi_popcount`, `mi_ctz`, `mi_clz`, `mi_bsf`, `mi_bsr`, `mi_rotr`, `mi_rotl`, `mi_rotl32` | `src/bits.rs` | Source-specific 2019–2024 Microsoft Research/Daan Leijen MIT notice preserved |
 | `include/mimalloc/atomic.h`: word/pointer `mi_atomic_{load,store,exchange,cas,add,sub,and,or}_*`, increment/decrement forms, `mi_atomic_addi`/`mi_atomic_subi`, signed-64-bit statistics/timer forms, and `mi_atomic_guard` | `src/atomic.rs` | Source-specific 2018–2024 Microsoft Research/Daan Leijen MIT notice preserved; exact Relaxed/Acquire/Release/AcqRel pairs retained |
 | `include/mimalloc/types.h:37-250,463-492,545-557,612,716-718`, `include/mimalloc/bits.h:33-145`, `include/mimalloc/internal.h:717-719`, `src/bitmap.h:94-105`, and `CMakeLists.txt:7-24,161-192,280-340,361-454,647-693,769-774`: normal-release Linux/AArch64 constants and selected geometry | `src/config.rs`; `types.rs::emit_layout`; `compat/allocator/run.py::LAYOUT_PROBE` | Applicable 2018–2026 and 2019–2024 source-specific Microsoft Research/Daan Leijen MIT notices preserved. The finite M1 audit records the frozen outcome set: LP64 sizes, AArch64/little-endian selection, normal-release debug/secure/stat/guard/padding/freelist/check-free defaults, large-page/page-metadata alignment, selected 64-KiB-slice/512-bchunk macros, 48/43-bit two-level page map, and size-class/arena products. All `config.*` records and the scalar vector are direct C/Rust compared; `MI_ARENA_SLICE_SHIFT` and `MI_BCHUNK_BITS_SHIFT` are emitted as source macros. CMake's optional Armv8.3-a path intentionally remains outside the frozen Armv8.0 baseline. Alternate secure/debug/guarded/padding/tracking/checked-free/free-small/flat-page-map/legacy-shift/virtual-address and CMake-mode branches remain API inventory, not a whole-header completion claim. |
-| `include/mimalloc/types.h`: memory/page/queue/arena layouts, `mi_heap_t` source prefix through `memid`, `mi_theap_t` prefix, and full source-ordered `mi_tld_t` fields; `src/init.c`: empty page, queue, direct-table, detached-TLD, and empty-theap images | `src/types.rs` with the exact random field in `src/random.rs` | Source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notice preserved; arena layouts and represented Theap prefix offsets are C-oracle checked, and disjoint raw page projections cover the selected live-owner and abandoned-page atomic protocols. `Heap` retains coherent source order through `memid` and omits stats, making no full C `sizeof(mi_heap_t)` or public-API claim. The static main Heap keeps its abandoned/arena regions in valid zero/deferred state; the private dynamic binding may publish one typed arena-pages slot. `MemoryId::static_kind_only` matches `_mi_memid_create(MI_MEM_STATIC)` (zero union/flags); `MemoryId::static_empty` matches `MI_MEMID_STATIC` (null/zero union plus pinned and initially committed flags) for `mi_page_empty`, the initial `mi_tld_detached`, and `_mi_theap_empty`; the later detached-TLD setup replaces its memory ID with the kind-only constructor; and `MemoryId::static_allocation` represents concrete `_mi_memid_create_static` storage. `ThreadLocalData` preserves TLD field order and meaning, and `PrivateLock` is the documented Linux futex boundary rather than a pthread ABI object, so it makes no C `sizeof(mi_tld_t)` claim. `main_theap.rs` attaches the ticket-zero static TLD, while `dynamic_theap.rs` attaches one later-ticket metadata TLD and caller-pinned Heap; heap/theap tails, complete subprocess/statistics layout, and general lifecycle remain unclaimed. |
+| `include/mimalloc/types.h`: memory/page/queue/arena layouts, `mi_heap_t` source prefix through `memid`, `mi_theap_t` prefix, and full source-ordered `mi_tld_t` fields; `src/init.c`: empty page, queue, direct-table, detached-TLD, and empty-theap images | `src/types.rs` with the exact random field in `src/random.rs` | Source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notice preserved; the finite M1 default-release representation vector directly compares all `mi_memid_t` union member sizes/alignments/offsets, enum and page-flag values, `mi_block_t`, every represented `mi_page_t` field through `memid`, and every `mi_page_kind_t`/`mi_page_queue_t` field. Its paired `internal.h` trace compares pure memory-kind predicates plus `_mi_memid_create`, `_mi_memid_none`, `_mi_memid_create_os`, `_mi_memid_create_static`, `_mi_memid_create_malloc`, and only the selected none/static/OS/malloc branches of `_mi_memid_size`, without recording a raw address. Arena-ID construction/external-owner transitions remain M2 lifecycle work. Arena layouts and represented Theap prefix offsets are separately C-oracle checked, and disjoint raw page projections cover the selected live-owner and abandoned-page atomic protocols. `Heap` retains coherent source order through `memid` and omits stats, making no full C `sizeof(mi_heap_t)` or public-API claim. The static main Heap keeps its abandoned/arena regions in valid zero/deferred state; the private dynamic binding may publish one typed arena-pages slot. `MemoryId::static_kind_only` matches `_mi_memid_create(MI_MEM_STATIC)` (zero union/flags); `MemoryId::static_empty` matches `MI_MEMID_STATIC` (null/zero union plus pinned and initially committed flags) for `mi_page_empty`, the initial `mi_tld_detached`, and `_mi_theap_empty`; the later detached-TLD setup replaces its memory ID with the kind-only constructor; and `MemoryId::static_allocation` represents concrete `_mi_memid_create_static` storage. `ThreadLocalData` preserves TLD field order and meaning, and `PrivateLock` is the documented Linux futex boundary rather than a pthread ABI object, so it makes no C `sizeof(mi_tld_t)` claim. `main_theap.rs` attaches the ticket-zero static TLD, while `dynamic_theap.rs` attaches one later-ticket metadata TLD and caller-pinned Heap; heap/theap tails, complete subprocess/statistics layout, and general lifecycle remain unclaimed. |
 | `include/mimalloc/internal.h`: `_mi_is_power_of_two`, `_mi_align_up`, `_mi_align_down`, `_mi_divide_up`, `_mi_wsize_from_size`, slice conversions | `src/invariants.rs` | Source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notice preserved; the source's zero-power predicate and generic non-power-of-two alignment division paths are retained, while invalid alignment boundaries and representational overflow are explicit `Option` results |
 | `include/mimalloc/types.h` and `include/mimalloc/internal.h`: memory-kind classification, `_mi_memid_create*`, `_mi_memid_size`, and `_mi_is_aligned` | `src/provenance.rs` with representations in `src/types.rs` | Source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notice preserved; integer address arithmetic never reconstructs a pointer, and the source's zero-alignment no-constraint predicate is C/Rust checked separately from division-based alignment constructors |
 | `src/page-queue.c`: `mi_bin`, `_mi_bin`, `_mi_bin_size`, `mi_good_size`; `include/mimalloc/internal.h`: alignment/count/word-size checks; `src/arena.c`: regular/singleton size selection | `src/size_class.rs` | Source-specific 2018–2024 and 2018–2026 Microsoft Research/Daan Leijen MIT notices preserved; exact default `MI_ALIGN2W` small-bin behavior retained |

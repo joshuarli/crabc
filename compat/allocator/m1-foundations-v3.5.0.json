@@ -320,25 +320,146 @@
         },
         {
           "expected_passed_test_count": 1,
+          "id": "memory-id-constructor-variants",
+          "target": "provenance::tests::memory_id_constructors_keep_the_pinned_union_and_size_rules"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "represented-default-layouts",
           "target": "types::tests::metadata_layout_matches_the_default_release_c_contract"
         }
       ],
-      "completion_status": "partial",
+      "completion_status": "complete",
       "id": "provenance-and-represented-layouts",
       "layout_keys": [
         "sizeof.mi_memkind_t",
+        "alignof.mi_memkind_t",
+        "value.MI_MEM_NONE",
+        "value.MI_MEM_EXTERNAL",
+        "value.MI_MEM_STATIC",
+        "value.MI_MEM_OS",
+        "value.MI_MEM_OS_HUGE",
+        "value.MI_MEM_OS_REMAP",
+        "value.MI_MEM_ARENA",
+        "value.MI_MEM_MALLOC",
+        "sizeof.mi_memid_t.mem",
+        "alignof.mi_memid_t.mem",
+        "sizeof.mi_memid_os_info_t",
+        "alignof.mi_memid_os_info_t",
+        "offsetof.mi_memid_os_info_t.base",
+        "offsetof.mi_memid_os_info_t.size",
+        "sizeof.mi_memid_arena_info_t",
+        "alignof.mi_memid_arena_info_t",
+        "offsetof.mi_memid_arena_info_t.arena",
+        "offsetof.mi_memid_arena_info_t.slice_index",
+        "offsetof.mi_memid_arena_info_t.slice_count",
+        "sizeof.mi_memid_malloc_info_t",
+        "alignof.mi_memid_malloc_info_t",
+        "offsetof.mi_memid_malloc_info_t.base",
+        "offsetof.mi_memid_malloc_info_t.size",
         "sizeof.mi_memid_t",
+        "alignof.mi_memid_t",
         "offsetof.mi_memid_t.mem",
+        "offsetof.mi_memid_t.mem.os.base",
+        "offsetof.mi_memid_t.mem.os.size",
+        "offsetof.mi_memid_t.mem.arena.arena",
+        "offsetof.mi_memid_t.mem.arena.slice_index",
+        "offsetof.mi_memid_t.mem.arena.slice_count",
+        "offsetof.mi_memid_t.mem.malloc.base",
+        "offsetof.mi_memid_t.mem.malloc.size",
+        "offsetof.mi_memid_t.memkind",
+        "offsetof.mi_memid_t.is_pinned",
+        "offsetof.mi_memid_t.initially_committed",
+        "offsetof.mi_memid_t.initially_zero",
+        "m1.provenance.memkind.is_os.mask",
+        "m1.provenance.memkind.needs_no_free.mask",
+        "m1.provenance.create.none.kind",
+        "m1.provenance.create.none.pinned",
+        "m1.provenance.create.none.committed",
+        "m1.provenance.create.none.zero",
+        "m1.provenance.create.none.memid_size",
+        "m1.provenance.create.static.kind",
+        "m1.provenance.create.static.pinned",
+        "m1.provenance.create.static.committed",
+        "m1.provenance.create.static.zero",
+        "m1.provenance.create.static.base_is_null",
+        "m1.provenance.create.static.stored_size",
+        "m1.provenance.create.static.memid_size",
+        "m1.provenance.create.static_allocation.kind",
+        "m1.provenance.create.static_allocation.pinned",
+        "m1.provenance.create.static_allocation.committed",
+        "m1.provenance.create.static_allocation.zero",
+        "m1.provenance.create.static_allocation.base_is_input",
+        "m1.provenance.create.static_allocation.stored_size",
+        "m1.provenance.create.static_allocation.memid_size",
+        "m1.provenance.create.malloc.kind",
+        "m1.provenance.create.malloc.pinned",
+        "m1.provenance.create.malloc.committed",
+        "m1.provenance.create.malloc.zero",
+        "m1.provenance.create.malloc.base_is_input",
+        "m1.provenance.create.malloc.stored_size",
+        "m1.provenance.create.malloc.memid_size",
+        "m1.provenance.create.os.kind",
+        "m1.provenance.create.os.pinned",
+        "m1.provenance.create.os.committed",
+        "m1.provenance.create.os.zero",
+        "m1.provenance.create.os.base_is_input",
+        "m1.provenance.create.os.stored_size",
+        "m1.provenance.create.os.memid_size",
+        "sizeof.mi_encoded_t",
+        "alignof.mi_encoded_t",
+        "sizeof.mi_threadid_t",
+        "alignof.mi_threadid_t",
+        "sizeof.mi_thread_free_t",
+        "alignof.mi_thread_free_t",
+        "sizeof.mi_used_t",
+        "alignof.mi_used_t",
+        "sizeof.mi_page_flags_t",
+        "alignof.mi_page_flags_t",
+        "value.MI_PAGE_IN_FULL_QUEUE",
+        "value.MI_PAGE_HAS_INTERIOR_POINTERS",
+        "value.MI_PAGE_FLAG_MASK",
+        "value.MI_PAGE_FLAG_BITS",
+        "value.MI_THREADID_ABANDONED",
+        "value.MI_THREADID_ABANDONED_MAPPED",
+        "value.MI_THREADID_DETACHED",
+        "sizeof.mi_block_t",
+        "alignof.mi_block_t",
+        "offsetof.mi_block_t.next",
         "sizeof.mi_page_t",
+        "alignof.mi_page_t",
+        "offsetof.mi_page_t.self",
+        "offsetof.mi_page_t.xthread_id",
+        "offsetof.mi_page_t.free",
+        "offsetof.mi_page_t.used",
+        "offsetof.mi_page_t.local_free",
+        "offsetof.mi_page_t.block_size",
+        "offsetof.mi_page_t.page_offset",
+        "offsetof.mi_page_t.capacity",
+        "offsetof.mi_page_t.reserved",
+        "offsetof.mi_page_t.slice_pcommitted",
+        "offsetof.mi_page_t.retire_expire",
+        "offsetof.mi_page_t.free_is_zero",
+        "offsetof.mi_page_t.xthread_free",
+        "offsetof.mi_page_t.theap",
+        "offsetof.mi_page_t.heap",
+        "offsetof.mi_page_t.next",
+        "offsetof.mi_page_t.prev",
         "offsetof.mi_page_t.memid",
+        "sizeof.mi_page_kind_t",
+        "alignof.mi_page_kind_t",
+        "value.MI_PAGE_SMALL",
+        "value.MI_PAGE_MEDIUM",
+        "value.MI_PAGE_LARGE",
+        "value.MI_PAGE_SINGLETON",
         "sizeof.mi_page_queue_t",
+        "alignof.mi_page_queue_t",
+        "offsetof.mi_page_queue_t.first",
+        "offsetof.mi_page_queue_t.last",
+        "offsetof.mi_page_queue_t.count",
         "offsetof.mi_page_queue_t.block_size"
       ],
-      "remaining_conditions": [
-        "Review every M1-relevant type and prefix boundary against pinned source; this component presently proves only the named represented layouts.",
-        "Keep the intentional Heap, Theap, subprocess, and statistics omissions explicit until their owning later milestones have separate acceptance records."
-      ],
+      "remaining_conditions": [],
       "source_map_records": [
         {
           "kind": "item",
@@ -375,7 +496,18 @@
           "name": "_mi_memid_create_os-and-_mi_memid_size",
           "required_statuses": [
             "implemented",
-            "unit_verified"
+            "unit_verified",
+            "differential_verified"
+          ],
+          "upstream": "include/mimalloc/internal.h"
+        },
+        {
+          "kind": "item",
+          "name": "_mi_memid_create_static-and-malloc",
+          "required_statuses": [
+            "implemented",
+            "unit_verified",
+            "differential_verified"
           ],
           "upstream": "include/mimalloc/internal.h"
         }
@@ -750,10 +882,49 @@
     {
       "disposition": "deferred-to-m2-m3",
       "id": "whole-types-and-internal-units",
-      "reason": "The whole include/mimalloc/types.h and include/mimalloc/internal.h units remain partial. Heap/Theap tails, statistics, subprocess state, and generic allocator algorithms are not M1 completion claims.",
+      "reason": "The whole include/mimalloc/types.h and include/mimalloc/internal.h units remain partial. The complete represented-layout component covers only mi_memkind_t, the complete mi_memid_t representation, selected page field types, the default-release mi_page_t image through memid, mi_page_kind_t, mi_page_queue_t, and the named pure memory-ID constructors. Heap/Theap/subprocess/TLD/arena/statistics representations and generic allocator algorithms remain separate nonclaims.",
       "upstream_paths": [
         "include/mimalloc/types.h",
         "include/mimalloc/internal.h"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m2",
+      "id": "arena-and-external-memory-id-lifecycle",
+      "reason": "The M1 vector proves the mi_memid_t.mem.arena field representation only. mi_memid_arena, source arena-ID construction, the arena branch of _mi_memid_size, MI_MEM_EXTERNAL ownership transition, mi_arena_t, and mi_arena_pages_t require a live arena or externally managed mapping. Their pointer validity, slice bounds, slice-size policy, and ownership lifecycle belong to M2 arena management and are not implied by M1 layout parity.",
+      "upstream_paths": [
+        "include/mimalloc/types.h",
+        "include/mimalloc/internal.h",
+        "src/arena.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m7",
+      "id": "nondefault-page-layout-modes",
+      "reason": "The represented-layout component is restricted to the selected MI_PAGE_META_IS_ALIGNED=1, MI_ENCODE_FREELIST=0, MI_PADDING=0 release image. mi_page_t::keys and mi_padding_t are absent from that image; secure, encoded-freelist, padding, and other nondefault layout modes require their own option/mode contract and do not silently count as M1 coverage.",
+      "upstream_paths": [
+        "include/mimalloc/types.h"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m2-m3",
+      "id": "heap-theap-subprocess-and-tld-layout-lifecycles",
+      "reason": "mi_heap_t, mi_theap_t, mi_subproc_t, and mi_tld_t require later ownership, lock, thread, and page lifecycle acceptance. Existing prefix records remain bounded supporting evidence and are not a full C-layout or lifecycle claim in M1.",
+      "upstream_paths": [
+        "include/mimalloc/types.h",
+        "src/heap.c",
+        "src/theap.c",
+        "src/subproc.c",
+        "src/init.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m7",
+      "id": "statistics-representations-and-operations",
+      "reason": "mi_stats_t and all statistic-bearing type tails are M7 statistics work. Their absence is not hidden by the M1 default-page metadata layout proof.",
+      "upstream_paths": [
+        "include/mimalloc/types.h",
+        "src/stats.c"
       ]
     },
     {

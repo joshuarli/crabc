@@ -1070,11 +1070,11 @@ performance_qualified = false
 [[item]]
 upstream = "include/mimalloc/types.h"
 name = "mi_memkind_t-and-mi_memid_t"
-source_region = "memory-kind classification and memory provenance representation"
+source_region = "mi_memkind_t, mi_memkind_is_os, mi_memkind_needs_no_free, and the complete mi_memid_t union/field representation; excludes mi_memid_arena lifecycle projection"
 rust_module = "crabc_mimalloc::types"
 rust_item = "MemoryKind/MemoryInfo/MemoryId"
-intentional_difference = "C field names become domain-specific Rust names; the proven default layout and discriminant representation are retained."
-tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/provenance.rs"]
+intentional_difference = "C field names become domain-specific Rust names; the vector directly compares every selected union arm, enclosing field, discriminant, and kind predicate. Arena-arm layout is a representation-only claim: it carries no live arena pointer or mi_memid_arena projection authority."
+tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/provenance.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -1085,11 +1085,11 @@ performance_qualified = false
 [[item]]
 upstream = "include/mimalloc/types.h"
 name = "mi_page_t-default-layout"
-source_region = "default release page metadata through memid"
+source_region = "every mi_page_t field through memid in the selected MI_PAGE_META_IS_ALIGNED=1, MI_ENCODE_FREELIST=0, MI_PADDING=0 default release image"
 rust_module = "crabc_mimalloc::types"
 rust_item = "Page"
-intentional_difference = "Rust atomics and raw pointers retain the C layout; padding/encoded-freelist fields remain absent in the default profile exactly as configured upstream."
-tests = ["crabc-mimalloc/src/types.rs"]
+intentional_difference = "Rust atomics and raw pointers retain the C layout. The C probe names each selected source field directly; the conditional keys tail is absent in this profile and nondefault layout modes remain outside this M1 record."
+tests = ["crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -1100,11 +1100,11 @@ performance_qualified = false
 [[item]]
 upstream = "include/mimalloc/types.h"
 name = "mi_page_kind_t-and-mi_page_queue_t"
-source_region = "page kind and page queue representations"
+source_region = "complete selected default-release mi_page_kind_t and mi_page_queue_t representations"
 rust_module = "crabc_mimalloc::types"
 rust_item = "PageKind/PageQueue"
-intentional_difference = ""
-tests = ["crabc-mimalloc/src/types.rs"]
+intentional_difference = "The vector proves the enum values and every queue field only; it does not claim page-queue operations or lifecycle behavior."
+tests = ["crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -1130,15 +1130,30 @@ performance_qualified = false
 [[item]]
 upstream = "include/mimalloc/internal.h"
 name = "_mi_memid_create_os-and-_mi_memid_size"
-source_region = "OS memory-ID construction and kind-specific size"
+source_region = "_mi_memid_create_os and _mi_memid_size OS, none/static, and malloc size branches"
 rust_module = "crabc_mimalloc::provenance"
 rust_item = "MemoryId::os/MemoryId::size/MemoryId::os_base"
-intentional_difference = "Kind-mismatched union access is unrepresentable through the constructors; address extraction retains no pointer-reconstruction authority."
-tests = ["crabc-mimalloc/src/provenance.rs"]
+intentional_difference = "Kind-mismatched union access is unrepresentable through the constructors; address extraction retains no pointer-reconstruction authority. The C/Rust vector compares every OS constructor field and every selected _mi_memid_size result without recording a raw address."
+tests = ["crabc-mimalloc/src/provenance.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/internal.h"
+name = "_mi_memid_create_static-and-malloc"
+source_region = "_mi_memid_create, _mi_memid_none, _mi_memid_create_static, and _mi_memid_create_malloc"
+rust_module = "crabc_mimalloc::types and crabc_mimalloc::provenance"
+rust_item = "MemoryId::none/static_kind_only/static_allocation/malloc and MemoryId::{static_memory,malloc_memory,size}"
+intentional_difference = "The selected default-profile C/Rust trace compares kind, every flag, union base identity as a boolean, retained extent, and _mi_memid_size. It deliberately excludes arena-ID construction and external-owner transition, which are owned by M2 arena management."
+tests = ["crabc-mimalloc/src/provenance.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
