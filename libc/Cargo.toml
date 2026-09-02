@@ -41,10 +41,15 @@ x86-environment-runtime = ["x86-allocator-runtime"]
 # its closed capability gate. This implies the private allocation backend but
 # does not widen the earlier basic-wrapper artifact's exact object surface.
 x86-allocator-observability = ["x86-allocator-runtime"]
+# Private Linux/x86-64 h_errno accessor/object evidence. This retains only
+# the selected bootstrapped-main and selected-pthread-worker status slots;
+# it does not select resolver configuration, DNS, netdb, or a general TCB.
+x86-h-errno = []
 # Private Linux/x86-64 resolver-runtime evidence. The C ABI state owner uses
-# the existing stateless no_std DNS transport, but remains opt-in until this
-# bounded package has its own complete native evidence and family accounting.
-x86-resolver-runtime = ["dep:crabc-core"]
+# the separately evidenced h_errno state owner plus the existing stateless
+# no_std DNS transport, but remains opt-in until this bounded package has its
+# own complete native evidence and family accounting.
+x86-resolver-runtime = ["dep:crabc-core", "x86-h-errno"]
 # Private Linux/x86-64 evidence for the existing bounded SHA-crypt C ABI.
 # `sha-crypt` owns the MCF result temporarily. The target-local adapter bridges
 # only to the final link's C malloc/aligned_alloc/free symbols; this does not

@@ -243,9 +243,12 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             {"encrypt", "fmtmsg", "setkey"},
         )
         self.assertEqual(
+            verified["x86-h-errno"],
+            {"__h_errno_location"},
+        )
+        self.assertEqual(
             planned["x86-resolver-runtime"],
             {
-                "__h_errno_location",
                 "__res_state",
                 "dn_comp",
                 "res_mkquery",

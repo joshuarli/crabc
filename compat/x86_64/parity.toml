@@ -15719,7 +15719,7 @@ id = "libc.resolver"
 order = 100
 depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.posix-runtime", "libc.text-math-locale-stdio"]
 category = "c-abi"
-description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, legacy inet_network parser-composition, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic and network-part extraction, hstrerror message, dependency-free dn_skipname wire-name span codec, dependency-free dn_expand wire-name expansion codec, immutable _ns_flagdata nameserver flag-accessor table, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, dependency-free ns_put32 caller-owned 32-bit wire-write codec, dependency-composed ns_skiprr resource-record span codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
+description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, legacy inet_network parser-composition, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic and network-part extraction, hstrerror message, h_errno status-slot accessor/object, dependency-free dn_skipname wire-name span codec, dependency-free dn_expand wire-name expansion codec, immutable _ns_flagdata nameserver flag-accessor table, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, dependency-free ns_put32 caller-owned 32-bit wire-write codec, dependency-composed ns_skiprr resource-record span codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
 aarch64_gates = ["resolver-network", "libc-test"]
 source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/ns_flagdata.rs", "libc/src/c_abi/x86_64/ns_get16.rs", "libc/src/c_abi/x86_64/ns_get32.rs", "libc/src/c_abi/x86_64/ns_put16.rs", "libc/src/c_abi/x86_64/ns_put32.rs", "libc/src/c_abi/x86_64/ns_skiprr.rs", "compat/resolver-network"]
 x86_abi_prerequisites = ["socket and DNS wire I/O syscall boundary", "x86 socket/address record layouts"]
@@ -15968,6 +15968,57 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-hstrerror", scope = "Pinned-musl project-header C execution followed by a true x86 `-nostdlib -static` candidate. The fixed-profile hstrerror regression ratchets the aggregate selected archive export surface, the pinned hstrerror.lo message sequence, GNU/BSD h_errno constants and `hstrerror` type, C/POSIX/C.UTF-8 Host not found/Try again/Non-recoverable error/Address not available/Unknown error output, stable pointer identity, and reference-only stale errno preservation. The final candidate has no interpreter/DT_NEEDED/unresolved dependency, no TLS, no errno/h_errno storage, no calls or syscalls in `hstrerror`, and no resolver configuration, DNS, `/etc/hosts`, `/etc/resolv.conf`, conventional network database, NSS/plugin, allocator, stdio, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX oracle for src/network/hstrerror.c's packed h_errno message order, empty-sentinel unknown fallback, and C/POSIX/C.UTF-8 LCTRANS_CUR identity; hosts/resolver/DNS/network-database behavior and locale catalogs remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 int argument and immutable char-pointer return convention for the GNU/BSD hstrerror C boundary used by the freestanding candidate." }]
+
+[[family.verified_artifact]]
+id = "static-c-h-errno"
+description = "Private native x86 static `h_errno` status-slot artifact inside still-planned `libc.resolver`, not resolver-network behavior or a complete C runtime. One project-header C/C++ visibility fixture and one project-header C runtime fixture first execute against pinned musl 1.2.6 and then against a true `-nostdlib -static` candidate linked through the opt-in crabc archive. It exposes exactly the four-byte global `h_errno` object and the no-argument `__h_errno_location` accessor: the authenticated bootstrapped main task uses the link-visible object, while a selected pthread worker uses one direct Static Initial TLS slot and remains isolated from the main value. The artifact supports those two `process.globals` names but does not complete `process.globals`, resolver state, or any broader netdb surface. It neither parses resolver configuration nor opens `/etc/hosts` or `/etc/resolv.conf`, performs DNS/socket/network-database I/O, or selects `getaddrinfo`, `__res_state`, allocation, `crabc-core`, resolver-runtime completion, family promotion, or public x86 support. Foreign-thread callers, dynamic TLS, general TCB access, and unselected pthread behavior remain outside this deliberately narrow status-storage boundary."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/h_errno.rs",
+  "libc/src/c_abi/x86_64/pthread_identity.rs",
+  "libc/src/c_abi/x86_64/pthread_create_join.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/resolver_runtime.rs",
+  "include/netdb.h",
+  "include/pthread.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/h_errno_header_abi_probe.c",
+  "compat/x86_64/h_errno_header_abi_probe.cpp",
+  "compat/x86_64/run_h_errno_header_abi.sh",
+  "compat/x86_64/libc_h_errno_probe.c",
+  "compat/x86_64/libc_h_errno_start.S",
+  "compat/x86_64/run_libc_h_errno.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_h_errno.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected legacy GNU/BSD C boundary is System V AMD64 LP64: `h_errno` is one global/default four-byte int object and `__h_errno_location(void)` receives no arguments and returns its selected int pointer in rax. The main-task fallback is link-visible BSS; selected pthread workers use one direct initial-exec TPOFF slot with the same four-byte alignment and no dynamic-TLS resolver.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/network/h_errno.c` to `h_errno.lo`, whose static x86 ABI owns the global `h_errno` object and `__h_errno_location` accessor. Intentional source-layout difference: musl reaches its full pthread/TCB worker status storage, while this selected translation deliberately authenticates only Static Initial TLS v1 and the selected pthread create/join lifecycle, then owns one direct initial-TLS worker slot. Evidence asserts selected main fallback versus selected-worker status identity and isolation, not a general musl TCB field layout or offset.",
+  "The status slot is mutable C state: selected callers may read and write it through the accessor, and the selected worker slot is not valid after worker teardown. This artifact has no general TCB, foreign-thread, dynamic TLS, resolver configuration, DNS, netdb, socket, allocation, syscall, or resolver-runtime completion contract.",
+]
+x86_header_prerequisites = [
+  "The dedicated project-first/pinned-musl `<netdb.h>` C/C++ visibility gate checks seven compiler-derived profiles: C11 GNU/BSD and POSIX/XOPEN strict profiles plus C++17 GNU/strict profiles. It proves the h_errno accessor macro is visible only in the retained GNU/BSD profiles, has `int *` expression type, and retains an unmangled `__h_errno_location` declaration; it is compile-only evidence and does not prove archive linkage, resolver behavior, installed-header completion, family promotion, or public x86 support.",
+  "The static C fixture preprocesses the project `netdb.h` and `pthread.h` declarations before comparing the legacy object/accessor and selected worker lifecycle against pinned musl. It selects no resolver-configuration, DNS, socket, hosts/services database, or broader netdb header state.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-h-errno", scope = "Pinned-musl/project-header C execution plus a true x86 `-nostdlib -static` candidate linked through the opt-in archive. The gate ratchets the exact feature delta to `h_errno` and `__h_errno_location`, proves the pinned `h_errno.lo` source mapping and global-object/accessor ELF shape, and checks direct initial-exec TPOFF with no dynamic TLS. The fixed regression proves the bootstrapped main-task fallback identity, selected pthread worker isolation and mutation, stable repeated worker location, four-byte object layout, and no stale main-task change. It rejects resolver configuration, DNS/socket/network-database I/O, resolver-runtime/core/allocator dependencies, foreign-thread/general-TCB behavior, interpreter/DT_NEEDED/unresolved symbols, and dynamic linkage. This status artifact supports two `process.globals` names but does not complete `process.globals`, resolver-network behavior, the owning family, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX GNU/BSD netdb oracle for src/network/h_errno.c and h_errno.lo: link-visible four-byte h_errno storage, accessor spelling, and the selected legacy status-slot boundary; resolver configuration, DNS, netdb databases, and foreign-thread behavior remain unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 no-argument pointer return, four-byte global object, direct initial-exec TLS relocation, and freestanding static ELF linkage contract for the selected accessor/object." },
+]
 
 [[family.verified_artifact]]
 id = "static-c-dn-skipname"
@@ -18818,12 +18869,24 @@ replacement_callables = []
 aliases = []
 
 [[feature_archive]]
+id = "x86-h-errno"
+state = "verified"
+evidence_record = "static-c-h-errno"
+runner = "compat/x86_64/run_libc_h_errno.sh"
+dispatch_command = "libc-h-errno"
+baseline_features = []
+enabled_features = ["x86-h-errno"]
+additive_callables = ["__h_errno_location"]
+replacement_callables = []
+aliases = []
+
+[[feature_archive]]
 id = "x86-resolver-runtime"
 state = "planned"
 runner = "compat/x86_64/run_libc_resolver_runtime.sh"
-baseline_features = []
+baseline_features = ["x86-h-errno"]
 enabled_features = ["x86-resolver-runtime"]
-additive_callables = ["__h_errno_location", "__res_state", "dn_comp", "res_mkquery", "res_query", "res_querydomain", "res_search", "res_send"]
+additive_callables = ["__res_state", "dn_comp", "res_mkquery", "res_query", "res_querydomain", "res_search", "res_send"]
 replacement_callables = ["getaddrinfo", "res_init"]
 aliases = [
   { name = "res_mkquery", target = "__res_mkquery", binding = "weak-same-address" },

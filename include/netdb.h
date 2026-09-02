@@ -46,10 +46,10 @@ extern "C" {
 #define NO_DATA 4
 #define NO_ADDRESS NO_DATA
 #if defined(__x86_64__)
-/* The x86 resolver package has native evidence for musl's accessor spelling:
+/* The x86 h_errno artifact has native evidence for musl's accessor spelling:
  * the bootstrapped main task retains the link-visible fallback object while
- * selected workers receive distinct resolver TLS slots. The active AArch64
- * C ABI still has its older direct-object contract until it has equivalent
+ * selected workers receive distinct status TLS slots. The active AArch64 C
+ * ABI still has its older direct-object contract until it has equivalent
  * lifecycle evidence, so do not treat this target branch as shared support. */
 int *__h_errno_location(void);
 #define h_errno (*__h_errno_location())

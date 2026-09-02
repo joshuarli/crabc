@@ -709,6 +709,9 @@ mod endhostent;
 mod sethostent;
 #[path = "ether_line.rs"]
 mod ether_line;
+#[cfg(feature = "x86-h-errno")]
+#[path = "h_errno.rs"]
+mod h_errno;
 #[cfg(feature = "x86-resolver-runtime")]
 #[path = "resolver_runtime.rs"]
 mod resolver_runtime;

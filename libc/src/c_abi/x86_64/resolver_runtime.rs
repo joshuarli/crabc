@@ -1,8 +1,9 @@
 //! Bounded Linux/x86-64 C resolver runtime.
 //!
-//! This module is the C-owned resolver boundary.  It owns the historical
-//! per-thread `__res_state` and `h_errno` accessor slots, parses fresh bounded snapshots
-//! of `/etc/resolv.conf` and `/etc/hosts`, and attaches symbolic results to
+//! This module is the C-owned resolver boundary. It owns the historical
+//! per-thread `__res_state` record, composes the separately selected `h_errno`
+//! accessor/object owner, parses fresh bounded snapshots of `/etc/resolv.conf`
+//! and `/etc/hosts`, and attaches symbolic results to
 //! the existing page-owned `addrinfo` list lifetime.  Numeric and passive
 //! `getaddrinfo` cases stay in `numeric_netdb`; they never open a local file
 //! or send DNS.  DNS wire validation, timeout, configured-order failover, and
@@ -13,10 +14,11 @@
 //! The source/behavior oracle is pinned musl 1.2.6, release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, MIT licensed:
 //!
-//! - `src/network/h_errno.c`, `res_mkquery.c`, `res_send.c`, `res_query.c`,
-//!   and `res_querydomain.c` supply the selected historical resolver
-//!   spellings; `res_query.c` supplies musl's `res_query`/`res_search` weak
-//!   alias boundary;
+//! - `src/network/res_mkquery.c`, `res_send.c`, `res_query.c`, and
+//!   `res_querydomain.c` supply the selected historical resolver spellings;
+//!   `res_query.c` supplies musl's `res_query`/`res_search` weak alias
+//!   boundary; `src/network/h_errno.c` is instead owned by the separate
+//!   `h_errno` artifact composed by this feature;
 //! - `src/network/lookup_name.c` and `lookup_ipliteral.c` establish the
 //!   numeric-before-hosts-before-DNS ordering used by `getaddrinfo`; and
 //! - `src/network/resolvconf.c` is the configuration/layout source.
@@ -38,8 +40,7 @@ use crabc_core::resolver::{
 };
 
 use super::{
-    errno, inet_address, numeric_netdb::{self, Address, CabiAddrInfo}, pthread_identity,
-    raw_syscall, static_tls,
+    errno, h_errno, inet_address, numeric_netdb::{self, Address, CabiAddrInfo}, raw_syscall,
 };
 
 const AF_UNSPEC: c_int = 0;
@@ -232,38 +233,15 @@ static mut RESOLVER_RES_STATE: ResolverResState = ResolverResState {
 #[thread_local]
 static mut RESOLVER_IPV6_NAMESERVERS: [SockaddrIn6; MAXNS] = [ZERO_SOCKADDR_IN6; MAXNS];
 
-/// Link-visible legacy fallback object for the bootstrapped initial thread.
+/// Return this resolver feature's selected worker `res_h_errno` storage.
 ///
-/// musl retains an ELF `h_errno` data symbol for old object compatibility, but
-/// its public header deliberately spells `h_errno` as
-/// `(*__h_errno_location())`.  The selected x86 resolver follows that public
-/// contract: [`__h_errno_location`] returns this process-main fallback for the
-/// bootstrapped initial thread and the caller's initial-TLS resolver record for
-/// a selected worker. The object is therefore neither the public C spelling
-/// nor an inter-thread status channel.
-#[no_mangle]
-pub static mut h_errno: c_int = 0;
-
-/// Locate the selected musl-shaped legacy resolver status slot.
-///
-/// `Static Initial TLS v1` is the only x86 runtime owner that can establish
-/// the process-main identity.  Matching both its pointer and Linux task ID
-/// makes a copied `%fs` base insufficient to select the global fallback.
-/// Every selected worker has a distinct direct-TLS resolver record instead.
+/// The separately owned `h_errno` accessor calls this only when the resolver
+/// feature is enabled. It keeps resolver-operation status and the public
+/// `__res_state()->res_h_errno` field synchronized without making this module
+/// define the public `h_errno` object or accessor.
 #[inline]
-unsafe fn resolver_h_errno_location() -> *mut c_int {
-    let thread_pointer = pthread_identity::current_thread_pointer();
-    if static_tls::is_initial_thread_pointer(thread_pointer) {
-        core::ptr::addr_of_mut!(h_errno)
-    } else {
-        core::ptr::addr_of_mut!(RESOLVER_RES_STATE.res_h_errno)
-    }
-}
-
-/// Return the calling thread's historical resolver error slot.
-#[no_mangle]
-pub unsafe extern "C" fn __h_errno_location() -> *mut c_int {
-    unsafe { resolver_h_errno_location() }
+pub(super) unsafe fn resolver_worker_h_errno_location() -> *mut c_int {
+    core::ptr::addr_of_mut!(RESOLVER_RES_STATE.res_h_errno)
 }
 
 /// Return the calling thread's historical resolver state record.
@@ -280,14 +258,14 @@ unsafe fn set_errno(value: c_int) {
 #[inline]
 unsafe fn set_h_errno(value: c_int) {
     unsafe {
-        resolver_h_errno_location().write(value);
+        h_errno::set(value);
         RESOLVER_RES_STATE.res_h_errno = value;
     }
 }
 
 #[inline]
 unsafe fn current_h_errno() -> c_int {
-    unsafe { resolver_h_errno_location().read() }
+    unsafe { h_errno::current() }
 }
 
 #[inline]

@@ -1705,7 +1705,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "timerfd-header-abi|signalfd-header-abi",
             "signal-legacy-aliases-header-abi|libc-signal-legacy-aliases|signal-sysv-helpers-header-abi|libc-signal-sysv-helpers",
             "psignal-header-abi|libc-psignal|libc-process-signal",
-            "resolver-runtime-header-abi|libc-resolver-runtime",
+            "h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime",
             "legacy-misc-header-abi|libc-legacy-misc",
             "usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",

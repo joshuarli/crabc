@@ -2307,6 +2307,24 @@ allocation, stdio, syscalls, `/etc/hosts`, `/etc/resolv.conf`, resolver
 configuration, DNS, network-database/NSS, interface, socket, libc.so, CRT,
 loader, sysroot, resolver completion, family promotion, or public x86 support.
 
+`h-errno-header-abi` (`./scripts/dev-x86_64.sh h-errno-header-abi`) is the
+seven-profile project-first/pinned-musl C and C++ `<netdb.h>` gate for the
+feature-gated `h_errno` accessor macro and `__h_errno_location` declaration.
+It records the GNU/BSD visibility split, the `int *` result type, and
+unmangled C++ linkage; it does not link an archive or select resolver behavior.
+`libc-h-errno` (`./scripts/dev-x86_64.sh libc-h-errno`) is the separate private
+static ABI artifact under still-planned `libc.resolver`. It selects only the
+four-byte link-visible `h_errno` fallback object and its accessor, with the
+authenticated main thread using that object and selected pthread workers using
+one direct initial-TLS slot. The pinned-musl comparison and freestanding
+`-nostdlib -static` fixture retain this boundary and reject dynamic TLS,
+resolver configuration, DNS, socket/network database behavior, and foreign
+threads. Musl's `h_errno.lo` normally reaches worker state through its full
+musl TCB; this selected port intentionally substitutes the direct static-TLS
+slot and therefore claims only the tested selected-worker semantics. The
+artifact does not complete `process.globals`, resolver behavior, family
+promotion, or public x86 support.
+
 `libc-endservent` (`./scripts/dev-x86_64.sh libc-endservent`) is a separate
 private static C ABI leaf under still-planned `libc.c-abi-compat`, not a
 service-database or resolver-network capability. The paired

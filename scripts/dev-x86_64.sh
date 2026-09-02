@@ -571,6 +571,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-inet-ntoa  run the archive-free static x86 crabc-libc inet_ntoa scratch-buffer slice
   libc-inet-classful  run the archive-free static x86 crabc-libc classful IPv4 slice
   libc-hstrerror  run the static x86 crabc-libc h_errno message-string slice
+  libc-h-errno  run the opt-in static x86 crabc-libc h_errno status-slot slice
   libc-endservent  run the archive-free static x86 crabc-libc legacy service-terminator slice
   libc-numeric-netdb  run the static x86 crabc-libc deterministic numeric netdb slice
   libc-resolver-runtime  run the hermetic static x86 C resolver-runtime slice
@@ -2293,6 +2294,7 @@ general facade admission, or C ABI support claim.
   posix-spawnattr-setschedparam-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setschedparam declaration
   posix-spawnattr-setschedpolicy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setschedpolicy declaration
   res-init-header-abi  compile the staged x86 C/C++ legacy resolver-initializer declaration
+  h-errno-header-abi  verify x86 <netdb.h> h_errno C/C++ feature visibility and linkage
   resolver-runtime-header-abi  verify x86 C/C++ resolver-state and legacy resolver ABI
   c32rtomb-header-abi  verify x86 C11 UTF-32 encoder C/C++ declarations and linkage
   chown-header-abi  verify selected x86 POSIX chown C/C++ declarations
@@ -4923,7 +4925,7 @@ case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     signal-legacy-aliases-header-abi|libc-signal-legacy-aliases|signal-sysv-helpers-header-abi|libc-signal-sysv-helpers) ;;
     psignal-header-abi|libc-psignal|libc-process-signal) ;;
-    resolver-runtime-header-abi|libc-resolver-runtime) ;;
+    h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime) ;;
     legacy-misc-header-abi|libc-legacy-misc) ;;
     usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
@@ -7913,6 +7915,11 @@ case "$command" in
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_hstrerror.sh
         ;;
+    libc-h-errno)
+        [ "$#" -eq 0 ] || fail "libc-h-errno takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_h_errno.sh
+        ;;
     libc-endservent)
         [ "$#" -eq 0 ] || fail "libc-endservent takes no arguments"
         ensure_image
@@ -8397,6 +8404,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "res-init-header-abi takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_res_init_header_abi.sh
+        ;;
+    h-errno-header-abi)
+        [ "$#" -eq 0 ] || fail "h-errno-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_h_errno_header_abi.sh
         ;;
     resolver-runtime-header-abi)
         [ "$#" -eq 0 ] || fail "resolver-runtime-header-abi takes no arguments"

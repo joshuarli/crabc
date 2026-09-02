@@ -66,9 +66,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 346)
-        self.assertEqual(report["feature_archive_count"], 18)
-        self.assertEqual(report["verified_feature_archive_count"], 17)
+        self.assertEqual(report["verified_artifact_count"], 348)
+        self.assertEqual(report["feature_archive_count"], 19)
+        self.assertEqual(report["verified_feature_archive_count"], 18)
         self.assertEqual(report["planned_feature_archive_count"], 1)
         self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -123,9 +123,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             data, self.verified_records(data)
         )
         self.assertEqual(report, {
-            "feature_archive_count": 18,
+            "feature_archive_count": 19,
             "planned_feature_archive_count": 1,
-            "verified_feature_archive_count": 17,
+            "verified_feature_archive_count": 18,
         })
 
         feature_archives = data["feature_archive"]

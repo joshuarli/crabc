@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "resolver_runtime.rs"
+H_ERRNO = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "h_errno.rs"
 RUNNER = ROOT / "compat" / "x86_64" / "run_libc_resolver_runtime.sh"
 PROBE = ROOT / "compat" / "x86_64" / "libc_resolver_runtime_probe.c"
 RESOLV_HEADER = ROOT / "include" / "resolv.h"
@@ -68,6 +69,7 @@ class ResolverRuntimeAliasTests(unittest.TestCase):
 
     def test_h_errno_uses_the_public_accessor_macro_and_per_thread_resolver_slot(self) -> None:
         runtime = RUNTIME.read_text(encoding="utf-8")
+        h_errno = H_ERRNO.read_text(encoding="utf-8")
         netdb_header = (ROOT / "include" / "netdb.h").read_text(encoding="utf-8")
         fixture = PROBE.read_text(encoding="utf-8")
 
@@ -82,12 +84,12 @@ class ResolverRuntimeAliasTests(unittest.TestCase):
             r"(?s)#if !defined\(__x86_64__\).*?extern int h_errno;",
         )
         self.assertRegex(
-            runtime,
-            r'(?s)fn __h_errno_location\(\) -> \*mut c_int \{\s*'
-            r'unsafe \{ resolver_h_errno_location\(\) \}',
+            h_errno,
+            r'(?s)pub extern "C" fn __h_errno_location\(\) -> \*mut c_int \{\s*'
+            r'.*?unsafe \{ location\(\) \}',
         )
         for required in (
-            "fn resolver_h_errno_location() -> *mut c_int",
+            "pub(super) unsafe fn resolver_worker_h_errno_location() -> *mut c_int",
             "static_tls::is_initial_thread_pointer(thread_pointer)",
             "core::ptr::addr_of_mut!(h_errno)",
             "core::ptr::addr_of_mut!(RESOLVER_RES_STATE.res_h_errno)",
@@ -95,7 +97,20 @@ class ResolverRuntimeAliasTests(unittest.TestCase):
             "__h_errno_location() != &crabc_link_visible_h_errno",
         ):
             with self.subTest(required=required):
-                self.assertIn(required, runtime if required.startswith(("fn ", "static_tls", "core::")) else fixture)
+                target = (
+                    h_errno
+                    if required in {
+                        "static_tls::is_initial_thread_pointer(thread_pointer)",
+                        "core::ptr::addr_of_mut!(h_errno)",
+                    }
+                    else runtime
+                    if required.startswith("pub(super)")
+                    or required == "core::ptr::addr_of_mut!(RESOLVER_RES_STATE.res_h_errno)"
+                    else fixture
+                )
+                self.assertIn(required, target)
+        self.assertNotIn("fn __h_errno_location", runtime)
+        self.assertNotIn("static mut h_errno", runtime)
         for required in (
             "#include <pthread.h>",
             "check_h_errno_worker",

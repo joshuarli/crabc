@@ -17,7 +17,6 @@
         "evidence_record": null,
         "id": "x86-resolver-runtime",
         "members": [
-          "__h_errno_location",
           "__res_state",
           "dn_comp",
           "res_mkquery",
@@ -1592,6 +1591,16 @@
           "malloc_usable_size"
         ],
         "runner": "compat/x86_64/run_libc_allocator_observability.sh",
+        "state": "verified"
+      },
+      {
+        "aliases": [],
+        "evidence_record": "static-c-h-errno",
+        "id": "x86-h-errno",
+        "members": [
+          "__h_errno_location"
+        ],
+        "runner": "compat/x86_64/run_libc_h_errno.sh",
         "state": "verified"
       },
       {
@@ -423982,7 +423991,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "b808df27081e0d0396707f1ed83e233c1f805d69240562a828cb138eda093acf",
+    "parity_ledger_sha256": "bf64ea537867d9907281641a647a17fd5b23e2f048467e28a05156ea9bd1ea6b",
     "static_c_abi_exports_sha256": "4bae318653f77305fe753238496833793609417c453b2cebbf225b7a665f43e8"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -442853,10 +442862,10 @@
       "missing": 60
     },
     "callable_provider_counts": {
-      "declared_unverified_feature_archives": 8,
+      "declared_unverified_feature_archives": 7,
       "default_static": 1048,
       "unprovided": 417,
-      "verified_feature_archives": 38
+      "verified_feature_archives": 39
     },
     "candidate_external_callable_count": 1511,
     "candidate_public_header_count": 191,

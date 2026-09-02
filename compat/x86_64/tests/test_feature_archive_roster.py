@@ -55,7 +55,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         rows = ROSTER.load_feature_archive_roster()
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
-        self.assertEqual(len(rows), 18)
+        self.assertEqual(len(rows), 19)
         self.assertEqual(
             [item.identifier for item in rows if item.state == "planned"],
             ["x86-resolver-runtime"],

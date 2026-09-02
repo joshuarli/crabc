@@ -43778,6 +43778,172 @@ def require_posix_close_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"posix_close dispatcher omits {snippet}")
 
 
+def require_h_errno_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected h_errno slot ABI separate from resolver completion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [artifact for artifact in artifacts if artifact.get("id") == "static-c-h-errno"]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-h-errno artifact",
+    )
+    require(family.get("status") == "planned", "static-c-h-errno must not promote libc.resolver")
+    artifact = matching[0]
+    require("capabilities" not in artifact, "static-c-h-errno must not claim a capability")
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-h-errno needs a description")
+    for phrase in (
+        "h_errno",
+        "__h_errno_location",
+        "still-planned `libc.resolver`",
+        "process.globals",
+        "resolver configuration",
+        "DNS",
+        "does not complete",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-h-errno description omits {phrase}")
+    require(
+        "foreign-thread" in description.lower(),
+        "static-c-h-errno description omits foreign-thread",
+    )
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-h-errno.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/h_errno.rs",
+        "libc/src/c_abi/x86_64/pthread_identity.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/netdb.h",
+        "compat/x86_64/h_errno_header_abi_probe.c",
+        "compat/x86_64/h_errno_header_abi_probe.cpp",
+        "compat/x86_64/run_h_errno_header_abi.sh",
+        "compat/x86_64/libc_h_errno_probe.c",
+        "compat/x86_64/libc_h_errno_start.S",
+        "compat/x86_64/run_libc_h_errno.sh",
+        "compat/x86_64/tests/test_h_errno.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-h-errno source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-h-errno.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "__h_errno_location" in item
+            and ("int *" in item or "int pointer" in item)
+            and "four-byte" in item
+            for item in prerequisites
+        ),
+        "static-c-h-errno must record its x86 C ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/h_errno.c" in item
+            and "h_errno.lo" in item
+            for item in prerequisites
+        ),
+        "static-c-h-errno must retain its pinned-musl source mapping",
+    )
+    prerequisite_text = "\n".join(prerequisites)
+    require(
+        all(
+            phrase in prerequisite_text
+            for phrase in (
+                "Static Initial TLS v1",
+                "selected pthread",
+                "foreign-thread",
+            )
+        )
+        and ("dynamic TLS" in prerequisite_text or "dynamic-TLS" in prerequisite_text),
+        "static-c-h-errno must retain its selected TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-h-errno.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "netdb.h" in item
+            and "h_errno" in item
+            and ("h-errno-header-abi" in item or "visibility gate" in item)
+            and "C++" in item
+            for item in headers
+        ),
+        "static-c-h-errno must record its bounded netdb C/C++ header gate",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-h-errno needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-h-errno"},
+        "static-c-h-errno must use the closed libc-h-errno command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-h-errno evidence needs a scope")
+    scope_text = scope.lower()
+    for phrase in (
+        "h_errno",
+        "__h_errno_location",
+        "pinned-musl",
+        "-nostdlib -static",
+        "selected pthread worker",
+        "resolver configuration",
+        "does not complete",
+        "public x86 support",
+    ):
+        require(phrase in scope_text, f"static-c-h-errno evidence omits {phrase}")
+
+    static_root = (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
+    require(
+        '#[path = "h_errno.rs"]\nmod h_errno;' in static_root,
+        "x86 static C ABI must compose the h_errno leaf",
+    )
+    source = (ROOT / "libc/src/c_abi/x86_64/h_errno.rs").read_text(encoding="utf-8")
+    for snippet in (
+        "src/network/h_errno.c",
+        "#[thread_local]",
+        "static_tls::is_initial_thread_pointer",
+        'pub extern "C" fn __h_errno_location() -> *mut c_int',
+    ):
+        require(snippet in source, f"h_errno leaf omits {snippet}")
+    for forbidden in ("raw_syscall", "crabc_mimalloc"):
+        require(forbidden not in source, f"h_errno leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat/x86_64/run_libc_h_errno.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "h_errno.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "R_X86_64_TPOFF",
+        "--features x86-resolver-runtime",
+        "resolver_runtime",
+    ):
+        require(snippet in runner, f"h_errno runner omits {snippet}")
+
+    dispatch = (ROOT / "scripts/dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("h-errno-header-abi)", "libc-h-errno)"):
+        require(snippet in dispatch, f"h_errno dispatcher omits {snippet}")
+
+
 def require_endhostent_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's stateless netdb terminator alias out of resolver state."""
     artifacts = require_verified_artifacts(
@@ -72077,6 +72243,7 @@ def validate_ledger(
     require_inet_network_artifact(by_id["libc.resolver"])
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
+    require_h_errno_artifact(by_id["libc.resolver"])
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
     require_issetugid_artifact(by_id["libc.c-abi-compat"])
     require_legacy_misc_slice(by_id["libc.c-abi-compat"])

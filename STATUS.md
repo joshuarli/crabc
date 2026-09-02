@@ -89,6 +89,19 @@ or syscall path. It does not inspect `/etc/hosts` or `/etc/resolv.conf`,
 configure or send DNS, consult a network database/NSS, touch interfaces or
 sockets, complete the resolver family, promote x86, or claim public support.
 
+`./scripts/dev-x86_64.sh libc-h-errno` is a separate private
+`static-c-h-errno` status-slot artifact inside still-planned `libc.resolver`.
+The paired `h-errno-header-abi` gate compares seven isolated project/musl
+`<netdb.h>` C/C++ feature profiles for the accessor macro, `int *` result, and
+unmangled C++ linkage. Its pinned-musl and true `-nostdlib -static` fixture
+proves only the four-byte link-visible `h_errno` fallback plus
+`__h_errno_location`: the bootstrapped main task uses that object and a
+selected pthread worker uses one direct initial-TLS slot. Musl normally reaches
+worker state through its full TCB; this selected port deliberately proves only
+the observed selected-worker semantics, not a general TCB or foreign-thread
+contract. It does not complete `process.globals`, resolver behavior, family
+promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-getsubopt` is a private `static-c-getsubopt`
 artifact inside still-planned `libc.text-math-locale-stdio`. It isolates the
 already-selected `getsubopt` export into a direct pinned-musl 1.2.6
