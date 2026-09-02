@@ -76,7 +76,8 @@
 //! conventional network databases, plus one stateless legacy netdb
 //! endhostent/endnetent terminator alias pair, an opt-in stateless legacy
 //! sethostent/setnetent setter alias pair, and one stateless legacy
-//! service-database terminator,
+//! service-database terminator, plus one fixed-table legacy protocol-database
+//! state machine,
 //! credential-observation, integer-arithmetic, integer-parsing, selected
 //! C-locale binary32/binary64/x87-binary80 floating parsing plus complete
 //! fixed-C/POSIX/C.UTF-8 narrow/wide numeric parsing, legacy decimal
@@ -750,6 +751,8 @@ mod posix_spawnattr_setschedpolicy;
 mod posix_spawn_file_actions_init;
 #[path = "endservent.rs"]
 mod endservent;
+#[path = "protocol_database.rs"]
+mod protocol_database;
 #[path = "numeric_netdb.rs"]
 mod numeric_netdb;
 #[path = "interface_discovery.rs"]

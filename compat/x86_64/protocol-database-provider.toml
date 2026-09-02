@@ -1,0 +1,26 @@
+# Linux/x86-64 static C protocol-database provider work package.
+#
+# This records the complete pinned-musl `proto.c` source block, its
+# target-local implementation, and its evidence. It is intentionally distinct
+# from crabc-rs's owned `/etc/protocols` snapshot facade: musl's C ABI keeps a
+# fixed protocol table and one shared non-reentrant enumeration/result state.
+schema = "crabc.x86_64-protocol-database-provider/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6"
+
+[work_package]
+target_family = "libc.headers-layouts"
+target_obligations = ["unlisted-public-callables", "current-static-c-exports"]
+target_verified_slice = "static-c-protocol-database"
+blocker = "Resolved by this selected artifact: the unconditional pinned-musl `<netdb.h>` declarations `endprotoent`, `getprotobyname`, `getprotobynumber`, `getprotoent`, and `setprotoent` appeared in all seven frozen profiles with no default static provider."
+prerequisites = ["oracle.musl-toolchain"]
+dependent_work = ["libc.headers-layouts callable-provider complement closure", "libc.c-abi-compat C ABI closure", "libc.resolver bounded resolver profile"]
+baseline_contract = "Pinned musl 1.2.6 src/network/proto.c and proto.lo: an immutable built-in protocol table, one shared index, one shared protoent result, and a NULL alias slot. It has exactly five strong public globals and imports only strlen/strcmp. The existing generic network_databases_exports.rs /etc/protocols parser is a materially different AArch64-oriented ABI path and is not reused."
+source_owners = ["compat/x86_64/protocol-database-provider.toml", "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/src/c_abi/x86_64/protocol_database.rs", "include/netdb.h", "compat/x86_64/protocol_database_header_abi_probe.c", "compat/x86_64/protocol_database_header_abi_probe.cpp", "compat/x86_64/run_protocol_database_header_abi.sh", "compat/x86_64/libc_protocol_database_probe.c", "compat/x86_64/libc_protocol_database_start.S", "compat/x86_64/run_libc_protocol_database.sh", "compat/x86_64/static_c_abi_exports.txt", "compat/x86_64/header_callable_inventory.json", "compat/x86_64/headers-layouts-foundation.toml", "compat/x86_64/parity.toml", "compat/x86_64/validate_parity_ledger.py", "compat/x86_64/tests/test_header_callable_inventory.py", "compat/x86_64/tests/test_parity_ledger.py", "compat/x86_64/tests/test_runner.py", "compat/x86_64/aarch64_parity_inventory.py", "compat/x86_64/aarch64_parity_inventory.json", "compat/x86_64/README.md", "scripts/dev-x86_64.sh"]
+focused_evidence_command = "./scripts/dev-x86_64.sh libc-protocol-database"
+family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
+product_command = "./scripts/dev-x86_64.sh campaign-static"
+negative_scope = "This batch owns only musl's fixed in-memory legacy C protocol enumeration and lookup state. It excludes /etc/protocols, the existing Rust owned snapshot facade, aliases beyond the mandatory NULL terminator, case folding, errno/TLS, allocation, stdio, files, sockets, DNS, resolver configuration, NSS/plugins, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+expected_transition = "This slice moved the default-static callable count from 1079 to 1084 and the unprovided complement from 387 to 382, while candidate externals remain 1513. libc.headers-layouts, libc.resolver, and libc.c-abi-compat remain planned; no frozen capability, product gate, promotion state, or public support boundary changes."
+evidence = ["pinned-musl/project netdb C/C++ declaration matrix", "pinned-musl versus static crabc proto.c state-machine differential", "header callable provider linkage audit", "AArch64 static ABI ownership parity inventory"]

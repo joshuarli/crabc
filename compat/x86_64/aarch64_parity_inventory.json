@@ -1483,7 +1483,7 @@
       "capability_count": 11,
       "contract_state": "selected-private",
       "id": "libc.c-abi-compat",
-      "verified_artifact_count": 28,
+      "verified_artifact_count": 29,
       "verified_slice_count": 9
     },
     {
@@ -1870,6 +1870,10 @@
     {
       "family": "libc.c-abi-compat",
       "id": "static-c-process-globals-getopt"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-protocol-database"
     },
     {
       "family": "libc.c-abi-compat",
@@ -3124,9 +3128,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "c62aa98d93be7a73e0c266c207c5194ac79e0de20087edd249f7476343a79287",
+    "x86_parity_ledger": "57806b6150e311c7f3e5e1c82cfff9c67b80a476081b387fd0ec934bcbf79352",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "659fc94dac3b6d494aa650215700fe741230565bc8f5100dc662ed48098bec9e"
+    "x86_static_c_exports": "3ab260b59246e130f9a3585abf4ec52d12b2b29451d192c4f3bf1a158a44b64b"
   },
   "unsupported_contracts": [
     {
@@ -3138,7 +3142,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 1149,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1128
+    "selected_static_export_count": 1154,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1133
   }
 }

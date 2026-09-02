@@ -204,6 +204,7 @@
         "ecvt",
         "endhostent",
         "endnetent",
+        "endprotoent",
         "endservent",
         "epoll_create",
         "epoll_create1",
@@ -363,6 +364,9 @@
         "getpid",
         "getppid",
         "getpriority",
+        "getprotobyname",
+        "getprotobynumber",
+        "getprotoent",
         "getrandom",
         "getresgid",
         "getresuid",
@@ -821,6 +825,7 @@
         "setpgid",
         "setpgrp",
         "setpriority",
+        "setprotoent",
         "setregid",
         "setresgid",
         "setresuid",
@@ -1168,7 +1173,6 @@
         "drand48",
         "endgrent",
         "endmntent",
-        "endprotoent",
         "endpwent",
         "endspent",
         "endusershell",
@@ -1244,9 +1248,6 @@
         "getnetbyaddr",
         "getnetbyname",
         "getnetent",
-        "getprotobyname",
-        "getprotobynumber",
-        "getprotoent",
         "getpwent",
         "getpwnam",
         "getpwnam_r",
@@ -1417,7 +1418,6 @@
         "setlinebuf",
         "setlogmask",
         "setmntent",
-        "setprotoent",
         "setpwent",
         "setservent",
         "setspent",
@@ -424028,8 +424028,8 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "c62aa98d93be7a73e0c266c207c5194ac79e0de20087edd249f7476343a79287",
-    "static_c_abi_exports_sha256": "659fc94dac3b6d494aa650215700fe741230565bc8f5100dc662ed48098bec9e"
+    "parity_ledger_sha256": "57806b6150e311c7f3e5e1c82cfff9c67b80a476081b387fd0ec934bcbf79352",
+    "static_c_abi_exports_sha256": "3ab260b59246e130f9a3585abf4ec52d12b2b29451d192c4f3bf1a158a44b64b"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -442496,7 +442496,6 @@
       "encrypt",
       "endgrent",
       "endmntent",
-      "endprotoent",
       "endpwent",
       "endspent",
       "endusershell",
@@ -442578,9 +442577,6 @@
       "getnetbyaddr",
       "getnetbyname",
       "getnetent",
-      "getprotobyname",
-      "getprotobynumber",
-      "getprotoent",
       "getpwent",
       "getpwnam",
       "getpwnam_r",
@@ -442773,7 +442769,6 @@
       "setlogmask",
       "setmntent",
       "setnetent",
-      "setprotoent",
       "setpwent",
       "setservent",
       "setspent",
@@ -442871,8 +442866,8 @@
     },
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
-      "default_static": 1079,
-      "unprovided": 387,
+      "default_static": 1084,
+      "unprovided": 382,
       "verified_feature_archives": 47
     },
     "candidate_external_callable_count": 1513,
@@ -442887,7 +442882,7 @@
       "ok": 2617,
       "oracle-not-applicable": 1
     },
-    "static_export_complement_count": 434
+    "static_export_complement_count": 429
   },
   "target": "x86_64-unknown-linux-musl"
 }

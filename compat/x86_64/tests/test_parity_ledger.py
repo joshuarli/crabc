@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 360)
+        self.assertEqual(report["verified_artifact_count"], 361)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -3361,11 +3361,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1513)
-        self.assertEqual(provider_audit["default_static_callable_count"], 1079)
+        self.assertEqual(provider_audit["default_static_callable_count"], 1084)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 387)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 382)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -27635,6 +27635,133 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-endservent must retain its pinned-musl serv.c mapping",
         ):
             ledger.validate_ledger(data)
+
+    def test_protocol_database_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-protocol-database"
+        )
+        ledger.require_protocol_database_artifact(family)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "complete pinned-musl `proto.c` protocol-database provider artifact",
+            "`endprotoent`",
+            "`getprotobyname`",
+            "`getprotobynumber`",
+            "`getprotoent`",
+            "`setprotoent`",
+            "`src/network/proto.c`",
+            "immutable 36-record protocol table",
+            "shared non-reentrant index",
+            "shared `struct protoent` result",
+            "alias-pointer slot",
+            "ignoring `stayopen`",
+            "exact case-sensitive name or protocol number",
+            "errno, h_errno, TLS, allocation, stdio, syscall, file",
+            "`/etc/protocols`",
+            "`network_databases_exports.rs`",
+            "NSS",
+            "resolver",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/protocol_database.rs",
+            "include/netdb.h",
+            "compat/x86_64/protocol-database-provider.toml",
+            "compat/x86_64/protocol_database_header_abi_probe.c",
+            "compat/x86_64/protocol_database_header_abi_probe.cpp",
+            "compat/x86_64/run_protocol_database_header_abi.sh",
+            "compat/x86_64/libc_protocol_database_probe.c",
+            "compat/x86_64/libc_protocol_database_start.S",
+            "compat/x86_64/run_libc_protocol_database.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "endprotoent(void)" in item
+                and "setprotoent(int)" in item
+                and "getprotoent(void)" in item
+                and "getprotobyname(const char *)" in item
+                and "getprotobynumber(int)" in item
+                and "24 bytes, align 8" in item
+                and "0/8/16" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/network/proto.c" in item
+                and "36 protocol-number/name records" in item
+                and "one index, one result, and one NULL alias slot" in item
+                and "strlen/strcmp" in item
+                for item in prerequisites
+            )
+        )
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list)
+        self.assertTrue(
+            any(
+                "seven-profile C11/C++17" in item
+                and "<netdb.h>" in item
+                and "strict, POSIX, X/Open, GNU, and BSD" in item
+                and "unmangled C++ linkage" in item
+                for item in headers
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-protocol-database",
+        )
+        for phrase in (
+            "seven-profile project/pinned-musl C/C++ netdb header gate",
+            "all 36 fixed table records",
+            "shared result and alias-pointer identity",
+            "mandatory NULL alias slot",
+            "both reset calls with ignored stayopen",
+            "exact case-sensitive name and numeric lookup composition",
+            "all five proto.lo/AArch64 strong globals",
+            "exactly one generated owner",
+            "`/etc/protocols`",
+            "generic database parser extraction",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        mapping_index = next(
+            index
+            for index, item in enumerate(prerequisites)
+            if "src/network/proto.c" in item
+        )
+        prerequisites[mapping_index] = prerequisites[mapping_index].replace(
+            "src/network/proto.c", "src/network/serv.c"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-protocol-database must retain its pinned-musl proto.c mapping",
+        ):
+            ledger.require_protocol_database_artifact(family)
 
     def test_extended_attributes_artifact_keeps_its_bounded_boundary(self) -> None:
         data = self.data()

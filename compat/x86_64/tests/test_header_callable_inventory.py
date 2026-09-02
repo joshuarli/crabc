@@ -352,6 +352,27 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertTrue(ether_entries <= default_static)
         self.assertFalse(ether_entries & unprovided)
 
+    def test_complete_protocol_database_provider_block_is_default_static_not_unprovided(
+        self,
+    ) -> None:
+        """Keep all five fixed musl proto.c entries in the ordinary default provider."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
+        unprovided = set(partition["unprovided"]["members"])
+        protocol_database_entries = {
+            "endprotoent",
+            "getprotobyname",
+            "getprotobynumber",
+            "getprotoent",
+            "setprotoent",
+        }
+
+        self.assertTrue(protocol_database_entries <= default_static)
+        self.assertFalse(protocol_database_entries & unprovided)
+
     def test_netinet_macro_batch_is_present_with_its_exact_feature_split(self) -> None:
         """Keep this header-only reduction separate from archive-callable work."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:

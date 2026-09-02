@@ -262,6 +262,7 @@ eaccess
 ecvt
 endhostent
 endnetent
+endprotoent
 endservent
 environ
 epoll_create
@@ -422,6 +423,9 @@ getpgrp
 getpid
 getppid
 getpriority
+getprotobyname
+getprotobynumber
+getprotoent
 getrandom
 getresgid
 getresuid
@@ -890,6 +894,7 @@ setlocale
 setpgid
 setpgrp
 setpriority
+setprotoent
 setregid
 setresgid
 setresuid

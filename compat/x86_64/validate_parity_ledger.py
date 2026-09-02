@@ -57,6 +57,9 @@ LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
 STATIC_C_ABI_EXPORTS_PATH = ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
 X86_64_DISPATCHER_PATH = ROOT / "scripts" / "dev-x86_64.sh"
 STATIC_PRODUCT_CONTRACT_PATH = ROOT / "compat" / "x86_64" / "static-product.toml"
+PROTOCOL_DATABASE_PROVIDER_PATH = (
+    ROOT / "compat" / "x86_64" / "protocol-database-provider.toml"
+)
 UPSTREAMS_PATH = ROOT / "compat" / "upstreams.toml"
 HEADER_LAYOUT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
 HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH = (
@@ -1805,6 +1808,14 @@ HSTRERROR_SYMBOLS = ("hstrerror",)
 
 ENDSERVENT_SYMBOLS = ("endservent",)
 
+PROTOCOL_DATABASE_SYMBOLS = (
+    "endprotoent",
+    "getprotobyname",
+    "getprotobynumber",
+    "getprotoent",
+    "setprotoent",
+)
+
 DN_SKIPNAME_SYMBOLS = ("dn_skipname",)
 
 DN_EXPAND_SYMBOLS = ("__dn_expand", "dn_expand")
@@ -3138,11 +3149,11 @@ def validate_header_layout_foundation_manifest(
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1513,
-            "default_static_callable_count": 1079,
+            "default_static_callable_count": 1084,
             "verified_feature_callable_count": 47,
             "verified_feature_profile_count": 21,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 387,
+            "unprovided_callable_count": 382,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -6179,12 +6190,12 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "no-feature default static archive",
         "isolated exact Cargo requests",
         "ordinary archive extraction",
-        "1,079 current default-static",
+        "1,084 current default-static",
         "47 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "387-name unprovided complement",
+        "382-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -46342,6 +46353,508 @@ def require_sethostent_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"sethostent dispatcher omits {snippet}")
 
 
+def require_protocol_database_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's fixed proto.c state machine out of generic netdb/resolver state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("id") == "static-c-protocol-database"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs exactly one static-c-protocol-database artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-protocol-database must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-protocol-database must not claim netdb or resolver capability progress",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-protocol-database needs a description")
+    for phrase in (
+        "complete pinned-musl `proto.c` protocol-database provider artifact",
+        "still-planned `libc.c-abi-compat`",
+        "exactly the five public source entries",
+        "`endprotoent`",
+        "`getprotobyname`",
+        "`getprotobynumber`",
+        "`getprotoent`",
+        "`setprotoent`",
+        "`src/network/proto.c`",
+        "immutable 36-record protocol table",
+        "shared non-reentrant index",
+        "shared `struct protoent` result",
+        "non-null alias-pointer slot",
+        "ignoring `stayopen`",
+        "exact case-sensitive name or protocol number",
+        "errno, h_errno, TLS, allocation, stdio, syscall, file",
+        "`/etc/protocols`",
+        "`network_databases_exports.rs`",
+        "NSS",
+        "resolver",
+        "generic netdb APIs",
+        "family completion",
+        "promotion",
+        "capability selection",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-protocol-database description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-protocol-database.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/protocol_database.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/types.h",
+        "include/sys/socket.h",
+        "include/netdb.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/protocol-database-provider.toml",
+        "compat/x86_64/protocol_database_header_abi_probe.c",
+        "compat/x86_64/protocol_database_header_abi_probe.cpp",
+        "compat/x86_64/run_protocol_database_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_protocol_database_probe.c",
+        "compat/x86_64/libc_protocol_database_start.S",
+        "compat/x86_64/run_libc_protocol_database.sh",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-protocol-database source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-protocol-database.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "endprotoent(void)" in item
+            and "setprotoent(int)" in item
+            and "getprotoent(void)" in item
+            and "getprotobyname(const char *)" in item
+            and "getprotobynumber(int)" in item
+            and "24 bytes, align 8" in item
+            and "0/8/16" in item
+            for item in prerequisites
+        ),
+        "static-c-protocol-database must retain the protoent C ABI layout and call shapes",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/proto.c" in item
+            and "36 protocol-number/name records" in item
+            and "one index, one result, and one NULL alias slot" in item
+            and "strlen/strcmp" in item
+            for item in prerequisites
+        ),
+        "static-c-protocol-database must retain its pinned-musl proto.c mapping",
+    )
+    require(
+        any(
+            "one-member `-nostdlib -static`" in item
+            and "no interpreter" in item
+            and "PT_TLS" in item
+            and "errno/h_errno" in item
+            and "`/etc/protocols`" in item
+            and "getprotoent performs no syscall" in item
+            for item in prerequisites
+        ),
+        "static-c-protocol-database must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-protocol-database.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "seven-profile C11/C++17" in item
+            and "<netdb.h>" in item
+            and "`void endprotoent(void)`" in item
+            and "`struct protoent *getprotobyname(const char *)`" in item
+            and "`struct protoent *getprotobynumber(int)`" in item
+            and "`struct protoent *getprotoent(void)`" in item
+            and "`void setprotoent(int)`" in item
+            and "24-byte align-eight protoent layout" in item
+            and "strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-protocol-database must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-protocol-database needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-protocol-database"},
+        "static-c-protocol-database must use the closed libc-protocol-database command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "seven-profile project/pinned-musl C/C++ netdb header gate",
+                "all 36 fixed table records",
+                "shared result and alias-pointer identity",
+                "mandatory NULL alias slot",
+                "both reset calls with ignored stayopen",
+                "exact case-sensitive name and numeric lookup composition",
+                "all five proto.lo/AArch64 strong globals",
+                "exactly one generated owner",
+                "no interpreter/DT_NEEDED/unresolved symbol/PLT/PT_TLS/errno/h_errno/dynamic-TLS/allocator/helper import/syscall/filesystem/ambient runtime",
+                "`/etc/protocols`",
+                "generic database parser extraction",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-protocol-database evidence must retain its bounded static closure",
+    )
+
+    exports = set(static_c_abi_export_names(STATIC_C_ABI_EXPORTS_PATH))
+    require(
+        set(PROTOCOL_DATABASE_SYMBOLS) <= exports,
+        "static-c-protocol-database must retain all five selected exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "protocol_database.rs"]\nmod protocol_database;' in static_root,
+        "x86 static C ABI must compose the proto.c provider leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "protocol_database.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 legacy protocol-database C ABI",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/proto.c",
+        "network_databases_exports.rs",
+        "static PROTOCOLS",
+        "static mut PROTOCOL_INDEX",
+        "static mut PROTOCOL_RESULT",
+        "static mut PROTOCOL_ALIASES",
+        "c_string_length",
+        "c_strings_equal",
+        'pub unsafe extern "C" fn endprotoent',
+        'pub unsafe extern "C" fn getprotobyname',
+        'pub unsafe extern "C" fn getprotobynumber',
+        'pub unsafe extern "C" fn getprotoent',
+        'pub unsafe extern "C" fn setprotoent',
+    ):
+        require(
+            snippet in source,
+            f"protocol database implementation omits {snippet}",
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "alloc::",
+    ):
+        require(
+            forbidden not in source,
+            f"protocol database leaf widens into {forbidden}",
+        )
+
+    provider = load_toml(PROTOCOL_DATABASE_PROVIDER_PATH)
+    require(
+        set(provider) == {"schema", "target", "platform", "oracle", "work_package"},
+        "protocol database provider contract fields drifted",
+    )
+    require(
+        provider.get("schema") == "crabc.x86_64-protocol-database-provider/v1",
+        "protocol database provider schema drifted",
+    )
+    require(
+        provider.get("target") == "x86_64-unknown-linux-musl"
+        and provider.get("platform") == "Linux/x86-64 little-endian"
+        and provider.get("oracle") == "Pinned musl 1.2.6",
+        "protocol database provider target/oracle drifted",
+    )
+    package = provider.get("work_package")
+    require(isinstance(package, Mapping), "protocol database provider needs work_package")
+    require(
+        set(package)
+        == {
+            "target_family",
+            "target_obligations",
+            "target_verified_slice",
+            "blocker",
+            "prerequisites",
+            "dependent_work",
+            "baseline_contract",
+            "source_owners",
+            "focused_evidence_command",
+            "family_aggregate_command",
+            "product_command",
+            "negative_scope",
+            "expected_transition",
+            "evidence",
+        },
+        "protocol database work package fields drifted",
+    )
+    require(
+        package.get("target_family") == "libc.headers-layouts"
+        and package.get("target_obligations")
+        == ["unlisted-public-callables", "current-static-c-exports"]
+        and package.get("target_verified_slice") == "static-c-protocol-database",
+        "protocol database work package target drifted",
+    )
+    for field, phrases in (
+        (
+            "blocker",
+            (
+                "endprotoent",
+                "getprotobyname",
+                "getprotobynumber",
+                "getprotoent",
+                "setprotoent",
+                "default static provider",
+            ),
+        ),
+        (
+            "baseline_contract",
+            (
+                "src/network/proto.c",
+                "immutable built-in protocol table",
+                "one shared index",
+                "one shared protoent result",
+                "NULL alias slot",
+                "strlen/strcmp",
+                "network_databases_exports.rs",
+            ),
+        ),
+        (
+            "negative_scope",
+            (
+                "/etc/protocols",
+                "case folding",
+                "errno/TLS",
+                "DNS",
+                "resolver configuration",
+                "NSS/plugins",
+                "family completion",
+                "public x86 support",
+            ),
+        ),
+        (
+            "expected_transition",
+            (
+                "1079 to 1084",
+                "387 to 382",
+                "1513",
+                "remain planned",
+                "public support boundary changes",
+            ),
+        ),
+    ):
+        value = package.get(field)
+        require(
+            isinstance(value, str) and all(phrase in value for phrase in phrases),
+            f"protocol database work package {field} drifted",
+        )
+    require(
+        package.get("prerequisites") == ["oracle.musl-toolchain"]
+        and package.get("focused_evidence_command")
+        == "./scripts/dev-x86_64.sh libc-protocol-database"
+        and package.get("family_aggregate_command")
+        == "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
+        and package.get("product_command") == "./scripts/dev-x86_64.sh campaign-static",
+        "protocol database work package commands or prerequisites drifted",
+    )
+    provider_owners = nonempty_strings(
+        package.get("source_owners"), "protocol database work package source_owners"
+    )
+    for owner in provider_owners:
+        repository_path(owner, f"protocol database work package source owner {owner}")
+    for owner in (
+        "compat/x86_64/protocol-database-provider.toml",
+        "libc/src/c_abi/x86_64/protocol_database.rs",
+        "compat/x86_64/run_protocol_database_header_abi.sh",
+        "compat/x86_64/run_libc_protocol_database.sh",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/parity.toml",
+        "compat/x86_64/validate_parity_ledger.py",
+    ):
+        require(
+            owner in provider_owners,
+            f"protocol database work package source owners omit {owner}",
+        )
+    evidence_rows = nonempty_strings(
+        package.get("evidence"), "protocol database work package evidence"
+    )
+    require(
+        set(evidence_rows)
+        == {
+            "pinned-musl/project netdb C/C++ declaration matrix",
+            "pinned-musl versus static crabc proto.c state-machine differential",
+            "header callable provider linkage audit",
+            "AArch64 static ABI ownership parity inventory",
+        },
+        "protocol database work package evidence drifted",
+    )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_protocol_database.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_protocol_database_header_abi.sh",
+        "proto.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "strcmp strlen",
+        "archive does not define ${symbol}",
+        "getprotoent",
+        "/etc/protocols",
+    ):
+        require(
+            snippet in runner,
+            f"protocol database runner omits {snippet}",
+        )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_protocol_database_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "expected_protocols[]",
+        "endprotoent_function",
+        "getprotobyname_function",
+        "getprotobynumber_function",
+        "getprotoent_function",
+        "setprotoent_function",
+        "entry->p_aliases[0] == NULL",
+        "check_enumeration",
+        "check_lookup_state",
+        "CRABC_PROTOCOL_DATABASE_FREESTANDING",
+    ):
+        require(snippet in probe, f"protocol database probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "protocol_database_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "protocol_database_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "protoent size",
+        "protoent alignment",
+        "endprotoent declaration",
+        "getprotobyname declaration",
+        "getprotobynumber declaration",
+        "getprotoent declaration",
+        "setprotoent declaration",
+    ):
+        require(snippet in header_c, f"protocol database C header probe omits {snippet}")
+    for snippet in (
+        "C++ protoent size",
+        "C++ protoent alignment",
+        "C++ endprotoent declaration",
+        "C++ getprotobyname declaration",
+        "C++ getprotobynumber declaration",
+        "C++ getprotoent declaration",
+        "C++ setprotoent declaration",
+    ):
+        require(snippet in header_cxx, f"protocol database C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_protocol_database_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "protocol_database_header_abi_probe.c",
+        "protocol_database_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional",
+        "c11-strict",
+        "c11-bsd",
+        "cxx17-gnu",
+        "retained a mangled $symbol reference",
+    ):
+        require(
+            snippet in header_runner,
+            f"protocol database header runner omits {snippet}",
+        )
+
+    netdb_header = (ROOT / "include" / "netdb.h").read_text(encoding="utf-8")
+    require(
+        "void endhostent(void); void endnetent(void); void endprotoent(void); void endservent(void);"
+        in netdb_header
+        and "struct protoent *getprotobyname(const char *); struct protoent *getprotobynumber(int); struct protoent *getprotoent(void);"
+        in netdb_header
+        and "void sethostent(int); void setnetent(int); void setprotoent(int); void setservent(int);"
+        in netdb_header
+        and '#ifdef __cplusplus\nextern "C" {' in netdb_header
+        and '#ifdef __cplusplus\n}\n#endif' in netdb_header,
+        "include/netdb.h must retain the selected proto.c C/C++ declarations",
+    )
+
+    dispatcher = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    for snippet in (
+        "protocol-database-header-abi)",
+        "run_protocol_database_header_abi",
+        "libc-protocol-database)",
+        "run_libc_protocol_database",
+    ):
+        require(
+            snippet in dispatcher,
+            f"protocol database dispatcher omits {snippet}",
+        )
+
+
 def require_endservent_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's stateless service terminator out of netdb/resolver state."""
     artifacts = require_verified_artifacts(
@@ -46529,10 +47042,8 @@ def require_endservent_artifact(family: Mapping[str, Any]) -> None:
             "setservent",
             "getservbyname",
             "getservbyport",
-            "endprotoent",
-            "setprotoent",
         },
-        "static-c-endservent must not expose an unselected service, netdb, or resolver entry",
+        "static-c-endservent must not expose an unselected service entry",
     )
 
     static_root = (
@@ -75325,6 +75836,7 @@ def validate_ledger(
     require_nameser_wire_aggregate_artifact(by_id["libc.resolver"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_endservent_artifact(by_id["libc.c-abi-compat"])
+    require_protocol_database_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])
     require_search_hash_table_slice(by_id["libc.c-abi-compat"])

@@ -1738,7 +1738,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
             "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
-            "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
             "tee-header-abi|splice-header-abi",
             "sync-file-range-header-abi|copy-file-range-header-abi",
@@ -14504,6 +14504,188 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-endservent)", dispatcher)
         self.assertIn(
             "/workspace/compat/x86_64/run_libc_endservent.sh", dispatcher
+        )
+
+    def test_libc_static_c_abi_protocol_database_artifact_stays_private(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "protocol_database.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_protocol_database_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_protocol_database_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_protocol_database.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_protocol_database_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "protocol_database_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "protocol_database_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        netdb_header = (ROOT / "include" / "netdb.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "protocol_database.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 legacy protocol-database C ABI",
+            "musl 1.2.6 release commit",
+            "src/network/proto.c",
+            "network_databases_exports.rs",
+            "static PROTOCOLS",
+            "static mut PROTOCOL_INDEX",
+            "static mut PROTOCOL_RESULT",
+            "static mut PROTOCOL_ALIASES",
+            "core::ptr::read_volatile",
+            'pub unsafe extern "C" fn endprotoent',
+            'pub unsafe extern "C" fn getprotobyname',
+            'pub unsafe extern "C" fn getprotobynumber',
+            'pub unsafe extern "C" fn getprotoent',
+            'pub unsafe extern "C" fn setprotoent',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "alloc::",
+            'pub unsafe extern "C" fn gethostent',
+            'pub unsafe extern "C" fn getnetent',
+            'pub unsafe extern "C" fn getservent',
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        protocol_database_symbols = {
+            "endprotoent",
+            "getprotobyname",
+            "getprotobynumber",
+            "getprotoent",
+            "setprotoent",
+        }
+        self.assertTrue(protocol_database_symbols <= static_exports)
+
+        for required in (
+            "#include <netdb.h>",
+            "sizeof(struct protoent) == 24",
+            "offsetof(struct protoent, p_aliases) == 8",
+            "endprotoent_signature",
+            "getprotobyname_signature",
+            "getprotobynumber_signature",
+            "getprotoent_signature",
+            "setprotoent_signature",
+            "expected_protocols[]",
+            "entry->p_aliases[0] == NULL",
+            "check_enumeration",
+            "check_lookup_state",
+            "CRABC_PROTOCOL_DATABASE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_protocol_database_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("ARCH_SET_FS", start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "endprotoent_signature",
+                "getprotobyname_signature",
+                "getprotobynumber_signature",
+                "getprotoent_signature",
+                "setprotoent_signature",
+                "endprotoent_function",
+                "getprotobyname_function",
+                "getprotobynumber_function",
+                "getprotoent_function",
+                "setprotoent_function",
+            ):
+                self.assertIn(required, header)
+        self.assertIn(
+            "void endhostent(void); void endnetent(void); void endprotoent(void); void endservent(void);",
+            netdb_header,
+        )
+        self.assertIn(
+            "struct protoent *getprotobyname(const char *); struct protoent *getprotobynumber(int); struct protoent *getprotoent(void);",
+            netdb_header,
+        )
+        self.assertIn('#ifdef __cplusplus\nextern "C" {', netdb_header)
+        self.assertIn('#ifdef __cplusplus\n}\n#endif', netdb_header)
+        for required in (
+            "protocol_database_header_abi_probe.c",
+            "protocol_database_header_abi_probe.cpp",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "c11-bsd",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "nm --undefined-only",
+            "retained a mangled $symbol reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_protocol_database_header_abi.sh",
+            "proto.lo",
+            "static_c_abi_exports.txt",
+            "assert_musl_proto_oracle",
+            "extract_protocol_member",
+            "strict subset of the proto.c provider block",
+            "-nostdlib -static",
+            '"$selected_member" -o "$candidate"',
+            "--no-undefined",
+            "candidate selects errno, h_errno, or TLS",
+            "strcmp|strlen",
+            "/etc/protocols",
+            "getprotoent unexpectedly performs a syscall",
+            "endhostent endnetent gethostent sethostent getnetent setnetent",
+            "res_init res_query res_querydomain res_search",
+            "socket bind connect accept listen send sendto sendmsg recv recvfrom recvmsg shutdown",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-protocol-database"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-protocol-database"',
+            parity_ledger,
+        )
+        self.assertIn("run_protocol_database_header_abi()", dispatcher)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_protocol_database_header_abi.sh", dispatcher
+        )
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_protocol_database.sh", dispatcher
+        )
+        self.assertIn(
+            '    protocol-database-header-abi)\n        [ "$#" -eq 0 ] || fail "protocol-database-header-abi takes no arguments"',
+            dispatcher,
+        )
+        self.assertIn(
+            '    libc-protocol-database)\n        [ "$#" -eq 0 ] || fail "libc-protocol-database takes no arguments"',
+            dispatcher,
         )
 
     def test_libc_static_c_abi_dn_skipname_artifact_stays_private(self) -> None:
