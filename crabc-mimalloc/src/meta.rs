@@ -801,12 +801,16 @@ impl<'owner> MetaAllocation<'owner> {
 /// A selected owned branch of source metadata release.
 ///
 /// This deliberately covers only the source `MI_MEM_MALLOC` branch and the
-/// regular anonymous-OS branch reached through `_mi_arenas_free`.  It is
-/// constructed from an already-owned capability, never from a raw pointer and
-/// copied [`MemoryId`].  A source `needs_no_free` branch creates no value: it
-/// has no release authority to transfer.  Arena release is also deliberately
-/// absent until its token carries and checks the source registry/subprocess
-/// identity required by `_mi_arenas_free`.
+/// regular anonymous-OS release shape reached through `_mi_arenas_free`.  It
+/// is constructed from an already-owned capability, never from a raw pointer
+/// and copied [`MemoryId`]. The regular-OS form is currently a stand-alone
+/// retry witness, not a metadata caller: pinned `_mi_meta_zalloc` forms
+/// `MI_MEM_MALLOC`, while a real `_mi_arenas_free` OS owner needs the broader
+/// memory-ID/subprocess contract that this value intentionally does not hold.
+/// A source `needs_no_free` branch creates no value: it has no release
+/// authority to transfer. Arena release is also deliberately absent until its
+/// token carries and checks the source registry/subprocess identity required
+/// by `_mi_arenas_free`.
 ///
 /// Consequently this is not a general `_mi_meta_free` dispatcher.  It proves
 /// only that the two represented owners cannot select a release algorithm by

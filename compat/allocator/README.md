@@ -172,7 +172,16 @@ direct-zeroed metadata failure consumes its later sequence without a capability
 or live lease, and the retry retains one typed Malloc capability through exact-
 owner teardown. It does not equate Rust's private backing with C's normal
 `_mi_meta_zalloc` backing or prove full `mi_tld_init`/`mi_tld_free` list, lock,
-or metadata-free behavior. The generic TLD checkpoint records direct `TPIDR_EL0`,
+or metadata-free behavior. The separate nonexclusive dynamic-Theap checkpoint
+follows one later TLD through `_mi_theap_alloc`'s nonexclusive
+`_mi_meta_zalloc` branch, together with selected init/threadlocal teardown.
+Its caller-pinned empty Heap proves the selected one-member TLD/Heap list
+shape and four attached metadata capabilities. The implementation tears down
+regular backing, then the Theap, then the TLD; the audit observes those
+attachment-local capabilities gone while the distinct registry bitmap remains
+for test-only quiescent shutdown. It excludes normal metadata-backing parity,
+exclusive-arena allocation, generic metadata-free dispatch, page ownership,
+concurrency, and full process/thread teardown. The generic TLD checkpoint records direct `TPIDR_EL0`,
 Linux NUMA, the exact Unix non-threadpool result, the same main-subprocess
 pointer as detached metadata bootstrap state, and a null theap list. Its
 metadata path remains **subprocess-attached, no-theap**. Generic construction

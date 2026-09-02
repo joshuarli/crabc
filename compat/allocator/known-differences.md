@@ -36,13 +36,21 @@ invalidated `thread_id`; each terminally poisons rather than retaining a
 capability that could name freed storage. The selected `MetaRelease` boundary
 makes that distinction explicit: its exact Malloc owner is terminal diagnostic
 state rather than a false retry token, while its normal anonymous `Mapping`
-owner remains live and is returned after a failed `munmap`. It intentionally
-does not represent no-free, arena, huge, or remap source branches. The selected
+owner remains live and is returned after a failed `munmap`. That regular-OS
+form is an intentionally unconnected retry witness, not a C metadata caller:
+pinned `_mi_meta_zalloc` forms Malloc IDs, while a real `_mi_arenas_free` OS
+owner needs a wider memory-ID/subprocess contract. It intentionally does not
+represent no-free, arena, huge, or remap source branches. The selected
 later-TLD witness now covers only one direct-Malloc caller lifetime: ticket-zero
 teardown has no metadata capability, an injected post-ready direct-zeroed
 failure consumes its sequence without a capability or lease, and one retry
-releases its typed Malloc capability. It does not claim normal C backing,
-generic metadata-free dispatch, or complete TLD/list/lock lifecycle parity.
+releases its typed Malloc capability. The separate nonexclusive dynamic-Theap
+witness follows a sequence-one Malloc TLD and Malloc Theap through no-page
+teardown. Its implementation releases regular backing, then the Theap, then
+the TLD; the audit distinguishes those three attachment-local capabilities
+from the process-owned registry bitmap. Neither witness claims normal C backing,
+generic metadata-free dispatch, exclusive-arena Theap allocation, or complete
+TLD/list/lock lifecycle parity.
 This state
 is not a valid C-program observable difference and has no C differential
 entry; an arena-release result may be added only when it can prove retained

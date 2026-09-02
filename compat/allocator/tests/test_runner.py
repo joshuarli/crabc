@@ -2211,7 +2211,16 @@ class ContractTests(unittest.TestCase):
                         "tld::tests::direct_metadata_allocation_failure_consumes_its_"
                         "ticket_but_never_leaks_live_count"
                     ),
-                }
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "nonexclusive-dynamic-theap-direct-malloc-capability-lifetime",
+                    "kind": "rust-unit",
+                    "target": (
+                        "dynamic_theap::tests::nonexclusive_dynamic_theap_releases_its_"
+                        "exact_malloc_metadata_lifecycle"
+                    ),
+                },
             ],
         )
         page_map = next(component for component in summary["components"] if component["id"] == "page-map")

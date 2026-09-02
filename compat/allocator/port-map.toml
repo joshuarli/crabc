@@ -2437,6 +2437,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/theap.c"
+name = "nonexclusive-dynamic-theap-direct-malloc-lifetime-checkpoint"
+source_region = "later TLD initialization/create/free from src/init.c:236-282; selected `_mi_thread_init_with_heap` dynamic-TLD/Theap setup from src/init.c:306-360; no-page `mi_thread_theaps_done` and outer `_mi_thread_done` order from src/init.c:377-421,452-480; regular TLS-backing lifecycle from src/threadlocal.c:103-173,205-214; process-global key-registry lifecycle from src/threadlocal.c:221-315; source regular-slot/key setup from src/heap.c:37-42,128-147; and `_mi_theap_init` list linking, nonexclusive `_mi_theap_alloc`/`_mi_theap_create`, decr/free, and `_mi_tld_detach_theaps` from src/theap.c:236-369,415-450"
+rust_module = "crabc_mimalloc::dynamic_theap, crabc_mimalloc::tld, crabc_mimalloc::thread_local, crabc_mimalloc::owned_tls_key_registry, crabc_mimalloc::meta, crabc_mimalloc::subproc, and crabc_mimalloc::types"
+rust_item = "DynamicTheapAttachment::begin_with_components_mode and no-page teardown; DynamicAttachedThreadLocalData::teardown_after_theap_detached; ThreadLocalBackingOwner; OwnedThreadLocalKeyRegistry; MainSubprocess; and exact MetaAllocation capabilities for the later TLD, nonexclusive Theap, regular backing, and registry bitmap"
+intentional_difference = "This test checkpoint selects only a child-thread, caller-pinned empty Heap after ticket zero. It proves selected sequence-one Malloc TLD and nonexclusive Malloc Theap provenance plus exact one-member TLD/Heap list shape, and observes four attached metadata capabilities. The implementation's no-page order releases regular backing, then the exact Theap, then the TLD; the check observes the post-teardown registry bitmap, whose distinct test-only quiescent shutdown returns the audit to zero. The companion Theap-allocation-failure regression proves that failure after TLD and registry creation occurs before an allocated regular-backing metadata capability, consumes the ticket without a live count, and leaves only the registry bitmap in the metadata audit while the dynamic root remains its immutable empty image. It does not claim pinned C's normal metadata-backing route, the exclusive-arena allocation branch, complete `_mi_theap_create`/`mi_thread_theaps_done` policy, generic `_mi_meta_free`, arbitrary list/refcount behavior, page ownership, concurrency, pthread/process hooks, or public ABI/runtime integration."
+tests = ["crabc-mimalloc/src/dynamic_theap.rs", "crabc-mimalloc/src/tld.rs", "crabc-mimalloc/src/thread_local.rs", "crabc-mimalloc/src/owned_tls_key_registry.rs", "crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/types.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/page.c"
 name = "scalar-local-page-free-list-allocation-and-collection"
 source_region = "mi_block_next/set_next, mi_page_extend_free, mi_page_free_quick_collect, both force forms of the local half of _mi_page_free_collect, mi_page_malloc_zero scalar pop/zero, and mi_free_block_local"

@@ -755,6 +755,18 @@ This does not equate Rust's private backing with C's normal `_mi_meta_zalloc`
 backing, prove generic `_mi_meta_free` dispatch, or establish complete
 `mi_tld_init`/`mi_tld_free` list, lock, or arbitrary-thread behavior.
 
+One distinct M2 checkpoint follows that later TLD through the nonexclusive
+`_mi_theap_alloc` branch. Its caller-pinned empty Heap has no exclusive arena,
+so the exact dynamic Theap is another direct Malloc capability. The focused
+child-thread regression observes the selected one-member TLD/Heap list shape
+and four live metadata capabilities while attached (TLD, Theap, regular
+backing, and the separately process-owned registry bitmap). The implementation's
+no-page teardown releases regular backing, then the Theap, then the TLD; the
+audit observes the first three gone, and test-only quiescent registry shutdown
+releases the fourth. This is not normal C metadata-backing parity, the
+exclusive-arena branch, generic metadata-free dispatch, general Theap policy,
+page ownership, concurrency, or process/thread shutdown coverage.
+
 `ThreadLocalDataOwner` receives that ticket internally rather than taking a
 caller-supplied sequence. Its full source-ordered TLD image names the same
 process-main identity as the detached metadata heap/TLD/theap bootstrap and
