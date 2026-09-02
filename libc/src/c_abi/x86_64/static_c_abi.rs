@@ -398,6 +398,8 @@ mod signal_altstack;
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]
 mod pthread_create_join;
+#[path = "pthread_attr.rs"]
+mod pthread_attr;
 #[path = "pthread_affinity.rs"]
 mod pthread_affinity;
 #[path = "pthread_cpuclock.rs"]

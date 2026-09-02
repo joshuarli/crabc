@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "ca7c79d0f21f86f683a7294459ce3573e2712e942fafedec9d46a0ac204d16b0"
+    "source_abi_report_sha256": "db69c1ebcaf96dd400ef0ac6395e14346f296dcf655bd95a7d92fb002ead4a58"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",

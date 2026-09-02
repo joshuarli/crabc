@@ -46,8 +46,9 @@ command as though it were independent corroboration.
 The selected private static matrix also includes `libc-rand-r` for
 caller-owned `rand_r` state and `libc-pthread-*` commands for the individual
 condattr and mutexattr bits/statuses, priority-ceiling status, and
-get/set-concurrency status. Those commands are isolated C ABI leaves in the
-still-planned `libc.posix-runtime` and `libc.pthread-tls` families, not a
+get/set-concurrency status, plus `pthread_attr_t` record initialization,
+validation, and metadata queries. Those commands are isolated C ABI leaves in
+the still-planned `libc.posix-runtime` and `libc.pthread-tls` families, not a
 pthread/TLS lifecycle vertical, family completion, owned-sysroot proof,
 promotion, or public support claim.
 
@@ -484,6 +485,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-thrd-yield
 ./scripts/dev-x86_64.sh libc-pthread-cpuclock
 ./scripts/dev-x86_64.sh libc-pthread-name
+./scripts/dev-x86_64.sh libc-pthread-attributes
 ./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared
 ./scripts/dev-x86_64.sh libc-pthread-barrier
 ./scripts/dev-x86_64.sh libc-pthread-spin-destroy
@@ -1718,11 +1720,11 @@ callables remain owned by planned `libc.c-abi-compat`, while noncallable header
 ABI remains owned by `libc.headers-layouts`.
 
 `header-callable-provider-linkage-audit` separately uses the checked inventory
-to ordinarily extract the 1,054 current default-static and 47 verified
+to ordinarily extract the 1,072 current default-static and 47 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 411-name unprovided complement remains explicit:
+selection and behavior. Its 393-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 
@@ -4235,6 +4237,22 @@ pthread TCB/thread list, musl's procfs route, cancellation, a general prctl C
 API, scheduler/affinity attributes, lifecycle/synchronization/TSS,
 dynamic/loader TLS, CRT, sysroot, full pthread/TLS or x86-64 parity,
 promotion, and public x86 support remain excluded.
+
+`libc-pthread-attributes` is a private `pthread_attr_t` record-metadata
+artifact under the same still-planned `libc.pthread-tls` family. Its
+project-header C fixture first runs against pinned musl 1.2.6 and then through
+a `-nostdlib -static` candidate. It selects exactly the 18 standard metadata
+entries: `pthread_attr_init`/`pthread_attr_destroy` and the set/get pairs for
+detach state, stack size, stack, guard size, scope, inherit-scheduler state,
+scheduler policy, and scheduler parameters. The private
+`libc/src/c_abi/x86_64/pthread_attr.rs` record retains musl's 56-byte,
+align-eight representation, 131072-byte default stack, 8192-byte default
+guard, direct status validation, raw scheduler metadata, and the unset-stack
+getter's no-output rule. `pthread_create` deliberately stays null-attribute-
+only, so this does not select custom-stack or detached-at-create behavior,
+scheduler or guard runtime effects, GNU default attributes,
+`pthread_getattr_np`/live-thread inspection, TLS/runtime state, family
+completion, promotion, or public x86 support.
 
 `libc-pthread-barrierattr-pshared` remains a separately recorded private static
 record leaf under the still-planned `libc.pthread-tls` family. Its project-header
@@ -7334,7 +7352,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-barrier`, `libc-pthread-spin-destroy`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-attributes`, `libc-pthread-barrierattr-pshared`, `libc-pthread-barrier`, `libc-pthread-spin-destroy`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,

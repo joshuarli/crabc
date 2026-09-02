@@ -133,6 +133,32 @@ _Static_assert(mtx_plain == 0 && mtx_recursive == 1 && mtx_timed == 2,
 
 typedef int (*crabc_pthread_create_signature)(
 	pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+typedef int (*crabc_pthread_attr_init_signature)(pthread_attr_t *);
+typedef int (*crabc_pthread_attr_destroy_signature)(pthread_attr_t *);
+typedef int (*crabc_pthread_attr_setdetachstate_signature)(pthread_attr_t *, int);
+typedef int (*crabc_pthread_attr_getdetachstate_signature)(
+	const pthread_attr_t *, int *);
+typedef int (*crabc_pthread_attr_setstacksize_signature)(pthread_attr_t *, size_t);
+typedef int (*crabc_pthread_attr_getstacksize_signature)(
+	const pthread_attr_t *, size_t *);
+typedef int (*crabc_pthread_attr_setstack_signature)(pthread_attr_t *, void *, size_t);
+typedef int (*crabc_pthread_attr_getstack_signature)(
+	const pthread_attr_t *, void **, size_t *);
+typedef int (*crabc_pthread_attr_setguardsize_signature)(pthread_attr_t *, size_t);
+typedef int (*crabc_pthread_attr_getguardsize_signature)(
+	const pthread_attr_t *, size_t *);
+typedef int (*crabc_pthread_attr_setscope_signature)(pthread_attr_t *, int);
+typedef int (*crabc_pthread_attr_getscope_signature)(const pthread_attr_t *, int *);
+typedef int (*crabc_pthread_attr_setinheritsched_signature)(pthread_attr_t *, int);
+typedef int (*crabc_pthread_attr_getinheritsched_signature)(
+	const pthread_attr_t *, int *);
+typedef int (*crabc_pthread_attr_setschedpolicy_signature)(pthread_attr_t *, int);
+typedef int (*crabc_pthread_attr_getschedpolicy_signature)(
+	const pthread_attr_t *, int *);
+typedef int (*crabc_pthread_attr_setschedparam_signature)(
+	pthread_attr_t *, const struct sched_param *);
+typedef int (*crabc_pthread_attr_getschedparam_signature)(
+	const pthread_attr_t *, struct sched_param *);
 typedef int (*crabc_pthread_detach_signature)(pthread_t);
 typedef int (*crabc_pthread_equal_signature)(pthread_t, pthread_t);
 typedef int (*crabc_pthread_getconcurrency_signature)(void);
@@ -229,6 +255,54 @@ typedef int (*crabc_tss_set_signature)(tss_t, void *);
 
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_create), crabc_pthread_create_signature),
 	"pthread_create signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_init),
+	crabc_pthread_attr_init_signature), "pthread_attr_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_destroy),
+	crabc_pthread_attr_destroy_signature), "pthread_attr_destroy signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_setdetachstate),
+	crabc_pthread_attr_setdetachstate_signature),
+	"pthread_attr_setdetachstate signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_getdetachstate),
+	crabc_pthread_attr_getdetachstate_signature),
+	"pthread_attr_getdetachstate signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_setstacksize),
+	crabc_pthread_attr_setstacksize_signature),
+	"pthread_attr_setstacksize signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_getstacksize),
+	crabc_pthread_attr_getstacksize_signature),
+	"pthread_attr_getstacksize signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_setstack),
+	crabc_pthread_attr_setstack_signature), "pthread_attr_setstack signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_getstack),
+	crabc_pthread_attr_getstack_signature), "pthread_attr_getstack signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_setguardsize),
+	crabc_pthread_attr_setguardsize_signature),
+	"pthread_attr_setguardsize signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_getguardsize),
+	crabc_pthread_attr_getguardsize_signature),
+	"pthread_attr_getguardsize signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_setscope),
+	crabc_pthread_attr_setscope_signature), "pthread_attr_setscope signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_getscope),
+	crabc_pthread_attr_getscope_signature), "pthread_attr_getscope signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_setinheritsched),
+	crabc_pthread_attr_setinheritsched_signature),
+	"pthread_attr_setinheritsched signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_getinheritsched),
+	crabc_pthread_attr_getinheritsched_signature),
+	"pthread_attr_getinheritsched signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_setschedpolicy),
+	crabc_pthread_attr_setschedpolicy_signature),
+	"pthread_attr_setschedpolicy signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_getschedpolicy),
+	crabc_pthread_attr_getschedpolicy_signature),
+	"pthread_attr_getschedpolicy signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_setschedparam),
+	crabc_pthread_attr_setschedparam_signature),
+	"pthread_attr_setschedparam signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_attr_getschedparam),
+	crabc_pthread_attr_getschedparam_signature),
+	"pthread_attr_getschedparam signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_detach), crabc_pthread_detach_signature),
 	"pthread_detach signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_equal), crabc_pthread_equal_signature),

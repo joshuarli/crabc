@@ -9,10 +9,11 @@ remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 The private `libc-rand-r` and `libc-pthread-*` static commands extend only
 leaf-level accounting: caller-owned `rand_r` state; condattr pshared/clock;
 mutexattr robust/protocol/pshared/type queries and type setting; mutex
-priority-ceiling status; and pthread concurrency query/set status. Their
-artifacts remain in planned `libc.posix-runtime` or `libc.pthread-tls`; they
-do not complete pthread/TLS, the C runtime, an owned sysroot, dynamic runtime,
-family promotion, or public x86 support.
+priority-ceiling status; pthread concurrency query/set status; and
+`pthread_attr_t` record initialization, validation, and metadata queries.
+Their artifacts remain in planned `libc.posix-runtime` or
+`libc.pthread-tls`; they do not complete pthread/TLS, the C runtime, an owned
+sysroot, dynamic runtime, family promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-network-byte-order` is a private
 `static-c-network-byte-order` artifact inside planned `libc.posix-runtime`.
@@ -1302,6 +1303,23 @@ The shared fixture proves self set/get, raw getter observation, the exact
 procfs route, cancellation, a general prctl API, scheduling/affinity
 attributes, lifecycle/synchronization/TSS, dynamic/loader TLS, CRT, sysroot,
 family completion, promotion, and public x86 support remain excluded.
+
+The separate `./scripts/dev-x86_64.sh libc-pthread-attributes` artifact is a
+private `pthread_attr_t` record-metadata leaf in the same still-planned
+`libc.pthread-tls` family. Its project-header fixture first runs against pinned
+musl 1.2.6 and then through a `-nostdlib -static` candidate. The private
+`libc/src/c_abi/x86_64/pthread_attr.rs` owner supplies exactly the 18 standard
+entries: `pthread_attr_init`/`pthread_attr_destroy` and the set/get pairs for
+detach state, stack size, stack, guard size, scope, inherit-scheduler state,
+scheduler policy, and scheduler parameters. It preserves musl's 56-byte,
+align-eight record defaults (131072-byte stack and 8192-byte guard), direct
+status validation for detach/inherit, stack, guard, and scope inputs, raw
+scheduler metadata, and `pthread_attr_getstack`'s no-output-on-unset rule.
+`pthread_create` remains null-attribute-only: this leaf does not consume the
+record. Custom stacks, detached-at-create behavior, scheduler or guard runtime
+effects, GNU default attributes, `pthread_getattr_np`, live-thread inspection,
+TLS/runtime state, family completion, promotion, and public x86 support remain
+excluded.
 
 The separate `./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared`
 artifact remains a record-only private static leaf in that same still-planned

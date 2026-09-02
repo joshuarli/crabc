@@ -287,6 +287,38 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertTrue(barrier_entries <= default_static)
         self.assertFalse(barrier_entries & unprovided)
 
+    def test_pthread_attribute_metadata_is_default_static_not_unprovided(self) -> None:
+        """Keep the bounded record-only pthread_attr surface provider-owned."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
+        unprovided = set(partition["unprovided"]["members"])
+        attributes = {
+            "pthread_attr_init",
+            "pthread_attr_destroy",
+            "pthread_attr_setdetachstate",
+            "pthread_attr_getdetachstate",
+            "pthread_attr_setstacksize",
+            "pthread_attr_getstacksize",
+            "pthread_attr_setstack",
+            "pthread_attr_getstack",
+            "pthread_attr_setguardsize",
+            "pthread_attr_getguardsize",
+            "pthread_attr_setscope",
+            "pthread_attr_getscope",
+            "pthread_attr_setinheritsched",
+            "pthread_attr_getinheritsched",
+            "pthread_attr_setschedpolicy",
+            "pthread_attr_getschedpolicy",
+            "pthread_attr_setschedparam",
+            "pthread_attr_getschedparam",
+        }
+
+        self.assertTrue(attributes <= default_static)
+        self.assertFalse(attributes & unprovided)
+
     def test_netinet_macro_batch_is_present_with_its_exact_feature_split(self) -> None:
         """Keep this header-only reduction separate from archive-callable work."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:

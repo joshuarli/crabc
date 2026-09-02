@@ -351,6 +351,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/math_tan.rs"),
     Path("libc/src/c_abi/x86_64/math_tanh.rs"),
     Path("libc/src/c_abi/x86_64/pthread_affinity.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_attr.rs"),
     Path("libc/src/c_abi/x86_64/pthread_atfork.rs"),
     Path("libc/src/c_abi/x86_64/pthread_barrierattr_pshared.rs"),
     # This exact complete barrier port remains a separately evidenced static

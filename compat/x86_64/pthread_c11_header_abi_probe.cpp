@@ -114,6 +114,32 @@ static_assert(mtx_plain == 0 && mtx_recursive == 1 && mtx_timed == 2,
 
 using crabc_pthread_create_signature = int (*)(
 	pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+using crabc_pthread_attr_init_signature = int (*)(pthread_attr_t *);
+using crabc_pthread_attr_destroy_signature = int (*)(pthread_attr_t *);
+using crabc_pthread_attr_setdetachstate_signature = int (*)(pthread_attr_t *, int);
+using crabc_pthread_attr_getdetachstate_signature = int (*)(
+	const pthread_attr_t *, int *);
+using crabc_pthread_attr_setstacksize_signature = int (*)(pthread_attr_t *, size_t);
+using crabc_pthread_attr_getstacksize_signature = int (*)(
+	const pthread_attr_t *, size_t *);
+using crabc_pthread_attr_setstack_signature = int (*)(pthread_attr_t *, void *, size_t);
+using crabc_pthread_attr_getstack_signature = int (*)(
+	const pthread_attr_t *, void **, size_t *);
+using crabc_pthread_attr_setguardsize_signature = int (*)(pthread_attr_t *, size_t);
+using crabc_pthread_attr_getguardsize_signature = int (*)(
+	const pthread_attr_t *, size_t *);
+using crabc_pthread_attr_setscope_signature = int (*)(pthread_attr_t *, int);
+using crabc_pthread_attr_getscope_signature = int (*)(const pthread_attr_t *, int *);
+using crabc_pthread_attr_setinheritsched_signature = int (*)(pthread_attr_t *, int);
+using crabc_pthread_attr_getinheritsched_signature = int (*)(
+	const pthread_attr_t *, int *);
+using crabc_pthread_attr_setschedpolicy_signature = int (*)(pthread_attr_t *, int);
+using crabc_pthread_attr_getschedpolicy_signature = int (*)(
+	const pthread_attr_t *, int *);
+using crabc_pthread_attr_setschedparam_signature = int (*)(
+	pthread_attr_t *, const struct sched_param *);
+using crabc_pthread_attr_getschedparam_signature = int (*)(
+	const pthread_attr_t *, struct sched_param *);
 using crabc_pthread_detach_signature = int (*)(pthread_t);
 using crabc_pthread_self_signature = pthread_t (*)();
 using crabc_pthread_equal_signature = int (*)(pthread_t, pthread_t);
@@ -209,6 +235,54 @@ using crabc_tss_set_signature = int (*)(tss_t, void *);
 
 static_assert(__is_same(decltype(&pthread_create), crabc_pthread_create_signature),
 	"pthread_create signature");
+static_assert(__is_same(decltype(&pthread_attr_init),
+	crabc_pthread_attr_init_signature), "pthread_attr_init signature");
+static_assert(__is_same(decltype(&pthread_attr_destroy),
+	crabc_pthread_attr_destroy_signature), "pthread_attr_destroy signature");
+static_assert(__is_same(decltype(&pthread_attr_setdetachstate),
+	crabc_pthread_attr_setdetachstate_signature),
+	"pthread_attr_setdetachstate signature");
+static_assert(__is_same(decltype(&pthread_attr_getdetachstate),
+	crabc_pthread_attr_getdetachstate_signature),
+	"pthread_attr_getdetachstate signature");
+static_assert(__is_same(decltype(&pthread_attr_setstacksize),
+	crabc_pthread_attr_setstacksize_signature),
+	"pthread_attr_setstacksize signature");
+static_assert(__is_same(decltype(&pthread_attr_getstacksize),
+	crabc_pthread_attr_getstacksize_signature),
+	"pthread_attr_getstacksize signature");
+static_assert(__is_same(decltype(&pthread_attr_setstack),
+	crabc_pthread_attr_setstack_signature), "pthread_attr_setstack signature");
+static_assert(__is_same(decltype(&pthread_attr_getstack),
+	crabc_pthread_attr_getstack_signature), "pthread_attr_getstack signature");
+static_assert(__is_same(decltype(&pthread_attr_setguardsize),
+	crabc_pthread_attr_setguardsize_signature),
+	"pthread_attr_setguardsize signature");
+static_assert(__is_same(decltype(&pthread_attr_getguardsize),
+	crabc_pthread_attr_getguardsize_signature),
+	"pthread_attr_getguardsize signature");
+static_assert(__is_same(decltype(&pthread_attr_setscope),
+	crabc_pthread_attr_setscope_signature), "pthread_attr_setscope signature");
+static_assert(__is_same(decltype(&pthread_attr_getscope),
+	crabc_pthread_attr_getscope_signature), "pthread_attr_getscope signature");
+static_assert(__is_same(decltype(&pthread_attr_setinheritsched),
+	crabc_pthread_attr_setinheritsched_signature),
+	"pthread_attr_setinheritsched signature");
+static_assert(__is_same(decltype(&pthread_attr_getinheritsched),
+	crabc_pthread_attr_getinheritsched_signature),
+	"pthread_attr_getinheritsched signature");
+static_assert(__is_same(decltype(&pthread_attr_setschedpolicy),
+	crabc_pthread_attr_setschedpolicy_signature),
+	"pthread_attr_setschedpolicy signature");
+static_assert(__is_same(decltype(&pthread_attr_getschedpolicy),
+	crabc_pthread_attr_getschedpolicy_signature),
+	"pthread_attr_getschedpolicy signature");
+static_assert(__is_same(decltype(&pthread_attr_setschedparam),
+	crabc_pthread_attr_setschedparam_signature),
+	"pthread_attr_setschedparam signature");
+static_assert(__is_same(decltype(&pthread_attr_getschedparam),
+	crabc_pthread_attr_getschedparam_signature),
+	"pthread_attr_getschedparam signature");
 static_assert(__is_same(decltype(&pthread_detach), crabc_pthread_detach_signature),
 	"pthread_detach signature");
 static_assert(__is_same(decltype(&pthread_self), crabc_pthread_self_signature),
@@ -367,6 +441,48 @@ static once_flag crabc_c11_once = ONCE_FLAG_INIT;
 /* `used` keeps the declaration-linkage evidence in the otherwise unlinked object. */
 static crabc_pthread_create_signature const crabc_force_pthread_create
 	__attribute__((used)) = &pthread_create;
+static crabc_pthread_attr_init_signature const crabc_force_pthread_attr_init
+	__attribute__((used)) = &pthread_attr_init;
+static crabc_pthread_attr_destroy_signature const crabc_force_pthread_attr_destroy
+	__attribute__((used)) = &pthread_attr_destroy;
+static crabc_pthread_attr_setdetachstate_signature const crabc_force_pthread_attr_setdetachstate
+	__attribute__((used)) = &pthread_attr_setdetachstate;
+static crabc_pthread_attr_getdetachstate_signature const crabc_force_pthread_attr_getdetachstate
+	__attribute__((used)) = &pthread_attr_getdetachstate;
+static crabc_pthread_attr_setstacksize_signature const crabc_force_pthread_attr_setstacksize
+	__attribute__((used)) = &pthread_attr_setstacksize;
+static crabc_pthread_attr_getstacksize_signature const crabc_force_pthread_attr_getstacksize
+	__attribute__((used)) = &pthread_attr_getstacksize;
+static crabc_pthread_attr_setstack_signature const crabc_force_pthread_attr_setstack
+	__attribute__((used)) = &pthread_attr_setstack;
+static crabc_pthread_attr_getstack_signature const crabc_force_pthread_attr_getstack
+	__attribute__((used)) = &pthread_attr_getstack;
+static crabc_pthread_attr_setguardsize_signature const crabc_force_pthread_attr_setguardsize
+	__attribute__((used)) = &pthread_attr_setguardsize;
+static crabc_pthread_attr_getguardsize_signature const crabc_force_pthread_attr_getguardsize
+	__attribute__((used)) = &pthread_attr_getguardsize;
+static crabc_pthread_attr_setscope_signature const crabc_force_pthread_attr_setscope
+	__attribute__((used)) = &pthread_attr_setscope;
+static crabc_pthread_attr_getscope_signature const crabc_force_pthread_attr_getscope
+	__attribute__((used)) = &pthread_attr_getscope;
+static crabc_pthread_attr_setinheritsched_signature const
+	crabc_force_pthread_attr_setinheritsched __attribute__((used)) =
+	&pthread_attr_setinheritsched;
+static crabc_pthread_attr_getinheritsched_signature const
+	crabc_force_pthread_attr_getinheritsched __attribute__((used)) =
+	&pthread_attr_getinheritsched;
+static crabc_pthread_attr_setschedpolicy_signature const
+	crabc_force_pthread_attr_setschedpolicy __attribute__((used)) =
+	&pthread_attr_setschedpolicy;
+static crabc_pthread_attr_getschedpolicy_signature const
+	crabc_force_pthread_attr_getschedpolicy __attribute__((used)) =
+	&pthread_attr_getschedpolicy;
+static crabc_pthread_attr_setschedparam_signature const
+	crabc_force_pthread_attr_setschedparam __attribute__((used)) =
+	&pthread_attr_setschedparam;
+static crabc_pthread_attr_getschedparam_signature const
+	crabc_force_pthread_attr_getschedparam __attribute__((used)) =
+	&pthread_attr_getschedparam;
 static crabc_pthread_detach_signature const crabc_force_pthread_detach
 	__attribute__((used)) = &pthread_detach;
 static crabc_pthread_self_signature const crabc_force_pthread_self

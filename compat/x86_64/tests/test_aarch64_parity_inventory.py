@@ -232,9 +232,13 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(pthread_tls["contract_state"], "selected-private")
         self.assertEqual(pthread_tls["verified_slice_count"], 1)
-        self.assertEqual(pthread_tls["verified_artifact_count"], 36)
+        self.assertEqual(pthread_tls["verified_artifact_count"], 37)
         self.assertIn(
             {"family": "libc.pthread-tls", "id": "static-c-pthread-barrier"},
+            report["selected_private_artifacts"],
+        )
+        self.assertIn(
+            {"family": "libc.pthread-tls", "id": "static-c-pthread-attributes"},
             report["selected_private_artifacts"],
         )
         self.assertIn(
@@ -266,7 +270,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            358,
+            359,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -350,10 +354,10 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1124)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1142)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
-            1103,
+            1121,
         )
         self.assertEqual(
             report["unsupported_contracts"],

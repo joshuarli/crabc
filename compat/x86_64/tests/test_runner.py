@@ -1852,7 +1852,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
             "libc-pthread-name",
-            "libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init",
+            "libc-pthread-attributes|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init",
             "libc-pthread-spin-destroy",
             "libc-pthread-detach",
             "libc-thrd-yield",
@@ -1979,6 +1979,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-atfork", source)
         self.assertIn("libc-pthread-cpuclock", source)
         self.assertIn("libc-pthread-name", source)
+        self.assertIn("libc-pthread-attributes", source)
         self.assertIn("libc-pthread-barrierattr-pshared", source)
         self.assertIn("libc-pthread-barrier", source)
         self.assertIn("pthread-spin-destroy-header-abi", source)
@@ -9249,6 +9250,142 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-pthread-barrierattr-pshared)\n        [ "$#" -eq 0 ] || fail "libc-pthread-barrierattr-pshared takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_attr_stays_metadata_only(self) -> None:
+        """Keep the standard pthread attribute record contract closed and pure."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_attr.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_pthread_attr_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_pthread_attr_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_attr.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+        symbols = (
+            "pthread_attr_init",
+            "pthread_attr_destroy",
+            "pthread_attr_setdetachstate",
+            "pthread_attr_getdetachstate",
+            "pthread_attr_setstacksize",
+            "pthread_attr_getstacksize",
+            "pthread_attr_setstack",
+            "pthread_attr_getstack",
+            "pthread_attr_setguardsize",
+            "pthread_attr_getguardsize",
+            "pthread_attr_setscope",
+            "pthread_attr_getscope",
+            "pthread_attr_setinheritsched",
+            "pthread_attr_getinheritsched",
+            "pthread_attr_setschedpolicy",
+            "pthread_attr_getschedpolicy",
+            "pthread_attr_setschedparam",
+            "pthread_attr_getschedparam",
+        )
+
+        for path in (implementation_path, probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing pthread attribute input: {path}")
+        implementation = implementation_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_attr.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_attr_init.c",
+            "src/thread/pthread_attr_get.c",
+            "src/thread/pthread_attr_setstacksize.c",
+            "src/thread/pthread_attr_setscope.c",
+            "src/thread/pthread_attr_setschedparam.c",
+            "56-byte, align-8 union",
+            "PTHREAD_STACK_MIN: usize = 2_048",
+            "null attribute pointer",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "use super",
+            "raw_syscall::",
+            "static_tls::",
+            "pthread_create_join::",
+            "Atomic",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for symbol in symbols:
+            self.assertIn(f'fn {symbol}(', implementation)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <limits.h>",
+            "#include <pthread.h>",
+            "#include <sched.h>",
+            "sizeof(pthread_attr_t) == 56",
+            "PTHREAD_STACK_MIN == 2048",
+            "CRABC_PTHREAD_ATTR_FREESTANDING",
+            "pthread_attr_getstack(&attributes, &stack_address, &stack_size) != EINVAL",
+            "maximum_guard + 1",
+            "PTHREAD_SCOPE_PROCESS) != ENOTSUP",
+            "pthread_attr_setschedparam",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("pthread_create(", probe)
+        for required in (
+            "crabc_x86_64_pthread_attr_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertNotIn("%fs", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_direct_record_paths",
+            "must remain TLS-free",
+            "src/thread/pthread_attr_init.c",
+            "src/thread/pthread_attr_get.c",
+            "pthread_getattr_default_np pthread_setattr_default_np",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(set(symbols) <= static_exports)
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for symbol in symbols:
+                self.assertIn(f"crabc_{symbol}_signature", header_probe)
+                self.assertIn(f'"{symbol} signature"', header_probe)
+        for symbol in symbols:
+            self.assertIn(f"crabc_force_{symbol}", cxx_header_probe)
+            self.assertIn(symbol, header_runner)
+        self.assertIn('id = "static-c-pthread-attributes"',
+                      (ROOT / "compat" / "x86_64" / "parity.toml").read_text(encoding="utf-8"))
+        self.assertIn("run_libc_pthread_attr_probe()", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_pthread_attr.sh", runner)
+        self.assertIn(
+            '    libc-pthread-attributes)\n        [ "$#" -eq 0 ] || fail "libc-pthread-attributes takes no arguments"',
             runner,
         )
 

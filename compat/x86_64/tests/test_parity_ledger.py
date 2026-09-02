@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 358)
+        self.assertEqual(report["verified_artifact_count"], 359)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -3361,11 +3361,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1512)
-        self.assertEqual(provider_audit["default_static_callable_count"], 1054)
+        self.assertEqual(provider_audit["default_static_callable_count"], 1072)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 411)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 393)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -15317,7 +15317,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 36)
+        self.assertEqual(len(artifacts), 37)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -15344,6 +15344,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-cpuclock",
                 "static-c-pthread-name",
                 "static-c-pthread-spin-destroy",
+                "static-c-pthread-attributes",
                 "static-c-pthread-barrierattr-pshared",
                 "static-c-pthread-barrier",
                 "static-c-pthread-spin-init",
@@ -15382,6 +15383,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         cpuclock = by_id["static-c-pthread-cpuclock"]
         name = by_id["static-c-pthread-name"]
         spin_destroy = by_id["static-c-pthread-spin-destroy"]
+        attributes = by_id["static-c-pthread-attributes"]
         barrierattr_pshared = by_id["static-c-pthread-barrierattr-pshared"]
         barrier = by_id["static-c-pthread-barrier"]
         spin_init = by_id["static-c-pthread-spin-init"]
@@ -15663,6 +15665,33 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, public x86 support, and x86-64 parity",
         ):
             self.assertIn(phrase, spin_destroy_scope)
+        self.assertEqual(
+            attributes["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-attributes",
+        )
+        self.assertEqual(
+            {entry["kind"] for entry in attributes["oracle"]},
+            {"c-posix", "elf-abi"},
+        )
+        for phrase in (
+            "Eighteen dependency-free standard entries",
+            "56-byte, eight-byte-aligned `pthread_attr_t` record",
+            "128 KiB stack and 8 KiB guard defaults",
+            "remains null-attribute-only",
+            "not custom-stack, detached-at-create, guard-page, scheduler",
+            "GNU default attributes, affinity attributes, live-thread inspection",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, attributes["description"])
+        attribute_scope = attributes["native_evidence"][0]["scope"]
+        for phrase in (
+            "every selected getter/setter",
+            "stack and guard exact lower/upper bounds",
+            "first-field-only sched_param writes",
+            "pthread_create attribute consumption",
+            "GNU defaults, affinity, live-thread inspection",
+        ):
+            self.assertIn(phrase, attribute_scope)
         self.assertEqual(
             barrierattr_pshared["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared",
@@ -17375,6 +17404,70 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "pthread spin-destroy must use its closed native command",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_pthread_attribute_artifact_stays_record_metadata_only(self) -> None:
+        """Keep the complete standard attr record surface below worker policy."""
+
+        data = self.data()
+        family = self.family(data, "libc.pthread-tls")
+        self.assertEqual(family["status"], "planned")
+        artifact = next(
+            entry
+            for entry in family["verified_artifact"]
+            if entry["id"] == "static-c-pthread-attributes"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            artifact["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-attributes",
+        )
+        self.assertEqual(
+            {entry["kind"] for entry in artifact["oracle"]},
+            {"c-posix", "elf-abi"},
+        )
+        for owner in (
+            "libc/src/c_abi/x86_64/pthread_attr.rs",
+            "compat/x86_64/libc_pthread_attr_probe.c",
+            "compat/x86_64/libc_pthread_attr_start.S",
+            "compat/x86_64/run_libc_pthread_attr.sh",
+            "compat/x86_64/pthread_c11_header_abi_probe.c",
+            "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "Eighteen dependency-free standard entries",
+            "128 KiB stack and 8 KiB guard defaults",
+            "remains null-attribute-only",
+            "GNU default attributes, affinity attributes, live-thread inspection",
+            "general pthread runtime behavior or x86-64 parity",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        for phrase in (
+            "size - PTHREAD_STACK_MIN > SIZE_MAX/4",
+            "PTHREAD_SCOPE_SYSTEM=0",
+            "ENOTSUP=95 for PTHREAD_SCOPE_PROCESS=1",
+            "Policy and priority are raw record values",
+        ):
+            self.assertIn(phrase, " ".join(artifact["x86_abi_prerequisites"]))
+
+        changed = copy.deepcopy(data)
+        changed_artifact = next(
+            entry
+            for entry in self.family(changed, "libc.pthread-tls")[
+                "verified_artifact"
+            ]
+            if entry["id"] == "static-c-pthread-attributes"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "pthread attributes must use their closed native command",
         ):
             ledger.validate_ledger(changed)
 

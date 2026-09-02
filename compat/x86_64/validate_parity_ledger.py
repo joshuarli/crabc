@@ -3138,11 +3138,11 @@ def validate_header_layout_foundation_manifest(
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1512,
-            "default_static_callable_count": 1054,
+            "default_static_callable_count": 1072,
             "verified_feature_callable_count": 47,
             "verified_feature_profile_count": 21,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 411,
+            "unprovided_callable_count": 393,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -6179,12 +6179,12 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "no-feature default static archive",
         "isolated exact Cargo requests",
         "ordinary archive extraction",
-        "1,054 current default-static",
+        "1,072 current default-static",
         "47 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "411-name unprovided complement",
+        "393-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -15936,8 +15936,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -16690,8 +16690,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -17017,8 +17017,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -17388,8 +17388,8 @@ def require_static_pthread_cancel_deferred_artifact(
         "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -69391,8 +69391,8 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-atfork-fork artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -69723,8 +69723,8 @@ def require_static_pthread_affinity_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread-affinity artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -69914,8 +69914,8 @@ def require_static_pthread_cpuclock_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread CPU-clock artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -70107,8 +70107,8 @@ def require_static_pthread_name_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread task-name artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -70312,8 +70312,8 @@ def require_static_pthread_spin_destroy_artifact(
         "libc.pthread-tls must contain exactly one source-closed pthread spin-destroy artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -70542,6 +70542,262 @@ def require_static_pthread_spin_destroy_artifact(
         )
 
 
+def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet pthread attribute record metadata without worker-policy promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pthread-attributes"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one pthread attribute artifact",
+    )
+    require(
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
+    )
+    require(
+        family.get("status") == "planned",
+        "pthread attributes must not promote libc.pthread-tls",
+    )
+    family_description = family["description"]
+    assert isinstance(family_description, str)
+    for phrase in (
+        "standard musl-shaped pthread-attribute record-metadata block",
+        "selected pthread_create null-attribute-only",
+    ):
+        require(
+            phrase in family_description,
+            f"libc.pthread-tls description omits {phrase} after pthread attributes",
+        )
+
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "Eighteen dependency-free standard entries",
+        "56-byte, eight-byte-aligned `pthread_attr_t` record",
+        "128 KiB stack and 8 KiB guard defaults",
+        "unsigned bounds, packed-word updates, no-mutation failure paths",
+        "direct positive `EINVAL`/`ENOTSUP` statuses",
+        "only `sched_priority`",
+        "remains null-attribute-only",
+        "not custom-stack, detached-at-create, guard-page, scheduler",
+        "GNU default attributes, affinity attributes, live-thread inspection",
+        "C errno/TLS/allocation/syscall state",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"pthread attribute description omits {phrase}",
+        )
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/pthread_attr.rs",
+        "include/bits/alltypes.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/limits.h",
+        "include/pthread.h",
+        "include/sched.h",
+        "include/stdint.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pthread_attr_probe.c",
+        "compat/x86_64/libc_pthread_attr_start.S",
+        "compat/x86_64/run_libc_pthread_attr.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "pthread attribute source owners"))
+        == expected_sources,
+        "pthread attribute source owners drifted",
+    )
+
+    prerequisite_text = " ".join(artifact["x86_abi_prerequisites"])
+    for phrase in (
+        "src/thread/pthread_attr_init.c",
+        "pthread_attr_destroy.c",
+        "pthread_attr_setstacksize.c",
+        "pthread_attr_setschedparam.c",
+        "pthread_attr_get.c",
+        "DEFAULT_STACK_SIZE=131072 and DEFAULT_GUARD_SIZE=8192",
+        "seven eight-byte words at offsets 0/8/16/24/32/40/48",
+        "size - PTHREAD_STACK_MIN > SIZE_MAX/4",
+        "size > SIZE_MAX/8",
+        "EINVAL without output writes",
+        "PTHREAD_SCOPE_SYSTEM=0",
+        "ENOTSUP=95 for PTHREAD_SCOPE_PROCESS=1",
+        "Policy and priority are raw record values",
+        "direct true-static candidate",
+        "no PT_TLS",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"pthread attribute ABI prerequisites omit {phrase}",
+        )
+    header_text = " ".join(artifact["x86_header_prerequisites"])
+    for phrase in (
+        "errno.h",
+        "limits.h",
+        "pthread.h",
+        "sched.h",
+        "stdint.h",
+        "56-byte align-eight public record",
+        "PTHREAD_STACK_MIN=2048",
+        "all eighteen exact function-pointer declarations",
+        "28-context C/C++ pthread/C11",
+        "unmangled C++ references",
+    ):
+        require(
+            phrase in header_text,
+            f"pthread attribute header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-attributes"},
+        "pthread attributes must use their closed native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 project-header C reference",
+        "`-nostdlib -static` candidate",
+        "every selected getter/setter",
+        "stack and guard exact lower/upper bounds",
+        "first-field-only sched_param writes",
+        "exactly the eighteen exports",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "PT_TLS, C errno/bootstrap, syscall, helper call",
+        "pthread_create attribute consumption",
+        "GNU defaults, affinity, live-thread inspection",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"pthread attribute evidence scope omits {phrase}",
+        )
+
+    symbols = (
+        "pthread_attr_init",
+        "pthread_attr_destroy",
+        "pthread_attr_setdetachstate",
+        "pthread_attr_getdetachstate",
+        "pthread_attr_setstacksize",
+        "pthread_attr_getstacksize",
+        "pthread_attr_setstack",
+        "pthread_attr_getstack",
+        "pthread_attr_setguardsize",
+        "pthread_attr_getguardsize",
+        "pthread_attr_setscope",
+        "pthread_attr_getscope",
+        "pthread_attr_setinheritsched",
+        "pthread_attr_getinheritsched",
+        "pthread_attr_setschedpolicy",
+        "pthread_attr_getschedpolicy",
+        "pthread_attr_setschedparam",
+        "pthread_attr_getschedparam",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(symbols) <= static_exports,
+        "pthread attribute static export contract is incomplete",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_attr.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "PublicPthreadAttr",
+        "size_of::<PublicPthreadAttr>() == 56",
+        "valid_stack_size",
+        "valid_guard_size",
+        "Musl leaves both outputs untouched on this error path",
+        "null attribute pointer",
+    ):
+        require(
+            phrase in implementation,
+            f"pthread attribute implementation omits {phrase}",
+        )
+    for forbidden in (
+        "use super",
+        "raw_syscall::",
+        "static_tls::",
+        "pthread_create_join::",
+        "Atomic",
+    ):
+        require(
+            forbidden not in implementation,
+            f"pthread attribute implementation unexpectedly selects {forbidden}",
+        )
+    for symbol in symbols:
+        require(
+            re.search(
+                rf'pub\s+unsafe\s+extern\s+"C"\s+fn\s+{re.escape(symbol)}\s*\(',
+                implementation,
+            )
+            is not None,
+            f"pthread attribute implementation omits {symbol}",
+        )
+
+    artifact_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_pthread_attr.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "run_musl_oracle.sh",
+        "run_pthread_c11_header_abi.sh",
+        "-nostdlib -static",
+        "assert_direct_record_paths",
+        "pthread_getattr_default_np pthread_setattr_default_np",
+        "must remain TLS-free",
+    ):
+        require(
+            phrase in artifact_runner,
+            f"pthread attribute native runner omits {phrase}",
+        )
+    require(
+        "--whole-archive" not in artifact_runner,
+        "pthread attribute native runner must preserve archive extraction evidence",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_libc_pthread_attr_probe()",
+        "run_libc_pthread_attr.sh",
+        "libc-pthread-attributes)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"pthread attribute dispatcher omits {snippet}",
+        )
+
+
 def require_static_pthread_barrierattr_pshared_artifact(
     family: Mapping[str, Any],
 ) -> None:
@@ -70562,8 +70818,8 @@ def require_static_pthread_barrierattr_pshared_artifact(
         "libc.pthread-tls must contain exactly one barrierattr pshared artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -70749,8 +71005,8 @@ def require_static_pthread_barrier_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-barrier artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -70950,8 +71206,8 @@ def require_static_pthread_spin_init_artifact(family: Mapping[str, Any]) -> None
         "libc.pthread-tls must contain exactly one pthread spin-init artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71192,8 +71448,8 @@ def require_static_thrd_yield_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one direct C11 thrd_yield artifact",
     )
     require(
-        len(artifacts) == 36,
-        "libc.pthread-tls must retain exactly thirty-six private verified artifacts",
+        len(artifacts) == 37,
+        "libc.pthread-tls must retain exactly thirty-seven private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -74557,12 +74813,39 @@ def validate_ledger(
     require_static_pthread_cpuclock_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_name_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_spin_destroy_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_attr_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_barrierattr_pshared_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_barrier_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_spin_init_artifact(by_id["libc.pthread-tls"])
     require_closed_static_leaf_artifacts(
         by_id["libc.pthread-tls"],
         (
+            (
+                "static-c-pthread-attributes",
+                "./scripts/dev-x86_64.sh libc-pthread-attributes",
+                "libc/src/c_abi/x86_64/pthread_attr.rs",
+                "compat/x86_64/run_libc_pthread_attr.sh",
+                (
+                    "pthread_attr_init",
+                    "pthread_attr_destroy",
+                    "pthread_attr_setdetachstate",
+                    "pthread_attr_getdetachstate",
+                    "pthread_attr_setstacksize",
+                    "pthread_attr_getstacksize",
+                    "pthread_attr_setstack",
+                    "pthread_attr_getstack",
+                    "pthread_attr_setguardsize",
+                    "pthread_attr_getguardsize",
+                    "pthread_attr_setscope",
+                    "pthread_attr_getscope",
+                    "pthread_attr_setinheritsched",
+                    "pthread_attr_getinheritsched",
+                    "pthread_attr_setschedpolicy",
+                    "pthread_attr_getschedpolicy",
+                    "pthread_attr_setschedparam",
+                    "pthread_attr_getschedparam",
+                ),
+            ),
             (
                 "static-c-pthread-condattr-pshared",
                 "./scripts/dev-x86_64.sh libc-pthread-condattr-pshared",
