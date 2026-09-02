@@ -136,8 +136,8 @@ set -e
 [ "$candidate_status" -eq 0 ] || fail "crabc SHA-crypt candidate failed with status $candidate_status"
 
 if CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib --features x86-crypt,x86-allocator-runtime --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort >"$combined_feature_log" 2>&1; then
-    fail "x86-crypt unexpectedly composes with x86-allocator-runtime"
+    fail "manual x86-crypt/x86-allocator-runtime selection unexpectedly composes"
 fi
-grep -Fq 'x86-crypt cannot compose with x86-allocator-runtime' "$combined_feature_log" || fail "combined crypt/allocator feature rejection drifted"
+grep -Fq 'x86-crypt and x86-allocator-runtime must be enabled through x86-crypt-allocator-composition' "$combined_feature_log" || fail "combined crypt/allocator feature rejection drifted"
 
 printf 'x86 static libc bounded SHA-crypt: PASS\n'

@@ -10,9 +10,11 @@
 //! `malloc`/`aligned_alloc`/`free` boundary through a local global allocator
 //! bridge. `x86-crypt` does not enable `x86-allocator-runtime` or select an
 //! allocator backend; its static evidence deliberately supplies those three
-//! symbols from pinned musl. That private implementation detail does not
-//! select allocator lifecycle integration, dynamic runtime support, or public
-//! x86 support.
+//! symbols from pinned musl. The named
+//! `x86-crypt-allocator-composition` feature is the separately evidenced
+//! exception: it resolves the same bridge through the selected crabc wrapper
+//! and backend. Neither private topology selects allocator lifecycle
+//! integration, dynamic runtime support, or public x86 support.
 //!
 //! Source/provenance mapping is recorded in
 //! `compat/x86_64/crypt-profile.md`. The behavior intentionally matches the

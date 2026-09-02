@@ -66,9 +66,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 353)
-        self.assertEqual(report["feature_archive_count"], 20)
-        self.assertEqual(report["verified_feature_archive_count"], 20)
+        self.assertEqual(report["verified_artifact_count"], 354)
+        self.assertEqual(report["feature_archive_count"], 21)
+        self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
         self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -131,9 +131,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             data, self.verified_records(data)
         )
         self.assertEqual(report, {
-            "feature_archive_count": 20,
+            "feature_archive_count": 21,
             "planned_feature_archive_count": 0,
-            "verified_feature_archive_count": 20,
+            "verified_feature_archive_count": 21,
         })
 
         feature_archives = data["feature_archive"]
@@ -1291,6 +1291,50 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crypt profile slice must select exactly crypto.crypt and crypto.crypt-helpers",
         ):
             ledger.validate_ledger(data)
+
+    def test_crypt_allocator_composition_is_private_and_non_capability_evidence(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "static-c-crypt-allocator-composition"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "named `x86-crypt-allocator-composition` feature",
+            "The manual `x86-crypt,x86-allocator-runtime` selection remains rejected",
+            "same selected crabc allocator wrapper/backend",
+            "does not add a C export or capability",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-crypt-allocator-composition"},
+        )
+
+        ledger.require_crypt_allocator_composition_artifact(family)
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "static-c-crypt-allocator-composition"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["capabilities"] = ["memory.allocator-basic"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
+            ledger.validate_ledger(changed)
 
     def test_alloca_builtin_stays_archive_free_and_non_promoting(self) -> None:
         data = self.data()

@@ -259,6 +259,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "res_send",
             },
         )
+        self.assertEqual(verified["x86-crypt-allocator-composition"], set())
         self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt"} & unprovided)
         self.assertIn("fputws", unprovided)
 

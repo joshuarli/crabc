@@ -50215,7 +50215,8 @@ def require_crypt_profile_slice(family: Mapping[str, Any]) -> None:
         "never hand-rolls a cryptographic primitive",
         "strict/POSIX hiding versus X/Open/GNU/BSD `<unistd.h>` visibility",
         "pinned-musl `malloc`/`aligned_alloc`/`free` boundary",
-        "rejects composition with `x86-allocator-runtime`",
+        "manual `x86-crypt,x86-allocator-runtime` pair remains rejected",
+        "named `x86-crypt-allocator-composition` feature",
         "default static export",
         "legacy DES/BSDI/MD5/bcrypt support",
         "separate selected-private `legacy.misc` slice",
@@ -50330,7 +50331,7 @@ def require_crypt_profile_slice(family: Mapping[str, Any]) -> None:
                 "actual public crypt/crypt_r and every private helper",
                 "crypt_data.__buf overlap",
                 "pinned-musl malloc/aligned_alloc/free",
-                "x86-allocator-runtime composition",
+                "manual x86-crypt/x86-allocator-runtime selection",
                 "public x86 support",
             )
         ),
@@ -50377,12 +50378,14 @@ def require_crypt_profile_slice(family: Mapping[str, Any]) -> None:
     ).read_text(encoding="utf-8")
     for snippet in (
         '#[cfg(feature = "x86-crypt")]\n#[path = "crypt.rs"]\nmod crypt;',
-        "x86-crypt cannot compose with x86-allocator-runtime",
+        "not(feature = \"x86-crypt-allocator-composition\")",
+        "x86-crypt and x86-allocator-runtime must be enabled through x86-crypt-allocator-composition",
     ):
         require(snippet in static_root, f"crypto.crypt-profile static root omits {snippet}")
     cargo_manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
     for snippet in (
         "x86-crypt = [\"dep:base64ct\", \"dep:sha-crypt\"]",
+        "x86-crypt-allocator-composition = [\"x86-crypt\", \"x86-allocator-runtime\"]",
         "sha-crypt = { version = \"0.6\"",
         "base64ct = { version = \"1.8\"",
     ):
@@ -50416,7 +50419,7 @@ def require_crypt_profile_slice(family: Mapping[str, Any]) -> None:
         "run_crypt_header_abi.sh",
         "-static",
         '"$musl_archive"',
-        "x86-crypt cannot compose with x86-allocator-runtime",
+        "x86-crypt and x86-allocator-runtime must be enabled through x86-crypt-allocator-composition",
     ):
         require(snippet in runner, f"crypto.crypt-profile runner omits {snippet}")
     fixture = (ROOT / "compat" / "x86_64" / "libc_crypt_probe.c").read_text(
@@ -50441,6 +50444,188 @@ def require_crypt_profile_slice(family: Mapping[str, Any]) -> None:
         "run_libc_crypt.sh",
     ):
         require(snippet in dispatcher, f"crypto.crypt-profile dispatcher omits {snippet}")
+
+
+def require_crypt_allocator_composition_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the named crypt/allocator topology private and provider-specific."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        str(family.get("status", "")),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-crypt-allocator-composition"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs one static-c-crypt-allocator-composition artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "crypt/allocator composition must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-crypt-allocator-composition must not carry capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "named `x86-crypt-allocator-composition` feature",
+        "The manual `x86-crypt,x86-allocator-runtime` selection remains rejected",
+        "same selected crabc allocator wrapper/backend",
+        "pinned-musl provider boundary intact",
+        "does not add a C export or capability",
+        "allocator lifecycle, interposition",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-crypt-allocator-composition description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "static-c-crypt-allocator-composition.source_owners",
+        )
+    )
+    for owner in (
+        "libc/Cargo.toml",
+        "libc/src/allocator_mimalloc.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/crypt.rs",
+        "compat/x86_64/libc_crypt_allocator_composition_probe.c",
+        "compat/x86_64/run_libc_crypt_allocator_composition.sh",
+        "compat/x86_64/run_libc_crypt.sh",
+        "compat/x86_64/run_libc_allocator_runtime.sh",
+        "compat/x86_64/feature_archive_roster.py",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_feature_archive_roster.py",
+        "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-crypt-allocator-composition source owners omit {owner}",
+        )
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-crypt-allocator-composition.x86_abi_prerequisites",
+    )
+    for phrase in (
+        "SysV AMD64 LP64",
+        "260-byte align-4 crypt_data record",
+        "weak default malloc plus strong default aligned_alloc/free",
+        "direct manual pair is a compile-time error",
+        "exactly one crypt owner, wrapper, initial-TLS errno owner, and bundled static backend",
+        "Pinned musl 1.2.6",
+        "one TLS image",
+    ):
+        require(
+            any(phrase in item for item in prerequisites),
+            f"static-c-crypt-allocator-composition ABI prerequisites omit {phrase}",
+        )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-crypt-allocator-composition.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "crypt.h, stdint.h, stdlib.h, string.h, unistd.h" in item
+            and "not a new installed-header" in item
+            for item in headers
+        ),
+        "static-c-crypt-allocator-composition must retain its narrow header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-crypt-allocator-composition"},
+        "static-c-crypt-allocator-composition must use its closed command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "manual-pair compile-time rejection",
+                "only named x86-crypt-allocator-composition",
+                "current crypt malloc relocation",
+                "direct fixture aligned_alloc/free",
+                "no pinned-musl allocator implementation",
+                "no second full-archive backend",
+                "heap-backed public crypt, crypt_r, aligned private SHA output",
+                "does not add a C export or capability",
+                "public x86 support",
+            )
+        ),
+        "static-c-crypt-allocator-composition evidence must retain its provider boundary",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        'not(feature = "x86-crypt-allocator-composition")',
+        "x86-crypt and x86-allocator-runtime must be enabled through x86-crypt-allocator-composition",
+    ):
+        require(
+            snippet in static_root,
+            f"static-c-crypt-allocator-composition static root omits {snippet}",
+        )
+    cargo_manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    require(
+        'x86-crypt-allocator-composition = ["x86-crypt", "x86-allocator-runtime"]'
+        in cargo_manifest,
+        "static-c-crypt-allocator-composition manifest omits its named feature",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_crypt_allocator_composition.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "--features x86-crypt-allocator-composition",
+        "manual x86-crypt/x86-allocator-runtime selection unexpectedly composed",
+        "selected_crypt_member",
+        "selected_allocator_archive",
+        "selected crypt object does not request $symbol",
+        "candidate selected a pinned-musl allocator implementation",
+        "candidate selected an additional backend from the full crabc archive",
+    ):
+        require(
+            snippet in runner,
+            f"static-c-crypt-allocator-composition runner omits {snippet}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_crypt_allocator_composition_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "struct guarded_crypt_data",
+        "malloc(sizeof(key_source))",
+        "aligned_alloc(64, 320)",
+        "private_sha256",
+        "storage->guard",
+    ):
+        require(
+            snippet in fixture,
+            f"static-c-crypt-allocator-composition fixture omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-crypt-allocator-composition)",
+        "run_libc_crypt_allocator_composition.sh",
+    ):
+        require(
+            snippet in dispatcher,
+            f"static-c-crypt-allocator-composition dispatcher omits {snippet}",
+        )
 
 
 def require_alloca_builtin_artifact(family: Mapping[str, Any]) -> None:
@@ -73741,6 +73926,7 @@ def validate_ledger(
     require_allocator_observability_slice(by_id["libc.c-abi-compat"])
     require_allocator_basic_runtime_slice(by_id["libc.c-abi-compat"])
     require_crypt_profile_slice(by_id["libc.c-abi-compat"])
+    require_crypt_allocator_composition_artifact(by_id["libc.c-abi-compat"])
     require_alloca_builtin_artifact(by_id["libc.c-abi-compat"])
     require_getsubopt_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])

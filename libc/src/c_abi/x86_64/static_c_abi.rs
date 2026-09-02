@@ -893,13 +893,17 @@ mod allocator_observability {
 }
 
 // The crypt leaf deliberately resolves its temporary RustCrypto allocation
-// through the terminal C link. Combining it with the separate mimalloc-backed
-// allocator-runtime leaf would make allocation/deallocation provider ownership
-// depend on archive order, which this private artifact has not specified or
-// evidenced.
-#[cfg(all(feature = "x86-crypt", feature = "x86-allocator-runtime"))]
+// through the terminal C link. A manual crypt/allocator feature pair has no
+// named provider contract, so it remains rejected. The one explicit
+// composition feature is separately evidenced to resolve malloc,
+// aligned_alloc, and free through the selected crabc wrapper/backend.
+#[cfg(all(
+    feature = "x86-crypt",
+    feature = "x86-allocator-runtime",
+    not(feature = "x86-crypt-allocator-composition"),
+))]
 compile_error!(
-    "x86-crypt cannot compose with x86-allocator-runtime until their allocation-provider contract is evidenced"
+    "x86-crypt and x86-allocator-runtime must be enabled through x86-crypt-allocator-composition"
 );
 
 use core::ffi::{c_int, c_void};

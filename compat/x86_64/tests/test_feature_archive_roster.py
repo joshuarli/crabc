@@ -55,7 +55,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         rows = ROSTER.load_feature_archive_roster()
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
-        self.assertEqual(len(rows), 20)
+        self.assertEqual(len(rows), 21)
         self.assertEqual([item.identifier for item in rows if item.state == "planned"], [])
         resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
         self.assertEqual(resolver.state, "verified")
@@ -73,6 +73,19 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             next(item for item in rows if item.identifier == "x86-environment-runtime").additive_callables,
             (),
         )
+        composition = next(
+            item
+            for item in rows
+            if item.identifier == "x86-crypt-allocator-composition"
+        )
+        self.assertEqual(composition.evidence_record, "static-c-crypt-allocator-composition")
+        self.assertEqual(composition.dispatch_command, "libc-crypt-allocator-composition")
+        self.assertEqual(
+            composition.baseline_features,
+            ("x86-allocator-runtime", "x86-crypt"),
+        )
+        self.assertEqual(composition.additive_callables, ())
+        self.assertEqual(composition.replacement_callables, ())
 
     def test_dependent_feature_requires_its_exact_cargo_baseline(self) -> None:
         cargo_features = {

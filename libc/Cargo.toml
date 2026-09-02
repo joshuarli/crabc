@@ -58,9 +58,13 @@ x86-resolver-runtime = ["dep:crabc-core", "x86-h-errno"]
 # `sha-crypt` owns the MCF result temporarily. The target-local adapter bridges
 # only to the final link's C malloc/aligned_alloc/free symbols; this does not
 # enable x86-allocator-runtime or select an allocator backend, lifecycle, or
-# wider x86 C runtime. The two features are deliberately rejected together
-# until one allocation-provider composition is separately evidenced.
+# wider x86 C runtime. Directly selecting it with x86-allocator-runtime stays
+# rejected so provider ownership cannot depend on an incidental feature set.
 x86-crypt = ["dep:base64ct", "dep:sha-crypt"]
+# The only audited route that composes the private SHA-crypt adapter with the
+# x86 allocator wrapper/backend. This adds no callable or capability: it names
+# the allocation-provider contract and keeps a manual pair selection rejected.
+x86-crypt-allocator-composition = ["x86-crypt", "x86-allocator-runtime"]
 # The frozen legacy.misc aggregate has five separately evidenced default-root
 # prerequisites.  Keep its remaining fmtmsg/setkey/encrypt C ABI owner opt-in
 # until this private aggregate has its own closed x86 evidence; otherwise the

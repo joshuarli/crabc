@@ -17937,7 +17937,7 @@ capabilities = ["memory.allocator-basic"]
 
 [[family.verified_slice]]
 id = "crypto.crypt-profile"
-description = "Private native x86 opt-in selected-static-archive completion of the bounded AArch64 `crypto.crypt` and `crypto.crypt-helpers` capabilities inside still-planned `libc.c-abi-compat`. The feature-only object owns strong default `crypt`, weak default `crypt_r`, and strong default private `__crypt_r`, `__crypt_sha256`, `__crypt_sha512`, `__crypt_md5`, and `__crypt_blowfish`; the last two helpers and unsupported public formats return the documented `*` marker. `crypt` owns one process-shared 260-byte `struct crypt_data` record, while `crypt_r` and `__crypt_r` write only a caller-owned record's 256-byte `__buf` and preserve its four-byte `initialized` field. The selected SHA-256-crypt `$5$` and SHA-512-crypt `$6$` profile accepts a bounded canonical one-to-sixteen-byte Base64ShaCrypt salt and `sha_crypt::Params` rounds, then delegates every digest, rounds, transposition, and MCF serialization operation to the existing approved RustCrypto `sha-crypt` and `base64ct` dependencies. The adapter copies accepted key/setting bytes before output so either input may overlap a shared result or reentrant `__buf`; it never hand-rolls a cryptographic primitive. Project/pinned-musl C11/C++17 header evidence fixes the 260-byte C record, unmangled `crypt`/`crypt_r` declarations, and strict/POSIX hiding versus X/Open/GNU/BSD `<unistd.h>` visibility. The temporary dependency-owned MCF allocation reaches only the final candidate's pinned-musl `malloc`/`aligned_alloc`/`free` boundary; `x86-crypt` rejects composition with `x86-allocator-runtime` until one allocation-provider contract is separately evidenced. This selects neither a default static export, allocator lifecycle/backend, nor legacy DES/BSDI/MD5/bcrypt support, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. The separate selected-private `legacy.misc` slice supplies opt-in inert link-compatible `encrypt`/`setkey` names only; that boundary has no DES, cipher, PRNG, or crypto semantics and does not widen default exports."
+description = "Private native x86 opt-in selected-static-archive completion of the bounded AArch64 `crypto.crypt` and `crypto.crypt-helpers` capabilities inside still-planned `libc.c-abi-compat`. The feature-only object owns strong default `crypt`, weak default `crypt_r`, and strong default private `__crypt_r`, `__crypt_sha256`, `__crypt_sha512`, `__crypt_md5`, and `__crypt_blowfish`; the last two helpers and unsupported public formats return the documented `*` marker. `crypt` owns one process-shared 260-byte `struct crypt_data` record, while `crypt_r` and `__crypt_r` write only a caller-owned record's 256-byte `__buf` and preserve its four-byte `initialized` field. The selected SHA-256-crypt `$5$` and SHA-512-crypt `$6$` profile accepts a bounded canonical one-to-sixteen-byte Base64ShaCrypt salt and `sha_crypt::Params` rounds, then delegates every digest, rounds, transposition, and MCF serialization operation to the existing approved RustCrypto `sha-crypt` and `base64ct` dependencies. The adapter copies accepted key/setting bytes before output so either input may overlap a shared result or reentrant `__buf`; it never hand-rolls a cryptographic primitive. Project/pinned-musl C11/C++17 header evidence fixes the 260-byte C record, unmangled `crypt`/`crypt_r` declarations, and strict/POSIX hiding versus X/Open/GNU/BSD `<unistd.h>` visibility. The standalone temporary dependency-owned MCF allocation reaches only the final candidate's pinned-musl `malloc`/`aligned_alloc`/`free` boundary. A manual `x86-crypt,x86-allocator-runtime` pair remains rejected; the named `x86-crypt-allocator-composition` feature is separately evidenced to use the selected crabc provider. This selects neither a default static export, allocator lifecycle/backend, nor legacy DES/BSDI/MD5/bcrypt support, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. The separate selected-private `legacy.misc` slice supplies opt-in inert link-compatible `encrypt`/`setkey` names only; that boundary has no DES, cipher, PRNG, or crypto semantics and does not widen default exports."
 source_owners = [
   "Cargo.lock",
   "compat/upstreams.toml",
@@ -17975,14 +17975,14 @@ source_owners = [
 x86_abi_prerequisites = [
   "The SysV AMD64 LP64 ABI passes `crypt(const char *, const char *)` in rdi/rsi and returns its shared char pointer in rax; `crypt_r(const char *, const char *, struct crypt_data *)` and private `__crypt_r` add the caller-owned record pointer in rdx. `struct crypt_data` is one 260-byte align-4 C record: int initialized at offset 0 and exactly 256 `__buf` bytes at offset 4. `crypt` is strong/default and `crypt_r` weak/default, while every selected private helper is strong/default; direct private helper calls have no installed declaration.",
   "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 supplies the C ABI/header shape and historical symbol roster. The selected profile deliberately follows the active AArch64 dependency-backed `libc/src/crypt_impl.rs` boundary rather than claiming every musl format: RustCrypto `sha-crypt` owns SHA-256/SHA-512 digest, rounds, transposition, and MCF work, while `base64ct::Base64ShaCrypt` validates canonical one-to-sixteen-byte salts. MD5, blowfish/bcrypt, DES, BSDI, empty/noncanonical/overlong settings, and out-of-range rounds remain the bounded unsupported `*` route.",
-  "The opt-in feature object is deliberately outside `static_c_abi_exports.txt` and is linked only into its static candidate. The candidate begins with that exact crabc object, proves its real public/private ELF bindings and no test-only exports, then admits pinned-musl strcmp/strlen/write and malloc/aligned_alloc/free solely for fixture and dependency-owned allocation closure. It rejects musl crypt members, mimalloc, glibc, dynamic linkage, unresolved symbols, and feature composition with x86-allocator-runtime; this is not a default allocator/runtime or owned-product closure.",
+  "The opt-in feature object is deliberately outside `static_c_abi_exports.txt` and is linked only into its static candidate. The standalone candidate begins with that exact crabc object, proves its real public/private ELF bindings and no test-only exports, then admits pinned-musl strcmp/strlen/write and malloc/aligned_alloc/free solely for fixture and dependency-owned allocation closure. It rejects musl crypt members, mimalloc, glibc, dynamic linkage, unresolved symbols, and manual x86-crypt/x86-allocator-runtime selection; the separately named composition feature has its own selected-crabc-provider artifact. Neither is a default allocator/runtime or owned-product closure.",
 ]
 x86_header_prerequisites = [
   "Pinned-musl/project-first C11 and C++17 `<crypt.h>` probes prove the exact `crypt`/`crypt_r` function-pointer types, a 260-byte align-4 `struct crypt_data` with initialized/__buf offsets 0/4 and a 256-byte buffer, and unmangled C++ C linkage. The six-profile `<unistd.h>` matrix proves crypt stays hidden under strict/POSIX and visible under X/Open 700, GNU, and BSD selection. This is a targeted C ABI declaration proof, not installed-header completion or public x86 support.",
 ]
 native_evidence = [
   { state = "verified", command = "./scripts/dev-x86_64.sh crypt-header-abi", scope = "Runs pinned-musl/project C11 and C++17 `<crypt.h>` plus `<unistd.h>` feature-profile compilation, fixing the exact crypt/crypt_r signatures, 260-byte crypt_data record, and unmangled linkage. Strict/POSIX hiding and X/Open/GNU/BSD visibility are compared without linking an x86 runtime; this does not claim installed-header, family, promotion, or public x86 support." },
-  { state = "verified", command = "./scripts/dev-x86_64.sh libc-crypt", scope = "Runs pinned-musl explicit-round SHA-crypt execution, then a static x86 candidate whose opt-in crabc object is linked before the pinned-musl and full crabc archives. It ratchets strong public/private and weak crypt_r ELF bindings, rejects test-only exports and musl crypt members, executes actual public crypt/crypt_r and every private helper, and covers SHA-256/SHA-512 explicit/default rounds, nulls, bounded input, caller/shared-result and crypt_data.__buf overlap, guards, initialized preservation, and legacy `*` markers. The only admitted allocation bridge is pinned-musl malloc/aligned_alloc/free; mimalloc, glibc, dynamic linkage, unresolved symbols, x86-allocator-runtime composition, family promotion, and public x86 support remain rejected." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh libc-crypt", scope = "Runs pinned-musl explicit-round SHA-crypt execution, then a static x86 candidate whose opt-in crabc object is linked before the pinned-musl and full crabc archives. It ratchets strong public/private and weak crypt_r ELF bindings, rejects test-only exports and musl crypt members, executes actual public crypt/crypt_r and every private helper, and covers SHA-256/SHA-512 explicit/default rounds, nulls, bounded input, caller/shared-result and crypt_data.__buf overlap, guards, initialized preservation, and legacy `*` markers. The only admitted allocation bridge is pinned-musl malloc/aligned_alloc/free; mimalloc, glibc, dynamic linkage, unresolved symbols, manual x86-crypt/x86-allocator-runtime selection, family promotion, and public x86 support remain rejected." },
 ]
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C ABI, `crypt.h`/`unistd.h` declaration-visibility, ELF binding, and explicit-round SHA-crypt behavior oracle for the selected public/private symbol roster and 260-byte crypt_data record. Its broader historical algorithm acceptance is deliberately limited by the shared dependency-backed profile." },
@@ -17990,6 +17990,54 @@ oracle = [
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer register/return ABI, 260-byte caller record layout, strong/default public/private and weak/default crypt_r bindings, and static candidate linkage boundary." },
 ]
 capabilities = ["crypto.crypt", "crypto.crypt-helpers"]
+
+[[family.verified_artifact]]
+id = "static-c-crypt-allocator-composition"
+description = "Private native x86 aggregate evidence inside still-planned `libc.c-abi-compat` for the named `x86-crypt-allocator-composition` feature. It composes the already selected bounded SHA-crypt adapter and private allocator wrapper/backend without selecting another C callable or capability. The manual `x86-crypt,x86-allocator-runtime` selection remains rejected: this explicit feature is the only topology that may join them. Its one mixed static candidate extracts the selected crypt object plus the same selected crabc allocator wrapper, initial-TLS errno owner, and bundled backend; the candidate proves the adapter's current RustCrypto `malloc` relocation plus the fixture's direct `aligned_alloc`/`free`, heap-backed crypt/crypt_r/private-SHA calls all resolve through that same selected crabc allocator wrapper/backend rather than pinned musl. It keeps the standalone crypt artifact's pinned-musl provider boundary intact. This aggregate does not add a C export or capability, allocator lifecycle, interposition, full CRT/runtime/sysroot product closure, family completion, promotion, or public x86 support."
+source_owners = [
+  "Cargo.lock",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/allocator_mimalloc.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/crypt.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "include/crypt.h",
+  "include/stdint.h",
+  "include/stdlib.h",
+  "include/string.h",
+  "include/unistd.h",
+  "compat/x86_64/crypt-profile.md",
+  "compat/x86_64/libc_crypt_allocator_composition_probe.c",
+  "compat/x86_64/run_libc_crypt_allocator_composition.sh",
+  "compat/x86_64/run_libc_crypt.sh",
+  "compat/x86_64/run_libc_allocator_runtime.sh",
+  "compat/x86_64/feature_archive_roster.py",
+  "compat/x86_64/header_callable_inventory.py",
+  "compat/x86_64/header_callable_inventory.json",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_feature_archive_roster.py",
+  "compat/x86_64/tests/test_header_callable_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 ABI retains crypt's rdi/rsi pointer arguments and rax result, crypt_r's caller-owned 260-byte align-4 crypt_data record in rdx, and the allocator's size_t/pointer ABI. The selected wrapper retains weak default malloc plus strong default aligned_alloc/free; the current crypt object has a malloc relocation, while the fixture directly exercises the paired free and aligned_alloc/free routes.",
+  "The named feature is the only provider-composition contract: it expands to x86-crypt and x86-allocator-runtime, while a direct manual pair is a compile-time error. The candidate extracts exactly one crypt owner, wrapper, initial-TLS errno owner, and bundled static backend before pinned musl/archive closure; link-map and relocation checks reject pinned-musl allocator implementation members and an extra full-archive backend owner.",
+  "Pinned musl 1.2.6 supplies the historical crypt C ABI/header/explicit-round behavior and residual startup/support calls only. The candidate is static with one TLS image, no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS relocation, glibc input, allocator observer, interposition, or lifecycle claim. A statically linked pinned-musl __tls_get_addr helper may remain in the Rust support closure; it establishes no owned resolver behavior. The standalone crypt artifact remains the separate pinned-musl allocation-provider proof.",
+]
+x86_header_prerequisites = ["The composition fixture preprocesses project crypt.h, stdint.h, stdlib.h, string.h, unistd.h, features.h, and bits/alltypes.h. It reuses the crypt profile's exact C record/declaration boundary and exercises only standard heap declarations; it is not a new installed-header, public-header-family, or public x86 support claim."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-crypt-allocator-composition", scope = "Builds and preserves the manual-pair compile-time rejection, then builds only named x86-crypt-allocator-composition. One static x86 candidate directly links its selected crypt object and selected wrapper/errno/backend archive before pinned-musl and full crabc closure. It ratchets the current crypt malloc relocation, direct fixture aligned_alloc/free, crypt bindings, wrapper weak-malloc/strong-aligned_alloc/free bindings, one selected backend, no observer leak, no pinned-musl allocator implementation, no second full-archive backend, static-TLS/no-dynamic-TLS-relocation/no-glibc/no-unresolved closure, and heap-backed public crypt, crypt_r, aligned private SHA output, guard, and initialized-field behavior. Pinned-musl __tls_get_addr support is attributed but does not establish a resolver behavior claim. It does not add a C export or capability, establish allocator lifecycle/interposition/product closure, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Crypt C ABI/header and explicit-round SHA-256-crypt behavior oracle, plus the forbidden static allocator-member boundary for the composition candidate." },
+  { kind = "project-contract", source = "Existing x86 crypto.crypt-profile and memory.allocator-basic selections", role = "The aggregate reuses, rather than duplicates, their bounded public/private semantics and approved RustCrypto/mimalloc provenance." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 crypt/allocator call ABI, weak malloc versus strong aligned_alloc/free binding, archive member ownership, static TLS, and static-link closure contract." },
+]
 
 [[family.verified_artifact]]
 id = "static-c-basename"
@@ -19167,6 +19215,18 @@ dispatch_command = "libc-crypt"
 baseline_features = []
 enabled_features = ["x86-crypt"]
 additive_callables = ["crypt", "crypt_r"]
+replacement_callables = []
+aliases = []
+
+[[feature_archive]]
+id = "x86-crypt-allocator-composition"
+state = "verified"
+evidence_record = "static-c-crypt-allocator-composition"
+runner = "compat/x86_64/run_libc_crypt_allocator_composition.sh"
+dispatch_command = "libc-crypt-allocator-composition"
+baseline_features = ["x86-allocator-runtime", "x86-crypt"]
+enabled_features = ["x86-crypt-allocator-composition"]
+additive_callables = []
 replacement_callables = []
 aliases = []
 

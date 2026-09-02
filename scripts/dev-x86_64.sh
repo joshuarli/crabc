@@ -519,6 +519,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-float-parse  run the complete static x86 numeric.parse-float-locale slice
   libc-getsubopt  run the static x86 crabc-libc state-free getsubopt slice
   libc-crypt  run the private static x86 bounded SHA-crypt compatibility slice
+  libc-crypt-allocator-composition  run the private x86 crypt/allocator provider composition
   libc-l64a  run the static x86 crabc-libc shared radix-64 result-buffer slice
   libc-a64l  run the opt-in static x86 crabc-libc radix-64 decoder slice
   libc-stdio-standard  run the static x86 crabc-libc permanent standard-stream slice
@@ -5100,7 +5101,7 @@ case "$command" in
     libc-timer-settime) ;;
     libc-tee|libc-splice) ;;
     libc-sync-file-range|libc-copy-file-range) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-crypt-allocator-composition|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -7193,6 +7194,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-crypt takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_crypt.sh
+        ;;
+    libc-crypt-allocator-composition)
+        [ "$#" -eq 0 ] || fail "libc-crypt-allocator-composition takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_crypt_allocator_composition.sh
         ;;
     libc-l64a)
         [ "$#" -eq 0 ] || fail "libc-l64a takes no arguments"

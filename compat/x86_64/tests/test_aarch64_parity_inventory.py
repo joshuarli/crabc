@@ -208,7 +208,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.c-abi-compat"
         )
         self.assertEqual(c_abi_compat["verified_slice_count"], 9)
-        self.assertEqual(c_abi_compat["verified_artifact_count"], 27)
+        self.assertEqual(c_abi_compat["verified_artifact_count"], 28)
         self.assertIn(
             {"family": "libc.c-abi-compat", "id": "static-c-issetugid"},
             report["selected_private_artifacts"],
@@ -217,6 +217,13 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {
                 "family": "libc.c-abi-compat",
                 "id": "static-c-posix-spawnattr-setschedparam",
+            },
+            report["selected_private_artifacts"],
+        )
+        self.assertIn(
+            {
+                "family": "libc.c-abi-compat",
+                "id": "static-c-crypt-allocator-composition",
             },
             report["selected_private_artifacts"],
         )
@@ -249,7 +256,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            353,
+            354,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),

@@ -1630,6 +1630,14 @@
       },
       {
         "aliases": [],
+        "evidence_record": "static-c-crypt-allocator-composition",
+        "id": "x86-crypt-allocator-composition",
+        "members": [],
+        "runner": "compat/x86_64/run_libc_crypt_allocator_composition.sh",
+        "state": "verified"
+      },
+      {
+        "aliases": [],
         "evidence_record": "legacy.misc",
         "id": "x86-legacy-misc",
         "members": [
@@ -424013,7 +424021,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "b5c0cc11dd500e2daf94aaedb67978b8726ef18c46af963fa039eab4221c0511",
+    "parity_ledger_sha256": "5eea24e396292d5c3baf710ccee482739004658f7e257f4045b85b97dda2582d",
     "static_c_abi_exports_sha256": "4bae318653f77305fe753238496833793609417c453b2cebbf225b7a665f43e8"
   },
   "oracle": "Pinned musl 1.2.6",
