@@ -264,22 +264,22 @@ run_in_container() {
     local -a rustix_mount=()
     local -a rustybench_mount=()
     local -a git_common_mount=()
-    if [ "${1:-}" = "--allocator-m1-git-common-dir" ]; then
+    if [ "${1:-}" = "--allocator-git-common-dir" ]; then
         shift
         if ! git_common_dir="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)"; then
-            configuration_error "allocator-m1 requires a Git worktree with a readable common directory"
+            configuration_error "allocator evidence requires a Git worktree with a readable common directory"
             return 1
         fi
         if [[ "$git_common_dir" != /* ]] || [ ! -d "$git_common_dir" ]; then
-            configuration_error "allocator-m1 Git common directory is not an existing absolute path: $git_common_dir"
+            configuration_error "allocator evidence Git common directory is not an existing absolute path: $git_common_dir"
             return 1
         fi
         if ! git_common_physical="$(cd -P "$git_common_dir" && pwd)"; then
-            configuration_error "allocator-m1 Git common directory cannot be resolved physically: $git_common_dir"
+            configuration_error "allocator evidence Git common directory cannot be resolved physically: $git_common_dir"
             return 1
         fi
         if [ "$git_common_dir" != "$git_common_physical" ]; then
-            configuration_error "allocator-m1 Git common directory must be a physical path: $git_common_dir"
+            configuration_error "allocator evidence Git common directory must be a physical path: $git_common_dir"
             return 1
         fi
     fi
@@ -346,6 +346,13 @@ run_in_container() {
     fi
     docker_args+=("$IMAGE" "$@")
     "${docker_args[@]}"
+}
+
+run_allocator_evidence() {
+    # The runner attests source provenance in every lane. A linked worktree's
+    # .git file names its common directory with a host-absolute path, so grant
+    # each attested allocator run the same read-only metadata mount.
+    run_in_container --allocator-git-common-dir python3 compat/allocator/run.py "$@"
 }
 
 # Resolver evidence must not inherit Docker's host-derived DNS configuration.
@@ -655,26 +662,26 @@ case "$command" in
         fi
         case "$1" in
             --quick)
-                run_in_container python3 compat/allocator/run.py --quick
+                run_allocator_evidence --quick
                 ;;
             --full)
                 # This runner builds the complete C-oracle/M4 boundary, runs
                 # the recorded 128-cycle M5 lifecycle lane, and reports each
                 # reviewed unmet M5 gate without turning absent Rust work into
                 # a pass.
-                run_in_container python3 compat/allocator/run.py --full
+                run_allocator_evidence --full
                 ;;
             --churn)
                 # This bounded lane repeats the mixed-local and live-owner
                 # remote-free pthread witnesses under a watchdog; it is not a
                 # general allocator pass.
-                run_in_container python3 compat/allocator/run.py --churn
+                run_allocator_evidence --churn
                 ;;
             --soak)
                 # This opt-in larger lane uses the same pointer-private
                 # witnesses and a longer watchdog. It is lifecycle stability
                 # evidence, not a general allocator pass.
-                run_in_container python3 compat/allocator/run.py --soak
+                run_allocator_evidence --soak
                 ;;
             *)
                 usage >&2
@@ -691,8 +698,7 @@ case "$command" in
         # This is an acceptance-record producer, not a synonym for a green
         # allocator milestone. It returns the runner's intentional unmet-M1
         # status while the checked contract has remaining conditions.
-        run_in_container --allocator-m1-git-common-dir \
-            python3 compat/allocator/run.py --m1
+        run_allocator_evidence --m1
         ;;
     allocator-upstream)
         ensure_image

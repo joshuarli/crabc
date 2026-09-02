@@ -299,6 +299,75 @@ exit 64
             self.assertNotIn("crabc-target-aarch64:/workspace/target", arguments)
             self.assertNotIn("crabc-cargo-aarch64:/workspace/.work/cargo", arguments)
 
+    def test_allocator_quick_mounts_its_trusted_common_git_directory(self) -> None:
+        """Allocator provenance must work when the checkout is a linked worktree."""
+
+        with self._work_temporary_directory() as temporary:
+            root = Path(temporary)
+            bin_directory, capture = self._write_fake_docker(root)
+            common_directory = root / "git-common"
+            common_directory.mkdir()
+            untrusted_directory = root / "untrusted-git-common"
+            untrusted_directory.mkdir()
+            git = bin_directory / "git"
+            git.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$*" == *"rev-parse --path-format=absolute --git-common-dir" ]]; then
+    printf '%s\\n' "${FAKE_GIT_COMMON_DIR:?}"
+    exit 0
+fi
+
+printf 'unexpected git invocation: %s\\n' "$*" >&2
+exit 64
+""",
+                encoding="utf-8",
+            )
+            git.chmod(git.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.pop("CRABC_WORK_DIR", None)
+            environment.pop("CRABC_TARGET_VOLUME", None)
+            environment.pop("CRABC_CARGO_VOLUME", None)
+            environment.update(
+                {
+                    "CRABC_DEV_IMAGE": "crabc-test:aarch64",
+                    "CRABC_CONTAINER_GIT_COMMON_DIR": str(untrusted_directory),
+                    "FAKE_DOCKER_ARGS": str(capture),
+                    "FAKE_GIT_COMMON_DIR": str(common_directory),
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(DISPATCHER), "allocator", "--quick"],
+                cwd=ROOT,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
+
+            arguments = [
+                argument.decode("utf-8")
+                for argument in capture.read_bytes().split(bytes((0,)))
+                if argument
+            ]
+            argument_pairs = set(zip(arguments, arguments[1:]))
+            self.assertIn(
+                ("--volume", f"{common_directory}:{common_directory}:ro"),
+                argument_pairs,
+            )
+            self.assertNotIn(
+                f"{untrusted_directory}:{untrusted_directory}:ro",
+                arguments,
+            )
+            self.assertEqual(
+                arguments[-3:],
+                ["python3", "compat/allocator/run.py", "--quick"],
+            )
+
     def test_structure_runs_in_pinned_container(self) -> None:
         """The structure gate must not depend on the host Python version."""
 
