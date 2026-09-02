@@ -3155,11 +3155,11 @@ def validate_header_layout_foundation_manifest(
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1513,
-            "default_static_callable_count": 1110,
+            "default_static_callable_count": 1113,
             "verified_feature_callable_count": 47,
             "verified_feature_profile_count": 21,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 356,
+            "unprovided_callable_count": 353,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -6196,12 +6196,12 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "no-feature default static archive",
         "isolated exact Cargo requests",
         "ordinary archive extraction",
-        "1,110 current default-static",
+        "1,113 current default-static",
         "47 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "356-name unprovided complement",
+        "353-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -52027,8 +52027,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -53484,8 +53484,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -53767,8 +53767,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -54097,8 +54097,8 @@ def require_stdio_fixed_percent_scan_artifact(family: Mapping[str, Any]) -> None
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -54440,8 +54440,8 @@ def require_stdio_fixed_format_whitespace_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -54798,8 +54798,8 @@ def require_stdio_fixed_literal_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -55154,8 +55154,8 @@ def require_stdio_fixed_empty_format_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -55505,8 +55505,8 @@ def require_stdio_fixed_suppressed_character_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -55866,8 +55866,8 @@ def require_stdio_fixed_suppressed_string_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -56237,8 +56237,8 @@ def require_stdio_fixed_suppressed_scanset_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -56609,8 +56609,8 @@ def require_stdio_fixed_suppressed_count_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -57167,8 +57167,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -57688,8 +57688,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -58015,8 +58015,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -58346,8 +58346,8 @@ def require_stdio_permanent_freading_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -58714,8 +58714,8 @@ def require_stdio_permanent_fsetlocking_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -59098,8 +59098,8 @@ def require_stdio_permanent_fseterr_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -59479,8 +59479,8 @@ def require_stdio_permanent_freadable_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -59835,8 +59835,8 @@ def require_stdio_permanent_fwritable_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -60197,8 +60197,8 @@ def require_stdio_permanent_fbufsize_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -60571,8 +60571,8 @@ def require_stdio_permanent_flbf_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -60938,8 +60938,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -61308,8 +61308,8 @@ def require_stdio_permanent_ferror_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -61575,8 +61575,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -61880,8 +61880,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry
@@ -66084,8 +66084,8 @@ def require_math_exp2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-exp2"]
     require(
@@ -66344,8 +66344,8 @@ def require_math_expm1_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-expm1"]
     require(
@@ -66582,8 +66582,8 @@ def require_math_log10_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log10"]
     require(
@@ -66827,8 +66827,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -67052,8 +67052,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -67278,8 +67278,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -67506,8 +67506,8 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log2"]
     require(
@@ -68826,8 +68826,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -69886,8 +69886,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 75,
-        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+        len(artifacts) == 76,
+        "libc.text-math-locale-stdio must retain exactly seventy-six private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"

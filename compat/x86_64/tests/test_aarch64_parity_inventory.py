@@ -203,7 +203,14 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             if row["id"] == "libc.text-math-locale-stdio"
         )
         self.assertEqual(text_math["verified_slice_count"], 7)
-        self.assertEqual(text_math["verified_artifact_count"], 75)
+        self.assertEqual(text_math["verified_artifact_count"], 76)
+        self.assertIn(
+            {
+                "family": "libc.text-math-locale-stdio",
+                "id": "static-c-uchar-stateful",
+            },
+            report["selected_private_artifacts"],
+        )
         c_abi_compat = next(
             row for row in report["families"] if row["id"] == "libc.c-abi-compat"
         )
@@ -270,7 +277,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            367,
+            368,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -361,10 +368,10 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1180)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1183)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
-            1159,
+            1162,
         )
         self.assertEqual(
             report["unsupported_contracts"],

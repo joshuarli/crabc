@@ -373,6 +373,19 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertTrue(protocol_database_entries <= default_static)
         self.assertFalse(protocol_database_entries & unprovided)
 
+    def test_uchar_stateful_provider_block_is_default_static_not_unprovided(self) -> None:
+        """Keep the three selected C11 `<uchar.h>` conversions provider-owned."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
+        unprovided = set(partition["unprovided"]["members"])
+        uchar_stateful_entries = {"c16rtomb", "mbrtoc16", "mbrtoc32"}
+
+        self.assertTrue(uchar_stateful_entries <= default_static)
+        self.assertFalse(uchar_stateful_entries & unprovided)
+
     def test_netinet_macro_batch_is_present_with_its_exact_feature_split(self) -> None:
         """Keep this header-only reduction separate from archive-callable work."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
