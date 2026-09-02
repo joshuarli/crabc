@@ -684,9 +684,9 @@ case "$command" in
                 run_allocator_evidence --soak
                 ;;
             --tls-terminal-prototype)
-                # This is an explicit source-only feasibility probe for the
-                # remaining same-TLD terminal boundary. It does not alter the
-                # M1 acceptance report or select a libc allocator backend.
+                # This is the standalone C half of the selected same-TLD
+                # terminal trace. It does not by itself write an M1 report
+                # or select a libc allocator backend.
                 run_allocator_evidence --m1-tls-terminal-prototype
                 ;;
             *)

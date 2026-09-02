@@ -3217,6 +3217,22 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/init.c"
+name = "page-free-same-tld-mi-thread-theaps-done-sequence"
+source_region = "mimalloc v3.5.0 src/init.c:377-421 `mi_thread_theaps_done`, with the selected page-free branch of src/theap.c:110-137 `_mi_theap_collect_abandon`, :414-449 `_mi_tld_detach_theaps`, and :357-369 `_mi_theap_decref` relations; cached reset is src/prim/prim-tls.c:211-229"
+rust_module = "crabc_mimalloc::main_theap, crabc_mimalloc::page_queue, and crabc_mimalloc::types"
+rust_item = "#[cfg(test)] M1SameTldTerminalFixture/M1SameTldTerminalTrace, page_queue::test_m1_collect_abandon_page_free, Theap::initialize_m1_cached_aux_on_main_tld, ThreadLocalData::{m1_detach_cached_aux_and_main_from_heaps,m1_finish_cached_aux_and_main_tld}, and the bounded Heap membership observer"
+implementation_scope = "test-only M1 C/Rust terminal differential fixture; not a production lifecycle mapping"
+intentional_difference = "A normal C artifact direct-includes pinned src/init.c and calls only file-static mi_thread_theaps_done on one page-free static-default D plus Malloc cached A same-TLD fixture, then _Exit. It observes C's A then D collector calls, default then cached reset, heap detach while the TLD list remains, A then D logical final release, and return roots. Rust exercises the shared generic queue-half coordinator's page-free branch for A then D; its explicit deferred-free then retired-page closures witness only order and the empty queue/direct-cache image, not the production prepass algorithms. C bounds its main Heap as metadata+D before detach and metadata-only after D leaves; Rust's selected static image is D then empty, so the 40-field comparison records only common D membership/absence relations rather than whole-list equality. Rust metadata, key, backing, fast-root, Heap, and static-image retirement occur after trace observation for fixture hygiene. This does not claim outer _mi_thread_done, regular-backing/fast teardown, TLD free, statistics/hooks, page-bearing collection, production deferred/retired prepasses, public Heap lifecycle, pthread/process lifecycle, or allocator integration."
+tests = ["crabc-mimalloc/src/main_theap.rs", "crabc-mimalloc/src/page_queue.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "include/mimalloc/prim-tls.h"
 name = "linux-aarch64-private-compiler-tls-root-codegen"
 source_region = "MI_TLS_MODEL_LOCAL compiler-TLS roots, initial values, Linux/AArch64 thread-pointer identity, and teardown reset values; count-sensitive dynamic-root reset from src/threadlocal.c:205-214"

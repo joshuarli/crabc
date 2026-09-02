@@ -595,6 +595,152 @@ where
     Ok(())
 }
 
+/// Why the test-only page-free M1 collect witness rejected the source shape.
+///
+/// The bounded M1 terminal differential admits only the source empty visitor
+/// path: both selected Theaps have zero pages, empty queues/direct cache, and
+/// no retired range.  Page-bearing collection, release, and abandonment stay
+/// with their M3/M5 lifecycle owners.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum M1PageFreeCollectError {
+    InvalidPageFreeImage,
+    PrepassOrder,
+    UnexpectedPage,
+    Coordinator,
+    Postcondition,
+}
+
+/// Records the source deferred-free then retired-page prepass for one empty
+/// `MI_ABANDON` coordinator call. Page callbacks are terminal failures: a
+/// page-bearing fixture must not silently widen this M1 witness.
+#[cfg(test)]
+struct M1PageFreeCollectCallbacks {
+    phase: u8,
+    unexpected_page_calls: usize,
+    terminal_calls: usize,
+}
+
+#[cfg(test)]
+impl M1PageFreeCollectCallbacks {
+    #[inline]
+    const fn new() -> Self {
+        Self {
+            phase: 0,
+            unexpected_page_calls: 0,
+            terminal_calls: 0,
+        }
+    }
+
+    #[inline]
+    fn observe_deferred_prepass(&mut self, theap: &Theap) -> Result<(), M1PageFreeCollectError> {
+        if self.phase != 0 || !m1_page_free_collect_image(theap) {
+            return Err(M1PageFreeCollectError::PrepassOrder);
+        }
+        self.phase = 1;
+        Ok(())
+    }
+
+    #[inline]
+    fn observe_retired_prepass(&mut self, theap: &Theap) -> Result<(), M1PageFreeCollectError> {
+        if self.phase != 1 || !m1_page_free_collect_image(theap) {
+            return Err(M1PageFreeCollectError::PrepassOrder);
+        }
+        self.phase = 2;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl TheapCollectAbandonCallbacks for M1PageFreeCollectCallbacks {
+    type Error = M1PageFreeCollectError;
+    type Retained = ();
+
+    #[inline]
+    fn collect_page(
+        &mut self,
+        _: TheapCollectAbandonCurrentPage<'_>,
+    ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
+        self.unexpected_page_calls += 1;
+        Err(M1PageFreeCollectError::UnexpectedPage)
+    }
+
+    #[inline]
+    fn release_page(
+        &mut self,
+        _: TheapCollectAbandonReleasedPage<'_>,
+    ) -> Result<(), Self::Error> {
+        self.unexpected_page_calls += 1;
+        Err(M1PageFreeCollectError::UnexpectedPage)
+    }
+
+    #[inline]
+    fn abandon_page(
+        &mut self,
+        _: TheapCollectAbandonAbandonedPage<'_>,
+    ) -> Result<(), Self::Error> {
+        self.unexpected_page_calls += 1;
+        Err(M1PageFreeCollectError::UnexpectedPage)
+    }
+
+    #[inline]
+    fn retain_terminal(&mut self, _: TheapCollectAbandonTerminalContext) -> Self::Retained {
+        self.terminal_calls += 1;
+    }
+}
+
+/// Exercises the generic queue-half coordinator's selected page-free branch
+/// on the finite M1 same-TLD terminal image.
+///
+/// This deliberately does not invent a local count-only substitute. It enters
+/// [`theap_collect_abandon_queues`], which proves every queue is empty before
+/// its source fast return. Its explicit deferred-free then retired-page
+/// closures witness only their order and the retained empty image; they do
+/// not implement the production prepass algorithms. The test-only callbacks
+/// reject any page visit or terminal owner, keeping the witness bounded to
+/// the page-free M1 input.
+#[cfg(test)]
+pub(crate) fn test_m1_collect_abandon_page_free(
+    theap: &mut Theap,
+) -> Result<(), M1PageFreeCollectError> {
+    if !m1_page_free_collect_image(theap) {
+        return Err(M1PageFreeCollectError::InvalidPageFreeImage);
+    }
+    let mut callbacks = M1PageFreeCollectCallbacks::new();
+    let prepass = TheapCollectAbandonPrepass::new(
+        |candidate: &mut Theap, callbacks: &mut M1PageFreeCollectCallbacks| {
+            callbacks.observe_deferred_prepass(candidate)
+        },
+        |candidate: &mut Theap, callbacks: &mut M1PageFreeCollectCallbacks| {
+            callbacks.observe_retired_prepass(candidate)
+        },
+    );
+    // SAFETY: the caller lends the uniquely owned selected Theap. The
+    // preflight proves its initialized page-free image, so every queue is a
+    // complete empty image and no page pointer can be dereferenced. The
+    // callbacks neither retain a page nor mutate queue/direct-cache state.
+    unsafe { theap_collect_abandon_queues(theap, prepass, &mut callbacks) }
+        .map_err(|_| M1PageFreeCollectError::Coordinator)?;
+    if callbacks.phase != 2
+        || callbacks.unexpected_page_calls != 0
+        || callbacks.terminal_calls != 0
+        || !m1_page_free_collect_image(theap)
+    {
+        return Err(M1PageFreeCollectError::Postcondition);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[inline]
+fn m1_page_free_collect_image(theap: &Theap) -> bool {
+    theap.is_initialized()
+        && theap.page_count() == 0
+        && theap.retired_bounds() == (BIN_FULL, 0)
+        && (0..PAGES_DIRECT).all(|index| theap.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
+        && (0..=BIN_FULL).all(|bin| theap.queue(bin).is_some_and(PageQueue::is_empty))
+}
+
 /// Converts one failed source transition into its single retained terminal
 /// owner. The lifetime marker in that owner keeps the exclusive Theap borrow
 /// unavailable to ordinary queue operations until the caller resolves the
@@ -1120,6 +1266,15 @@ mod tests {
         let mut page = Page::empty();
         page.block_size = block_size;
         page
+    }
+
+    #[test]
+    fn m1_page_free_collect_rejects_an_uninitialized_empty_image() {
+        let mut theap = Theap::empty();
+        assert_eq!(
+            test_m1_collect_abandon_page_free(&mut theap),
+            Err(M1PageFreeCollectError::InvalidPageFreeImage),
+        );
     }
 
     #[test]

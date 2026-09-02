@@ -957,9 +957,10 @@ explicit. `allocator-tls` runs this judge alone and writes
 [`m1-foundations-v3.5.0.json`](m1-foundations-v3.5.0.json) contract. It reruns
 the source/ratchet/C-release-layout producers and only the named focused Rust
 checks, binds the result to an unchanged clean Git commit, and classifies each
-component plus its explicit exclusions. It intentionally exits 3 while the
-contract says M1 is partial. A passing focused check or shared M0/M3/M4
-producer does not close a whole source unit or promote any allocator backend.
+component plus its explicit exclusions. It exits 0 only when the checked
+contract is complete; exit 3 remains the intentional result for a partial M1
+contract. A passing focused check or shared M0/M3/M4 producer does not close a
+whole source unit or promote any allocator backend.
 The complete atomics/locks/once/bootstrap component compares a 148-key, address-independent
 release C/Rust vector for every represented field of the pinned immutable
 `mi_page_empty`, direct-page table, all 75 queues, pre-process-init
@@ -987,14 +988,22 @@ no-hint/non-large map transition sequence, NUMA/current-node relation,
 monotonic-yield observation, successful zero/16-byte entropy calls, and the
 constant-false threadpool observation. It deliberately excludes addresses,
 random bytes, timestamps, error/fallback branches, hints, and huge/THP policy.
-The bounded compiler-TLS subsidiary trace adds one 32-field direct pinned-C/Rust
-record: a constructor-suppressed initial five-root image and TPIDR identity,
-the count-zero image plus positive regular-slot reset, and the local
-cached-Theap `1 -> 2 -> 1` reference pair. It deliberately does not bind the
-same-TLD `src/init.c:mi_thread_theaps_done` terminal default/cached reset,
-shared-list detach, or final teardown; it also excludes page-bearing TLS
-attachment and M5 process/thread lifecycle integration. Compiler TLS therefore
-remains partial despite the matched subsidiary trace.
+The compiler-TLS component retains one 32-field direct pinned-C/Rust record:
+a constructor-suppressed initial five-root image and TPIDR identity, the
+count-zero image plus positive regular-slot reset, and the local cached-Theap
+`1 -> 2 -> 1` reference pair. A distinct 40-field normal-artifact C/Rust
+record direct-includes pinned `src/init.c` and invokes file-static
+`mi_thread_theaps_done` on one page-free same-TLD static-default `D` plus
+Malloc cached `A` fixture. It records C's A→D collector calls and Rust's A→D
+generic queue-half empty branch with ordered empty-prepass witnesses, then
+default/cached reset, heap detach, TLD final-loop order, and logical final
+release. C bounds
+main-Heap membership as metadata+D then metadata-only while the selected Rust
+image is D then empty, so only common D membership/absence relations compare.
+Together these records close the bounded M1 compiler-TLS component. They do
+not claim outer `_mi_thread_done`, regular-backing/fast teardown, statistics,
+TLD free, process hooks, page-bearing collection, production deferred/retired
+prepasses, public Heap lifecycle, or M5 process/thread integration.
 The complete finite configuration-and-arithmetic component compares
 every frozen `config.*` C/Rust record and a compact representable scalar
 vector, including `_mi_is_power_of_two(0)`, generic non-power-of-two

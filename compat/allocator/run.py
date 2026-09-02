@@ -174,8 +174,9 @@ M1_FOUNDATIONS_REPORT = REPORT_ROOT / "m1-foundations-latest.json"
 M1_FOUNDATIONS_CARGO_TARGET = ARTIFACT_ROOT / "m1-foundations/cargo-target"
 M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/raw-primitive-trace"
 M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/compiler-tls-trace"
-# This is deliberately not M1 acceptance evidence. It is the source-only C
-# producer for the selected same-TLD terminal trace.
+# This is the source-only C producer for the selected same-TLD terminal
+# trace. The standalone prototype command exposes its C half; the M1 gate
+# consumes the same producer together with its dedicated Rust comparison.
 M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m1-foundations/compiler-tls-same-tld-trace"
 )
@@ -222,6 +223,7 @@ M1_FOUNDATIONS_GLOBAL_EVIDENCE = (
     "release-c-rust-layout",
     "raw-primitive-c-rust-trace",
     "compiler-tls-c-rust-trace",
+    "compiler-tls-same-tld-terminal-c-rust-trace",
     "compiler-tls-codegen",
     "production-dependency-graph",
 )
@@ -2438,8 +2440,9 @@ int main(void) {
 # D; the probe asserts both selected theaps are page-free before the source
 # terminal routine and records their post-collection state. The fixture then
 # calls the exact file-static body directly from the included pinned source.
-# It is a feasibility probe, not M1 acceptance evidence and not a general
-# claim about outer `mi_thread_done`, pthread, or process teardown routes.
+# The standalone C producer is only one half of the evidence; `--m1` consumes
+# it with the dedicated Rust record. Neither route makes a general claim about
+# outer `mi_thread_done`, pthread, or process teardown.
 M1_COMPILER_TLS_SAME_TLD_TRACE_PROBE = r"""
 #include <stdbool.h>
 #include <stddef.h>
@@ -2502,6 +2505,28 @@ static size_t fixture_tld_theap_count(const mi_tld_t* tld) {
 static bool fixture_heap_has_exact_theap(const mi_heap_t* heap, const mi_theap_t* target) {
   return heap->theaps == target && target->hprev == NULL && target->hnext == NULL &&
          mi_atomic_load_ptr_relaxed(mi_heap_t, &target->heap) == heap;
+}
+
+// This trace admits only the two source-observed main-Heap shapes: the
+// metadata Theap plus D before `_mi_tld_detach_theaps`, then metadata alone
+// after D detaches.  Bound the traversal so a malformed link cannot turn the
+// fixture into a general Heap-list walk.
+static bool fixture_heap_has_bounded_theap_member(
+    const mi_heap_t* heap, const mi_theap_t* target, size_t member_count, bool contains) {
+  if (heap == NULL || target == NULL || member_count > 2) return false;
+  const mi_theap_t* previous = NULL;
+  const mi_theap_t* current = heap->theaps;
+  bool found = false;
+  for (size_t index = 0; index < member_count; index++) {
+    if (current == NULL || current->hprev != previous ||
+        mi_atomic_load_ptr_relaxed(mi_heap_t, &current->heap) != heap) {
+      return false;
+    }
+    found = found || (current == target);
+    previous = current;
+    current = current->hnext;
+  }
+  return current == NULL && found == contains;
 }
 
 static bool fixture_theap_links_are_null(const mi_theap_t* theap) {
@@ -2568,7 +2593,10 @@ static void fixture_tld_detach_theaps(mi_tld_t* tld) {
         (mi_atomic_load_ptr_relaxed(mi_heap_t, &fixture_default_before->heap) == NULL);
     fixture_detach_cached_heap_is_null =
         (mi_atomic_load_ptr_relaxed(mi_heap_t, &fixture_cached_before->heap) == NULL);
-    fixture_detach_main_default_detached = fixture_detach_default_heap_is_null;
+    // The source main Heap retains its metadata Theap after D leaves. This
+    // proves D's list absence instead of conflating it with D.heap == NULL.
+    fixture_detach_main_default_detached = fixture_heap_has_bounded_theap_member(
+        fixture_main_heap_before, fixture_default_before, 1, false);
     fixture_detach_aux_heap_list_empty = (fixture_aux_heap.theaps == NULL);
     fixture_detach_member_count = fixture_tld_theap_count(tld);
   }
@@ -2638,10 +2666,11 @@ int main(void) {
   const size_t pre_cached_refcount = mi_atomic_load_relaxed(&fixture_cached_before->refcount);
   const bool pre_default_is_main = (_mi_theap_default() == fixture_default_before);
   const bool pre_cached_is_aux = (_mi_theap_cached() == fixture_cached_before);
-  // This intentionally means `D.heap == main`, not that D is the only main
-  // Heap member: source-private metadata Theaps may also remain linked there.
+  // The source main Heap contains its metadata Theap plus D. Require that
+  // finite list shape and D membership rather than merely reading D.heap.
   const bool pre_main_heap_contains_default =
-      (mi_atomic_load_ptr_relaxed(mi_heap_t, &fixture_default_before->heap) == fixture_main_heap_before);
+      fixture_heap_has_bounded_theap_member(
+          fixture_main_heap_before, fixture_default_before, 2, true);
   const bool pre_aux_heap_contains_aux = fixture_heap_has_exact_theap(
       &fixture_aux_heap, fixture_cached_before);
   const bool pre_list_is_cached_then_default =
@@ -4772,12 +4801,19 @@ def _m1_foundations_source_test_exists(target: str, check_id: str) -> None:
     """Refuse a checked-in M1 filter once its current source witness is gone."""
 
     target_parts = target.split("::")
-    if len(target_parts) != 3 or target_parts[1] != "tests":
+    if len(target_parts) == 3 and target_parts[1] == "tests":
+        module, _, test = target_parts
+        source = ROOT / "crabc-mimalloc" / "src" / f"{module}.rs"
+    elif target_parts[:3] == ["types", "page_queue", "tests"] and len(target_parts) == 4:
+        # `types.rs` includes this private sibling with an explicit `#[path]`,
+        # so Cargo names the focused unit test through `types::page_queue`
+        # while the durable source witness remains `page_queue.rs`.
+        test = target_parts[3]
+        source = ROOT / "crabc-mimalloc" / "src" / "page_queue.rs"
+    else:
         raise HarnessError(
             f"M1 foundations check {check_id} has an unsupported source test filter: {target}"
         )
-    module, _, test = target_parts
-    source = ROOT / "crabc-mimalloc" / "src" / f"{module}.rs"
     if not source.is_file():
         raise HarnessError(
             f"M1 foundations check {check_id} names no current source test filter: {target}"
@@ -5453,6 +5489,85 @@ def run_m1_compiler_tls_differential(
     }
 
 
+def run_m1_compiler_tls_same_tld_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the selected page-free same-TLD terminal body with pinned C.
+
+    This remains separate from the 32-field compiler-TLS trace: that trace
+    proves the constructor-suppressed root image and independent regular
+    backing/cached-reference transitions, while this normal-artifact trace
+    reaches the exact file-static `mi_thread_theaps_done` body on one finite
+    D/A list. Neither record substitutes for the other.
+    """
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m1-compiler-tls-same-tld-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m1_compiler_tls_same_tld_trace(
+            compiler,
+            source,
+            M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "main_theap::tests::emit_m1_same_tld_terminal_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M1 compiler-TLS same-TLD terminal trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m1_compiler_tls_same_tld_trace(rust_output)
+    validate_m1_compiler_tls_same_tld_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M1 compiler-TLS same-TLD terminal trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m1_compiler_tls_same_tld_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "normal-artifact probe direct-includes pinned src/init.c and invokes file-static "
+            "mi_thread_theaps_done on one page-free D/A same-TLD fixture, comparing 40 "
+            "address-independent terminal relations. Rust exercises the generic queue-half "
+            "empty branch with ordered empty-prepass witnesses, not production prepasses. "
+            "C bounds main-Heap membership as "
+            "metadata+D then metadata-only; Rust's selected static image is D then empty, "
+            "so only common D membership/absence relations compare. Rust metadata/key/backing "
+            "retirement is post-trace fixture cleanup. Setup plus _Exit deliberately exclude "
+            "_mi_thread_done, regular-backing/fast teardown, stats, TLD free, process hooks, "
+            "page-bearing collection, production deferred/retired prepasses, and public heap lifecycle"
+        ),
+        "status": comparison["status"],
+    }
+
+
 def m1_foundations_layout_evidence(
     components: Sequence[Mapping[str, Any]],
     c_layout: Mapping[str, int],
@@ -5534,6 +5649,7 @@ def m1_foundations_report(
     shared_oracle: Mapping[str, Any],
     raw_primitive_differential: Mapping[str, Any],
     compiler_tls_differential: Mapping[str, Any],
+    compiler_tls_same_tld_differential: Mapping[str, Any],
     focused_checks: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Render a current-commit M1 evidence report without changing its status."""
@@ -5601,6 +5717,25 @@ def m1_foundations_report(
         or not isinstance(compiler_tls_rust, Mapping)
     ):
         raise HarnessError("M1 foundations compiler-TLS C/Rust differential record is invalid")
+    if (
+        not isinstance(compiler_tls_same_tld_differential, Mapping)
+        or compiler_tls_same_tld_differential.get("status") != "matched"
+    ):
+        raise HarnessError(
+            "M1 foundations compiler-TLS same-TLD terminal C/Rust differential did not match"
+        )
+    compiler_tls_same_tld_comparison = compiler_tls_same_tld_differential.get("comparison")
+    compiler_tls_same_tld_c_oracle = compiler_tls_same_tld_differential.get("c_oracle")
+    compiler_tls_same_tld_rust = compiler_tls_same_tld_differential.get("rust")
+    if (
+        not isinstance(compiler_tls_same_tld_comparison, Mapping)
+        or compiler_tls_same_tld_comparison.get("status") != "matched"
+        or not isinstance(compiler_tls_same_tld_c_oracle, Mapping)
+        or not isinstance(compiler_tls_same_tld_rust, Mapping)
+    ):
+        raise HarnessError(
+            "M1 foundations compiler-TLS same-TLD terminal C/Rust differential record is invalid"
+        )
 
     checks_by_component: dict[str, list[dict[str, Any]]] = {
         component["id"]: [] for component in summary["components"]
@@ -5628,12 +5763,17 @@ def m1_foundations_report(
             component_id != "compiler-tls-roots"
             or compiler_tls_comparison["status"] == "matched"
         )
+        compiler_tls_same_tld_trace_matched = (
+            component_id != "compiler-tls-roots"
+            or compiler_tls_same_tld_comparison["status"] == "matched"
+        )
         complete = (
             component["completion_status"] == "complete"
             and not component["remaining_conditions"]
             and layout["status"] in {"matched", "not-applicable"}
             and raw_trace_matched
             and compiler_tls_trace_matched
+            and compiler_tls_same_tld_trace_matched
         )
         if not complete:
             incomplete_components.append(component_id)
@@ -5662,6 +5802,12 @@ def m1_foundations_report(
             report_component["c_rust_differential"] = {
                 "compared_value_count": compiler_tls_comparison.get("compared_value_count"),
                 "status": compiler_tls_comparison["status"],
+            }
+            report_component["same_tld_terminal_c_rust_differential"] = {
+                "compared_value_count": compiler_tls_same_tld_comparison.get(
+                    "compared_value_count"
+                ),
+                "status": compiler_tls_same_tld_comparison["status"],
             }
         components.append(report_component)
 
@@ -5695,6 +5841,15 @@ def m1_foundations_report(
                 "rust_passed_test_count": compiler_tls_rust.get("passed_test_count"),
                 "scope": compiler_tls_differential.get("scope"),
                 "status": compiler_tls_comparison["status"],
+            },
+            "compiler_tls_same_tld_terminal_c_rust_trace": {
+                "c_source_files": compiler_tls_same_tld_c_oracle.get("source_files"),
+                "compared_value_count": compiler_tls_same_tld_comparison.get(
+                    "compared_value_count"
+                ),
+                "rust_passed_test_count": compiler_tls_same_tld_rust.get("passed_test_count"),
+                "scope": compiler_tls_same_tld_differential.get("scope"),
+                "status": compiler_tls_same_tld_comparison["status"],
             },
             "production_dependency_graph": {
                 "status": "recorded",
@@ -5760,6 +5915,11 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
     )
+    compiler_tls_same_tld_differential = run_m1_compiler_tls_same_tld_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+    )
     focused_checks = run_m1_foundations_checks(summary)
     source_after = m1_foundations_source_state()
     report = m1_foundations_report(
@@ -5770,6 +5930,7 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
         shared_oracle=shared_oracle,
         raw_primitive_differential=raw_primitive_differential,
         compiler_tls_differential=compiler_tls_differential,
+        compiler_tls_same_tld_differential=compiler_tls_same_tld_differential,
         focused_checks=focused_checks,
     )
     write_json(M1_FOUNDATIONS_REPORT, report)
@@ -10648,8 +10809,8 @@ def build_m1_compiler_tls_same_tld_trace(
 ) -> dict[str, Any]:
     """Build one source-internal page-free same-TLD C trace.
 
-    This is intentionally kept outside `build_m1_compiler_tls_trace` and the
-    M1 report: the C producer itself makes no C/Rust comparison. A static
+    This is intentionally kept separate from `build_m1_compiler_tls_trace`:
+    its C producer alone makes no C/Rust comparison. A static
     auxiliary Heap is initialized through the ordinary regular-key setup and
     `_mi_heap_theap_get_or_init`, without public `mi_heap_new`, so the main
     static default D and Malloc-backed cached A start page-free in one TLD.
@@ -10714,11 +10875,11 @@ def build_m1_compiler_tls_same_tld_trace(
 
 
 def run_m1_compiler_tls_terminal_prototype(*, offline: bool) -> dict[str, Any]:
-    """Build and run the isolated pinned-C terminal feasibility probe.
+    """Build and run the isolated pinned-C half of the terminal trace.
 
-    This intentionally has no report path and is not called by `--m1`: it is
-    an explicit development witness for deciding whether the remaining
-    source boundary can be represented, rather than status-bearing evidence.
+    This intentionally has no report path: it is an explicit development
+    view of the C half only. `--m1` consumes the same C producer with the
+    dedicated Rust trace and remains the status-bearing evidence path.
     """
 
     require_native_aarch64()
@@ -10736,8 +10897,8 @@ def run_m1_compiler_tls_terminal_prototype(*, offline: bool) -> dict[str, Any]:
     return {
         "c_oracle": c_oracle,
         "scope": (
-            "explicit source-only feasibility probe; it does not alter M1, M2+, "
-            "or public allocator lifecycle completion status"
+            "explicit source-only C half; it does not by itself produce an M1 report "
+            "or establish M2+ or public allocator lifecycle completion"
         ),
         "status": "passed",
         "target": {"architecture": platform.machine(), "system": platform.system()},
@@ -14072,7 +14233,7 @@ def parse_arguments() -> argparse.Namespace:
     mode.add_argument(
         "--m1-tls-terminal-prototype",
         action="store_true",
-        help="run the source-only pinned-C same-TLD terminal feasibility probe",
+        help="run the standalone pinned-C half of the same-TLD M1 terminal trace",
     )
     mode.add_argument("--full", action="store_true", help="run the audited Milestone 5 full-lane report")
     mode.add_argument(

@@ -2129,7 +2129,7 @@ class ContractTests(unittest.TestCase):
             [component["id"] for component in summary["components"]],
             list(RUNNER.M1_FOUNDATIONS_COMPONENT_IDS),
         )
-        self.assertEqual(summary["milestone"]["status"], "partial")
+        self.assertEqual(summary["milestone"]["status"], "complete")
         self.assertEqual(summary["execution"], {
             "features": [],
             "package": "crabc-mimalloc",
@@ -2346,6 +2346,16 @@ class ContractTests(unittest.TestCase):
             [check["id"] for check in compiler_tls["checks"]],
         )
         self.assertIn(
+            "compiler-tls-same-tld-terminal-c-rust-trace",
+            [check["id"] for check in compiler_tls["checks"]],
+        )
+        self.assertIn(
+            "compiler-tls-same-tld-page-free-queue-half-rejection",
+            [check["id"] for check in compiler_tls["checks"]],
+        )
+        self.assertEqual(compiler_tls["completion_status"], "complete")
+        self.assertEqual(compiler_tls["remaining_conditions"], [])
+        self.assertIn(
             {
                 "kind": "item",
                 "name": "current-thread-allocator-owned-regular-tls-backing",
@@ -2366,6 +2376,7 @@ class ContractTests(unittest.TestCase):
                 "count-zero-root-image-and-positive-regular-reset",
                 "canonical-empty-cached-root-transition",
                 "cached-theap-reference-pair",
+                "page-free-same-tld-mi-thread-theaps-done-sequence",
             ],
         )
         raw_primitives = next(
@@ -2627,11 +2638,22 @@ class ContractTests(unittest.TestCase):
             },
         )
 
-    def test_m1_foundations_report_does_not_promote_partial_components(self) -> None:
+    def test_m1_foundations_report_does_not_promote_a_synthetic_partial_contract(self) -> None:
         contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
         pin = RUNNER.load_pin()
+        partial_contract = json.loads(json.dumps(contract))
+        partial_contract["milestone"]["status"] = "partial"
+        partial_compiler_tls = next(
+            component
+            for component in partial_contract["components"]
+            if component["id"] == "compiler-tls-roots"
+        )
+        partial_compiler_tls["completion_status"] = "partial"
+        partial_compiler_tls["remaining_conditions"] = [
+            "synthetic ratchet condition: do not promote a partial compiler-TLS component"
+        ]
         summary = RUNNER.validate_m1_foundations_contract(
-            contract,
+            partial_contract,
             pin,
             RUNNER.load_port_map(),
         )
@@ -2663,7 +2685,7 @@ class ContractTests(unittest.TestCase):
             },
         }
         report = RUNNER.m1_foundations_report(
-            contract=contract,
+            contract=partial_contract,
             pin=pin,
             summary=summary,
             source_attestation=RUNNER.m1_foundations_source_attestation(
@@ -2717,6 +2739,13 @@ class ContractTests(unittest.TestCase):
                 "scope": "selected compiler-TLS M1 source paths",
                 "status": "matched",
             },
+            compiler_tls_same_tld_differential={
+                "c_oracle": {"source_files": []},
+                "comparison": {"compared_value_count": 40, "status": "matched"},
+                "rust": {"passed_test_count": 1},
+                "scope": "selected compiler-TLS same-TLD M1 source paths",
+                "status": "matched",
+            },
             focused_checks=focused_checks,
         )
 
@@ -2754,6 +2783,10 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             compiler_tls_component["c_rust_differential"],
             {"compared_value_count": 32, "status": "matched"},
+        )
+        self.assertEqual(
+            compiler_tls_component["same_tld_terminal_c_rust_differential"],
+            {"compared_value_count": 40, "status": "matched"},
         )
 
     def test_native_owner_exit_lifecycle_contract_covers_every_reviewed_condition(self) -> None:

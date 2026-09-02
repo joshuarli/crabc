@@ -2373,7 +2373,7 @@ advance this AArch64 allocator ledger.
 | Milestone | Status | Evidence and remaining closure condition |
 | --- | --- | --- |
 | M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. `./scripts/dev.sh allocator --quick` passes on Linux/AArch64. This is inventory/skeleton completion only, not engine parity. |
-| M1 — pure foundations | partial (5/6 components complete) | Complete: `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, and `linux-raw-primitives`. The atomics component proves the bounded identity-capable process-main `mi_atomic_do_once` envelope—active-racer blocking, recursive refusal, terminal release ordering, retained-failure wakeup, and pre-body cancellation—without claiming whole `mi_process_init_once`, `mi_process_done`, or process lifecycle. The compiler-TLS component now has a fixed 32-field pinned-C/Rust subsidiary trace for selected static roots and identity, count-zero image, positive regular-slot reset, and a controlled cached-Theap `1 → 2 → 1` reference pair. It is a union of a constructor-suppressed C image reader and a normal C transition reader, compared with isolated Rust observations; it is not one continuous same-TLD lifecycle trace. Partial: `compiler-tls-roots` still lacks a trace of `src/init.c:mi_thread_theaps_done` default/cached reset, shared-list detach, and final teardown together on the same TLD. The 148-key immutable bootstrap vector and 12-call-site ledger are bounded evidence, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion. |
+| M1 — pure foundations | complete (6/6 bounded components) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. The compiler-TLS component retains its 32-field pinned-C/Rust image, regular-reset, and cached-reference trace and adds a distinct 40-field normal-artifact C/Rust trace of one page-free same-TLD `D`/`A` call to the file-static `src/init.c:mi_thread_theaps_done` body: C's A→D collector calls; Rust's A→D generic queue-half empty branch with ordered empty-prepass witnesses; default then cached reset; heap detach; TLD-list final loop; and logical final release. It compares actual `D` membership/absence rather than whole main-Heap shape: C has metadata+D then metadata-only, while the selected Rust static image has D then empty. A clean native `./scripts/dev.sh allocator-m1` report is the closure evidence. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
 | M2 — memory substrate | partial | Selected metadata, bitmap, PageMap, arena, initialization, and fault paths exist, but their source units remain partial; no full substrate, fault, and no-recursion closure record exists. |
 | M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri; forced `cfg(miri)` is smoke evidence, not a Miri pass. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
@@ -2388,28 +2388,30 @@ A checked-in contract records the current boundary; only its clean-current-commi
 report is current runtime evidence. Evidence from an ancestor is historical
 supporting evidence, not a pass for this checkpoint.
 
-## Current M1 checkpoint
+## M1 closure evidence
 
-`compat/allocator/m1-foundations-v3.5.0.json` currently records M1 as
-`partial`: five of its six components are complete—
-`configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`,
-`provenance-and-represented-layouts`, `random-image`, and
-`linux-raw-primitives`—and `compiler-tls-roots` is the only partial component.
-Its new finite C/Rust trace is supporting evidence for the selected root-image,
-regular-reset, and cached-reference primitives, not a waiver of the unbound
-same-TLD `mi_thread_theaps_done` terminal sequence. A clean native
-`./scripts/dev.sh allocator --quick` passes at this checkpoint. A clean native
-`./scripts/dev.sh allocator-m1` must produce
-`.work/reports/allocator/m1-foundations-latest.json` from the current commit.
-Until that report has every component complete, no remaining condition, all
-required source-map states, all focused checks, and all required layout keys,
-its exit status `3` is intentional and M1 is not closed.
+`compat/allocator/m1-foundations-v3.5.0.json` records M1 as `complete`: each
+of its six named components is complete with no remaining condition, and the
+compiler-TLS component requires both independent C/Rust records. The existing
+32-field record covers the constructor-suppressed root image, positive
+regular-slot reset, and local cached-reference pair. The distinct 40-field
+record direct-includes the pinned `src/init.c` into a normal C artifact and
+compares the file-static `mi_thread_theaps_done` body with the test-only Rust
+same-TLD composite. Its C setup and `_Exit` deliberately exclude outer
+`_mi_thread_done`, regular-backing/fast cleanup, statistics, TLD free, process
+hooks, page-bearing collection, and public Heap lifecycle; Rust performs its
+metadata/key/backing cleanup only after the compared trace. Its page-free
+queue-half witness checks the generic coordinator's empty branch and only the
+deferred-free → retired-page prepass order; it does not execute those
+production prepass algorithms.
 
-The `fec84761e9fbdb29c32d8f492ca6c9cfa08a015b` M1 report is historical
-supporting evidence for its older partial contract only. It does not attest the
-current static-image, raw-primitive, represented-layout, bounded compiler-TLS
-trace, or remaining same-TLD terminal boundary. Deferred lifecycle and
-whole-unit exclusions remain nonclaims, not implicit M1 coverage.
+The current proof is a clean native `./scripts/dev.sh allocator-m1` exit 0 and
+its `.work/reports/allocator/m1-foundations-latest.json` report at that exact
+commit. A partial contract or a dirty source makes exit 3 or a hard failure,
+respectively; neither is closure. The
+`fec84761e9fbdb29c32d8f492ca6c9cfa08a015b` report remains historical support
+for its older partial contract only. Deferred lifecycle and whole-unit
+exclusions remain nonclaims, not implicit M1 coverage.
 
 ## Active boundary and priority rule
 
@@ -2418,13 +2420,12 @@ mapped M5/Phase-E regression: it is neither a general scan nor a milestone,
 shadow, or promotion claim. Keep its source map, regression, and exact test
 result, but do not use it to advance M5.
 
-M0 is the only closed predecessor. M1 is the current gate: close its sole
-compiler-TLS partial component with current-commit evidence before declaring
-M1 complete. The narrowly scoped M5 work around the bounded process-once
-envelope does not advance M5. Then close M2, M3, and M4 in order; M4's adapter
-evidence and all bounded/direct or shadow reports remain regressions, not
-milestone closure. M5 remains open until its Phase A–G acceptance conditions
-are met.
+M0 and M1 are closed predecessors. M2 is now the current closure gate; do not
+advance M3, M4, or later milestones until M2 has its own complete
+current-commit contract and evidence. The narrowly scoped M5 work around the
+bounded process-once envelope does not advance M5. Existing M3/M4 bounded
+evidence remains regression evidence, not permission to skip M2 or milestone
+closure. M5 remains open until its Phase A–G acceptance conditions are met.
 
 ## Current M5 gate facts
 

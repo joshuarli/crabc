@@ -1141,15 +1141,22 @@
           "expected_passed_test_count": 1,
           "id": "compiler-tls-c-rust-trace",
           "target": "dynamic_theap::tests::emit_m1_compiler_tls_c_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "compiler-tls-same-tld-terminal-c-rust-trace",
+          "target": "main_theap::tests::emit_m1_same_tld_terminal_c_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "compiler-tls-same-tld-page-free-queue-half-rejection",
+          "target": "types::page_queue::tests::m1_page_free_collect_rejects_an_uninitialized_empty_image"
         }
       ],
-      "completion_status": "partial",
+      "completion_status": "complete",
       "id": "compiler-tls-roots",
       "layout_keys": [],
-      "remaining_conditions": [
-        "A bounded 32-field native C/Rust trace covers the selected initial compiler-TLS roots and identity, count-zero image, positive regular-slot reset, and local cached-root/reference pair. It does not bind the same-TLD terminal sequence in src/init.c:mi_thread_theaps_done (377-421): default/cached reset, shared-list detach, and final teardown. Rust's static/default attachment and dynamic/cached attachment use separate TLD images, so compiler TLS remains partial.",
-        "The later process/thread lifecycle, page-bearing TLS attachment, and public runtime integration stay explicitly outside this M1 component."
-      ],
+      "remaining_conditions": [],
       "source_map_records": [
         {
           "kind": "item",
@@ -1208,6 +1215,16 @@
             "differential_verified"
           ],
           "upstream": "src/theap.c"
+        },
+        {
+          "kind": "item",
+          "name": "page-free-same-tld-mi-thread-theaps-done-sequence",
+          "required_statuses": [
+            "implemented",
+            "unit_verified",
+            "differential_verified"
+          ],
+          "upstream": "src/init.c"
         }
       ]
     }
@@ -1352,7 +1369,7 @@
     {
       "disposition": "deferred-to-m5",
       "id": "whole-prim-tls-lifecycle",
-      "reason": "The bounded 32-field compiler-TLS C/Rust trace proves only selected initial roots/identity, count-sensitive regular reset, and a controlled cached-root/reference pair. It does not prove src/init.c:mi_thread_theaps_done same-TLD terminal default/cached reset, shared-list detach, general cached-root switching, process/thread teardown, page-bearing attachment, or public allocator/runtime integration.",
+      "reason": "The bounded 32-field compiler-TLS C/Rust trace proves selected initial roots/identity, count-sensitive regular reset, and a controlled cached-root/reference pair; the separate 40-field same-TLD differential now proves only the selected page-free src/init.c:mi_thread_theaps_done D/A queue-half entry (with ordered empty-prepass witnesses), terminal default/cached reset, heap/TLD-list detach, and logical final-release relations. It still excludes outer _mi_thread_done, regular-backing/fast teardown, TLD free, statistics/hooks, general cached-root switching, page-bearing attachment/collection, production deferred/retired prepasses, process or pthread lifecycle, and public allocator/runtime integration.",
       "upstream_paths": [
         "include/mimalloc/prim-tls.h",
         "src/init.c",
@@ -1382,6 +1399,7 @@
     "release-c-rust-layout",
     "raw-primitive-c-rust-trace",
     "compiler-tls-c-rust-trace",
+    "compiler-tls-same-tld-terminal-c-rust-trace",
     "compiler-tls-codegen",
     "production-dependency-graph"
   ],
@@ -1394,7 +1412,7 @@
       "The M0 C profiles and M3/M4 traces produced by the shared oracle are supporting producers only; their passing does not close M1 or any later milestone.",
       "Focused Rust tests are bounded witnesses for their named source-shaped condition, not whole-component parity proof."
     ],
-    "status": "partial"
+    "status": "complete"
   },
   "schema": "crabc-mimalloc-m1-foundations",
   "target": {

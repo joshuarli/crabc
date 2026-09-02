@@ -624,6 +624,58 @@ impl Heap {
         Ok(is_member)
     }
 
+    /// Observes the exact finite Heap-list shape admitted by the M1
+    /// compiler-TLS same-TLD terminal fixture.
+    ///
+    /// This is intentionally narrower than a general Heap traversal. The
+    /// caller supplies the complete fixture-local member count, so a null
+    /// link, extra member, cycle, mismatched Heap publication, or failed lock
+    /// is a failed observation rather than an unbounded walk. `contains`
+    /// selects whether the named Theap must occur in that exact list shape.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_m1_has_bounded_theap_member(
+        &self,
+        target: *mut Theap,
+        member_count: usize,
+        contains: bool,
+    ) -> bool {
+        // The Rust fixture's main Heap has only D before the selected detach
+        // and no members afterwards. Pinned C also retains a metadata member,
+        // but that source-private image is outside this Rust representation;
+        // do not silently broaden this seam into a generic traversal.
+        if target.is_null() || member_count > 1 {
+            return false;
+        }
+        let Ok(guard) = self.theaps_lock.lock() else {
+            return false;
+        };
+        let self_pointer = core::ptr::from_ref(self).cast_mut();
+        let mut current = self.theaps;
+        let mut found = false;
+        let mut valid = true;
+        for _ in 0..member_count {
+            if current.is_null() {
+                valid = false;
+                break;
+            }
+            // SAFETY: the fixture retains every admitted Theap and the
+            // source Heap-list lock serializes the hnext/hprev image.
+            unsafe {
+                if !core::ptr::eq((*current).heap.load(Ordering::Acquire), self_pointer) {
+                    valid = false;
+                    break;
+                }
+                found |= current == target;
+                current = (*current).hnext;
+            }
+        }
+        if !current.is_null() {
+            valid = false;
+        }
+        guard.unlock().is_ok() && valid && found == contains
+    }
+
     #[inline]
     fn detach_one_theap_under_tld_lock(
         &mut self,
@@ -1127,6 +1179,49 @@ impl ThreadLocalData {
         !self.subprocess.is_null() && self.theaps.is_null()
     }
 
+    /// Checks the exact page-free two-member shape used by the M1
+    /// compiler-TLS same-TLD terminal fixture: dynamic cached head followed
+    /// by the static default tail.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_m1_cached_aux_and_main_pair(
+        &self,
+        cached_aux: *mut Theap,
+        main_default: *mut Theap,
+    ) -> bool {
+        let self_pointer = core::ptr::from_ref(self).cast_mut();
+        // SAFETY: test callers retain both typed Theap images and invoke this
+        // only while the fixture owns the TLD list exclusively.
+        unsafe {
+            !cached_aux.is_null()
+                && !main_default.is_null()
+                && self.theaps == cached_aux
+                && (*cached_aux).tprev.is_null()
+                && (*cached_aux).tnext == main_default
+                && (*main_default).tprev == cached_aux
+                && (*main_default).tnext.is_null()
+                && core::ptr::eq((*cached_aux).tld, self_pointer)
+                && core::ptr::eq((*main_default).tld, self_pointer)
+        }
+    }
+
+    /// Counts at most the two list entries admitted by the M1 terminal
+    /// fixture. Returning `3` means the fixture is malformed; it never
+    /// traverses an unbounded production list.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_m1_theap_count(&self) -> usize {
+        let mut count = 0;
+        let mut theap = self.theaps;
+        while !theap.is_null() && count < 3 {
+            count += 1;
+            // SAFETY: this finite test-only observation is guarded by the
+            // owning M1 fixture, which retains each permitted node.
+            theap = unsafe { (*theap).tnext };
+        }
+        count
+    }
+
     #[inline]
     pub(crate) fn is_attached_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
         core::ptr::eq(self.subprocess, subprocess.as_ptr())
@@ -1541,6 +1636,153 @@ impl ThreadLocalData {
             (*theap).tld = null_mut();
         }
         guard.unlock().map_err(ThreadLocalTheapListError::Lock)
+    }
+
+    /// Performs the finite two-member heap-list pass used only by the M1
+    /// compiler-TLS terminal differential fixture.
+    ///
+    /// The pinned `mi_thread_theaps_done` path first leaves its TLD list
+    /// intact, then `_mi_tld_detach_theaps` walks each member and
+    /// Release-clears its owning Heap pointer.  The normal one-Theap owners
+    /// above intentionally cannot express that intermediate `aux -> main`
+    /// TLD list.  This test-only helper accepts exactly that page-free pair:
+    /// the Malloc auxiliary cached Theap is the head and the process-static
+    /// default Theap is its sole tail.  It is not a general multi-Theap API
+    /// or a claim about source contention/retry behavior.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn m1_detach_cached_aux_and_main_from_heaps(
+        &mut self,
+        cached_aux: *mut Theap,
+        cached_aux_heap: &mut Heap,
+        main_default: *mut Theap,
+        main_heap: &mut Heap,
+    ) -> Result<(), ThreadLocalTheapListError> {
+        if cached_aux.is_null()
+            || main_default.is_null()
+            || core::ptr::eq(cached_aux, main_default)
+            || core::ptr::eq(cached_aux_heap, main_heap)
+        {
+            return Err(ThreadLocalTheapListError::Membership);
+        }
+        let self_pointer = core::ptr::from_mut(self);
+        let guard = self
+            .theaps_lock
+            .lock()
+            .map_err(ThreadLocalTheapListError::Lock)?;
+        // SAFETY: the M1 composite retains the two typed Theap allocations
+        // and both address-stable Heap images. The exact list shape is
+        // checked before either Heap list is changed, mirroring the saved
+        // `tnext` traversal in `_mi_tld_detach_theaps`.
+        let valid_pair = unsafe {
+            self.theaps == cached_aux
+                && (*cached_aux).tprev.is_null()
+                && (*cached_aux).tnext == main_default
+                && (*main_default).tprev == cached_aux
+                && (*main_default).tnext.is_null()
+                && core::ptr::eq((*cached_aux).tld, self_pointer)
+                && core::ptr::eq((*main_default).tld, self_pointer)
+                && core::ptr::eq(
+                    (*cached_aux).heap.load(Ordering::Acquire),
+                    core::ptr::from_mut(cached_aux_heap),
+                )
+                && core::ptr::eq(
+                    (*main_default).heap.load(Ordering::Acquire),
+                    core::ptr::from_mut(main_heap),
+                )
+        };
+        if !valid_pair {
+            let _ = guard.unlock();
+            return Err(ThreadLocalTheapListError::Membership);
+        }
+        // The source takes each Heap lock while the TLD list is still live.
+        // This fixture has no competing owner, so the blocking form supplies
+        // the same successful lock order without inventing retry coverage.
+        cached_aux_heap
+            .detach_one_theap_under_tld_lock_blocking(cached_aux)
+            .map_err(ThreadLocalTheapListError::Heap)?;
+        main_heap
+            .detach_one_theap_under_tld_lock_blocking(main_default)
+            .map_err(ThreadLocalTheapListError::Heap)?;
+        guard.unlock().map_err(ThreadLocalTheapListError::Lock)
+    }
+
+    /// Completes the finite M1 fixture's TLD-list/final-reference pass only
+    /// after its complete heap-list pass.
+    ///
+    /// This mirrors `mi_thread_theaps_done`'s terminal loop precisely enough
+    /// for the selected two-node trace: take the list head, publish
+    /// `tld->theaps = NULL`, clear and observe/decref cached auxiliary A,
+    /// then clear and observe/decref static default D. The observers run just
+    /// before their respective Rust final-reference operations, corresponding
+    /// to the C wrapper immediately before `_mi_theap_decref`. The Malloc
+    /// metadata capability itself is released by the owning fixture after
+    /// this source-shaped list pass, not under this list lock.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn m1_finish_cached_aux_and_main_tld(
+        &mut self,
+        cached_aux: *mut Theap,
+        main_default: *mut Theap,
+        before_cached_aux_decref: impl FnOnce(&Theap),
+        before_main_default_decref: impl FnOnce(&Theap),
+    ) -> Result<(bool, bool), ThreadLocalTheapListError> {
+        if cached_aux.is_null()
+            || main_default.is_null()
+            || core::ptr::eq(cached_aux, main_default)
+        {
+            return Err(ThreadLocalTheapListError::Membership);
+        }
+        let self_pointer = core::ptr::from_mut(self);
+        let guard = self
+            .theaps_lock
+            .lock()
+            .map_err(ThreadLocalTheapListError::Lock)?;
+        // SAFETY: the preceding exact heap pass Release-cleared both heap
+        // pointers while retaining this unchanged two-member TLD list.
+        let valid_pair = unsafe {
+            self.theaps == cached_aux
+                && (*cached_aux).tprev.is_null()
+                && (*cached_aux).tnext == main_default
+                && (*main_default).tprev == cached_aux
+                && (*main_default).tnext.is_null()
+                && (*cached_aux).heap.load(Ordering::Acquire).is_null()
+                && (*main_default).heap.load(Ordering::Acquire).is_null()
+                && core::ptr::eq((*cached_aux).tld, self_pointer)
+                && core::ptr::eq((*main_default).tld, self_pointer)
+        };
+        if !valid_pair {
+            let _ = guard.unlock();
+            return Err(ThreadLocalTheapListError::Membership);
+        }
+        // SAFETY: `valid_pair` proves both raw nodes stay live and have no
+        // other neighbors. Source clears the list head before its saved-next
+        // traversal; preserve the separate A then D link-clear/final-release
+        // order rather than coalescing both nodes into one Rust operation.
+        unsafe {
+            self.theaps = null_mut();
+            (*cached_aux).tld = null_mut();
+            (*cached_aux).tnext = null_mut();
+            (*cached_aux).tprev = null_mut();
+        }
+        // SAFETY: A remains owned by the M1 fixture. Its TLD/heap/list links
+        // now exactly match the source pre-decref assertion state.
+        let cached_cleared = unsafe {
+            before_cached_aux_decref(&*cached_aux);
+            (&mut *cached_aux).clear_dynamic_metadata_after_detach()
+        };
+        // SAFETY: D remains the static fixture image; A's former pointer in
+        // D's tprev is cleared before D is observed/released just as in the
+        // source saved-next loop.
+        let main_cleared = unsafe {
+            (*main_default).tld = null_mut();
+            (*main_default).tnext = null_mut();
+            (*main_default).tprev = null_mut();
+            before_main_default_decref(&*main_default);
+            (&mut *main_default).clear_main_static_after_detach()
+        };
+        guard.unlock().map_err(ThreadLocalTheapListError::Lock)?;
+        Ok((cached_cleared, main_cleared))
     }
 
     /// Invalidates a fully detached live TLD after its registration is
@@ -3814,6 +4056,94 @@ impl Theap {
             .map_err(TheapDynamicInitError::HeapList)
     }
 
+    /// Initializes the one Malloc-backed cached Theap in the finite M1
+    /// same-TLD terminal fixture.
+    ///
+    /// Pinned `mi_heap_new` can attach an auxiliary Theap to the current
+    /// thread's already-live process TLD.  In the selected fixture that TLD
+    /// has exactly one existing member: the process-static default Theap.
+    /// The normal dynamic initializer deliberately rejects that shape so its
+    /// ordinary owner cannot accidentally form a multi-Theap list.  Keep this
+    /// test-only entry narrow instead of weakening that production boundary.
+    /// It preserves `_mi_theap_init`'s ordering for the auxiliary image:
+    /// Malloc provenance, empty image, TLD/subprocess/refcount, TLD-list
+    /// head insertion and random split, Release heap publication, then the
+    /// auxiliary Heap list.
+    ///
+    /// # Safety
+    ///
+    /// `heap`, `tld`, and `main_default` must be the exact address-stable
+    /// page-free fixture images. The caller retains the Malloc metadata
+    /// capability for `self`, owns both list mutations, and must tear the
+    /// pair down through the matching M1 helper before releasing either
+    /// image.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn initialize_m1_cached_aux_on_main_tld(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+        main_default: *mut Theap,
+    ) -> Result<(), TheapDynamicInitError> {
+        let tld_pointer = core::ptr::from_mut(tld);
+        // SAFETY: this is only an entry witness; no field is mutated until
+        // every relation of the existing static one-member list is checked.
+        let valid_main_tail = unsafe {
+            !main_default.is_null()
+                && tld.theaps == main_default
+                && (*main_default).tprev.is_null()
+                && (*main_default).tnext.is_null()
+                && core::ptr::eq((*main_default).tld, tld_pointer)
+                && !(*main_default).heap.load(Ordering::Acquire).is_null()
+                && (*main_default).memid.kind() == MemoryKind::Static
+                && (*main_default).refcount.load(Ordering::Acquire) == 1
+                && core::ptr::eq(
+                    (*main_default).subproc.load(Ordering::Acquire),
+                    tld.subprocess,
+                )
+        };
+        if self.is_initialized()
+            || self.memid.kind() != MemoryKind::Malloc
+            || !valid_main_tail
+            || !tld.matches_owner(TheapOwner::Live(
+                LiveThreadId::new(tld.thread_id()).ok_or(TheapDynamicInitError::InvalidInput)?,
+            ))
+            || heap.subprocess.is_null()
+            || !core::ptr::eq(heap.subprocess, tld.subprocess)
+        {
+            return Err(TheapDynamicInitError::InvalidInput);
+        }
+
+        let memid = self.memid;
+        let replaced = core::mem::replace(self, Self::empty());
+        drop(replaced);
+        self.memid = memid;
+        self.tld = tld_pointer;
+        self.refcount.store(1, Ordering::Release);
+        self.subproc.store(heap.subprocess, Ordering::Release);
+        self.allow_page_reclaim = true;
+        self.allow_page_abandon = true;
+        self.page_full_retain = 2;
+        self.is_detached = false;
+
+        let self_pointer = core::ptr::from_mut(self);
+        let head_random = tld
+            .attach_one_theap(self_pointer)
+            .map_err(TheapDynamicInitError::ThreadList)?;
+        let Some(mut head_random) = head_random else {
+            // The validated main tail is a member, so source must split its
+            // initialized random image into the new head. Treat an impossible
+            // empty result as an invalid fixture rather than silently making
+            // this a second independent initialization path.
+            return Err(TheapDynamicInitError::InvalidInput);
+        };
+        head_random.split_into(&mut self.random);
+        self.cookie = self.random.next() as usize | 1;
+        self.heap.store(core::ptr::from_mut(heap), Ordering::Release);
+        heap.attach_theap_after_heap_publication(self_pointer)
+            .map_err(TheapDynamicInitError::HeapList)
+    }
+
     /// Initializes one metadata Theap for a later thread using the shared
     /// process-static main Heap.
     ///
@@ -3934,13 +4264,14 @@ impl Theap {
 
     /// Acquires the one cached-root reference for a live dynamic attachment.
     ///
-    /// This is deliberately not a general Theap refcount API. The sole
-    /// `DynamicTheapAttachment` caller has just source-ordered the compiler
-    /// TLS cached-root store from the canonical empty Theap to this exact
-    /// Malloc-backed image, and retains exclusive current-thread/lifecycle
-    /// ownership until it reverses that store. The exact 1 -> 2 CAS turns a
-    /// violated owner/refcount invariant into a retained terminal state rather
-    /// than silently composing with an unknown reference.
+    /// This is deliberately not a general Theap refcount API. Its sole
+    /// production caller, `DynamicTheapAttachment`, and the exact `cfg(test)`
+    /// M1 same-TLD fixture each source-order the compiler-TLS cached-root
+    /// store from the canonical empty Theap to this exact Malloc-backed image
+    /// and retain exclusive current-thread/lifecycle ownership until they
+    /// reverse that store. The exact 1 -> 2 CAS turns a violated
+    /// owner/refcount invariant into a retained terminal state rather than
+    /// silently composing with an unknown reference.
     #[inline]
     pub(crate) fn acquire_dynamic_cached_reference(&self) -> bool {
         self.memid.kind() == MemoryKind::Malloc
@@ -3954,7 +4285,8 @@ impl Theap {
     /// Releases the one cached-root reference of a dynamic attachment after
     /// its source-ordered cached-root reset to the canonical static empty
     /// image. This exact 2 -> 1 transition is the inverse of
-    /// [`Self::acquire_dynamic_cached_reference`]; any other count is an
+    /// [`Self::acquire_dynamic_cached_reference`] for the production dynamic
+    /// owner and the exact `cfg(test)` M1 fixture; any other count is an
     /// invalid-owner state and must retain the allocated image terminally.
     #[inline]
     pub(crate) fn release_dynamic_cached_reference(&self) -> bool {
@@ -4102,6 +4434,25 @@ impl Theap {
             allows_page_abandon: self.allow_page_abandon,
             detached: self.is_detached,
             memid: self.memid,
+        }
+    }
+
+    /// Address-free terminal-link observation for the finite M1 compiler-TLS
+    /// same-TLD differential. It intentionally exposes only relations that
+    /// the pinned C fixture records before final metadata release.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_m1_terminal_fields(&self) -> M1TerminalTheapFields {
+        M1TerminalTheapFields {
+            heap_is_null: self.heap.load(Ordering::Acquire).is_null(),
+            tld_is_null: self.tld.is_null(),
+            tnext_is_null: self.tnext.is_null(),
+            tprev_is_null: self.tprev.is_null(),
+            hnext_is_null: self.hnext.is_null(),
+            hprev_is_null: self.hprev.is_null(),
+            subproc_is_nonnull: !self.subproc.load(Ordering::Acquire).is_null(),
+            refcount: self.refcount(),
+            page_count: self.page_count,
         }
     }
 
@@ -4285,6 +4636,22 @@ pub(crate) struct TheapMainStaticFields {
     pub(crate) allows_page_abandon: bool,
     pub(crate) detached: bool,
     pub(crate) memid: MemoryId,
+}
+
+/// The source-visible terminal Theap relations observed before its final
+/// `_mi_theap_decref` in the M1 same-TLD differential fixture.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(crate) struct M1TerminalTheapFields {
+    pub(crate) heap_is_null: bool,
+    pub(crate) tld_is_null: bool,
+    pub(crate) tnext_is_null: bool,
+    pub(crate) tprev_is_null: bool,
+    pub(crate) hnext_is_null: bool,
+    pub(crate) hprev_is_null: bool,
+    pub(crate) subproc_is_nonnull: bool,
+    pub(crate) refcount: usize,
+    pub(crate) page_count: usize,
 }
 
 const _: [(); 4] = [(); size_of::<MemoryKind>()];
