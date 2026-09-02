@@ -2435,6 +2435,14 @@ no unmet component IDs. This is the current M1 runtime evidence recorded by
 this ledger; it remains only the bounded six-component milestone described
 above.
 
+The M1 gate was rerun once more from a clean detached native checkout at
+`2b289b1f8ae10543dfc57ddda0b49b08789be400`: it exited 0 and its
+`m1-foundations-latest.json` attests the source was clean before and after
+execution, with all six bounded components complete and no unmet component
+IDs. This is the current revalidation after the detached first-head
+random/cookie M2 slice; it does not broaden M1 beyond its six-component
+contract.
+
 ## M2 current partial gate
 
 `compat/allocator/m2-memory-substrate-v3.5.0.json` is the current M2
