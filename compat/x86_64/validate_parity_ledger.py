@@ -67992,6 +67992,342 @@ def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_uchar_stateful_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the three-state musl uchar block without capability promotion."""
+
+    artifact_id = "static-c-uchar-stateful"
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == artifact_id]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-uchar-stateful artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-uchar-stateful must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-uchar-stateful must remain a private non-capability artifact",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-uchar-stateful needs a description")
+    for phrase in (
+        "Pinned musl 1.2.6",
+        "c16rtomb",
+        "mbrtoc16",
+        "mbrtoc32",
+        "one-word null state",
+        "first-word-only",
+        "(size_t)-3",
+        "C/POSIX/C.UTF-8",
+        "unmangled C linkage",
+        "true `-nostdlib -static` closure",
+        "unchanged c32rtomb",
+        "pre-existing uchar restrict spelling",
+        "locale policy or public locale-object APIs",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-uchar-stateful description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-uchar-stateful.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/uchar-stateful-provider.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/uchar_stateful.rs",
+        "libc/src/c_abi/x86_64/locale_multibyte.rs",
+        "libc/src/c_abi/x86_64/locale_objects.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/locale.h",
+        "include/uchar.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/uchar_stateful_header_abi_probe.c",
+        "compat/x86_64/uchar_stateful_header_abi_probe.cpp",
+        "compat/x86_64/run_uchar_stateful_header_abi.sh",
+        "compat/x86_64/libc_uchar_stateful_probe.c",
+        "compat/x86_64/libc_uchar_stateful_start.S",
+        "compat/x86_64/run_libc_uchar_stateful.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/parity.toml",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-uchar-stateful source owners omit {owner}")
+
+    abi_prerequisites = "\n".join(
+        nonempty_strings(
+            artifact.get("x86_abi_prerequisites"),
+            "static-c-uchar-stateful.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "rdi/esi/rdx",
+        "rdi/rsi/rdx/rcx",
+        "8-byte/align-4",
+        "c16rtomb.c::c16rtomb",
+        "mbrtoc16.c::mbrtoc16",
+        "mbrtoc32.c::mbrtoc32",
+        "first-word state access",
+        "three separate one-u32 null fallbacks",
+        "positive pending-low",
+        "mbrtowc decoder seam",
+        "direct wcrtomb edge",
+        "initial-exec-errno closure",
+    ):
+        require(
+            phrase in abi_prerequisites,
+            f"static-c-uchar-stateful ABI map omits {phrase}",
+        )
+
+    header_prerequisites = "\n".join(
+        nonempty_strings(
+            artifact.get("x86_header_prerequisites"),
+            "static-c-uchar-stateful.x86_header_prerequisites",
+        )
+    )
+    for phrase in (
+        "C11/C++17",
+        "strict, POSIX.1-2008, X/Open 700, GNU, and BSD",
+        "char16_t",
+        "char32_t",
+        "unmangled C++",
+        "mbrtoc16 pending source NULL/n=0/bad-pointer",
+        "separate null states",
+        "caller second-word preservation",
+    ):
+        require(
+            phrase in header_prerequisites,
+            f"static-c-uchar-stateful header map omits {phrase}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-uchar-stateful native evidence is invalid")
+    require(
+        {entry.get("command") for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-uchar-stateful"},
+        "static-c-uchar-stateful must use the closed libc-uchar-stateful command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-uchar-stateful evidence scope is invalid")
+    for phrase in (
+        "five-profile C11/C++17",
+        "one true `-nostdlib -static` candidate",
+        "c16rtomb/mbrtoc16/mbrtoc32",
+        "mbrtowc decoder seam",
+        "direct wcrtomb closure",
+        "mbrtoc16 -3 no-read pending-low paths",
+        "direct fs initial-TLS errno",
+        "does not select c32rtomb",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(phrase in scope, f"static-c-uchar-stateful evidence omits {phrase}")
+
+    manifest_path = ROOT / "compat" / "x86_64" / "uchar-stateful-provider.toml"
+    require(manifest_path.is_file(), "uchar stateful work-package manifest is missing")
+    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    require(
+        set(manifest) == {"schema", "target", "platform", "oracle", "work_package"},
+        "uchar stateful work-package manifest keys drifted",
+    )
+    require(
+        manifest.get("schema") == "crabc.x86_64-uchar-stateful-provider/v1",
+        "uchar stateful work-package schema drifted",
+    )
+    require(
+        manifest.get("target") == EXPECTED_TARGET
+        and manifest.get("platform") == "Linux/x86-64 little-endian",
+        "uchar stateful work-package target drifted",
+    )
+    work_package = manifest.get("work_package")
+    require(isinstance(work_package, Mapping), "uchar stateful work package is invalid")
+    require(
+        set(work_package)
+        == {
+            "target_family",
+            "target_capability",
+            "target_verified_slice",
+            "blocker",
+            "prerequisites",
+            "dependent_work",
+            "musl_source_mapping",
+            "source_owners",
+            "focused_evidence_command",
+            "family_aggregate_command",
+            "product_command",
+            "negative_scope",
+            "expected_transition",
+            "evidence",
+        },
+        "uchar stateful work-package fields drifted",
+    )
+    require(
+        work_package.get("target_family") == "libc.text-math-locale-stdio"
+        and work_package.get("target_capability") == "text.wide-multibyte"
+        and work_package.get("target_verified_slice") == artifact_id,
+        "uchar stateful work-package target ownership drifted",
+    )
+    require(
+        work_package.get("focused_evidence_command")
+        == "./scripts/dev-x86_64.sh libc-uchar-stateful",
+        "uchar stateful work package must retain the closed focused command",
+    )
+    for field, phrase in (
+        ("blocker", "c16rtomb"),
+        ("musl_source_mapping", "c16rtomb.c::c16rtomb"),
+        ("negative_scope", "c32rtomb"),
+        ("expected_transition", "Generated parity inventories"),
+    ):
+        value = work_package.get(field)
+        require(
+            isinstance(value, str) and phrase in value,
+            f"uchar stateful work package {field} omits {phrase}",
+        )
+    for field, phrase in (
+        ("prerequisites", "initial-exec errno substrate"),
+        ("dependent_work", "integration-owned generated inventory"),
+        ("evidence", "true-static behavioral differential"),
+    ):
+        values = string_list(work_package.get(field), f"uchar stateful work package {field}")
+        require(
+            any(phrase in value for value in values),
+            f"uchar stateful work package {field} omits {phrase}",
+        )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "uchar_stateful.rs"]\nmod uchar_stateful;' in static_root,
+        "x86 static C ABI must compose the uchar stateful provider",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "uchar_stateful.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/multibyte/c16rtomb.c::c16rtomb",
+        "src/multibyte/mbrtoc16.c::mbrtoc16",
+        "src/multibyte/mbrtoc32.c::mbrtoc32",
+        "C16RTOMB_INTERNAL_STATE",
+        "MBRTOC16_INTERNAL_STATE",
+        "MBRTOC32_INTERNAL_STATE",
+        "AtomicU32",
+        "mbrtowc_with_selected_state",
+        "MB_RET_PENDING_LOW",
+        "if source.is_null()",
+        "pending.wrapping_add(c16).wrapping_sub(0xdc00)",
+        "fn mbrtowc(",
+        "fn wcrtomb(",
+        "initialized, live, aligned x86 `mbstate_t` storage",
+        "Callers serialize use of a shared",
+        "need external serialization for one coherent conversion sequence",
+    ):
+        require(snippet in implementation, f"uchar stateful provider omits {snippet}")
+    require(
+        "static mut" not in implementation,
+        "uchar stateful provider must use atomic null-state storage",
+    )
+    for symbol in ("c16rtomb", "mbrtoc16", "mbrtoc32"):
+        require(
+            re.search(
+                rf'pub\s+unsafe\s+extern\s+"C"\s+fn\s+{symbol}\s*\(', implementation
+            )
+            is not None,
+            f"uchar stateful provider omits exported {symbol}",
+        )
+    require(
+        "c32rtomb" not in implementation,
+        "uchar stateful provider must not absorb the pre-existing c32rtomb adapter",
+    )
+
+    exports = static_c_abi_export_names(STATIC_C_ABI_EXPORTS_PATH)
+    for symbol in ("c16rtomb", "mbrtoc16", "mbrtoc32"):
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_uchar_stateful_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "C11/C++17",
+        "CXX_SYMBOLS=(c16rtomb mbrtoc16 mbrtoc32)",
+        "strict posix xopen gnu bsd",
+        "-nostdinc",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"uchar stateful header runner omits {snippet}")
+    for probe_name in (
+        "uchar_stateful_header_abi_probe.c",
+        "uchar_stateful_header_abi_probe.cpp",
+    ):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(encoding="utf-8")
+        for symbol in ("c16rtomb", "mbrtoc16", "mbrtoc32"):
+            require(symbol in probe, f"{probe_name} omits {symbol}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_uchar_stateful.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_uchar_stateful_header_abi.sh",
+        "c16rtomb.lo",
+        "mbrtoc16.lo",
+        "mbrtoc32.lo",
+        "reconstructed closure archive",
+        "-nostdlib -static",
+        "--no-undefined",
+        "mbrtowc decoder seam",
+        "wcrtomb",
+        "initial TLS",
+        "newlocale|duplocale|uselocale|freelocale",
+        "mimalloc",
+    ):
+        require(snippet in runner, f"uchar stateful runner omits {snippet}")
+    fixture = (ROOT / "compat" / "x86_64" / "libc_uchar_stateful_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "C.UTF-8",
+        "(size_t)-3",
+        "(const char *)1",
+        "invalid_c0",
+        "invalid_c1",
+        "invalid_f5",
+        "invalid_80",
+        "overlong",
+        "encoded_surrogate",
+        "beyond_unicode",
+        "check_mbrtoc32_split",
+        "check_mbrtoc16_split",
+        "check_null_states_are_separate",
+        "check_c16rtomb_state_machine",
+        "__opaque2",
+    ):
+        require(snippet in fixture, f"uchar stateful fixture omits {snippet}")
+
+    dispatcher = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    for snippet in (
+        "uchar-stateful-header-abi)",
+        "libc-uchar-stateful)",
+        "run_uchar_stateful_header_abi.sh",
+        "run_libc_uchar_stateful.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_locale_profile_slice(family: Mapping[str, Any]) -> None:
     """Keep the selected fixed profile distinct from broad locale completion.
 
@@ -75993,6 +76329,7 @@ def validate_ledger(
     require_math_complex_complete_slice(by_id["libc.text-math-locale-stdio"])
     require_math_elementary_long_double_slice(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
+    require_uchar_stateful_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_profile_slice(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])

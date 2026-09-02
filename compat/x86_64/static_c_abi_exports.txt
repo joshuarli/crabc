@@ -120,6 +120,7 @@ bindtextdomain
 bsearch
 btowc
 bzero
+c16rtomb
 c32rtomb
 cabs
 cabsf
@@ -610,6 +611,8 @@ lutimes
 madvise
 mblen
 mbrlen
+mbrtoc16
+mbrtoc32
 mbrtowc
 mbsinit
 mbsrtowcs

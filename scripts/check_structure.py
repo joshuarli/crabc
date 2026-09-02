@@ -328,6 +328,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     # a directory-wide exemption or a family-completion claim.
     Path("libc/src/c_abi/x86_64/basename.rs"),
     Path("libc/src/c_abi/x86_64/c32rtomb.rs"),
+    Path("libc/src/c_abi/x86_64/uchar_stateful.rs"),
     Path("libc/src/c_abi/x86_64/fdim.rs"),
     Path("libc/src/c_abi/x86_64/float_parse.rs"),
     Path("libc/src/c_abi/x86_64/iconv.rs"),
