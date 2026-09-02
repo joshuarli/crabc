@@ -193,6 +193,9 @@ M2_BITMAP_ABANDONED_CLAIM_TRACE_ARTIFACT_ROOT = (
 M2_BITMAP_CLEAR_RANGE_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/bitmap-clear-range-trace"
 )
+M2_BITMAP_RANGESN_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "m2-memory-substrate/bitmap-rangesn-trace"
+)
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -396,6 +399,65 @@ M2_BITMAP_CLEAR_RANGE_TRACE_KEYS = (
     "m2.bitmap_range.reject.unvisited_same_field_restored",
     "m2.bitmap_range.reject.later_field_untouched",
     "m2.bitmap_range.reject.chunkmap_retained",
+)
+# This one-chunk record directly exercises the source rangesn wrapper. The
+# aligned-three path retains incomplete windows and its top suffix, including
+# when a callback stops after a lower skipped window. Fresh images also prove
+# the <=1 generic delegation and the cap above one source field. It is not an
+# arena policy, multi-chunk, binned, or concurrent bitmap contract.
+M2_BITMAP_RANGESN_TRACE_KEYS = (
+    "m2.bitmap_rangesn.control.bfield_bits",
+    "m2.bitmap_rangesn.control.bchunk_bits",
+    "m2.bitmap_rangesn.control.aligned_rngslices",
+    "m2.bitmap_rangesn.control.capped_request",
+    "m2.bitmap_rangesn.layout.byte_size",
+    "m2.bitmap_rangesn.r3_complete.returned_completed",
+    "m2.bitmap_rangesn.r3_complete.callback_count",
+    "m2.bitmap_rangesn.r3_complete.range_0_index",
+    "m2.bitmap_rangesn.r3_complete.range_0_count",
+    "m2.bitmap_rangesn.r3_complete.range_1_index",
+    "m2.bitmap_rangesn.r3_complete.range_1_count",
+    "m2.bitmap_rangesn.r3_complete.range_2_index",
+    "m2.bitmap_rangesn.r3_complete.range_2_count",
+    "m2.bitmap_rangesn.r3_complete.field_0_after",
+    "m2.bitmap_rangesn.r3_complete.chunkmap_field_0_after",
+    "m2.bitmap_rangesn.r3_reject.returned_completed",
+    "m2.bitmap_rangesn.r3_reject.callback_count",
+    "m2.bitmap_rangesn.r3_reject.range_0_index",
+    "m2.bitmap_rangesn.r3_reject.range_0_count",
+    "m2.bitmap_rangesn.r3_reject.field_0_after",
+    "m2.bitmap_rangesn.r3_reject.field_1_after",
+    "m2.bitmap_rangesn.r3_reject.chunkmap_field_0_after",
+    "m2.bitmap_rangesn.delegation_zero.returned_completed",
+    "m2.bitmap_rangesn.delegation_zero.callback_count",
+    "m2.bitmap_rangesn.delegation_zero.range_0_index",
+    "m2.bitmap_rangesn.delegation_zero.range_0_count",
+    "m2.bitmap_rangesn.delegation_zero.range_1_index",
+    "m2.bitmap_rangesn.delegation_zero.range_1_count",
+    "m2.bitmap_rangesn.delegation_zero.range_2_index",
+    "m2.bitmap_rangesn.delegation_zero.range_2_count",
+    "m2.bitmap_rangesn.delegation_zero.range_3_index",
+    "m2.bitmap_rangesn.delegation_zero.range_3_count",
+    "m2.bitmap_rangesn.delegation_zero.field_0_after",
+    "m2.bitmap_rangesn.delegation_zero.chunkmap_field_0_after",
+    "m2.bitmap_rangesn.delegation_one.returned_completed",
+    "m2.bitmap_rangesn.delegation_one.callback_count",
+    "m2.bitmap_rangesn.delegation_one.range_0_index",
+    "m2.bitmap_rangesn.delegation_one.range_0_count",
+    "m2.bitmap_rangesn.delegation_one.range_1_index",
+    "m2.bitmap_rangesn.delegation_one.range_1_count",
+    "m2.bitmap_rangesn.delegation_one.range_2_index",
+    "m2.bitmap_rangesn.delegation_one.range_2_count",
+    "m2.bitmap_rangesn.delegation_one.range_3_index",
+    "m2.bitmap_rangesn.delegation_one.range_3_count",
+    "m2.bitmap_rangesn.delegation_one.field_0_after",
+    "m2.bitmap_rangesn.delegation_one.chunkmap_field_0_after",
+    "m2.bitmap_rangesn.cap_over.returned_completed",
+    "m2.bitmap_rangesn.cap_over.callback_count",
+    "m2.bitmap_rangesn.cap_over.range_0_index",
+    "m2.bitmap_rangesn.cap_over.range_0_count",
+    "m2.bitmap_rangesn.cap_over.field_0_after",
+    "m2.bitmap_rangesn.cap_over.chunkmap_field_0_after",
 )
 M1_FOUNDATIONS_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
@@ -2985,6 +3047,249 @@ int main(void) {
   U("m2.bitmap_range.reject.later_field_untouched", reject_later_field_untouched);
   U("m2.bitmap_range.reject.chunkmap_retained", reject_chunkmap_retained);
   puts("CRABC_MI_M2_BITMAP_CLEAR_RANGE_TRACE_END");
+  return 0;
+}
+"""
+
+
+# This fixture includes the source-private rangesn wrapper itself. Each static
+# image is fresh because the source visitor exchanges data fields with zero;
+# the record is address-free and fixes only selected one-chunk scalar behavior.
+M2_BITMAP_RANGESN_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "bitmap.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+typedef struct m2_bitmap_rangesn_trace_s {
+  size_t count;
+  size_t indices[4];
+  size_t counts[4];
+} m2_bitmap_rangesn_trace_t;
+
+static mi_bitmap_t m2_bitmap_rangesn_complete;
+static mi_bitmap_t m2_bitmap_rangesn_reject;
+static mi_bitmap_t m2_bitmap_rangesn_delegation_zero;
+static mi_bitmap_t m2_bitmap_rangesn_delegation_one;
+static mi_bitmap_t m2_bitmap_rangesn_cap_over;
+static m2_bitmap_rangesn_trace_t m2_rangesn_complete_trace;
+static m2_bitmap_rangesn_trace_t m2_rangesn_reject_trace;
+static m2_bitmap_rangesn_trace_t m2_rangesn_delegation_zero_trace;
+static m2_bitmap_rangesn_trace_t m2_rangesn_delegation_one_trace;
+static m2_bitmap_rangesn_trace_t m2_rangesn_cap_over_trace;
+
+static bool m2_rangesn_seed_complete(mi_bitmap_t* bitmap) {
+  return mi_bitmap_setN(bitmap, 0, 8, NULL) &&
+      mi_bitmap_setN(bitmap, 9, 3, NULL) &&
+      mi_bitmap_setN(bitmap, 60, 2, NULL) &&
+      mi_bitmap_setN(bitmap, 63, 1, NULL);
+}
+
+static bool m2_rangesn_seed_reject(mi_bitmap_t* bitmap) {
+  return mi_bitmap_setN(bitmap, 0, 1, NULL) &&
+      mi_bitmap_setN(bitmap, 2, 4, NULL) &&
+      mi_bitmap_setN(bitmap, 6, 2, NULL) &&
+      mi_bitmap_setN(bitmap, 9, 3, NULL) &&
+      mi_bitmap_setN(bitmap, 60, 2, NULL) &&
+      mi_bitmap_setN(bitmap, 63, 1, NULL) &&
+      mi_bitmap_setN(bitmap, MI_BFIELD_BITS, 3, NULL);
+}
+
+static bool m2_rangesn_accept_visit(
+    size_t slice_index, size_t slice_count, mi_arena_t* arena, void* arg)
+{
+  m2_bitmap_rangesn_trace_t* const trace = (m2_bitmap_rangesn_trace_t*)arg;
+  if (arena != NULL || trace == NULL || trace->count >= 4) return false;
+  trace->indices[trace->count] = slice_index;
+  trace->counts[trace->count] = slice_count;
+  trace->count++;
+  return true;
+}
+
+static bool m2_rangesn_reject_visit(
+    size_t slice_index, size_t slice_count, mi_arena_t* arena, void* arg)
+{
+  m2_bitmap_rangesn_trace_t* const trace = (m2_bitmap_rangesn_trace_t*)arg;
+  if (arena != NULL || trace != &m2_rangesn_reject_trace || trace->count != 0) return false;
+  trace->indices[0] = slice_index;
+  trace->counts[0] = slice_count;
+  trace->count = 1;
+  return false;
+}
+
+int main(void) {
+  const size_t complete_size = mi_bitmap_init(
+      &m2_bitmap_rangesn_complete, MI_BCHUNK_BITS, true);
+  const size_t reject_size = mi_bitmap_init(
+      &m2_bitmap_rangesn_reject, MI_BCHUNK_BITS, true);
+  const size_t delegation_zero_size = mi_bitmap_init(
+      &m2_bitmap_rangesn_delegation_zero, MI_BCHUNK_BITS, true);
+  const size_t delegation_one_size = mi_bitmap_init(
+      &m2_bitmap_rangesn_delegation_one, MI_BCHUNK_BITS, true);
+  const size_t cap_over_size = mi_bitmap_init(
+      &m2_bitmap_rangesn_cap_over, MI_BCHUNK_BITS, true);
+
+  const bool complete_seeded = m2_rangesn_seed_complete(&m2_bitmap_rangesn_complete);
+  const bool complete_returned_completed = _mi_bitmap_forall_setc_rangesn(
+      &m2_bitmap_rangesn_complete, 3, &m2_rangesn_accept_visit, NULL,
+      &m2_rangesn_complete_trace);
+  const mi_bfield_t complete_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_complete.chunks[0].bfields[0]);
+  const mi_bfield_t complete_chunkmap_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_complete.chunkmap.bfields[0]);
+
+  const bool reject_seeded = m2_rangesn_seed_reject(&m2_bitmap_rangesn_reject);
+  const bool reject_returned_completed = _mi_bitmap_forall_setc_rangesn(
+      &m2_bitmap_rangesn_reject, 3, &m2_rangesn_reject_visit, NULL,
+      &m2_rangesn_reject_trace);
+  const mi_bfield_t reject_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_reject.chunks[0].bfields[0]);
+  const mi_bfield_t reject_field_1_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_reject.chunks[0].bfields[1]);
+  const mi_bfield_t reject_chunkmap_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_reject.chunkmap.bfields[0]);
+
+  const bool delegation_zero_seeded = m2_rangesn_seed_complete(
+      &m2_bitmap_rangesn_delegation_zero);
+  const bool delegation_zero_returned_completed = _mi_bitmap_forall_setc_rangesn(
+      &m2_bitmap_rangesn_delegation_zero, 0, &m2_rangesn_accept_visit, NULL,
+      &m2_rangesn_delegation_zero_trace);
+  const mi_bfield_t delegation_zero_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_delegation_zero.chunks[0].bfields[0]);
+  const mi_bfield_t delegation_zero_chunkmap_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_delegation_zero.chunkmap.bfields[0]);
+
+  const bool delegation_one_seeded = m2_rangesn_seed_complete(
+      &m2_bitmap_rangesn_delegation_one);
+  const bool delegation_one_returned_completed = _mi_bitmap_forall_setc_rangesn(
+      &m2_bitmap_rangesn_delegation_one, 1, &m2_rangesn_accept_visit, NULL,
+      &m2_rangesn_delegation_one_trace);
+  const mi_bfield_t delegation_one_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_delegation_one.chunks[0].bfields[0]);
+  const mi_bfield_t delegation_one_chunkmap_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_delegation_one.chunkmap.bfields[0]);
+
+  const bool cap_over_seeded = mi_bitmap_setN(
+      &m2_bitmap_rangesn_cap_over, 0, MI_BFIELD_BITS, NULL);
+  const bool cap_over_returned_completed = _mi_bitmap_forall_setc_rangesn(
+      &m2_bitmap_rangesn_cap_over, MI_BFIELD_BITS + 1, &m2_rangesn_accept_visit, NULL,
+      &m2_rangesn_cap_over_trace);
+  const mi_bfield_t cap_over_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_cap_over.chunks[0].bfields[0]);
+  const mi_bfield_t cap_over_chunkmap_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_rangesn_cap_over.chunkmap.bfields[0]);
+
+  const bool all_relations =
+      complete_size == sizeof(m2_bitmap_rangesn_complete) &&
+      reject_size == sizeof(m2_bitmap_rangesn_reject) &&
+      delegation_zero_size == sizeof(m2_bitmap_rangesn_delegation_zero) &&
+      delegation_one_size == sizeof(m2_bitmap_rangesn_delegation_one) &&
+      cap_over_size == sizeof(m2_bitmap_rangesn_cap_over) &&
+      complete_seeded && complete_returned_completed &&
+      m2_rangesn_complete_trace.count == 3 &&
+      m2_rangesn_complete_trace.indices[0] == 0 &&
+      m2_rangesn_complete_trace.counts[0] == 3 &&
+      m2_rangesn_complete_trace.indices[1] == 3 &&
+      m2_rangesn_complete_trace.counts[1] == 3 &&
+      m2_rangesn_complete_trace.indices[2] == 9 &&
+      m2_rangesn_complete_trace.counts[2] == 3 &&
+      complete_field_0_after == (mi_bfield_t)UINT64_C(0xb0000000000000c0) &&
+      complete_chunkmap_field_0_after == 1 &&
+      reject_seeded && !reject_returned_completed &&
+      m2_rangesn_reject_trace.count == 1 &&
+      m2_rangesn_reject_trace.indices[0] == 3 &&
+      m2_rangesn_reject_trace.counts[0] == 3 &&
+      reject_field_0_after == (mi_bfield_t)UINT64_C(0xb000000000000ec5) &&
+      reject_field_1_after == 7 && reject_chunkmap_field_0_after == 1 &&
+      delegation_zero_seeded && delegation_zero_returned_completed &&
+      m2_rangesn_delegation_zero_trace.count == 4 &&
+      m2_rangesn_delegation_zero_trace.indices[0] == 0 &&
+      m2_rangesn_delegation_zero_trace.counts[0] == 8 &&
+      m2_rangesn_delegation_zero_trace.indices[1] == 9 &&
+      m2_rangesn_delegation_zero_trace.counts[1] == 3 &&
+      m2_rangesn_delegation_zero_trace.indices[2] == 60 &&
+      m2_rangesn_delegation_zero_trace.counts[2] == 2 &&
+      m2_rangesn_delegation_zero_trace.indices[3] == 63 &&
+      m2_rangesn_delegation_zero_trace.counts[3] == 1 &&
+      delegation_zero_field_0_after == 0 &&
+      delegation_zero_chunkmap_field_0_after == 1 &&
+      delegation_one_seeded && delegation_one_returned_completed &&
+      m2_rangesn_delegation_one_trace.count == 4 &&
+      m2_rangesn_delegation_one_trace.indices[0] == 0 &&
+      m2_rangesn_delegation_one_trace.counts[0] == 8 &&
+      m2_rangesn_delegation_one_trace.indices[1] == 9 &&
+      m2_rangesn_delegation_one_trace.counts[1] == 3 &&
+      m2_rangesn_delegation_one_trace.indices[2] == 60 &&
+      m2_rangesn_delegation_one_trace.counts[2] == 2 &&
+      m2_rangesn_delegation_one_trace.indices[3] == 63 &&
+      m2_rangesn_delegation_one_trace.counts[3] == 1 &&
+      delegation_one_field_0_after == 0 &&
+      delegation_one_chunkmap_field_0_after == 1 &&
+      cap_over_seeded && cap_over_returned_completed &&
+      m2_rangesn_cap_over_trace.count == 1 &&
+      m2_rangesn_cap_over_trace.indices[0] == 0 &&
+      m2_rangesn_cap_over_trace.counts[0] == MI_BFIELD_BITS &&
+      cap_over_field_0_after == 0 && cap_over_chunkmap_field_0_after == 1;
+  if (!all_relations) return 10;
+
+  puts("CRABC_MI_M2_BITMAP_RANGESN_TRACE_BEGIN");
+  U("m2.bitmap_rangesn.control.bfield_bits", MI_BFIELD_BITS);
+  U("m2.bitmap_rangesn.control.bchunk_bits", MI_BCHUNK_BITS);
+  U("m2.bitmap_rangesn.control.aligned_rngslices", 3);
+  U("m2.bitmap_rangesn.control.capped_request", MI_BFIELD_BITS + 1);
+  U("m2.bitmap_rangesn.layout.byte_size", complete_size);
+  U("m2.bitmap_rangesn.r3_complete.returned_completed", complete_returned_completed);
+  U("m2.bitmap_rangesn.r3_complete.callback_count", m2_rangesn_complete_trace.count);
+  U("m2.bitmap_rangesn.r3_complete.range_0_index", m2_rangesn_complete_trace.indices[0]);
+  U("m2.bitmap_rangesn.r3_complete.range_0_count", m2_rangesn_complete_trace.counts[0]);
+  U("m2.bitmap_rangesn.r3_complete.range_1_index", m2_rangesn_complete_trace.indices[1]);
+  U("m2.bitmap_rangesn.r3_complete.range_1_count", m2_rangesn_complete_trace.counts[1]);
+  U("m2.bitmap_rangesn.r3_complete.range_2_index", m2_rangesn_complete_trace.indices[2]);
+  U("m2.bitmap_rangesn.r3_complete.range_2_count", m2_rangesn_complete_trace.counts[2]);
+  U("m2.bitmap_rangesn.r3_complete.field_0_after", complete_field_0_after);
+  U("m2.bitmap_rangesn.r3_complete.chunkmap_field_0_after", complete_chunkmap_field_0_after);
+  U("m2.bitmap_rangesn.r3_reject.returned_completed", reject_returned_completed);
+  U("m2.bitmap_rangesn.r3_reject.callback_count", m2_rangesn_reject_trace.count);
+  U("m2.bitmap_rangesn.r3_reject.range_0_index", m2_rangesn_reject_trace.indices[0]);
+  U("m2.bitmap_rangesn.r3_reject.range_0_count", m2_rangesn_reject_trace.counts[0]);
+  U("m2.bitmap_rangesn.r3_reject.field_0_after", reject_field_0_after);
+  U("m2.bitmap_rangesn.r3_reject.field_1_after", reject_field_1_after);
+  U("m2.bitmap_rangesn.r3_reject.chunkmap_field_0_after", reject_chunkmap_field_0_after);
+  U("m2.bitmap_rangesn.delegation_zero.returned_completed", delegation_zero_returned_completed);
+  U("m2.bitmap_rangesn.delegation_zero.callback_count", m2_rangesn_delegation_zero_trace.count);
+  U("m2.bitmap_rangesn.delegation_zero.range_0_index", m2_rangesn_delegation_zero_trace.indices[0]);
+  U("m2.bitmap_rangesn.delegation_zero.range_0_count", m2_rangesn_delegation_zero_trace.counts[0]);
+  U("m2.bitmap_rangesn.delegation_zero.range_1_index", m2_rangesn_delegation_zero_trace.indices[1]);
+  U("m2.bitmap_rangesn.delegation_zero.range_1_count", m2_rangesn_delegation_zero_trace.counts[1]);
+  U("m2.bitmap_rangesn.delegation_zero.range_2_index", m2_rangesn_delegation_zero_trace.indices[2]);
+  U("m2.bitmap_rangesn.delegation_zero.range_2_count", m2_rangesn_delegation_zero_trace.counts[2]);
+  U("m2.bitmap_rangesn.delegation_zero.range_3_index", m2_rangesn_delegation_zero_trace.indices[3]);
+  U("m2.bitmap_rangesn.delegation_zero.range_3_count", m2_rangesn_delegation_zero_trace.counts[3]);
+  U("m2.bitmap_rangesn.delegation_zero.field_0_after", delegation_zero_field_0_after);
+  U("m2.bitmap_rangesn.delegation_zero.chunkmap_field_0_after", delegation_zero_chunkmap_field_0_after);
+  U("m2.bitmap_rangesn.delegation_one.returned_completed", delegation_one_returned_completed);
+  U("m2.bitmap_rangesn.delegation_one.callback_count", m2_rangesn_delegation_one_trace.count);
+  U("m2.bitmap_rangesn.delegation_one.range_0_index", m2_rangesn_delegation_one_trace.indices[0]);
+  U("m2.bitmap_rangesn.delegation_one.range_0_count", m2_rangesn_delegation_one_trace.counts[0]);
+  U("m2.bitmap_rangesn.delegation_one.range_1_index", m2_rangesn_delegation_one_trace.indices[1]);
+  U("m2.bitmap_rangesn.delegation_one.range_1_count", m2_rangesn_delegation_one_trace.counts[1]);
+  U("m2.bitmap_rangesn.delegation_one.range_2_index", m2_rangesn_delegation_one_trace.indices[2]);
+  U("m2.bitmap_rangesn.delegation_one.range_2_count", m2_rangesn_delegation_one_trace.counts[2]);
+  U("m2.bitmap_rangesn.delegation_one.range_3_index", m2_rangesn_delegation_one_trace.indices[3]);
+  U("m2.bitmap_rangesn.delegation_one.range_3_count", m2_rangesn_delegation_one_trace.counts[3]);
+  U("m2.bitmap_rangesn.delegation_one.field_0_after", delegation_one_field_0_after);
+  U("m2.bitmap_rangesn.delegation_one.chunkmap_field_0_after", delegation_one_chunkmap_field_0_after);
+  U("m2.bitmap_rangesn.cap_over.returned_completed", cap_over_returned_completed);
+  U("m2.bitmap_rangesn.cap_over.callback_count", m2_rangesn_cap_over_trace.count);
+  U("m2.bitmap_rangesn.cap_over.range_0_index", m2_rangesn_cap_over_trace.indices[0]);
+  U("m2.bitmap_rangesn.cap_over.range_0_count", m2_rangesn_cap_over_trace.counts[0]);
+  U("m2.bitmap_rangesn.cap_over.field_0_after", cap_over_field_0_after);
+  U("m2.bitmap_rangesn.cap_over.chunkmap_field_0_after", cap_over_chunkmap_field_0_after);
+  puts("CRABC_MI_M2_BITMAP_RANGESN_TRACE_END");
   return 0;
 }
 """
@@ -5685,6 +5990,7 @@ def validate_m2_memory_substrate_contract(
                     "rust-page-map-success-trace",
                     "c-rust-bitmap-abandoned-claim-differential",
                     "c-rust-bitmap-clear-range-differential",
+                    "c-rust-bitmap-rangesn-differential",
                     "c-rust-page-map-success-differential",
                     "c-rust-page-map-cold-init-differential",
                 }
@@ -5944,6 +6250,77 @@ def run_m2_bitmap_clear_range_differential(
     }
 
 
+def run_m2_bitmap_rangesn_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the selected pinned-C/Rust scalar rangesn wrapper."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-bitmap-rangesn-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_bitmap_rangesn_trace(
+            compiler,
+            source,
+            M2_BITMAP_RANGESN_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "bitmap::tests::emit_m2_bitmap_rangesn_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 bitmap rangesn trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_bitmap_rangesn_trace(rust_output, source="Rust")
+    validate_m2_bitmap_rangesn_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 bitmap rangesn trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_bitmap_rangesn_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "one pinned-C/Rust scalar one-chunk `_mi_bitmap_forall_setc_rangesn` "
+            "trace: fresh `rngslices == 3` images prove aligned completed windows, "
+            "partial-window and non-divisible top-suffix restoration, and a stopped "
+            "callback restoring its earlier skipped window plus all later snapshot bits; "
+            "fresh `0` and `1` calls prove generic maximal-range delegation, and a `65` "
+            "call proves the source cap at 64. It does not cover actual minimal-purge/"
+            "transparent-huge-page policy, arena/subprocess ownership, multi-chunk or "
+            "binned bitmaps, races, statistics, general purge integration, or allocator "
+            "integration."
+        ),
+        "status": comparison["status"],
+    }
+
+
 def run_m2_page_map_differential(
     pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
 ) -> dict[str, Any]:
@@ -6111,6 +6488,26 @@ def run_m2_memory_substrate_checks(
                 continue
             if check["kind"] == "c-rust-bitmap-clear-range-differential":
                 differential = run_m2_bitmap_clear_range_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
+            if check["kind"] == "c-rust-bitmap-rangesn-differential":
+                differential = run_m2_bitmap_rangesn_differential(
                     pin,
                     offline=offline,
                     timeout_seconds=summary["execution"]["timeout_seconds"],
@@ -11601,6 +11998,128 @@ def compare_m2_bitmap_clear_range_trace(
     }
 
 
+def parse_m2_bitmap_rangesn_trace(output: str, *, source: str) -> dict[str, int]:
+    """Parse the fixed scalar bitmap rangesn-wrapper record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_BITMAP_RANGESN_TRACE_BEGIN",
+        end="CRABC_MI_M2_BITMAP_RANGESN_TRACE_END",
+        description=f"{source} M2 bitmap rangesn trace",
+    )
+    if set(trace) != set(M2_BITMAP_RANGESN_TRACE_KEYS):
+        missing = sorted(set(M2_BITMAP_RANGESN_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_BITMAP_RANGESN_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 bitmap rangesn trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_bitmap_rangesn_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Require selected scalar rangesn facts before C/Rust comparison."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown M2 bitmap rangesn trace source: {source}")
+    if set(trace) != set(M2_BITMAP_RANGESN_TRACE_KEYS):
+        raise HarnessError(f"{source} M2 bitmap rangesn trace keys differ from the fixed contract")
+    for key in M2_BITMAP_RANGESN_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} M2 bitmap rangesn trace field is not an integer: {key}"
+            )
+
+    expected = {
+        "m2.bitmap_rangesn.control.bfield_bits": 64,
+        "m2.bitmap_rangesn.control.bchunk_bits": 512,
+        "m2.bitmap_rangesn.control.aligned_rngslices": 3,
+        "m2.bitmap_rangesn.control.capped_request": 65,
+        "m2.bitmap_rangesn.layout.byte_size": 192,
+        "m2.bitmap_rangesn.r3_complete.returned_completed": 1,
+        "m2.bitmap_rangesn.r3_complete.callback_count": 3,
+        "m2.bitmap_rangesn.r3_complete.range_0_index": 0,
+        "m2.bitmap_rangesn.r3_complete.range_0_count": 3,
+        "m2.bitmap_rangesn.r3_complete.range_1_index": 3,
+        "m2.bitmap_rangesn.r3_complete.range_1_count": 3,
+        "m2.bitmap_rangesn.r3_complete.range_2_index": 9,
+        "m2.bitmap_rangesn.r3_complete.range_2_count": 3,
+        "m2.bitmap_rangesn.r3_complete.field_0_after": 0xB0000000000000C0,
+        "m2.bitmap_rangesn.r3_complete.chunkmap_field_0_after": 1,
+        "m2.bitmap_rangesn.r3_reject.returned_completed": 0,
+        "m2.bitmap_rangesn.r3_reject.callback_count": 1,
+        "m2.bitmap_rangesn.r3_reject.range_0_index": 3,
+        "m2.bitmap_rangesn.r3_reject.range_0_count": 3,
+        "m2.bitmap_rangesn.r3_reject.field_0_after": 0xB000000000000EC5,
+        "m2.bitmap_rangesn.r3_reject.field_1_after": 7,
+        "m2.bitmap_rangesn.r3_reject.chunkmap_field_0_after": 1,
+        "m2.bitmap_rangesn.delegation_zero.returned_completed": 1,
+        "m2.bitmap_rangesn.delegation_zero.callback_count": 4,
+        "m2.bitmap_rangesn.delegation_zero.range_0_index": 0,
+        "m2.bitmap_rangesn.delegation_zero.range_0_count": 8,
+        "m2.bitmap_rangesn.delegation_zero.range_1_index": 9,
+        "m2.bitmap_rangesn.delegation_zero.range_1_count": 3,
+        "m2.bitmap_rangesn.delegation_zero.range_2_index": 60,
+        "m2.bitmap_rangesn.delegation_zero.range_2_count": 2,
+        "m2.bitmap_rangesn.delegation_zero.range_3_index": 63,
+        "m2.bitmap_rangesn.delegation_zero.range_3_count": 1,
+        "m2.bitmap_rangesn.delegation_zero.field_0_after": 0,
+        "m2.bitmap_rangesn.delegation_zero.chunkmap_field_0_after": 1,
+        "m2.bitmap_rangesn.delegation_one.returned_completed": 1,
+        "m2.bitmap_rangesn.delegation_one.callback_count": 4,
+        "m2.bitmap_rangesn.delegation_one.range_0_index": 0,
+        "m2.bitmap_rangesn.delegation_one.range_0_count": 8,
+        "m2.bitmap_rangesn.delegation_one.range_1_index": 9,
+        "m2.bitmap_rangesn.delegation_one.range_1_count": 3,
+        "m2.bitmap_rangesn.delegation_one.range_2_index": 60,
+        "m2.bitmap_rangesn.delegation_one.range_2_count": 2,
+        "m2.bitmap_rangesn.delegation_one.range_3_index": 63,
+        "m2.bitmap_rangesn.delegation_one.range_3_count": 1,
+        "m2.bitmap_rangesn.delegation_one.field_0_after": 0,
+        "m2.bitmap_rangesn.delegation_one.chunkmap_field_0_after": 1,
+        "m2.bitmap_rangesn.cap_over.returned_completed": 1,
+        "m2.bitmap_rangesn.cap_over.callback_count": 1,
+        "m2.bitmap_rangesn.cap_over.range_0_index": 0,
+        "m2.bitmap_rangesn.cap_over.range_0_count": 64,
+        "m2.bitmap_rangesn.cap_over.field_0_after": 0,
+        "m2.bitmap_rangesn.cap_over.chunkmap_field_0_after": 1,
+    }
+    for key, value in expected.items():
+        if trace[key] != value:
+            raise HarnessError(
+                f"{source} M2 bitmap rangesn trace contains an unmet relation: {key}"
+            )
+
+
+def compare_m2_bitmap_rangesn_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require exact equality for the selected scalar rangesn transition."""
+
+    validate_m2_bitmap_rangesn_trace(c_trace, source="pinned C")
+    validate_m2_bitmap_rangesn_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_BITMAP_RANGESN_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 bitmap rangesn trace differs from pinned C: " + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(M2_BITMAP_RANGESN_TRACE_KEYS),
+        "status": "matched",
+    }
+
+
 def parse_rust_test_count(output: str) -> int:
     matches = re.findall(
         r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
@@ -12757,6 +13276,66 @@ def build_m2_bitmap_clear_range_trace(
     require_success(run, "pinned C M2 bitmap clear-range trace execution")
     record = parse_m2_bitmap_clear_range_trace(str(run["stdout"]), source="pinned C")
     validate_m2_bitmap_clear_range_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc.h",
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/bits.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "include/mimalloc/types.h",
+                "src/bitmap.h",
+                "src/bitmap.c",
+            ),
+        ),
+    }
+
+
+def build_m2_bitmap_rangesn_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the selected source-private scalar rangesn-wrapper producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-bitmap-rangesn-trace-probe.c"
+    trace_binary = profile_dir / "m2-bitmap-rangesn-trace-probe"
+    trace_source.write_text(M2_BITMAP_RANGESN_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-DMI_OPT_SIMD=0",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        "-ffunction-sections",
+        "-fdata-sections",
+        str(trace_source),
+        "-Wl,--gc-sections",
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 bitmap rangesn trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 bitmap rangesn trace execution")
+    record = parse_m2_bitmap_rangesn_trace(str(run["stdout"]), source="pinned C")
+    validate_m2_bitmap_rangesn_trace(record, source="pinned C")
     return {
         "command": command,
         "record": record,

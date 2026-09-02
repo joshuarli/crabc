@@ -2256,6 +2256,12 @@ class ContractTests(unittest.TestCase):
                     "id": "c-rust-bitmap-clear-range-differential",
                     "kind": "c-rust-bitmap-clear-range-differential",
                     "target": "bitmap::tests::emit_m2_bitmap_clear_range_c_rust_trace",
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "c-rust-bitmap-rangesn-differential",
+                    "kind": "c-rust-bitmap-rangesn-differential",
+                    "target": "bitmap::tests::emit_m2_bitmap_rangesn_c_rust_trace",
                 }
             ],
         )
@@ -2649,6 +2655,87 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.bitmap_range.reject.unvisited_same_field_restored"] = 0
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_bitmap_clear_range_trace(c_trace, rust_trace)
+
+    @staticmethod
+    def _m2_bitmap_rangesn_trace() -> dict[str, int]:
+        return {
+            "m2.bitmap_rangesn.control.bfield_bits": 64,
+            "m2.bitmap_rangesn.control.bchunk_bits": 512,
+            "m2.bitmap_rangesn.control.aligned_rngslices": 3,
+            "m2.bitmap_rangesn.control.capped_request": 65,
+            "m2.bitmap_rangesn.layout.byte_size": 192,
+            "m2.bitmap_rangesn.r3_complete.returned_completed": 1,
+            "m2.bitmap_rangesn.r3_complete.callback_count": 3,
+            "m2.bitmap_rangesn.r3_complete.range_0_index": 0,
+            "m2.bitmap_rangesn.r3_complete.range_0_count": 3,
+            "m2.bitmap_rangesn.r3_complete.range_1_index": 3,
+            "m2.bitmap_rangesn.r3_complete.range_1_count": 3,
+            "m2.bitmap_rangesn.r3_complete.range_2_index": 9,
+            "m2.bitmap_rangesn.r3_complete.range_2_count": 3,
+            "m2.bitmap_rangesn.r3_complete.field_0_after": 0xB0000000000000C0,
+            "m2.bitmap_rangesn.r3_complete.chunkmap_field_0_after": 1,
+            "m2.bitmap_rangesn.r3_reject.returned_completed": 0,
+            "m2.bitmap_rangesn.r3_reject.callback_count": 1,
+            "m2.bitmap_rangesn.r3_reject.range_0_index": 3,
+            "m2.bitmap_rangesn.r3_reject.range_0_count": 3,
+            "m2.bitmap_rangesn.r3_reject.field_0_after": 0xB000000000000EC5,
+            "m2.bitmap_rangesn.r3_reject.field_1_after": 7,
+            "m2.bitmap_rangesn.r3_reject.chunkmap_field_0_after": 1,
+            "m2.bitmap_rangesn.delegation_zero.returned_completed": 1,
+            "m2.bitmap_rangesn.delegation_zero.callback_count": 4,
+            "m2.bitmap_rangesn.delegation_zero.range_0_index": 0,
+            "m2.bitmap_rangesn.delegation_zero.range_0_count": 8,
+            "m2.bitmap_rangesn.delegation_zero.range_1_index": 9,
+            "m2.bitmap_rangesn.delegation_zero.range_1_count": 3,
+            "m2.bitmap_rangesn.delegation_zero.range_2_index": 60,
+            "m2.bitmap_rangesn.delegation_zero.range_2_count": 2,
+            "m2.bitmap_rangesn.delegation_zero.range_3_index": 63,
+            "m2.bitmap_rangesn.delegation_zero.range_3_count": 1,
+            "m2.bitmap_rangesn.delegation_zero.field_0_after": 0,
+            "m2.bitmap_rangesn.delegation_zero.chunkmap_field_0_after": 1,
+            "m2.bitmap_rangesn.delegation_one.returned_completed": 1,
+            "m2.bitmap_rangesn.delegation_one.callback_count": 4,
+            "m2.bitmap_rangesn.delegation_one.range_0_index": 0,
+            "m2.bitmap_rangesn.delegation_one.range_0_count": 8,
+            "m2.bitmap_rangesn.delegation_one.range_1_index": 9,
+            "m2.bitmap_rangesn.delegation_one.range_1_count": 3,
+            "m2.bitmap_rangesn.delegation_one.range_2_index": 60,
+            "m2.bitmap_rangesn.delegation_one.range_2_count": 2,
+            "m2.bitmap_rangesn.delegation_one.range_3_index": 63,
+            "m2.bitmap_rangesn.delegation_one.range_3_count": 1,
+            "m2.bitmap_rangesn.delegation_one.field_0_after": 0,
+            "m2.bitmap_rangesn.delegation_one.chunkmap_field_0_after": 1,
+            "m2.bitmap_rangesn.cap_over.returned_completed": 1,
+            "m2.bitmap_rangesn.cap_over.callback_count": 1,
+            "m2.bitmap_rangesn.cap_over.range_0_index": 0,
+            "m2.bitmap_rangesn.cap_over.range_0_count": 64,
+            "m2.bitmap_rangesn.cap_over.field_0_after": 0,
+            "m2.bitmap_rangesn.cap_over.chunkmap_field_0_after": 1,
+        }
+
+    def test_m2_bitmap_rangesn_trace_requires_the_selected_transitions(self) -> None:
+        c_trace = self._m2_bitmap_rangesn_trace()
+        output = "CRABC_MI_M2_BITMAP_RANGESN_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_BITMAP_RANGESN_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_bitmap_rangesn_trace(output, source="pinned C")
+        RUNNER.validate_m2_bitmap_rangesn_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_bitmap_rangesn_trace()
+        RUNNER.validate_m2_bitmap_rangesn_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_bitmap_rangesn_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_BITMAP_RANGESN_TRACE_KEYS),
+        )
+
+    def test_m2_bitmap_rangesn_trace_rejects_missing_skipped_window_restoration(self) -> None:
+        c_trace = self._m2_bitmap_rangesn_trace()
+        rust_trace = self._m2_bitmap_rangesn_trace()
+        rust_trace["m2.bitmap_rangesn.r3_reject.field_0_after"] = 0xB000000000000EC4
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_bitmap_rangesn_trace(c_trace, rust_trace)
 
     def test_m2_parser_is_native_only_and_mutually_exclusive(self) -> None:
         with mock.patch.object(sys, "argv", ["run.py", "--m2"]):
