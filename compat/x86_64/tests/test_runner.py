@@ -1655,7 +1655,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            "    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr) ;;",
+            "    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate) ;;",
             source,
         )
         self.assertIn("    libc-in6addr-any)", source)
@@ -1748,7 +1748,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "math-special-header-abi|libc-math-special",
             "math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow",
             "inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi",
-            "libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr",
+            "libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate",
             "ldso-target-root",
             "libc-fenv-rounding",
             "libc-math-minmax",
@@ -35038,6 +35038,71 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("nameser-header-abi)", dispatcher)
         self.assertIn("libc-ns-skiprr)", dispatcher)
         self.assertIn("run_libc_ns_skiprr.sh", dispatcher)
+
+
+    def test_libc_static_c_abi_nameser_wire_aggregate_stays_private(self) -> None:
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_nameser_wire_aggregate_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_nameser_wire_aggregate_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_nameser_wire_aggregate.sh"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "owner_name",
+            "ns_put16_function",
+            "ns_put32_function",
+            "ns_get16_function",
+            "ns_get32_function",
+            "dn_skipname_function",
+            "dn_expand_function",
+            "ns_skiprr_function",
+            "ns_msg_getflag",
+            "eom != message + 49",
+            "expect_malformed(answer, eom - 1)",
+            "CRABC_NAMESER_WIRE_AGGREGATE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_nameser_wire_aggregate_probe",
+            "mov $231, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_nameser_header_abi.sh",
+            "ns_parse.lo",
+            "dn_expand.lo",
+            "assert_dn_expand_alias",
+            "extract_selected_member",
+            "ns_skiprr archive member also defines a nameserver sibling",
+            '"$selected_member" "$archive"',
+            "_ns_flagdata",
+            "candidate lacks the selected errno TLS segment",
+            "candidate errno does not use direct fs initial TLS",
+            "ns_skiprr does not call its selected dn_skipname dependency",
+            "ns_skiprr does not call its selected ns_get16 dependency",
+            "ns_initparse ns_parserr ns_name_uncompress",
+            "res_query res_querydomain res_search",
+            "getaddrinfo",
+            "socket bind",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-nameser-wire-aggregate"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-nameser-wire-aggregate"',
+            parity_ledger,
+        )
+        self.assertIn("libc-nameser-wire-aggregate)", dispatcher)
+        self.assertIn("run_libc_nameser_wire_aggregate.sh", dispatcher)
 
 
     def test_libc_static_c_abi_aio_error_artifact_stays_archive_free(self) -> None:

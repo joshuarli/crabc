@@ -71691,6 +71691,374 @@ def require_ns_skiprr_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_nameser_wire_aggregate_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected nameser wire/data composition below resolver behavior."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-nameser-wire-aggregate"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-nameser-wire-aggregate artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-nameser-wire-aggregate must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-nameser-wire-aggregate must not claim a capability",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-nameser-wire-aggregate needs a description",
+    )
+    for phrase in (
+        "Private native x86 static selected nameser wire/data aggregate",
+        "still-planned `libc.resolver`",
+        "true `-nostdlib -static` candidate",
+        "nine selected nameser symbols",
+        "`__dn_expand`",
+        "weak default `dn_expand`",
+        "`_ns_flagdata`",
+        "one unaligned 49-byte caller-owned DNS response",
+        "`ns_msg_getflag`",
+        "`EMSGSIZE`",
+        "initial-TLS `errno`",
+        "ordinary demand-driven `libc.a`",
+        "does not force-link the archive",
+        "ns_initparse",
+        "ns_parserr",
+        "ns_name_uncompress",
+        "resolver configuration/state",
+        "DNS packet I/O",
+        "netdb/database",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-nameser-wire-aggregate description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-nameser-wire-aggregate.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/dn_skipname.rs",
+        "libc/src/c_abi/x86_64/dn_expand.rs",
+        "libc/src/c_abi/x86_64/ns_flagdata.rs",
+        "libc/src/c_abi/x86_64/ns_get16.rs",
+        "libc/src/c_abi/x86_64/ns_get32.rs",
+        "libc/src/c_abi/x86_64/ns_put16.rs",
+        "libc/src/c_abi/x86_64/ns_put32.rs",
+        "libc/src/c_abi/x86_64/ns_skiprr.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/resolv.h",
+        "include/arpa/nameser.h",
+        "compat/x86_64/nameser_header_abi_probe.c",
+        "compat/x86_64/nameser_header_abi_probe.cpp",
+        "compat/x86_64/run_nameser_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_nameser_wire_aggregate_probe.c",
+        "compat/x86_64/libc_nameser_wire_aggregate_start.S",
+        "compat/x86_64/run_libc_nameser_wire_aggregate.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-nameser-wire-aggregate source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-nameser-wire-aggregate.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "dn_expand" in item
+            and "ns_put16/ns_put32" in item
+            and "ns_skiprr" in item
+            and "_ns_flagdata" in item
+            and "same-address ELF alias pair" in item
+            for item in prerequisites
+        ),
+        "static-c-nameser-wire-aggregate must retain its selected C ABI boundary",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/dn_skipname.c" in item
+            and "dn_expand.lo/src/network/dn_expand.c" in item
+            and "ns_parse.lo/src/network/ns_parse.c" in item
+            and "ns_initparse" in item
+            and "ns_parserr" in item
+            and "ns_name_uncompress" in item
+            for item in prerequisites
+        ),
+        "static-c-nameser-wire-aggregate must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "exactly one extracted ns_skiprr object" in item
+            and "ordinary demand-driven `libc.a`" in item
+            and "nine selected nameser symbols" in item
+            and "direct initial-TLS errno" in item
+            and "never --whole-archive" in item
+            and "no interpreter, DT_NEEDED, unresolved symbol, or dynamic-TLS model" in item
+            for item in prerequisites
+        ),
+        "static-c-nameser-wire-aggregate must retain its bounded static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-nameser-wire-aggregate.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<resolv.h>" in item
+            and "dn_skipname" in item
+            and "dn_expand" in item
+            and "ns_skiprr" in item
+            and "_ns_flagdata" in item
+            and "unmangled C++ C linkage" in item
+            for item in headers
+        ),
+        "static-c-nameser-wire-aggregate must retain its C/C++ nameser declaration boundary",
+    )
+    require(
+        any(
+            "one unaligned caller-owned DNS response" in item
+            and "ns_msg_getflag" in item
+            and "EMSGSIZE" in item
+            for item in headers
+        ),
+        "static-c-nameser-wire-aggregate must retain its aggregate fixture boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    expected_symbols = {
+        "__dn_expand",
+        "dn_expand",
+        "dn_skipname",
+        "_ns_flagdata",
+        "ns_get16",
+        "ns_get32",
+        "ns_put16",
+        "ns_put32",
+        "ns_skiprr",
+    }
+    require(
+        expected_symbols <= exports,
+        "static-c-nameser-wire-aggregate must retain all selected nameser exports",
+    )
+    require(
+        not (exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress"}),
+        "static-c-nameser-wire-aggregate must not expose a broader parser entry",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    for module in (
+        "dn_skipname",
+        "dn_expand",
+        "ns_flagdata",
+        "ns_get16",
+        "ns_get32",
+        "ns_put16",
+        "ns_put32",
+        "ns_skiprr",
+    ):
+        require(
+            f'#[path = "{module}.rs"]\nmod {module};' in static_root,
+            f"x86 static C ABI must retain the selected {module} leaf",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_nameser_wire_aggregate_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <arpa/nameser.h>",
+        "#include <errno.h>",
+        "#include <resolv.h>",
+        "owner_name",
+        "dn_skipname_signature",
+        "dn_expand_signature",
+        "ns_get16_signature",
+        "ns_get32_signature",
+        "ns_put16_signature",
+        "ns_put32_signature",
+        "ns_skiprr_signature",
+        "ns_msg_getflag",
+        "eom != message + 49",
+        "dn_skipname_function(answer, eom) != 2",
+        "expect_malformed(answer, eom - 1)",
+        "CRABC_NAMESER_WIRE_AGGREGATE_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"nameser wire aggregate fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_nameser_wire_aggregate_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_nameser_wire_aggregate_probe",
+        "mov $231, %eax",
+    ):
+        require(
+            snippet in start,
+            f"nameser wire aggregate static entry omits {snippet}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_nameser_wire_aggregate.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_nameser_header_abi.sh",
+        "AARCH64_STATIC_TSV",
+        "ns_parse.lo",
+        "dn_expand.lo",
+        "assert_selected_c_abi_surface",
+        "assert_dn_expand_alias",
+        "extract_selected_member",
+        "ns_skiprr archive member also defines a nameserver sibling",
+        "-nostdlib -static",
+        '"$selected_member" "$archive"',
+        "_ns_flagdata",
+        "candidate lacks the selected errno TLS segment",
+        "candidate errno does not use direct fs initial TLS",
+        "ns_skiprr does not call its selected dn_skipname dependency",
+        "ns_skiprr does not call its selected ns_get16 dependency",
+        "ns_skiprr implementation unexpectedly performs a syscall",
+        "ns_initparse ns_parserr ns_name_uncompress",
+        "res_query res_querydomain res_search",
+        "getaddrinfo",
+        "socket bind",
+    ):
+        require(
+            snippet in runner,
+            f"nameser wire aggregate runner omits {snippet}",
+        )
+    require(
+        "--whole-archive" not in runner,
+        "nameser wire aggregate runner must not force-link the archive",
+    )
+
+    oracle = artifact.get("oracle")
+    require(
+        isinstance(oracle, list),
+        "static-c-nameser-wire-aggregate needs oracle evidence",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/network/dn_skipname.c" in entry["role"]
+            and "src/network/dn_expand.c" in entry["role"]
+            and "src/network/ns_parse.c" in entry["role"]
+            and "EMSGSIZE" in entry["role"]
+            and "Resolver state/files" in entry["role"]
+            and "Ethernet" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-nameser-wire-aggregate must retain its pinned-musl composition oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "hidden `__dn_expand`/weak-default dn_expand same-address alias pair" in entry["role"]
+            and "direct initial-exec errno" in entry["role"]
+            and "ordinary-archive closure" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-nameser-wire-aggregate must retain its static ELF ABI oracle",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-nameser-wire-aggregate needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-nameser-wire-aggregate"},
+        "static-c-nameser-wire-aggregate must use the closed libc-nameser-wire-aggregate command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str),
+        "static-c-nameser-wire-aggregate evidence needs a scope",
+    )
+    for phrase in (
+        "Pinned-musl/project C/C++ nameser header proof",
+        "true x86 `-nostdlib -static` candidate",
+        "dn_expand.lo/dn_expand.c and ns_parse.lo/ns_parse.c source mappings",
+        "nine selected nameser symbols",
+        "one extracted ns_skiprr object",
+        "ordinary demand-driven archive closure",
+        "one unaligned 49-byte caller-owned DNS response",
+        "ns_msg_getflag",
+        "EMSGSIZE",
+        "no interpreter/DT_NEEDED/unresolved symbol/dynamic-TLS model",
+        "direct fs initial TLS",
+        "no syscall in ns_skiprr",
+        "ns_initparse/ns_parserr/ns_name_uncompress",
+        "hosts/resolv.conf",
+        "DNS packet I/O",
+        "netdb/database",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-nameser-wire-aggregate evidence omits {phrase}",
+        )
+
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "nameser-header-abi)" in dispatch
+        and "run_nameser_header_abi.sh" in dispatch
+        and "libc-nameser-wire-aggregate)" in dispatch
+        and "run_libc_nameser_wire_aggregate.sh" in dispatch,
+        "nameser wire aggregate dispatcher bindings are missing",
+    )
+
+
 def require_sched_getparam_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's scheduler-record process/thread mismatch below promotion."""
     artifacts = require_verified_artifacts(
@@ -73356,6 +73724,7 @@ def validate_ledger(
     require_ns_put16_artifact(by_id["libc.resolver"])
     require_ns_put32_artifact(by_id["libc.resolver"])
     require_ns_skiprr_artifact(by_id["libc.resolver"])
+    require_nameser_wire_aggregate_artifact(by_id["libc.resolver"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_endservent_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])

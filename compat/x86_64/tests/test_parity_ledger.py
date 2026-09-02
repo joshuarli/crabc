@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 352)
+        self.assertEqual(report["verified_artifact_count"], 353)
         self.assertEqual(report["feature_archive_count"], 20)
         self.assertEqual(report["verified_feature_archive_count"], 20)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -29221,6 +29221,78 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["scope"] = "static nameserver dword helper"
         with self.assertRaisesRegex(
             ledger.LedgerError, "Pinned-musl project-header C execution"
+        ):
+            ledger.validate_ledger(data)
+
+
+    def test_nameser_wire_aggregate_keeps_its_private_composition_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-nameser-wire-aggregate"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/dn_skipname.rs",
+            "libc/src/c_abi/x86_64/dn_expand.rs",
+            "libc/src/c_abi/x86_64/ns_flagdata.rs",
+            "libc/src/c_abi/x86_64/ns_get16.rs",
+            "libc/src/c_abi/x86_64/ns_get32.rs",
+            "libc/src/c_abi/x86_64/ns_put16.rs",
+            "libc/src/c_abi/x86_64/ns_put32.rs",
+            "libc/src/c_abi/x86_64/ns_skiprr.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "compat/x86_64/libc_nameser_wire_aggregate_probe.c",
+            "compat/x86_64/libc_nameser_wire_aggregate_start.S",
+            "compat/x86_64/run_libc_nameser_wire_aggregate.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/tests/test_parity_ledger.py",
+            "compat/x86_64/tests/test_runner.py",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-nameser-wire-aggregate"},
+        )
+        for phrase in (
+            "Private native x86 static selected nameser wire/data aggregate",
+            "still-planned `libc.resolver`",
+            "nine selected nameser symbols",
+            "one unaligned 49-byte caller-owned DNS response",
+            "`ns_msg_getflag`",
+            "`EMSGSIZE`",
+            "initial-TLS `errno`",
+            "ordinary demand-driven `libc.a`",
+            "resolver configuration",
+            "DNS packet I/O",
+            "netdb/database",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-nameser-wire-aggregate"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "static nameser aggregate"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "Pinned-musl/project C/C\\+\\+ nameser header proof"
         ):
             ledger.validate_ledger(data)
 
