@@ -904,6 +904,8 @@ pub(crate) struct MetaAllocator {
     #[cfg(test)]
     fail_next_direct_zeroed_size: AtomicUsize,
     #[cfg(test)]
+    fail_next_rezalloc_size: AtomicUsize,
+    #[cfg(test)]
     fail_next_aligned_zeroed_size: AtomicUsize,
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
     test_live_allocation_count: AtomicUsize,
@@ -981,6 +983,8 @@ impl MetaAllocator {
             registry: ArenaRegistry::new(core::ptr::null_mut()),
             #[cfg(test)]
             fail_next_direct_zeroed_size: AtomicUsize::new(0),
+            #[cfg(test)]
+            fail_next_rezalloc_size: AtomicUsize::new(0),
             #[cfg(test)]
             fail_next_aligned_zeroed_size: AtomicUsize::new(0),
             #[cfg(any(test, feature = "native-runtime-test-audit"))]
@@ -1197,6 +1201,17 @@ impl MetaAllocator {
         self.fail_next_direct_zeroed_size.store(size, Ordering::Release);
     }
 
+    /// Makes one exact `_mi_meta_rezalloc` replacement request fail after its
+    /// old capability has entered the source-shaped moving state. The failure
+    /// path must restore that old capability before it returns; this is a
+    /// narrow test seam, not a production metadata fault policy.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_fail_next_rezalloc_size(&self, size: usize) {
+        assert_ne!(size, 0);
+        self.fail_next_rezalloc_size.store(size, Ordering::Release);
+    }
+
     /// Makes one exact aligned-zeroed metadata request fail in an isolated
     /// test. This remains narrower than an allocator policy: it only proves
     /// a caller's pre-publication ownership branch.
@@ -1313,6 +1328,16 @@ impl MetaAllocator {
                     return Err(MetaError::ReleasedOrStale);
                 }
             };
+            #[cfg(test)]
+            if new_size != 0
+                && self
+                    .fail_next_rezalloc_size
+                    .compare_exchange(new_size, 0, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                old.restore_live();
+                return Err(MetaError::AllocationUnavailable);
+            }
             let Some(pointer) = entry.allocator().allocate_zeroed(new_size) else {
                 old.restore_live();
                 return Err(MetaError::AllocationUnavailable);

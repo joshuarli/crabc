@@ -1721,6 +1721,90 @@ mod tests {
         .expect("the isolated growth lifecycle completes");
     }
 
+    /// Covers the real `mi_thread_locals_expand` replacement route: after a
+    /// live 16-slot image, a non-null index 16 set must retain the old Malloc
+    /// capability on allocation failure, then copy that image and consume the
+    /// old capability only after a successful 16-to-32 replacement.
+    #[test]
+    fn current_thread_backing_rezalloc_failure_preserves_the_old_malloc_capability_then_retries() {
+        let metadata = MetaAllocator::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        thread::spawn(move || {
+            let mut owner = unsafe {
+                ThreadLocalBackingOwner::begin_with_metadata(
+                    metadata,
+                    subprocess,
+                    memory_config(),
+                )
+            }
+            .expect("the isolated child begins at the immutable empty root");
+            let original_key = key(15, 1);
+            let growth_key = key(16, 1);
+            let mut original_payload = 0x51usize;
+            let mut grown_payload = 0x52usize;
+            let original_value = (&mut original_payload as *mut usize).cast();
+            let grown_value = (&mut grown_payload as *mut usize).cast();
+
+            owner
+                .set(original_key, original_value)
+                .expect("the source starts with one 16-slot Malloc image");
+            let root_before = dynamic_backing_peek().expect("the first image is published");
+            // SAFETY: the live current-thread owner still retains the exact
+            // first metadata capability and has just verified its TLS root.
+            let backing_before = unsafe { root_before.as_ref() };
+            assert_eq!(backing_before.memory_id().kind(), MemoryKind::Malloc);
+            assert_eq!(backing_before.count(), 16);
+            let before_failure = metadata.test_allocation_audit();
+            assert_eq!(before_failure.live_capability_count, 1);
+            assert_eq!(before_failure.high_water_capability_count, 1);
+            let replacement_size = DynamicThreadLocalBacking::allocation_size(32)
+                .expect("the exact source 16-to-32 request is representable");
+            metadata
+                .get_ref()
+                .test_fail_next_rezalloc_size(replacement_size);
+
+            assert_eq!(
+                owner.set(growth_key, grown_value),
+                Err(ThreadLocalBackingError::Metadata(MetaError::AllocationUnavailable))
+            );
+            assert_eq!(owner.count, 16);
+            assert_eq!(dynamic_backing_peek(), Some(root_before));
+            assert_eq!(owner.get(original_key).unwrap(), original_value);
+            assert_eq!(owner.get(growth_key).unwrap(), core::ptr::null_mut());
+            assert!(owner.allocation.is_some(), "the old capability remains live on failure");
+            let after_failure = metadata.test_allocation_audit();
+            assert_eq!(after_failure.live_capability_count, 1);
+            assert_eq!(after_failure.high_water_capability_count, 1);
+
+            owner
+                .set(growth_key, grown_value)
+                .expect("the next source replacement retries the exact old image");
+            let root_after = dynamic_backing_peek().expect("the replacement is published");
+            assert_ne!(root_after, root_before, "the live old image cannot alias its replacement");
+            assert_eq!(owner.count, 32);
+            // SAFETY: the current-thread owner retains the exact replacement
+            // capability and verifies the compiler-TLS root before access.
+            let backing = unsafe { root_after.as_ref() };
+            assert_eq!(backing.memory_id().kind(), MemoryKind::Malloc);
+            assert_eq!(backing.count(), 32);
+            assert_eq!(owner.get(original_key).unwrap(), original_value);
+            assert_eq!(owner.get(growth_key).unwrap(), grown_value);
+            let after_retry = metadata.test_allocation_audit();
+            assert_eq!(after_retry.live_capability_count, 1);
+            assert_eq!(after_retry.high_water_capability_count, 2);
+
+            owner
+                .teardown()
+                .expect("the replacement capability releases through source teardown");
+            assert!(dynamic_backing_peek().is_none());
+            let after_teardown = metadata.test_allocation_audit();
+            assert_eq!(after_teardown.live_capability_count, 0);
+            assert_eq!(after_teardown.high_water_capability_count, 2);
+        })
+        .join()
+        .expect("the exact resize failure/retry lifecycle completes");
+    }
+
     #[test]
     fn current_thread_backing_rejects_stale_generation_and_null_out_of_range_needs_no_growth() {
         thread::spawn(|| {
