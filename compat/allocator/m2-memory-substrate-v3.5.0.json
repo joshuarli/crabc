@@ -18,7 +18,7 @@
       "completion_status": "partial",
       "id": "metadata",
       "remaining_conditions": [
-        "prove all source memory-ID ownership branches and metadata allocation/free paths, including retry-preserving failure behavior"
+        "connect the selected exact-owner Malloc and regular-OS release witnesses to real metadata callers; complete no-free, arena registry/subprocess, huge/remap, and every remaining source memory-ID ownership branch with retry-preserving failure behavior where source ownership remains live"
       ],
       "source_units": [
         "include/mimalloc/types.h",

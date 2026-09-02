@@ -2032,7 +2032,8 @@ Required:
 - configuration/layout baseline;
 - canonical harness.
 
-Existing work substantially covers this milestone. Preserve it.
+Existing work closes this inventory/skeleton milestone only. Preserve it; this
+is not an allocator-engine or source-unit parity claim.
 
 ## Milestone 1 — pure foundations
 
@@ -2046,6 +2047,10 @@ Complete and verify:
 - random machinery;
 - primitive layer;
 - bootstrap types.
+
+These are the six bounded components named by
+`compat/allocator/m1-foundations-v3.5.0.json`, not whole `types.h`, `prim.h`,
+`prim-tls.h`, `internal.h`, or source-file completion.
 
 ## Milestone 2 — memory substrate
 
@@ -2374,7 +2379,7 @@ advance this AArch64 allocator ledger.
 | --- | --- | --- |
 | M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. `./scripts/dev.sh allocator --quick` passes on Linux/AArch64. This is inventory/skeleton completion only, not engine parity. |
 | M1 — pure foundations | complete (6/6 bounded components) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. The compiler-TLS component retains its 32-field pinned-C/Rust image, regular-reset, and cached-reference trace and adds a distinct 40-field normal-artifact C/Rust trace of one page-free same-TLD `D`/`A` call to the file-static `src/init.c:mi_thread_theaps_done` body: C's A→D collector calls; Rust's A→D generic queue-half empty branch with ordered empty-prepass witnesses; default then cached reset; heap detach; TLD-list final loop; and logical final release. It compares actual `D` membership/absence rather than whole main-Heap shape: C has metadata+D then metadata-only, while the selected Rust static image has D then empty. A clean native `./scripts/dev.sh allocator-m1` report is the closure evidence. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes the eight required categories—VM primitives, metadata, bitmaps, PageMap, arenas, initialization, fault injection, and allocator recursion—and records their remaining conditions and exclusions. `./scripts/dev.sh allocator-m2` runs a source-private pinned-C/Rust PageMap success differential and writes `m2-memory-substrate-latest.json` only for a clean, unchanged native commit; it intentionally exits 3 while any category remains partial. The selected record compares controlled partial commitment, two-submap extension, a two-slice clear, boundary rollback, and absent post-destruction root. It retains the header-dependent raw counts and C-global/Rust-owner root-order difference as explicit report data, rather than claiming byte-layout equality; the C static-empty-root versus Rust poisoned cold-root initialization-failure difference remains an explicit M2 condition. |
+| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes the eight required categories—VM primitives, metadata, bitmaps, PageMap, arenas, initialization, fault injection, and allocator recursion—and records their remaining conditions and exclusions. `./scripts/dev.sh allocator-m2` runs a source-private pinned-C/Rust PageMap success differential and writes `m2-memory-substrate-latest.json` only for a clean, unchanged native commit; it intentionally exits 3 while any category remains partial. The selected PageMap record compares controlled partial commitment, two-submap extension, a two-slice clear, boundary rollback, and absent post-destruction root. The metadata substrate also has a narrow typed-release witness: `MetaRelease` accepts only an exact Malloc capability or a regular anonymous `Mapping`; failed Malloc release is explicitly terminal/diagnostic and failed regular unmap returns the exact mapping for retry. It deliberately represents neither no-free nor arena, huge, or remap branches. The PageMap report retains the header-dependent raw counts and C-global/Rust-owner root-order difference as explicit report data, rather than claiming byte-layout equality; the C static-empty-root versus Rust poisoned cold-root initialization-failure difference remains an explicit M2 condition. |
 | M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri; forced `cfg(miri)` is smoke evidence, not a Miri pass. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
@@ -2386,7 +2391,8 @@ advance this AArch64 allocator ledger.
 
 A checked-in contract records the current boundary; only its clean-current-commit
 report is current runtime evidence. Evidence from an ancestor is historical
-supporting evidence, not a pass for this checkpoint.
+supporting evidence, not a pass for a later checkpoint, though it remains the
+closure record for the exact contract and revision it attests.
 
 ## M1 closure evidence
 
@@ -2405,10 +2411,12 @@ queue-half witness checks the generic coordinator's empty branch and only the
 deferred-free → retired-page prepass order; it does not execute those
 production prepass algorithms.
 
-The current proof is a clean native `./scripts/dev.sh allocator-m1` exit 0 and
-its `.work/reports/allocator/m1-foundations-latest.json` report at that exact
-commit. A partial contract or a dirty source makes exit 3 or a hard failure,
-respectively; neither is closure. The
+M1 closed at `38d0a51fda55f61e4a5985eee0afc90a9211b49f` with a clean native
+`./scripts/dev.sh allocator-m1` exit 0 and that revision's
+`m1-foundations-latest.json` report. A partial contract or a dirty source makes
+exit 3 or a hard failure, respectively; neither is closure. That report is
+historical support at a later revision and must be rerun from a clean target
+checkout before it can be called current runtime evidence there. The
 `fec84761e9fbdb29c32d8f492ca6c9cfa08a015b` report remains historical support
 for its older partial contract only. Deferred lifecycle and whole-unit
 exclusions remain nonclaims, not implicit M1 coverage.
@@ -2437,6 +2445,17 @@ live global root and then restores its static empty root, whereas a Rust
 success-path differential evidence, not C/Rust equality for cold-init failure,
 VM failure, full PageMap lifetime, or the remaining VM, metadata, bitmap,
 arena, initialization, fault, and recursion closure conditions.
+
+The metadata witness is deliberately smaller still. `MetaRelease::Malloc`
+carries one exact detached `MetaAllocation` and retrieves that capability's
+recorded owner internally; an error can follow a mutating local-free attempt,
+so the returned capability is terminal diagnostic state, not a retry token.
+`MetaRelease::RegularOs` carries only one normal anonymous `Mapping` and
+returns it after a failed `munmap` for explicit retry. A no-free source branch
+carries no release token, and Arena release remains outside this dispatcher
+until a token can retain and validate its registry/subprocess identity. Huge,
+remap, sanitizer-tracking, integration, and allocator-recursion coverage
+remain M2 conditions.
 
 Run `./scripts/dev.sh allocator-m2` from a clean native checkout to write the
 current-commit `.work/reports/allocator/m2-memory-substrate-latest.json`

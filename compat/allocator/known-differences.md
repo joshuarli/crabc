@@ -33,9 +33,14 @@ in the source map:
 `MetaAllocator::free` may report an error after consuming a capability. The
 regular owner clears its dynamic root, while the TLD owner has already
 invalidated `thread_id`; each terminally poisons rather than retaining a
-capability that could name freed storage. This state is not a valid C-program
-observable difference and has no C differential entry; a richer metadata-free
-result may refine it only when it can prove retained ownership.
+capability that could name freed storage. The selected `MetaRelease` boundary
+makes that distinction explicit: its exact Malloc owner is terminal diagnostic
+state rather than a false retry token, while its normal anonymous `Mapping`
+owner remains live and is returned after a failed `munmap`. It intentionally
+does not represent no-free, arena, huge, or remap source branches. This state
+is not a valid C-program observable difference and has no C differential
+entry; an arena-release result may be added only when it can prove retained
+registry/subprocess ownership.
 
 ### `CRABC-LIBC-SHADOW-ABI-REALLOC-NULL-ZERO-ALIGNMENT` — observed public-C ABI known red
 

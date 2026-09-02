@@ -5,10 +5,12 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/subproc.c:19-88`
-// (`_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, `_mi_meta_rezalloc`,
-// `_mi_meta_free`, and `_mi_meta_is_meta_page`) with bootstrap ordering from
-// `src/init.c:15-145,184-208`, plus `src/arena.c:674-723,1613-1673` for the
-// typed non-main `mi_arena_pages_t` metadata image. The detached owner uses
+// (`_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, `_mi_meta_rezalloc`, the
+// selected Malloc branch of `_mi_meta_free`, and `_mi_meta_is_meta_page`) with
+// bootstrap ordering from
+// `src/init.c:15-145,184-208`, plus `src/arena.c:1433-1490` for selected
+// regular-OS release and `src/arena.c:674-723,1613-1673` for the typed
+// non-main `mi_arena_pages_t` metadata image. The detached owner uses
 // the already-portioned `src/arena.c`/`src/page-map.c`/`src/page.c` ordinary
 // page lifecycle rather than a bespoke metadata allocator.
 
@@ -788,6 +790,80 @@ impl<'owner> MetaAllocation<'owner> {
             return Err(MetaBitmapProjectionError::InvalidImage);
         }
         Ok(())
+    }
+}
+
+/// A selected owned branch of source metadata release.
+///
+/// This deliberately covers only the source `MI_MEM_MALLOC` branch and the
+/// regular anonymous-OS branch reached through `_mi_arenas_free`.  It is
+/// constructed from an already-owned capability, never from a raw pointer and
+/// copied [`MemoryId`].  A source `needs_no_free` branch creates no value: it
+/// has no release authority to transfer.  Arena release is also deliberately
+/// absent until its token carries and checks the source registry/subprocess
+/// identity required by `_mi_arenas_free`.
+///
+/// Consequently this is not a general `_mi_meta_free` dispatcher.  It proves
+/// only that the two represented owners cannot select a release algorithm by
+/// forging or misinterpreting provenance bits.
+#[must_use = "selected metadata release owners must be released or retained explicitly"]
+pub(crate) enum MetaRelease {
+    Malloc(MetaAllocation<'static>),
+    RegularOs(Mapping),
+}
+
+/// One failed selected metadata release.
+///
+/// An exact-owner Malloc failure is terminal in the current detached
+/// allocator: local free may already have changed page or queue state before
+/// it reports [`MetaError::Free`].  The rejected capability is retained for
+/// diagnosis, but it is intentionally not retryable.  A regular OS mapping,
+/// in contrast, remains live when [`Mapping::unmap`] reports a kernel error,
+/// so its exact owner is returned for an explicit retry.
+pub(crate) enum MetaReleaseFailure {
+    MallocTerminal {
+        error: MetaError,
+        allocation: MetaAllocation<'static>,
+    },
+    RegularOs {
+        error: Errno,
+        mapping: Mapping,
+    },
+}
+
+impl MetaRelease {
+    /// Releases the exact owner carried by this selected branch.
+    ///
+    /// The Malloc branch recovers only the private, process-lived owner
+    /// recorded when the capability was created; it never lets a caller
+    /// nominate a different metadata allocator.  Its failure is terminal as
+    /// documented on [`MetaReleaseFailure`].  The regular OS branch retains
+    /// the mapping on a failed kernel unmap, so its failure returns that exact
+    /// mapping for explicit retry.
+    pub(crate) fn release(self) -> Result<(), MetaReleaseFailure> {
+        match self {
+            Self::Malloc(mut allocation) => {
+                // SAFETY: `MetaAllocation::new` records only a pinned,
+                // process-lived `MetaAllocator`; its lifetime parameter is
+                // `static` for this release boundary.  The capability keeps
+                // that owner identity exact and does not form a mutable alias.
+                let owner = unsafe { Pin::new_unchecked(allocation.owner.as_ref()) };
+                match owner.free(&mut allocation) {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        debug_assert!(
+                            !allocation.is_live(),
+                            "an exact-owner metadata free failure must retain a terminal capability"
+                        );
+                        Err(MetaReleaseFailure::MallocTerminal { error, allocation })
+                    }
+                }
+            }
+            Self::RegularOs(mut mapping) => match mapping.unmap() {
+                Ok(()) => Ok(()),
+                Err(error) => Err(MetaReleaseFailure::RegularOs { error, mapping }),
+            },
+        }
     }
 }
 
@@ -1599,6 +1675,64 @@ mod tests {
         assert!(allocator.free(&mut block).is_ok());
         let mut aligned = aligned;
         assert!(allocator.free(&mut aligned).is_ok());
+    }
+
+    #[test]
+    fn typed_release_uses_the_metadata_capabilitys_recorded_owner() {
+        let allocator = static_allocator();
+        let block = allocator.zalloc(config(), 91).unwrap();
+        assert!(MetaRelease::Malloc(block).release().is_ok());
+    }
+
+    #[test]
+    fn typed_malloc_release_retains_a_terminal_capability_for_diagnosis() {
+        let allocator = static_allocator();
+        let mut block = allocator.zalloc(config(), 91).unwrap();
+        allocator.free(&mut block).unwrap();
+
+        let failure = MetaRelease::Malloc(block)
+            .release()
+            .expect_err("a stale metadata capability must not be released twice");
+        let MetaReleaseFailure::MallocTerminal { error, allocation } = failure else {
+            panic!("typed Malloc release returned the wrong failure branch");
+        };
+        assert_eq!(error, MetaError::ReleasedOrStale);
+        assert!(
+            !allocation.is_live(),
+            "a failed exact-owner free is terminal rather than retryable"
+        );
+    }
+
+    #[test]
+    fn typed_regular_os_release_returns_the_exact_mapping_for_retry() {
+        let mapping = Mapping::map_for_allocator(config(), 4096, MapAccess::Reserved).unwrap();
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+
+        let failure = MetaRelease::RegularOs(mapping)
+            .release()
+            .expect_err("a failed unmap must retain the mapping owner");
+        let MetaReleaseFailure::RegularOs {
+            error,
+            mut mapping,
+        } = failure
+        else {
+            panic!("typed regular-OS release returned the wrong failure branch");
+        };
+        assert_eq!(error, Errno::NOMEM);
+        assert_eq!(mapping.length().unwrap(), 4096);
+
+        fault.set(fault::Plan::disabled());
+        mapping.unmap().unwrap();
+    }
+
+    #[test]
+    fn typed_regular_os_release_closes_a_live_mapping() {
+        let mapping = Mapping::map_for_allocator(config(), 4096, MapAccess::Reserved).unwrap();
+        assert!(MetaRelease::RegularOs(mapping).release().is_ok());
     }
 
     #[test]
