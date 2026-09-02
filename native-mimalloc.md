@@ -1005,15 +1005,19 @@ Use these records for distinct purposes:
 - gate manifests: authoritative only for the exact evidence scope recorded in
   the manifest;
 - generated compatibility reports: aggregate evidence, never hand-edited;
-- `STATUS.md`: concise current critical path;
+- `STATUS.md`: repository-wide status; it does not close or advance native
+  mimalloc milestones;
+- the live ledger in [§26](#26-native-mimalloc-live-ledger): authoritative
+  native-mimalloc milestone status and execution order;
 - `docs/design/allocator.md`: durable current architecture;
 - `crabc-mimalloc/UPSTREAM.md`: source provenance and update procedure;
 - `compat/allocator/known-differences.md`: deliberate differences;
 - tests and benchmark reports: executable evidence;
 - Git history: delivery history.
 
-`native-mimalloc.md` is the execution contract. Do not turn it into a commit
-log.
+`native-mimalloc.md` is the execution contract. Its concise live ledger is not
+a commit log: per-source status stays in the port map, and runtime evidence
+stays in generated reports.
 
 ## 7.2 Progress measures
 
@@ -2010,6 +2014,10 @@ results are not manually rewritten to claim success.
 
 # 21. Milestones after architecture convergence
 
+The requirements below define closure. The live status of each milestone is
+recorded in [§26](#26-native-mimalloc-live-ledger); do not infer completion
+from a bounded witness or an implemented source-map item.
+
 ## Milestone 0 — pin, scope, inventory, skeleton
 
 Required:
@@ -2344,62 +2352,59 @@ there: continue until the missing gate is actually closed.
 
 ---
 
-# 25. Immediate next actions from the audited checkpoint
+# 25. Historical audited checkpoint
 
-Execute these actions now, using the mandatory up-to-eight-worktree wave:
-
-1. commit this replacement execution contract by itself;
-2. create up to eight Terra `max` implementation worktrees;
-3. add and observe the initial-thread post-exit free regression;
-4. add the canonical unmodified upstream stress lane and preserve its first
-   failure;
-5. record the architecture/performance baseline;
-6. land the narrow caller-neutral free-dispatch correctness fix;
-7. establish persistent later-thread TLD/Theap ownership;
-8. introduce the common pointer-to-page operation boundary;
-9. generalize page-local live remote free;
-10. implement the generic collect-abandon coordinator;
-11. move post-exit free and reclaim to abandoned page/process state;
-12. delete the client ledgers, owner registries, post-exit registries,
-    per-call scheduler, park/resume machinery, and route-completion ownership;
-13. rerun all bounded witnesses through the general production paths;
-14. close churn and unmodified upstream stress;
-15. close the selected shadow, full parity, integration, performance, and
-    default-promotion gates.
-
-At each point, use the first failing objective gate to select the next
-implementation wave. Do not ask for another page-shape assignment. Do not
-append another checkpoint narrative. Keep each active implementation worktree
-productive until the active wave is integrated and verified.
+The original execution sequence above is historical orientation, not the live
+backlog. Do not infer that its numbered actions or its old `main-wip` commit
+are complete. The live ledger below supersedes it for native mimalloc.
 
 ---
 
-# 26. Paused handoff (2026-08-31)
+# 26. Native-mimalloc live ledger
 
-This is a pause record, not a completion claim. The most recent behavior slice
-preserves an all-free, resident initial engine across the held direct-fork
-boundary; ordinary local free still retains that engine outside the fork path.
-The accompanying `port-map.toml` review changed only its checked-in digest,
-with no status-count or monotonic-status regression.
+This is the current native-mimalloc progress record. It is deliberately concise
+rather than a commit log: `compat/allocator/port-map.toml` remains the
+machine-readable per-source status and generated reports remain the only
+runtime evidence. `STATUS.md` is repository-wide status and does not close or
+advance this AArch64 allocator ledger.
 
-The latest canonical checkpoint is:
+## Milestone closure
 
-```sh
-./scripts/dev.sh allocator --full
-```
+| Milestone | Status | Evidence and remaining closure condition |
+| --- | --- | --- |
+| M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. `./scripts/dev.sh allocator --quick` passes on Linux/AArch64. This is inventory/skeleton completion only, not engine parity. |
+| M1 — pure foundations | partial | Selected configuration, arithmetic, atomics, provenance, random, and bootstrap slices are verified. The authoritative map still marks `include/mimalloc/types.h`, `prim.h`, `prim-tls.h`, and `internal.h` partial, so types and the primitive layer are not closed. |
+| M2 — memory substrate | partial | Selected metadata, bitmap, PageMap, arena, initialization, and fault paths exist, but their source units remain partial; no full substrate, fault, and no-recursion closure record exists. |
+| M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri; forced `cfg(miri)` is smoke evidence, not a Miri pass. |
+| M4 — fundamental operations | bounded direct-engine evidence | The selected 33-test M4 C adapter and its required operation records pass, but this is a one-thread private adapter over the still-partial M1–M3 substrate. It is not a closed production/general milestone. |
+| M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
+| M6–M7 | not started | Blocked behind the allocator foundations and M5. |
+| M8 | partial, nondefault shadow only | The selected Rust shadow exists; it is not full libc integration. |
+| M9 | not started | No qualified AArch64 performance closure. |
+| M10 | blocked | C mimalloc remains the default production backend. |
+| M11 | not started | Follows promotion. |
 
-It generated `compat/reports/allocator/latest.json`. `m5.base`, `m5.5a`,
-`m5.5b`, and `m5.5c` passed; `m5.5d` and `m5.5e` remain blocked. The first
-unmet objective is `m5.5d`: replace the creating-thread-only source-derived
-`test/test-stress.c` lane with the minimally environment-bound upstream
-schedule, including real pthread transfer/cleanup behavior, then prove the
-required 1/2/4/8-worker and applicable large-object matrix. Do not reschedule
-transferred-object cleanup to make that workload pass. `m5.5e` remains the
-following selected-shadow ABI, pthread, differential, and stress closure;
-the Rust backend is still nondefault and must not be promoted from the current
-bounded evidence.
+Evidence from an ancestor is historical supporting evidence, not a pass for
+this checkpoint.
 
-Resume from that gate after explicit reprioritization. Preserve the pinned
-v3.5.0 C oracle, existing regressions, and generated-report boundaries; do
-not treat this pause as permission to weaken blocked gates or promote the
-shadow backend.
+## Active boundary and priority rule
+
+The integrated owner-local mapped-abandoned medium reclaim slice is a narrowly
+mapped M5/Phase-E regression: it is neither a general scan nor a milestone,
+shadow, or promotion claim. Keep its source map, regression, and exact test
+result, but do not use it to advance M5.
+
+M0 is the only closed predecessor. Before broadening M5 again, close
+the remaining M1, then M2, then M3, then M4 requirements in order with named
+acceptance records and current-commit evidence. Existing direct-engine and
+bounded-shadow tests remain regressions, not substitute closure evidence.
+
+## Current M5 gate facts
+
+The historical full report at `d5e5901bcfaf7d790632f3c6324afd4019c4e0f4`
+recorded `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` as passed. `m5.5d` is
+blocked because the canonical source-bound upstream stress matrix remains a
+bounded nondefault shadow subset and the source-derived lane cannot accept
+upstream cross-thread transfer or lifecycle. `m5.5e` is blocked because the
+selected shadow ABI, pthread, differential, and stress closure is not
+established. The Rust backend remains nondefault.
