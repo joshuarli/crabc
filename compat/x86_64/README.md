@@ -1720,11 +1720,11 @@ callables remain owned by planned `libc.c-abi-compat`, while noncallable header
 ABI remains owned by `libc.headers-layouts`.
 
 `header-callable-provider-linkage-audit` separately uses the checked inventory
-to ordinarily extract the 1,073 current default-static and 47 verified
+to ordinarily extract the 1,079 current default-static and 47 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 393-name unprovided complement remains explicit:
+selection and behavior. Its 387-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 

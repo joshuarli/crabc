@@ -361,10 +361,10 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1143)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1149)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
-            1122,
+            1128,
         )
         self.assertEqual(
             report["unsupported_contracts"],

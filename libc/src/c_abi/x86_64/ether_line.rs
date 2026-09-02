@@ -3,9 +3,10 @@
 //! This private leaf maps exactly to pinned musl 1.2.6
 //! `src/network/ether.c::ether_line`. Its complete source body is
 //! `return -1;`: it neither reads nor writes the input line, `ether_addr`, or
-//! hostname pointer. The nearby `ether_aton[_r]`, `ether_ntoa[_r]`,
-//! `ether_ntohost`, and `ether_hostton` entries remain unselected. In
-//! particular, this is not `/etc/ethers` parsing or Ethernet address
+//! hostname pointer. The nearby target-local `ether` module owns musl's six
+//! conversion and host-stub siblings in a distinct Rust module so this leaf's
+//! existing ordinary archive-extraction proof can remain narrow. In
+//! particular, this body is not `/etc/ethers` parsing or Ethernet address
 //! conversion, mapping, resolver, socket, interface, or network policy.
 //!
 //! The System V AMD64 ABI passes the three pointer values in rdi/rsi/rdx and
@@ -22,7 +23,7 @@ use core::ffi::{c_char, c_int};
 /// C-layout spelling of the caller-owned six-octet Ethernet address.
 #[repr(C)]
 pub(super) struct CabiEtherAddr {
-    _octets: [u8; 6],
+    pub(super) octets: [u8; 6],
 }
 
 /// Return musl's fixed unsupported legacy Ethernet-line result.

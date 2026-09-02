@@ -331,6 +331,27 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertIn("sched_setaffinity", default_static)
         self.assertNotIn("sched_setaffinity", unprovided)
 
+    def test_complete_ether_provider_block_is_default_static_not_unprovided(self) -> None:
+        """Keep all seven musl ether.c entries in the ordinary default provider."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
+        unprovided = set(partition["unprovided"]["members"])
+        ether_entries = {
+            "ether_aton",
+            "ether_aton_r",
+            "ether_hostton",
+            "ether_line",
+            "ether_ntoa",
+            "ether_ntoa_r",
+            "ether_ntohost",
+        }
+
+        self.assertTrue(ether_entries <= default_static)
+        self.assertFalse(ether_entries & unprovided)
+
     def test_netinet_macro_batch_is_present_with_its_exact_feature_split(self) -> None:
         """Keep this header-only reduction separate from archive-callable work."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:

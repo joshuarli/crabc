@@ -722,6 +722,11 @@ mod endhostent;
 mod sethostent;
 #[path = "ether_line.rs"]
 mod ether_line;
+// The six parser/presentation/host-stub siblings of `ether_line` intentionally
+// remain a separate target-local module. The retained leaf fixture proves
+// ordinary archive extraction of `ether_line` alone does not pull them in.
+#[path = "ether.rs"]
+mod ether;
 #[cfg(feature = "x86-h-errno")]
 #[path = "h_errno.rs"]
 mod h_errno;

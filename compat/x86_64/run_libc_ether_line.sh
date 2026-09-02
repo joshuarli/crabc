@@ -5,7 +5,10 @@
 # then as a true `-nostdlib -static` candidate linked only with crabc-libc.
 # It proves musl's fixed `-1` Ethernet-line compatibility failure without
 # selecting Ethernet conversion, /etc/ethers, resolver, socket, interface,
-# libc.so, CRT, loader, sysroot, or public x86 support.
+# libc.so, CRT, loader, sysroot, or public x86 support. The candidate link map
+# separately proves that the complete ether provider object's archive member
+# is not selected; section GC only closes unrelated sections that cohabit in
+# the ether_line compiler-generated object.
 set -euo pipefail
 export LC_ALL=C
 
@@ -29,6 +32,20 @@ require_native_linux_x86_64() {
 
 require_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "requires $1"
+}
+
+archive_member_for_symbol() {
+    local archive_path="$1" symbol="$2"
+
+    nm -A --defined-only "$archive_path" |
+        awk -v symbol="$symbol" '
+            $NF == symbol {
+                member = $1
+                sub(/^.*\.a:/, "", member)
+                sub(/:.*$/, "", member)
+                print member
+            }
+        ' | LC_ALL=C sort -u
 }
 
 assert_selected_c_abi_surface() {
@@ -84,6 +101,7 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 ether_line_disassembly="$work_dir/ether-line-disassembly"
+candidate_link_map="$work_dir/candidate.map"
 
 cd "$ROOT_DIR"
 case "$musl_archive" in
@@ -115,12 +133,30 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 grep -Eq '[[:space:]][TW][[:space:]]ether_line$' "$archive_symbols" ||
     fail "archive does not define ether_line"
+mapfile -t ether_line_members < <(archive_member_for_symbol "$archive" ether_line)
+[ "${#ether_line_members[@]}" -eq 1 ] ||
+    fail "ether_line must have exactly one crate object owner"
+for symbol in ether_aton ether_aton_r ether_ntoa ether_ntoa_r ether_ntohost ether_hostton; do
+    mapfile -t provider_members < <(archive_member_for_symbol "$archive" "$symbol")
+    [ "${#provider_members[@]}" -eq 1 ] ||
+        fail "$symbol must have exactly one crate object owner"
+    [ "${provider_members[0]}" != "${ether_line_members[0]}" ] ||
+        fail "$symbol must not cohabit in ether_line's crate object owner"
+done
 
 "$ORACLE_CC" -std=c11 -DCRABC_ETHER_LINE_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections -Wl,-Map,"$candidate_link_map" \
     compat/x86_64/libc_ether_line_probe.c \
     compat/x86_64/libc_ether_line_start.S "$archive" -o "$candidate"
+
+for symbol in ether_aton ether_aton_r ether_ntoa ether_ntoa_r ether_ntohost ether_hostton; do
+    mapfile -t provider_members < <(archive_member_for_symbol "$archive" "$symbol")
+    if grep -Fq "(${provider_members[0]})" "$candidate_link_map"; then
+        fail "ether_line candidate selected $symbol's provider archive member"
+    fi
+done
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"

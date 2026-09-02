@@ -275,7 +275,13 @@ erfcf
 erfcl
 erff
 erfl
+ether_aton
+ether_aton_r
+ether_hostton
 ether_line
+ether_ntoa
+ether_ntoa_r
+ether_ntohost
 euidaccess
 eventfd
 eventfd_read
