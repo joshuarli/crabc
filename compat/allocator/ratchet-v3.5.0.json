@@ -8,7 +8,7 @@
   "api_total_item_count": 336,
   "configuration_profile_count": 5,
   "format": 1,
-  "m1_foundations_contract_sha256": "7441c93da65170d70679a429d85ec6a9b4b3788ee9ebb62b9f141480959a5a64",
+  "m1_foundations_contract_sha256": "32deab16bff093873b18c0a7f90d9802bf6925cc259fdb9a97861b15c2faa3a0",
   "native_shadow_stress_contract_sha256": "cdef617f743ccd7c26283a3ce22ce17c43d6ae79b3873ac400a54fb1749139c8",
   "native_shadow_stress_fixture_count": 1,
   "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
@@ -22,7 +22,7 @@
     "unit_count": 34,
     "unit_verified": 152
   },
-  "port_map_sha256": "720e99b9dc5c49fe13a23598ff9008864d2fddfa46a9a4a938bb666e057679f4",
+  "port_map_sha256": "24d5bcd404305f17a3e06e6b37b0d76fcd61368af7283db8e2f3b24442a2dbcd",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",

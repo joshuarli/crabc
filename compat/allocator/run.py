@@ -227,6 +227,87 @@ M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
         "outside-m1",
     }
 )
+# This is the complete frozen normal-release configuration record emitted by
+# both `LAYOUT_PROBE` and `types::tests::emit_layout`. Keeping it explicit
+# means the M1 configuration component cannot quietly narrow itself back to a
+# representative handful of values: every frozen source-derived configuration
+# result must remain directly C/Rust checked.
+M1_CONFIGURATION_LAYOUT_KEYS = (
+    "config.WORD_SIZE",
+    "config.MAX_ALIGN_SIZE",
+    "config.SECURE_LEVEL",
+    "config.DEBUG_LEVEL",
+    "config.STAT_LEVEL",
+    "config.FREE_IS_CHECKED",
+    "config.FREE_USE_PAGEMAP",
+    "config.OPT_FREE_SMALL",
+    "config.ENABLE_LARGE_PAGES",
+    "config.ENCODE_FREELIST",
+    "config.GUARDED",
+    "config.OPT_SIMD",
+    "config.PADDING_SIZE",
+    "config.PADDING_WSIZE",
+    "config.PAGE_KEY_COUNT",
+    "config.ARENA_SLICE_SHIFT",
+    "config.BCHUNK_BITS_SHIFT",
+    "config.BCHUNK_BITS",
+    "config.ARENA_SLICE_SIZE",
+    "config.ARENA_SLICE_ALIGN",
+    "config.ARENA_CHUNK_SIZE",
+    "config.ARENA_MIN_OBJ_SLICES",
+    "config.ARENA_MAX_CHUNK_OBJ_SLICES",
+    "config.ARENA_MIN_OBJ_SIZE",
+    "config.ARENA_MAX_CHUNK_OBJ_SIZE",
+    "config.SMALL_PAGE_SIZE",
+    "config.MEDIUM_PAGE_SIZE",
+    "config.LARGE_PAGE_SIZE",
+    "config.BIN_HUGE",
+    "config.BIN_FULL",
+    "config.BIN_COUNT",
+    "config.MAX_ALLOC_SIZE",
+    "config.PAGE_MIN_COMMIT_SIZE",
+    "config.PAGE_META_IS_SEPARATED",
+    "config.PAGE_META_IS_ALIGNED",
+    "config.PAGE_META_ALIGNED_CHUNKS",
+    "config.PAGE_META_ALIGNED_COUNT",
+    "config.PAGE_META_ALIGNMENT",
+    "config.ARENA_ALIGNMENT",
+    "config.PAGE_ALIGN",
+    "config.PAGE_MIN_START_BLOCK_ALIGN",
+    "config.PAGE_MAX_START_BLOCK_ALIGN2",
+    "config.PAGE_OSPAGE_BLOCK_ALIGN2",
+    "config.PAGE_MAX_OVERALLOC_ALIGN",
+    "config.SMALL_WSIZE_MAX",
+    "config.SMALL_SIZE_MAX",
+    "config.SMALL_MAX_OBJ_SIZE",
+    "config.MEDIUM_MAX_OBJ_SIZE",
+    "config.LARGE_MAX_OBJ_SIZE",
+    "config.LARGE_MAX_OBJ_WSIZE",
+    "config.MAX_SINGLETON_BIN",
+    "config.PAGES_DIRECT",
+    "config.MAX_ARENAS",
+    "config.ARENA_BIN_COUNT",
+    "config.BITMAP_MAX_BIT_COUNT",
+    "config.ARENA_MIN_SIZE",
+    "config.ARENA_MAX_SIZE",
+    "config.MAX_VABITS",
+    "config.MIN_VABITS",
+    "config.PAGE_MAP_FLAT",
+    "config.PAGE_MAP_SUB_SHIFT",
+    "config.PAGE_MAP_SUB_COUNT",
+    "config.PAGE_MAP_SHIFT",
+)
+M1_CONFIGURATION_AND_ARITHMETIC_LAYOUT_KEYS = (
+    *M1_CONFIGURATION_LAYOUT_KEYS,
+    "m1.scalar.is_power_of_two.zero",
+    "m1.scalar.is_aligned.zero",
+    "m1.scalar.align_down.generic.101_by_24",
+    "m1.scalar.align_up.generic.101_by_24",
+    "m1.scalar.divide_up.17_by_6",
+    "m1.scalar.wsize_from_size.17",
+    "m1.scalar.slice_count.one_past_slice",
+    "m1.scalar.size_of_slices.3",
+)
 M1_RAW_PRIMITIVE_DECLARATIONS = (
     "mi_os_mem_config_t",
     "_mi_prim_mem_init",
@@ -1128,8 +1209,8 @@ int main(void) {
   U("config.PADDING_SIZE", MI_PADDING_SIZE);
   U("config.PADDING_WSIZE", MI_PADDING_WSIZE);
   U("config.PAGE_KEY_COUNT", MI_PAGE_KEY_COUNT);
-  U("config.ARENA_SLICE_SHIFT", (13 + MI_SIZE_SHIFT));
-  U("config.BCHUNK_BITS_SHIFT", (6 + MI_SIZE_SHIFT));
+  U("config.ARENA_SLICE_SHIFT", MI_ARENA_SLICE_SHIFT);
+  U("config.BCHUNK_BITS_SHIFT", MI_BCHUNK_BITS_SHIFT);
   U("config.BCHUNK_BITS", MI_BCHUNK_BITS);
   U("config.ARENA_SLICE_SIZE", MI_ARENA_SLICE_SIZE);
   U("config.ARENA_SLICE_ALIGN", MI_ARENA_SLICE_ALIGN);
@@ -3586,6 +3667,14 @@ def validate_m1_foundations_contract(
             or len(set(raw_layout_keys)) != len(raw_layout_keys)
         ):
             raise HarnessError(f"M1 foundations component {component_id} has invalid layout keys")
+        if (
+            component_id == "configuration-and-arithmetic"
+            and raw_layout_keys != list(M1_CONFIGURATION_AND_ARITHMETIC_LAYOUT_KEYS)
+        ):
+            raise HarnessError(
+                "M1 configuration-and-arithmetic must retain the complete "
+                "frozen configuration and scalar layout inventory"
+            )
 
         raw_references = raw_component.get("source_map_records")
         if not isinstance(raw_references, list) or not raw_references:

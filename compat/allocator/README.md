@@ -963,10 +963,14 @@ producer does not close a whole source unit or promote any allocator backend.
 The bootstrap component compares the actual pinned `MI_MEMID_STATIC` empty-page
 and empty-Theap memory-ID flags against the release C oracle; this is evidence
 for those two immutable images only, not a general `src/init.c` completion
-claim. The configuration-and-arithmetic component also compares a compact
-representable scalar vector, including `_mi_is_power_of_two(0)`, generic
-non-power-of-two `_mi_align_up`/`_mi_align_down`, division, word rounding, and
-slice conversion; it makes no claim about C unsigned-overflow behavior.
+claim. The complete finite configuration-and-arithmetic component compares
+every frozen `config.*` C/Rust record and a compact representable scalar
+vector, including `_mi_is_power_of_two(0)`, generic non-power-of-two
+`_mi_align_up`/`_mi_align_down`, division, word rounding, and slice conversion.
+Its geometry entries read `MI_ARENA_SLICE_SHIFT` and `MI_BCHUNK_BITS_SHIFT`
+themselves, so a source selector change cannot hide behind duplicated probe
+formulas. It makes no claim about C unsigned-overflow behavior, whole
+`types.h`/`bits.h`/`internal.h` completion, or unselected CMake modes.
 
 `allocator --full` extends that gate by building and auditing the standalone
 static and shared test adapter, including its exact 16-symbol export boundary,

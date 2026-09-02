@@ -1872,7 +1872,7 @@ class ContractTests(unittest.TestCase):
         self.assertIn("broader claimed M5 lifecycle surface", blocker)
         self.assertNotIn("large_object_mode: not-claimed", blocker)
 
-    def test_m1_foundations_contract_keeps_a_finite_partial_inventory(self) -> None:
+    def test_m1_foundations_contract_keeps_a_finite_component_inventory(self) -> None:
         contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
         summary = RUNNER.validate_m1_foundations_contract(
             contract,
@@ -1896,22 +1896,11 @@ class ContractTests(unittest.TestCase):
             for component in summary["components"]
             if component["id"] == "configuration-and-arithmetic"
         )
+        self.assertEqual(configuration_and_arithmetic["completion_status"], "complete")
+        self.assertEqual(configuration_and_arithmetic["remaining_conditions"], [])
         self.assertEqual(
             configuration_and_arithmetic["layout_keys"],
-            [
-                "config.WORD_SIZE",
-                "config.MAX_ALIGN_SIZE",
-                "config.ARENA_SLICE_SIZE",
-                "config.PAGE_MAP_SHIFT",
-                "m1.scalar.is_power_of_two.zero",
-                "m1.scalar.is_aligned.zero",
-                "m1.scalar.align_down.generic.101_by_24",
-                "m1.scalar.align_up.generic.101_by_24",
-                "m1.scalar.divide_up.17_by_6",
-                "m1.scalar.wsize_from_size.17",
-                "m1.scalar.slice_count.one_past_slice",
-                "m1.scalar.size_of_slices.3",
-            ],
+            list(RUNNER.M1_CONFIGURATION_AND_ARITHMETIC_LAYOUT_KEYS),
         )
         self.assertIn(
             "generic-alignment",
@@ -1934,6 +1923,7 @@ class ContractTests(unittest.TestCase):
             },
             configuration_and_arithmetic["source_map_records"],
         )
+
         self.assertIn(
             {
                 "kind": "item",
@@ -2119,6 +2109,20 @@ class ContractTests(unittest.TestCase):
             ],
         )
 
+    def test_layout_probe_reads_the_selected_source_shape_macros(self) -> None:
+        # The M1 configuration boundary must observe the macros that actually
+        # selected the normal-release geometry. Repeating their current
+        # arithmetic in the probe would let a future source branch drift
+        # without changing the C/Rust comparison.
+        self.assertIn(
+            'U("config.ARENA_SLICE_SHIFT", MI_ARENA_SLICE_SHIFT);',
+            RUNNER.LAYOUT_PROBE,
+        )
+        self.assertIn(
+            'U("config.BCHUNK_BITS_SHIFT", MI_BCHUNK_BITS_SHIFT);',
+            RUNNER.LAYOUT_PROBE,
+        )
+
     def test_m1_foundations_contract_rejects_a_noncurrent_source_map_claim(self) -> None:
         contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
         malformed = json.loads(json.dumps(contract))
@@ -2296,9 +2300,9 @@ class ContractTests(unittest.TestCase):
 
         self.assertEqual(report["milestone"]["status"], "partial")
         expected_unmet = [
-            component_id
-            for component_id in RUNNER.M1_FOUNDATIONS_COMPONENT_IDS
-            if component_id != "random-image"
+            component["id"]
+            for component in summary["components"]
+            if component["completion_status"] != "complete"
         ]
         self.assertEqual(
             report["milestone"]["unmet_component_ids"],

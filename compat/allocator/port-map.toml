@@ -1055,10 +1055,10 @@ performance_qualified = false
 [[item]]
 upstream = "include/mimalloc/types.h"
 name = "linux-aarch64-default-release-constants"
-source_region = "normal release constants and compile-time feature values used by current foundations"
+source_region = "include/mimalloc/types.h:37-250,463-492,545-557,612,716-718; include/mimalloc/bits.h:33-145; include/mimalloc/internal.h:717-719; src/bitmap.h:94-105; CMakeLists.txt:7-24,161-192,280-340,361-454,647-693,769-774"
 rust_module = "crabc_mimalloc::config"
-rust_item = "source-derived configuration constants"
-intentional_difference = "Resolved Linux/AArch64 values are Rust constants rather than a C preprocessor surface; unsupported profiles are not advertised."
+rust_item = "frozen normal-release configuration constants; all `config.*` C/Rust probe records"
+intentional_difference = "The finite M1 boundary freezes the Linux/AArch64 little-endian normal-release path, not a C preprocessor or CMake option surface. Its C oracle deliberately keeps crabc's Armv8.0 baseline rather than upstream CMake's optional Armv8.3-a `MI_OPT_ARCH` path. The source-conditional audit directly checks every frozen `config.*` result and the selected `MI_ARENA_SLICE_SHIFT`/`MI_BCHUNK_BITS_SHIFT` macros. Debug/secure/guarded/padding/tracking/checked-free/free-small/flat-page-map/legacy-shift/alternate-virtual-address and CMake-mode branches remain separately inventoried, not an M1 whole-header claim."
 tests = ["crabc-mimalloc/src/config.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true
