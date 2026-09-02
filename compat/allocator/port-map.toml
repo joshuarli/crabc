@@ -354,11 +354,11 @@ performance_qualified = false
 
 [[unit]]
 upstream = "src/random.c"
-source_region = "allocator random state, OS entropy acquisition, and weak-key fallback"
+source_region = "allocator random state, Linux entropy acquisition, and accepted weak-key fallback"
 rust_module = "crabc_mimalloc::random"
 rust_item = "TheapRandomImage exact source layout, direct entropy initialization, weak continuation, in-place split, and reinitialization"
-intentional_difference = "The cryptographic primitive is delegated to approved RustCrypto instead of translated locally; its domain-separated weak-key expansion replaces source-local _mi_random_shuffle as recorded in known-differences.md."
-tests = ["crabc-mimalloc/src/random.rs"]
+intentional_difference = "The cryptographic primitive is delegated to approved RustCrypto instead of translated locally; its domain-separated weak-key expansion replaces source-local _mi_random_shuffle as recorded in known-differences.md. The normal-entropy failure warning is an M7 diagnostics exclusion, and the automatic-process reinitialization call site is an M5 lifecycle exclusion."
+tests = ["crabc-mimalloc/src/random.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -495,15 +495,15 @@ performance_qualified = false
 [[item]]
 upstream = "src/random.c"
 name = "original-chacha-context-state-and-output-contract"
-source_region = "chacha_init/chacha_block/chacha_next32/chacha_split/_mi_random_next/_mi_random_split/_mi_random_reinit_if_weak"
+source_region = "src/random.c:42-212: chacha_init/chacha_block/chacha_next32/chacha_split, selected Linux/AArch64 64-bit _mi_random_next/_mi_random_split, normal and forced initialization, and _mi_random_reinit_if_weak"
 rust_module = "crabc_mimalloc::random"
-rust_item = "TheapRandomImage/WeakObservations"
-intentional_difference = "ChaCha20 rounds are supplied by approved RustCrypto; direct entropy and random-field address identity are now source-owned lifecycle state, while dependency-owned weak expansion replaces source-local _mi_random_shuffle."
-tests = ["crabc-mimalloc/src/random.rs"]
+rust_item = "TheapRandomImage, M1RandomStateTrace, and WeakObservations"
+intentional_difference = "ChaCha20 rounds are supplied by approved RustCrypto. The C/Rust trace compares exact address-independent state for split, 64-bit zero-result retry, forced weak initialization, and strong reinit no-op; normal short/error entropy and weak reinit branches have focused Rust fault witnesses. Dependency-owned weak expansion replaces source-local _mi_random_shuffle, with exact weak key/output comparison deliberately excluded in known-differences.md. The normal-entropy warning and automatic-process call site remain explicit M7/M5 exclusions."
+tests = ["crabc-mimalloc/src/random.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 

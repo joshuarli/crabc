@@ -2150,17 +2150,22 @@ existing teardown. A sole, arena-backed, non-singleton,
 - **Difference:** pinned C repeatedly applies its local
   `_mi_random_shuffle` core to ASLR/time material. The project crypto policy
   forbids maintaining that PRNG/DRBG core. Rust serializes the same degraded
-  context-address/time/identity observations plus the source extra seed, then
-  asks approved RustCrypto `ChaCha20LegacyCore` for one domain-separated block
-  to form the weak key. It preserves the source continuation, weak flag,
-  reinitialization, and original-ChaCha context lifecycle; it does not claim
-  to add entropy.
+  context-address/time/identity observations plus the selected initializer's
+  fixed-zero source extra seed, then asks approved RustCrypto
+  `ChaCha20LegacyCore` for one domain-separated block to form the weak key.
+  It preserves the source continuation, weak flag, reinitialization, and
+  original-ChaCha context lifecycle; it does not claim to add entropy.
 - **Evidence:** `random::tests::weak_observations_have_a_dependency_owned_deterministic_expansion`
   fixes the replacement vector. The entropy fault regression proves error
-  continuation and weak reinitialization; the direct primitive contract treats
-  a short read as `Ok(false)` on that same branch. Exact C output comparison is
-  intentionally inapplicable because both source paths consume ASLR/time and
-  no random cookie is a deterministic valid-program oracle. The static
+  continuation and weak reinitialization, while
+  `normal_entropy_initialization_treats_a_short_fill_as_weak` fixes the short
+  read (`Ok(false)`) classification. The C/Rust M1 state trace exactly compares
+  every non-weak-key state fact for split, zero-result retry, forced weak
+  initialization, and a strong reinit no-op. Exact C weak-key/output comparison
+  is intentionally inapplicable because both source paths consume ASLR/time
+  and use different approved cores; no random cookie is a deterministic
+  valid-program oracle. The automatic-process reinit caller and entropy-failure
+  diagnostic remain explicit lifecycle/diagnostics exclusions. The static
   ticket-zero Theap exercises this path; performance remains unqualified.
 - **Decision/removal:** accepted because the source-local cryptographic core
   cannot enter this repository. It remains until the pinned upstream changes

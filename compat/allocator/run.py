@@ -829,6 +829,7 @@ CONFIGURATION_PROFILES: Mapping[str, tuple[str, ...]] = {
 
 LAYOUT_PROBE = r"""
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <mimalloc.h>
 #include <mimalloc/internal.h>
@@ -890,6 +891,22 @@ LAYOUT_PROBE = r"""
 #define CRABC_MI_PAGE_META_ALIGNMENT 0
 #endif
 
+static uint64_t m1_random_state_fingerprint(const mi_random_ctx_t* ctx) {
+  uint64_t fingerprint = UINT64_C(0xcbf29ce484222325);
+  for (size_t index = 0; index < 16; index++) {
+    fingerprint ^= (uint64_t)ctx->input[index];
+    fingerprint *= UINT64_C(0x00000100000001b3);
+  }
+  for (size_t index = 0; index < 16; index++) {
+    fingerprint ^= (uint64_t)ctx->output[index];
+    fingerprint *= UINT64_C(0x00000100000001b3);
+  }
+  fingerprint ^= (uint64_t)(uint32_t)ctx->output_available;
+  fingerprint *= UINT64_C(0x00000100000001b3);
+  fingerprint ^= (uint64_t)ctx->weak;
+  return fingerprint * UINT64_C(0x00000100000001b3);
+}
+
 #define U(name, value) printf(name "=%llu\n", (unsigned long long)(value))
 int main(void) {
   U("pointer.size", sizeof(void*));
@@ -929,6 +946,71 @@ int main(void) {
   U("offsetof.mi_random_ctx_t.output", offsetof(mi_random_ctx_t, output));
   U("offsetof.mi_random_ctx_t.output_available", offsetof(mi_random_ctx_t, output_available));
   U("offsetof.mi_random_ctx_t.weak", offsetof(mi_random_ctx_t, weak));
+  // This selected M1 state vector deliberately records only values that are
+  // stable across independent C and Rust processes. Weak-key bytes and child
+  // block output depend on the documented degraded-entropy substitution or an
+  // address-derived nonce, so they are not a false equality claim.
+  mi_random_ctx_t random_parent = {
+    { 0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
+      0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
+      0x13121110, 0x17161514, 0x1b1a1918, 0x1f1e1d1c,
+      0x00000001, 0x09000000, 0x4a000000, 0x00000000 },
+    { 0 }, 0, true
+  };
+  mi_random_ctx_t random_child = { 0 };
+  const uint64_t random_child_address = (uint64_t)(uintptr_t)&random_child;
+  _mi_random_split(&random_parent, &random_child);
+  const uint64_t random_child_nonce =
+      (uint64_t)random_child.input[14] | ((uint64_t)random_child.input[15] << 32);
+  U("m1.random.split.parent.output_available", random_parent.output_available);
+  U("m1.random.split.parent.consumed_words_cleared",
+    random_parent.output[0] == 0 && random_parent.output[1] == 0);
+  U("m1.random.split.parent.counter_low", random_parent.input[12]);
+  U("m1.random.split.parent.counter_high", random_parent.input[13]);
+  U("m1.random.split.child.output_available", random_child.output_available);
+  U("m1.random.split.child.counter_low", random_child.input[12]);
+  U("m1.random.split.child.counter_high", random_child.input[13]);
+  U("m1.random.split.child.weak", random_child.weak);
+  U("m1.random.split.child.nonce_xor_destination", random_child_nonce ^ random_child_address);
+
+  mi_random_ctx_t random_zero_retry = {
+    { 0x61707865, 0x3320646e, 0x79622d32, 0x6b206574 },
+    { 0, 0, 0x11223344, 0x55667788 }, 16, false
+  };
+  const uintptr_t random_zero_retry_result = _mi_random_next(&random_zero_retry);
+  U("m1.random.next.zero_retry.result", random_zero_retry_result);
+  U("m1.random.next.zero_retry.output_available", random_zero_retry.output_available);
+  U("m1.random.next.zero_retry.consumed_words_cleared",
+    random_zero_retry.output[0] == 0 && random_zero_retry.output[1] == 0
+      && random_zero_retry.output[2] == 0 && random_zero_retry.output[3] == 0);
+
+  mi_random_ctx_t random_forced_weak = { 0 };
+  const uint64_t random_forced_weak_address = (uint64_t)(uintptr_t)&random_forced_weak;
+  _mi_random_init_weak(&random_forced_weak);
+  const uint64_t random_forced_weak_nonce =
+      (uint64_t)random_forced_weak.input[14]
+      | ((uint64_t)random_forced_weak.input[15] << 32);
+  U("m1.random.forced_weak.initialized", random_forced_weak.input[0] != 0);
+  U("m1.random.forced_weak.weak", random_forced_weak.weak);
+  U("m1.random.forced_weak.output_available", random_forced_weak.output_available);
+  U("m1.random.forced_weak.counter_low", random_forced_weak.input[12]);
+  U("m1.random.forced_weak.counter_high", random_forced_weak.input[13]);
+  U("m1.random.forced_weak.nonce_xor_destination",
+    random_forced_weak_nonce ^ random_forced_weak_address);
+
+  mi_random_ctx_t random_strong = {
+    { 0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
+      0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
+      0x13121110, 0x17161514, 0x1b1a1918, 0x1f1e1d1c,
+      0x00000001, 0x09000000, 0x4a000000, 0x00000000 },
+    { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 }, 3, false
+  };
+  const uint64_t random_strong_before = m1_random_state_fingerprint(&random_strong);
+  _mi_random_reinit_if_weak(&random_strong);
+  const uint64_t random_strong_after = m1_random_state_fingerprint(&random_strong);
+  U("m1.random.reinit.strong.attempted", 0);
+  U("m1.random.reinit.strong.state_preserved", random_strong_before == random_strong_after);
+  U("m1.random.reinit.strong.fingerprint", random_strong_after);
   U("sizeof.mi_page_map_t", sizeof(mi_page_map_t));
   U("alignof.mi_page_map_t", _Alignof(mi_page_map_t));
   U("offsetof.mi_page_map_t.committed_count", offsetof(mi_page_map_t, committed_count));

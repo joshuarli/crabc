@@ -4382,6 +4382,93 @@ mod tests {
             "offsetof.mi_random_ctx_t.weak",
             TheapRandomImage::WEAK_OFFSET
         );
+        // The M1 record is a selected address-independent state trace from
+        // pinned `src/random.c`, not an extra layout claim. It pairs the
+        // source's split and no-op reinitialization branches with the weak
+        // initializer and 64-bit zero-result retry without leaking a random
+        // key, generated child output, or raw address into evidence.
+        let random_trace = TheapRandomImage::m1_source_state_trace();
+        record!(
+            "m1.random.split.parent.output_available",
+            random_trace.split_parent_output_available as usize
+        );
+        record!(
+            "m1.random.split.parent.consumed_words_cleared",
+            random_trace.split_parent_consumed_words_cleared as usize
+        );
+        record!(
+            "m1.random.split.parent.counter_low",
+            random_trace.split_parent_counter_low as usize
+        );
+        record!(
+            "m1.random.split.parent.counter_high",
+            random_trace.split_parent_counter_high as usize
+        );
+        record!(
+            "m1.random.split.child.output_available",
+            random_trace.split_child_output_available as usize
+        );
+        record!(
+            "m1.random.split.child.counter_low",
+            random_trace.split_child_counter_low as usize
+        );
+        record!(
+            "m1.random.split.child.counter_high",
+            random_trace.split_child_counter_high as usize
+        );
+        record!(
+            "m1.random.split.child.weak",
+            random_trace.split_child_weak as usize
+        );
+        record!(
+            "m1.random.split.child.nonce_xor_destination",
+            random_trace.split_child_nonce_xor_destination as usize
+        );
+        record!(
+            "m1.random.next.zero_retry.result",
+            random_trace.zero_retry_result as usize
+        );
+        record!(
+            "m1.random.next.zero_retry.output_available",
+            random_trace.zero_retry_output_available as usize
+        );
+        record!(
+            "m1.random.next.zero_retry.consumed_words_cleared",
+            random_trace.zero_retry_consumed_words_cleared as usize
+        );
+        record!(
+            "m1.random.forced_weak.initialized",
+            random_trace.forced_weak_initialized as usize
+        );
+        record!("m1.random.forced_weak.weak", random_trace.forced_weak as usize);
+        record!(
+            "m1.random.forced_weak.output_available",
+            random_trace.forced_weak_output_available as usize
+        );
+        record!(
+            "m1.random.forced_weak.counter_low",
+            random_trace.forced_weak_counter_low as usize
+        );
+        record!(
+            "m1.random.forced_weak.counter_high",
+            random_trace.forced_weak_counter_high as usize
+        );
+        record!(
+            "m1.random.forced_weak.nonce_xor_destination",
+            random_trace.forced_weak_nonce_xor_destination as usize
+        );
+        record!(
+            "m1.random.reinit.strong.attempted",
+            random_trace.strong_reinit_attempted as usize
+        );
+        record!(
+            "m1.random.reinit.strong.state_preserved",
+            random_trace.strong_reinit_state_preserved as usize
+        );
+        record!(
+            "m1.random.reinit.strong.fingerprint",
+            random_trace.strong_reinit_fingerprint as usize
+        );
         record!("sizeof.mi_page_t", size_of::<Page>());
         record!("alignof.mi_page_t", align_of::<Page>());
         record!("offsetof.mi_page_t.xthread_free", offset_of!(Page, xthread_free));

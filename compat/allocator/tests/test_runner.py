@@ -26,6 +26,40 @@ sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
 
+# The finite M1 random image combines the C ABI fields with the deliberately
+# address-independent C/Rust state record. Keep this exact source order in the
+# harness test so a manifest edit cannot silently drop a covered branch.
+M1_RANDOM_IMAGE_KEYS = (
+    "sizeof.mi_random_ctx_t",
+    "alignof.mi_random_ctx_t",
+    "offsetof.mi_random_ctx_t.input",
+    "offsetof.mi_random_ctx_t.output",
+    "offsetof.mi_random_ctx_t.output_available",
+    "offsetof.mi_random_ctx_t.weak",
+    "m1.random.split.parent.output_available",
+    "m1.random.split.parent.consumed_words_cleared",
+    "m1.random.split.parent.counter_low",
+    "m1.random.split.parent.counter_high",
+    "m1.random.split.child.output_available",
+    "m1.random.split.child.counter_low",
+    "m1.random.split.child.counter_high",
+    "m1.random.split.child.weak",
+    "m1.random.split.child.nonce_xor_destination",
+    "m1.random.next.zero_retry.result",
+    "m1.random.next.zero_retry.output_available",
+    "m1.random.next.zero_retry.consumed_words_cleared",
+    "m1.random.forced_weak.initialized",
+    "m1.random.forced_weak.weak",
+    "m1.random.forced_weak.output_available",
+    "m1.random.forced_weak.counter_low",
+    "m1.random.forced_weak.counter_high",
+    "m1.random.forced_weak.nonce_xor_destination",
+    "m1.random.reinit.strong.attempted",
+    "m1.random.reinit.strong.state_preserved",
+    "m1.random.reinit.strong.fingerprint",
+)
+
+
 class WorkRootTests(unittest.TestCase):
     def test_work_root_routes_all_runner_owned_outputs(self) -> None:
         work_root = RUNNER.default_work_root()
@@ -1900,16 +1934,21 @@ class ContractTests(unittest.TestCase):
             for component in summary["components"]
             if component["id"] == "random-image"
         )
-        self.assertEqual(
-            random_image["layout_keys"],
-            [
-                "sizeof.mi_random_ctx_t",
-                "alignof.mi_random_ctx_t",
-                "offsetof.mi_random_ctx_t.input",
-                "offsetof.mi_random_ctx_t.output",
-                "offsetof.mi_random_ctx_t.output_available",
-                "offsetof.mi_random_ctx_t.weak",
-            ],
+        self.assertEqual(random_image["completion_status"], "complete")
+        self.assertEqual(random_image["remaining_conditions"], [])
+        self.assertEqual(random_image["layout_keys"], list(M1_RANDOM_IMAGE_KEYS))
+        self.assertIn(
+            {
+                "kind": "item",
+                "name": "original-chacha-context-state-and-output-contract",
+                "required_statuses": [
+                    "implemented",
+                    "unit_verified",
+                    "differential_verified",
+                ],
+                "upstream": "src/random.c",
+            },
+            random_image["source_map_records"],
         )
         bootstrap = next(
             component
@@ -1986,6 +2025,15 @@ class ContractTests(unittest.TestCase):
                 "current-thread-unattached-tld-metadata-lifecycle",
             ],
         )
+        self.assertIn(
+            "random-reinit-process-hook",
+            [exclusion["id"] for exclusion in summary["exclusions"]],
+        )
+        pinned_chacha_block = next(
+            check
+            for check in random_image["checks"]
+            if check["id"] == "pinned-chacha-block"
+        )
         self.assertEqual(
             {
                 declaration["name"]: declaration["record_id"]
@@ -2038,7 +2086,7 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("whole-prim-h-memory-policy", exclusions_by_id)
         self.assertEqual(
             RUNNER.m1_foundations_check_command(
-                summary["execution"], random_image["checks"][0]
+                summary["execution"], pinned_chacha_block
             ),
             [
                 "cargo",
@@ -2109,14 +2157,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             evidence["random-image"],
             {
-                "keys": [
-                    "sizeof.mi_random_ctx_t",
-                    "alignof.mi_random_ctx_t",
-                    "offsetof.mi_random_ctx_t.input",
-                    "offsetof.mi_random_ctx_t.output",
-                    "offsetof.mi_random_ctx_t.output_available",
-                    "offsetof.mi_random_ctx_t.weak",
-                ],
+                "keys": list(M1_RANDOM_IMAGE_KEYS),
                 "missing_from_rust": ["offsetof.mi_random_ctx_t.weak"],
                 "mismatches": [],
                 "status": "pending",
@@ -2236,14 +2277,19 @@ class ContractTests(unittest.TestCase):
         )
 
         self.assertEqual(report["milestone"]["status"], "partial")
+        expected_unmet = [
+            component_id
+            for component_id in RUNNER.M1_FOUNDATIONS_COMPONENT_IDS
+            if component_id != "random-image"
+        ]
         self.assertEqual(
             report["milestone"]["unmet_component_ids"],
-            list(RUNNER.M1_FOUNDATIONS_COMPONENT_IDS),
+            expected_unmet,
         )
         self.assertEqual(
             RUNNER.m1_foundations_unmet_message(report).split(";", 1)[0],
             "M1 foundations remain partial for "
-            + ", ".join(RUNNER.M1_FOUNDATIONS_COMPONENT_IDS),
+            + ", ".join(expected_unmet),
         )
 
     def test_native_owner_exit_lifecycle_contract_covers_every_reviewed_condition(self) -> None:

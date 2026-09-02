@@ -312,16 +312,71 @@
       "checks": [
         {
           "expected_passed_test_count": 1,
+          "id": "random-image-initialization-and-clear",
+          "target": "random::tests::source_layout_and_chacha_initialization_keep_all_words_authoritative"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "pinned-chacha-block",
           "target": "random::tests::pinned_c_block_vector_uses_the_original_chacha_word_layout"
         },
         {
           "expected_passed_test_count": 1,
+          "id": "random-buffer-refill",
+          "target": "random::tests::buffer_exhaustion_clears_the_old_block_before_refilling"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "random-counter-carry",
+          "target": "random::tests::counter_wrap_increments_only_the_low_nonce_word"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "random-counter-low-word-carry",
+          "target": "random::tests::low_counter_word_wraps_into_the_high_counter_word_before_the_nonce"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "random-split-retry-and-strong-reinit-trace",
+          "target": "random::tests::source_split_and_reinitialization_state_machine_has_address_independent_record"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-entropy-image",
+          "target": "random::tests::entropy_success_initializes_a_strong_source_image"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "weak-entropy-image",
           "target": "random::tests::entropy_failure_continues_with_a_weak_source_image"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "short-entropy-image",
+          "target": "random::tests::normal_entropy_initialization_treats_a_short_fill_as_weak"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "forced-weak-image",
+          "target": "random::tests::forced_weak_initialization_skips_entropy_without_a_caller_seed"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "weak-reinit-failure",
+          "target": "random::tests::weak_reinitialization_retries_entropy_but_strong_contexts_do_not"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "weak-reinit-success",
+          "target": "random::tests::successful_weak_reinitialization_becomes_strong_once"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "weak-expansion-replacement",
+          "target": "random::tests::weak_observations_have_a_dependency_owned_deterministic_expansion"
         }
       ],
-      "completion_status": "partial",
+      "completion_status": "complete",
       "id": "random-image",
       "layout_keys": [
         "sizeof.mi_random_ctx_t",
@@ -329,18 +384,38 @@
         "offsetof.mi_random_ctx_t.input",
         "offsetof.mi_random_ctx_t.output",
         "offsetof.mi_random_ctx_t.output_available",
-        "offsetof.mi_random_ctx_t.weak"
+        "offsetof.mi_random_ctx_t.weak",
+        "m1.random.split.parent.output_available",
+        "m1.random.split.parent.consumed_words_cleared",
+        "m1.random.split.parent.counter_low",
+        "m1.random.split.parent.counter_high",
+        "m1.random.split.child.output_available",
+        "m1.random.split.child.counter_low",
+        "m1.random.split.child.counter_high",
+        "m1.random.split.child.weak",
+        "m1.random.split.child.nonce_xor_destination",
+        "m1.random.next.zero_retry.result",
+        "m1.random.next.zero_retry.output_available",
+        "m1.random.next.zero_retry.consumed_words_cleared",
+        "m1.random.forced_weak.initialized",
+        "m1.random.forced_weak.weak",
+        "m1.random.forced_weak.output_available",
+        "m1.random.forced_weak.counter_low",
+        "m1.random.forced_weak.counter_high",
+        "m1.random.forced_weak.nonce_xor_destination",
+        "m1.random.reinit.strong.attempted",
+        "m1.random.reinit.strong.state_preserved",
+        "m1.random.reinit.strong.fingerprint"
       ],
-      "remaining_conditions": [
-        "Review split and reinitialization behavior against every selected random.c source branch before changing this component to complete."
-      ],
+      "remaining_conditions": [],
       "source_map_records": [
         {
           "kind": "item",
           "name": "original-chacha-context-state-and-output-contract",
           "required_statuses": [
             "implemented",
-            "unit_verified"
+            "unit_verified",
+            "differential_verified"
           ],
           "upstream": "src/random.c"
         }
@@ -629,10 +704,12 @@
     {
       "disposition": "deferred-to-m7",
       "id": "prim-h-options-environment-and-diagnostics",
-      "reason": "_mi_prim_getenv and _mi_prim_out_stderr belong to the M7 options/environment/diagnostics surface. The selected primitive paths do not supply option parsing, environment policy, or diagnostic ownership.",
+      "reason": "_mi_prim_getenv and _mi_prim_out_stderr belong to the M7 options/environment/diagnostics surface. This includes the _mi_warning_message reached by src/random.c when normal entropy fails. The selected primitive paths do not supply option parsing, environment policy, or diagnostic ownership.",
       "upstream_paths": [
         "include/mimalloc/prim.h",
-        "src/prim/unix/prim.c"
+        "src/prim/unix/prim.c",
+        "src/options.c",
+        "src/random.c"
       ]
     },
     {
@@ -683,6 +760,15 @@
       "reason": "The C libc fallback wrappers, clock() fallback, and getrandom ENOSYS /dev/urandom fallback are not M1 evidence: the Linux 5.10 profile uses direct crabc-core primitives and does not add a portability layer.",
       "upstream_paths": [
         "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m5",
+      "id": "random-reinit-process-hook",
+      "reason": "The selected random-image component proves the state-machine behavior of _mi_random_reinit_if_weak. Its automatic-process-initialization call site in src/init.c, including publication and lifecycle ordering, remains M5 lifecycle work and is not implied by the direct state witness.",
+      "upstream_paths": [
+        "src/init.c",
+        "src/random.c"
       ]
     },
     {
