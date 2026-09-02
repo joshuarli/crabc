@@ -21606,6 +21606,83 @@ mod tests {
         .expect("the current-thread attachment test completes");
     }
 
+    /// Selects the non-exclusive `_mi_theap_alloc` metadata branch together
+    /// with its later-TLD owner. The independent registry bitmap is retained
+    /// after attachment teardown, so the final registry shutdown makes the
+    /// capability accounting boundary explicit instead of attributing that
+    /// process-owned image to the Theap/TLD pair.
+    #[test]
+    fn nonexclusive_dynamic_theap_releases_its_exact_malloc_metadata_lifecycle() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "ticket zero uses source-static storage before the later dynamic branch"
+            );
+            let roots_before = UnrelatedRoots::capture();
+
+            let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
+            let theap_pointer = owner
+                .theap_pointer()
+                .expect("the attached owner retains its exact dynamic Theap");
+            let tld = owner
+                .tld
+                .as_mut()
+                .expect("the attached owner retains its later TLD")
+                .current_mut()
+                .expect("the later TLD remains current while its Theap is attached");
+            assert_eq!(tld.thread_sequence().get(), 1);
+            assert_eq!(tld.memory_id().kind(), MemoryKind::Malloc);
+            assert!(tld.is_attached_to_main_subprocess(subprocess));
+            assert!(tld.has_exact_theap_member(theap_pointer));
+            assert!(
+                !owner.heap_ref().test_main_static_fields().has_exclusive_arena,
+                "the selected source branch is the non-exclusive _mi_meta_zalloc path"
+            );
+            assert_eq!(
+                owner
+                    .theap
+                    .as_ref()
+                    .expect("the attached owner retains its Theap allocation")
+                    .memory_id()
+                    .kind(),
+                MemoryKind::Malloc,
+                "the non-exclusive source branch obtains Theap metadata through _mi_meta_zalloc"
+            );
+            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
+            assert_eq!(subprocess.total_thread_count(), 2);
+            assert_eq!(subprocess.live_thread_count(), 1);
+            let attached_audit = metadata.test_allocation_audit();
+            assert_eq!(attached_audit.live_capability_count, 4);
+            assert_eq!(attached_audit.high_water_capability_count, 4);
+
+            owner
+                .teardown()
+                .expect("the no-page non-exclusive attachment tears down in source owner order");
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(registry.test_live_lease_count(), 0);
+            assert!(owner.heap_ref().test_main_static_fields().theaps_empty);
+            assert!(owner.theap.is_none(), "teardown consumes the exact Theap capability");
+            assert!(owner.tld.is_none(), "teardown consumes the exact later-TLD capability");
+            assert!(owner.backing.is_none(), "teardown consumes the regular TLS backing capability");
+            assert!(roots_before.still_matches());
+            let after_attachment = metadata.test_allocation_audit();
+            assert_eq!(after_attachment.live_capability_count, 1);
+            assert_eq!(after_attachment.high_water_capability_count, 4);
+
+            registry
+                .shutdown()
+                .expect("the explicit quiescent registry release frees its distinct bitmap image");
+            let after_registry = metadata.test_allocation_audit();
+            assert_eq!(after_registry.live_capability_count, 0);
+            assert_eq!(after_registry.high_water_capability_count, 4);
+        })
+        .join()
+        .expect("the non-exclusive dynamic Theap metadata lifecycle completes");
+    }
+
     /// Emits the finite address-independent compiler-TLS M1 record compared
     /// to two pinned C executables: the constructor-suppressed source image,
     /// then the normal regular-backing and cached-root primitives. This is not
@@ -21926,6 +22003,16 @@ mod tests {
         thread::spawn(|| {
             let (subprocess, metadata, registry) = fixture();
             consume_static_ticket(subprocess, metadata);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "ticket zero leaves the isolated metadata owner without a live capability"
+            );
+            assert_eq!(
+                metadata.test_allocation_audit().high_water_capability_count,
+                0,
+                "ticket zero does not raise the later metadata lifetime watermark"
+            );
             let roots = UnrelatedRoots::capture();
             let dynamic_before = dynamic_backing_peek();
             let fault = fault::install(fault::Plan::at(
@@ -21949,6 +22036,16 @@ mod tests {
             ));
             assert_eq!(subprocess.total_thread_count(), 2);
             assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "a failed later-TLD request has no metadata capability to retain"
+            );
+            assert_eq!(
+                metadata.test_allocation_audit().high_water_capability_count,
+                0,
+                "the rejected later-TLD request never manufactures a transient capability"
+            );
             assert_eq!(dynamic_backing_peek(), dynamic_before);
             assert!(roots.still_matches());
             fault.set(fault::Plan::disabled());
@@ -21972,8 +22069,17 @@ mod tests {
             ));
             assert_eq!(subprocess.total_thread_count(), 3);
             assert_eq!(subprocess.live_thread_count(), 0);
+            let after_theap_failure = metadata.test_allocation_audit();
+            assert_eq!(after_theap_failure.live_capability_count, 1);
+            assert_eq!(after_theap_failure.high_water_capability_count, 2);
             assert!(is_empty_dynamic_backing(dynamic_backing_peek().unwrap()));
             assert!(roots.still_matches());
+            registry
+                .shutdown()
+                .expect("the rejected Theap path leaves only the quiescent registry bitmap");
+            let after_registry = metadata.test_allocation_audit();
+            assert_eq!(after_registry.live_capability_count, 0);
+            assert_eq!(after_registry.high_water_capability_count, 2);
         })
         .join()
         .expect("allocation failures leave no live dynamic attachment");
