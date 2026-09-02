@@ -2479,6 +2479,9 @@ mod tests {
             let (storage, subprocess) = fixture();
             let metadata = MetaAllocator::test_static_owner();
             let registry = OwnedThreadLocalKeyRegistry::test_static_owner();
+            metadata
+                .prepare_for_main_subprocess(memory_config(), subprocess)
+                .expect("the selected source process publishes metadata before same-TLD demand");
             let mut main = unsafe {
                 MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
             }
@@ -2745,6 +2748,9 @@ mod tests {
         thread::spawn(|| {
             let (storage, subprocess) = fixture();
             let metadata = MetaAllocator::test_static_owner();
+            metadata
+                .prepare_for_main_subprocess(memory_config(), subprocess)
+                .expect("the isolated source process publishes metadata before generic TLD admission");
             let mut generic = unsafe {
                 ThreadLocalDataOwner::begin_with_test_metadata(
                     subprocess,

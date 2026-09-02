@@ -127,11 +127,22 @@ pub(crate) enum MetaError {
     /// process-main identity. One owner may not silently serve two
     /// subprocesses in this slice.
     SubprocessMismatch,
+    /// The source process has not yet published its detached `theap_meta`
+    /// identity. Rust refuses the metadata route before it enters the private
+    /// lock; this is a safety strengthening of the pinned C non-null
+    /// assertion.
+    TheapMetaUnpublished,
+    /// The source process's one-way `theap_meta` identity did not name this
+    /// allocator's exact detached static Theap. Rust refuses to take the
+    /// metadata lock or create backing through an unselected image; this is a
+    /// safety strengthening of the pinned C non-null assertion.
+    TheapMetaMismatch,
     /// A prior initialization cleanup could not release a partially owned
     /// mapping, so retrying would overwrite live process state.
     InitializationRetained,
     /// Direct OS/page-map/arena bootstrap could not complete but left no
-    /// published metadata owner. A later call may retry.
+    /// published private metadata backing. The detached-Theap identity remains
+    /// bound, and a later demand may retry that backing path.
     InitializationFailed,
     /// The source allocation route returned null for this request.
     AllocationUnavailable,
@@ -900,6 +911,17 @@ pub(crate) struct MetaAllocator {
     bootstrap: UnsafeCell<MaybeUninit<ExclusiveTheapBootstrap>>,
     allocator: UnsafeCell<MaybeUninit<SingleThreadAllocator<'static, 'static, 'static>>>,
     subprocess: AtomicPtr<MainSubprocess>,
+    /// The exact detached static Theap address successfully published through
+    /// `subprocess->theap_meta`. This is identity-only: the allocator never
+    /// dereferences it through this slot. Keeping it separate from the
+    /// mutable bootstrap lets a later `_mi_meta_zalloc` precondition compare
+    /// stable atomics before taking the metadata lock.
+    detached_metadata_theap: AtomicPtr<Theap>,
+    /// Each leaked metadata test fixture owns its own source-main identity.
+    /// Production has no alternate default: a null test pointer selects the
+    /// one process-global `MainSubprocess` below.
+    #[cfg(test)]
+    test_default_subprocess: AtomicPtr<MainSubprocess>,
     registry: ArenaRegistry,
     #[cfg(test)]
     fail_next_direct_zeroed_size: AtomicUsize,
@@ -907,6 +929,8 @@ pub(crate) struct MetaAllocator {
     fail_next_rezalloc_size: AtomicUsize,
     #[cfg(test)]
     fail_next_aligned_zeroed_size: AtomicUsize,
+    #[cfg(test)]
+    test_entry_attempt_count: AtomicUsize,
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
     test_live_allocation_count: AtomicUsize,
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
@@ -980,6 +1004,9 @@ impl MetaAllocator {
             bootstrap: UnsafeCell::new(MaybeUninit::uninit()),
             allocator: UnsafeCell::new(MaybeUninit::uninit()),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
+            detached_metadata_theap: AtomicPtr::new(core::ptr::null_mut()),
+            #[cfg(test)]
+            test_default_subprocess: AtomicPtr::new(core::ptr::null_mut()),
             registry: ArenaRegistry::new(core::ptr::null_mut()),
             #[cfg(test)]
             fail_next_direct_zeroed_size: AtomicUsize::new(0),
@@ -987,6 +1014,8 @@ impl MetaAllocator {
             fail_next_rezalloc_size: AtomicUsize::new(0),
             #[cfg(test)]
             fail_next_aligned_zeroed_size: AtomicUsize::new(0),
+            #[cfg(test)]
+            test_entry_attempt_count: AtomicUsize::new(0),
             #[cfg(any(test, feature = "native-runtime-test-audit"))]
             test_live_allocation_count: AtomicUsize::new(0),
             #[cfg(any(test, feature = "native-runtime-test-audit"))]
@@ -1004,6 +1033,30 @@ impl MetaAllocator {
         unsafe { Pin::new_unchecked(&PROCESS_METADATA_ALLOCATOR) }
     }
 
+    #[cfg(not(test))]
+    #[inline]
+    fn default_subprocess(self: Pin<&'static Self>) -> &'static MainSubprocess {
+        let _ = self;
+        MainSubprocess::global()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn default_subprocess(self: Pin<&'static Self>) -> &'static MainSubprocess {
+        let pointer = self
+            .get_ref()
+            .test_default_subprocess
+            .load(Ordering::Acquire);
+        let Some(pointer) = NonNull::new(pointer) else {
+            return MainSubprocess::global();
+        };
+        // SAFETY: `test_static_owner` stores exactly one separately leaked
+        // subprocess before returning this metadata fixture and never
+        // replaces it. The production singleton retains the null sentinel and
+        // takes the process-global branch above instead.
+        unsafe { pointer.as_ref() }
+    }
+
     /// Builds an isolated process-lifetime owner for tests that must inject a
     /// first-allocation failure without depending on singleton test ordering.
     /// Production lifecycle code must use [`Self::global`] exclusively.
@@ -1011,10 +1064,27 @@ impl MetaAllocator {
     pub(crate) fn test_static_owner() -> Pin<&'static Self> {
         let owner: &'static MetaAllocator =
             std::boxed::Box::leak(std::boxed::Box::new(MetaAllocator::new()));
+        let subprocess = MainSubprocess::test_static_owner();
+        owner
+            .test_default_subprocess
+            .store(subprocess.as_ptr(), Ordering::Release);
         // SAFETY: the deliberately leaked test fixture has a process-lifetime
-        // address, matching the static-reference requirement of its detached
-        // page-map/bootstrap/allocator slots.
+        // address, and its test-only default subprocess is separately leaked
+        // before this owner is returned. That matches the static-reference
+        // requirement of its detached page-map/bootstrap/allocator slots
+        // without sharing another fixture's one-way source publication slot.
         unsafe { Pin::new_unchecked(owner) }
+    }
+
+    /// Returns this test fixture's isolated source-main identity. It exposes
+    /// no metadata or Theap capability and exists only so an explicit
+    /// test-only caller can keep its allocator/subprocess pair coherent.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_default_subprocess(
+        self: Pin<&'static Self>,
+    ) -> &'static MainSubprocess {
+        self.default_subprocess()
     }
 
     /// Observes only whether this detached metadata owner bound one exact
@@ -1040,10 +1110,9 @@ impl MetaAllocator {
         let stored_config = unsafe { *(*this.config.get()).assume_init_ref() };
         stored_config == config
             && core::ptr::eq(this.subprocess.load(Ordering::Acquire), subprocess.as_ptr())
-            // SAFETY: BOUND also writes the final pinned bootstrap slot before
-            // its Release publication; READY retains that exact image.
-            && unsafe { (&*this.bootstrap.get()).assume_init_ref() }
-                .is_detached_for_main_subprocess(subprocess)
+            && self
+                .validate_bound_detached_metadata_theap(subprocess)
+                .is_ok()
     }
 
     /// Test-only observation of the PageMap bootstrap mapping retained before
@@ -1124,6 +1193,15 @@ impl MetaAllocator {
         }
     }
 
+    /// Returns how often a test reached the metadata private-lock entry
+    /// boundary. This exposes no lock capability and lets the source-shaped
+    /// `theap_meta` regression prove rejection occurs before C's lock site.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_entry_attempt_count(self: Pin<&'static Self>) -> usize {
+        self.get_ref().test_entry_attempt_count.load(Ordering::Acquire)
+    }
+
     /// Binds the detached metadata Theap/image for one selected source main
     /// subprocess without allocating a caller-visible metadata block or its
     /// private backing. This is the source `mi_process_theap_meta` ordering
@@ -1151,7 +1229,7 @@ impl MetaAllocator {
         config: MemoryConfig,
         size: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
-        self.zalloc_for_main_subprocess(config, MainSubprocess::global(), size)
+        self.zalloc_for_main_subprocess(config, self.default_subprocess(), size)
     }
 
     /// Allocates zeroed metadata for one already selected process-main
@@ -1164,6 +1242,7 @@ impl MetaAllocator {
         subprocess: &'static MainSubprocess,
         size: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
+        self.require_published_detached_metadata_theap(subprocess)?;
         let mut entry = self.enter()?;
         entry.ensure_ready(config, subprocess)?;
         #[cfg(test)]
@@ -1229,12 +1308,7 @@ impl MetaAllocator {
         size: usize,
         alignment: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
-        self.zalloc_aligned_for_main_subprocess(
-            config,
-            MainSubprocess::global(),
-            size,
-            alignment,
-        )
+        self.zalloc_aligned_for_main_subprocess(config, self.default_subprocess(), size, alignment)
     }
 
     /// Allocates zeroed aligned metadata for the selected process-main
@@ -1251,6 +1325,7 @@ impl MetaAllocator {
         if !size_class::alignment_is_valid(alignment) {
             return Err(MetaError::InvalidAlignment);
         }
+        self.require_published_detached_metadata_theap(subprocess)?;
         let mut entry = self.enter()?;
         entry.ensure_ready(config, subprocess)?;
         #[cfg(test)]
@@ -1290,7 +1365,7 @@ impl MetaAllocator {
         old: Option<&mut MetaAllocation<'static>>,
         new_size: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
-        self.rezalloc_for_main_subprocess(config, MainSubprocess::global(), old, new_size)
+        self.rezalloc_for_main_subprocess(config, self.default_subprocess(), old, new_size)
     }
 
     /// Replaces one metadata allocation while retaining the already selected
@@ -1311,6 +1386,7 @@ impl MetaAllocator {
         if !old.belongs_to(self) {
             return Err(MetaError::ForeignOwner);
         }
+        self.require_published_detached_metadata_theap(subprocess)?;
 
         let (replacement, copy_size) = {
             let mut entry = self.enter()?;
@@ -1434,9 +1510,59 @@ impl MetaAllocator {
         Ok(page.theap() == entry.allocator_ref().theap_identity())
     }
 
+    /// Enforces the source `_mi_meta_zalloc` precondition before a metadata
+    /// caller can enter its private lock. A cold owner has no published
+    /// source-static image, so only `prepare_for_main_subprocess` may bind and
+    /// publish it. `MetaEntry::ensure_ready` repeats the exact check before it
+    /// can map a first backing page.
+    fn require_published_detached_metadata_theap(
+        self: Pin<&'static Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        match self.get_ref().status.load(Ordering::Acquire) {
+            COLD => Err(MetaError::TheapMetaUnpublished),
+            BOUND | READY => {
+                if !core::ptr::eq(
+                    self.get_ref().subprocess.load(Ordering::Acquire),
+                    subprocess.as_ptr(),
+                ) {
+                    return Err(MetaError::SubprocessMismatch);
+                }
+                self.validate_bound_detached_metadata_theap(subprocess)
+            }
+            FAILED | _ => Err(MetaError::InitializationRetained),
+        }
+    }
+
+    /// Checks that a BOUND or READY metadata owner is still the exact Theap
+    /// identity published through its selected source subprocess.
+    ///
+    /// The caller observed BOUND or READY with Acquire. Those states
+    /// Release-publish this immutable address after the source subprocess
+    /// publication. This method only compares stable atomics; it never
+    /// reborrows the mutable bootstrap or dereferences the subprocess slot.
+    fn validate_bound_detached_metadata_theap(
+        self: Pin<&'static Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        let this = self.get_ref();
+        let Some(identity) = NonNull::new(
+            this.detached_metadata_theap.load(Ordering::Acquire),
+        ) else {
+            return Err(MetaError::TheapMetaUnpublished);
+        };
+        if subprocess.matches_published_detached_metadata_theap(identity) {
+            Ok(())
+        } else {
+            Err(MetaError::TheapMetaMismatch)
+        }
+    }
+
     fn enter(self: Pin<&'static Self>) -> Result<MetaEntry, MetaError> {
         let thread = current_entry_thread()?;
         let this = self.get_ref();
+        #[cfg(test)]
+        this.test_entry_attempt_count.fetch_add(1, Ordering::Relaxed);
         if this.active_entry_thread.load(Ordering::Acquire) == thread {
             return Err(MetaError::RecursiveEntry);
         }
@@ -1517,8 +1643,11 @@ impl MetaAllocator {
         // the process-static, pinned bootstrap slot before any session may
         // borrow its self-referential fields.
         unsafe { (*this.bootstrap.get()).write(ExclusiveTheapBootstrap::new()) };
-        let bootstrap = unsafe { Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut()) };
+        let mut bootstrap = unsafe {
+            Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut())
+        };
         if bootstrap
+            .as_mut()
             .bind_detached_for_main_subprocess(subprocess)
             .is_err()
         {
@@ -1529,10 +1658,37 @@ impl MetaAllocator {
             return Err(MetaError::InitializationRetained);
         }
 
+        let Some(identity) = bootstrap
+            .as_ref()
+            .detached_metadata_theap_identity(subprocess)
+        else {
+            // A successful detached bind must expose this exact image before
+            // source `subproc->theap_meta` publication. Retain rather than
+            // inventing a later lazy publication from an incomplete image.
+            this.status.store(FAILED, Ordering::Release);
+            return Err(MetaError::TheapMetaMismatch);
+        };
+        // SAFETY: `bootstrap` names this allocator's pinned process-lifetime
+        // final slot. The identity is never dereferenced through the
+        // subprocess, and COLD plus the held private lock ensure that this is
+        // its sole one-way source publication attempt.
+        if !unsafe { subprocess.publish_detached_metadata_theap(identity) } {
+            // Another static detached image already claimed this source
+            // subprocess. Do not overwrite it or make this partially bound
+            // image retryable under a second process identity.
+            this.status.store(FAILED, Ordering::Release);
+            return Err(MetaError::TheapMetaMismatch);
+        }
+
         // SAFETY: the immutable tuple is written before BOUND's Release
-        // publication and is never replaced on a clean backing retry.
+        // publication and is never replaced on a clean backing retry. The
+        // exact Theap identity was already one-way published through the
+        // selected source subprocess above, so this independent atomic is a
+        // comparison-only mirror for lock-free precondition checks.
         unsafe { (*this.config.get()).write(config) };
         this.subprocess.store(subprocess.as_ptr(), Ordering::Release);
+        this.detached_metadata_theap
+            .store(identity.as_ptr(), Ordering::Release);
         this.status.store(BOUND, Ordering::Release);
         Ok(())
     }
@@ -1753,6 +1909,8 @@ impl MetaEntry {
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         self.ensure_bound(config, subprocess)?;
+        self.owner
+            .validate_bound_detached_metadata_theap(subprocess)?;
         match self.status() {
             READY => Ok(()),
             BOUND => self.owner.initialize_backing(self, config, subprocess),
@@ -1769,20 +1927,20 @@ impl MetaEntry {
         // SAFETY: BOUND Release-publishes this immutable tuple before the
         // current held lock can observe it; READY retains the same tuple.
         let stored = unsafe { self.owner.get_ref().config.get().read().assume_init() };
-        if stored == config
-            && core::ptr::eq(
-                self.owner
-                    .get_ref()
-                    .subprocess
-                    .load(Ordering::Acquire),
-                subprocess.as_ptr(),
-            )
-        {
-            Ok(())
-        } else if stored == config {
+        if stored != config {
+            return Err(MetaError::ConfigurationMismatch);
+        }
+        if !core::ptr::eq(
+            self.owner
+                .get_ref()
+                .subprocess
+                .load(Ordering::Acquire),
+            subprocess.as_ptr(),
+        ) {
             Err(MetaError::SubprocessMismatch)
         } else {
-            Err(MetaError::ConfigurationMismatch)
+            self.owner
+                .validate_bound_detached_metadata_theap(subprocess)
         }
     }
 
@@ -1860,12 +2018,20 @@ mod tests {
 
     /// Test-only process lifetime mirrors the production static singleton:
     /// the detached engine stores `'static` references into its final slots.
+    /// This deliberately leaves the source detached-metadata image cold so a
+    /// regression can prove direct demand does not publish it.
+    fn cold_static_allocator() -> Pin<&'static MetaAllocator> {
+        MetaAllocator::test_static_owner()
+    }
+
+    /// Returns an isolated fixture after the production-shaped preparation
+    /// edge has bound and published its own selected main-subprocess image.
     fn static_allocator() -> Pin<&'static MetaAllocator> {
-        let allocator: &'static MetaAllocator =
-            std::boxed::Box::leak(std::boxed::Box::new(MetaAllocator::new()));
-        // SAFETY: `Box::leak` gives this test fixture a true process-lifetime
-        // address, and `MetaAllocator` is never moved after construction.
-        unsafe { Pin::new_unchecked(allocator) }
+        let allocator = cold_static_allocator();
+        allocator
+            .prepare_for_main_subprocess(config(), allocator.test_default_subprocess())
+            .expect("the isolated fixture publishes its detached metadata-Theap before demand");
+        allocator
     }
 
     #[test]
@@ -1949,8 +2115,11 @@ mod tests {
 
     #[test]
     fn selected_aligned_main_metadata_projects_only_an_exact_transient_bitmap_image() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         let subprocess = MainSubprocess::test_static_owner();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image publishes before bitmap demand");
         let layout = BitmapLayout::for_bit_count(1024).unwrap();
         let wrong_layout = BitmapLayout::for_bit_count(512).unwrap();
         let mut image = allocator
@@ -1997,8 +2166,11 @@ mod tests {
 
     #[test]
     fn tls_projection_cannot_be_reinterpreted_as_dynamic_arena_or_bitmap_image() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         let subprocess = MainSubprocess::test_static_owner();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image publishes before TLS-image demand");
         let arena_layout = ArenaPagesLayout::for_slice_count(crate::config::BCHUNK_BITS)
             .expect("the source minimum arena has a dynamic pages layout");
         assert_eq!(arena_layout.byte_size(), 12_416);
@@ -2062,8 +2234,11 @@ mod tests {
 
     #[test]
     fn bitmap_image_lifecycle_rejects_out_of_order_or_duplicate_projection() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         let subprocess = MainSubprocess::test_static_owner();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image publishes before bitmap lifecycle demand");
         let layout = BitmapLayout::for_bit_count(1024).unwrap();
         let mut source = allocator
             .zalloc_aligned_for_main_subprocess(
@@ -2132,14 +2307,15 @@ mod tests {
 
     #[test]
     fn detached_metadata_bootstrap_uses_its_selected_main_subprocess_identity() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         let subprocess = MainSubprocess::test_static_owner();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image publishes before demand");
         let mut block = allocator
             .zalloc_for_main_subprocess(config(), subprocess, 8)
             .expect("the detached metadata owner initializes for this main identity");
-        let bootstrap = unsafe { (&*allocator.get_ref().bootstrap.get()).assume_init_ref() };
-
-        assert!(bootstrap.is_detached_for_main_subprocess(subprocess));
+        assert!(allocator.test_is_bound_for(config(), subprocess));
         assert!(allocator
             .get_ref()
             .registry
@@ -2232,7 +2408,7 @@ mod tests {
 
     #[test]
     fn invalid_alignment_does_not_initialize_or_publish_metadata_state() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         assert!(matches!(
             allocator.zalloc_aligned(config(), 8, 3),
             Err(MetaError::InvalidAlignment)
@@ -2241,7 +2417,72 @@ mod tests {
     }
 
     #[test]
-    fn map_and_commit_failure_leave_the_owner_retryable_and_unpublished() {
+    fn cold_direct_metadata_demand_requires_prepared_theap_publication() {
+        let allocator = cold_static_allocator();
+        let subprocess = allocator.test_default_subprocess();
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+
+        assert!(!subprocess.test_has_published_metadata_theap());
+        assert_eq!(allocator.test_entry_attempt_count(), 0);
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            }
+        );
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::TheapMetaUnpublished)
+        ));
+        assert!(matches!(
+            allocator.zalloc_aligned(config(), 8, 8),
+            Err(MetaError::TheapMetaUnpublished)
+        ));
+        assert!(matches!(
+            allocator.rezalloc(config(), None, 8),
+            Err(MetaError::TheapMetaUnpublished)
+        ));
+        assert_eq!(allocator.status.load(Ordering::Acquire), COLD);
+        assert!(!subprocess.test_has_published_metadata_theap());
+        assert_eq!(fault.observed(), 0, "cold demand cannot reach any mapping edge");
+        assert_eq!(
+            allocator.test_entry_attempt_count(),
+            0,
+            "cold demand rejects before the source metadata-lock entry boundary"
+        );
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            }
+        );
+
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("only preparation may bind and publish the detached metadata Theap");
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+        assert!(subprocess.test_has_published_metadata_theap());
+        assert_eq!(fault.observed(), 0, "preparation is identity-only");
+        assert_eq!(allocator.test_entry_attempt_count(), 1);
+
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::InitializationFailed)
+        ));
+        assert_eq!(fault.observed(), 1, "prepared demand may consume the pending map fault");
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+
+        fault.set(fault::Plan::disabled());
+        let mut allocation = allocator
+            .zalloc(config(), 8)
+            .expect("the bound owner retries demand after the map fault");
+        allocator.free(&mut allocation).unwrap();
+    }
+
+    #[test]
+    fn map_and_commit_failure_leave_the_owner_retryable_without_private_backing() {
         let allocator = static_allocator();
         let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
         assert!(matches!(
@@ -2269,7 +2510,7 @@ mod tests {
 
     #[test]
     fn bound_metadata_rejects_a_foreign_subprocess_before_first_backing() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         let selected = MainSubprocess::test_static_owner();
         let foreign = MainSubprocess::test_static_owner();
 
@@ -2277,6 +2518,14 @@ mod tests {
             .prepare_for_main_subprocess(config(), selected)
             .expect("the source-static detached image binds without private backing");
         assert!(allocator.test_is_bound_for(config(), selected));
+        assert!(
+            selected.test_has_published_metadata_theap(),
+            "the selected source subprocess receives its detached metadata-Theap identity before first backing",
+        );
+        assert!(
+            !foreign.test_has_published_metadata_theap(),
+            "an unrelated subprocess cannot inherit the selected metadata-Theap identity"
+        );
         assert!(allocator.test_private_page_map_address().is_none());
 
         let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
@@ -2308,6 +2557,50 @@ mod tests {
     }
 
     #[test]
+    fn detached_metadata_theap_publication_is_one_way_before_first_backing() {
+        let first = cold_static_allocator();
+        let selected = MainSubprocess::test_static_owner();
+        let second = cold_static_allocator();
+
+        let _first_binding = first
+            .prepare_for_main_subprocess(config(), selected)
+            .expect("the first detached metadata image publishes the selected identity");
+        assert!(first.test_is_bound_for(config(), selected));
+        assert!(selected.test_has_published_metadata_theap());
+        assert!(first.test_private_page_map_address().is_none());
+        assert_eq!(
+            first.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            },
+            "publication is identity-only and cannot take metadata backing"
+        );
+
+        assert!(
+            matches!(
+                second.prepare_for_main_subprocess(config(), selected),
+                Err(MetaError::TheapMetaMismatch)
+            ),
+            "a second detached image cannot overwrite the source process's one-way metadata-Theap slot",
+        );
+        assert!(
+            first.test_is_bound_for(config(), selected),
+            "the first source image remains the exact published identity after the rejected collision",
+        );
+        assert!(selected.test_has_published_metadata_theap());
+        assert!(second.test_private_page_map_address().is_none());
+        assert_eq!(
+            second.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            },
+            "the rejected collision cannot create a caller-visible metadata capability"
+        );
+    }
+
+    #[test]
     fn failed_arena_cleanup_retains_the_static_owner_and_rejects_retry() {
         let allocator = static_allocator();
         let fault = fault::install(fault::Plan::at_pair(
@@ -2331,10 +2624,16 @@ mod tests {
 
     #[cfg(not(miri))]
     #[test]
-    fn aligned_map_prefix_cleanup_failure_retains_metadata_before_publication() {
-        let allocator = static_allocator();
+    fn aligned_map_prefix_cleanup_failure_retains_metadata_before_private_backing_publication() {
+        let allocator = cold_static_allocator();
         let mut selected_config = config();
         selected_config.test_force_full_aligned_map_trim();
+        allocator
+            .prepare_for_main_subprocess(
+                selected_config,
+                allocator.test_default_subprocess(),
+            )
+            .expect("the isolated fixture publishes before its selected backing configuration");
         let fault = fault::install(fault::Plan::at(
             fault::Point::Unmap,
             2,
@@ -2577,6 +2876,9 @@ mod tests {
         let cached_before = crate::compiler_tls::cached_theap();
 
         let allocator = MetaAllocator::global();
+        allocator
+            .prepare_for_main_subprocess(config(), MainSubprocess::global())
+            .expect("the process metadata image publishes before global demand");
         let mut block = allocator.zalloc(config(), 8).unwrap();
         allocator.free(&mut block).unwrap();
 

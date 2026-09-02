@@ -41682,6 +41682,9 @@ mod tests {
             let subprocess = MainSubprocess::test_static_owner();
             let metadata = MetaAllocator::test_static_owner();
             let key_registry = OwnedThreadLocalKeyRegistry::test_static_owner();
+            metadata
+                .prepare_for_main_subprocess(config, subprocess)
+                .expect("the isolated source process publishes metadata before dynamic demand");
             let mut ticket_zero = unsafe {
                 ThreadLocalDataOwner::begin_with_test_metadata(subprocess, metadata, config)
             }
@@ -42130,6 +42133,9 @@ mod tests {
             let subprocess = MainSubprocess::test_static_owner();
             let metadata = MetaAllocator::test_static_owner();
             let key_registry = OwnedThreadLocalKeyRegistry::test_static_owner();
+            metadata
+                .prepare_for_main_subprocess(config, subprocess)
+                .expect("the isolated source process publishes metadata before dynamic demand");
             let mut ticket_zero = unsafe {
                 ThreadLocalDataOwner::begin_with_test_metadata(subprocess, metadata, config)
             }

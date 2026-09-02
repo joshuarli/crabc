@@ -271,6 +271,30 @@ impl<'main> MainHeapThreadAttachment<'main> {
         metadata: core::pin::Pin<&'static MetaAllocator>,
         config: MemoryConfig,
     ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
+        // Preserve the common constructor's no-side-effect admission checks:
+        // a rejected current-thread/root image must not even publish the
+        // test fixture's metadata identity.
+        if current_thread_identity().is_none() {
+            return Err(MainHeapThreadAttachmentBeginError::Rejected(
+                MainHeapThreadAttachmentError::InvalidCurrentThread,
+            ));
+        }
+        if !roots_are_pristine_for_later_main_attachment() {
+            return Err(MainHeapThreadAttachmentBeginError::Rejected(
+                MainHeapThreadAttachmentError::RootsNotPristine,
+            ));
+        }
+        // The test-only fixture establishes the same process preparation
+        // edge that production completes before it admits later threads. The
+        // main-heap lease carries the exact selected source-main identity;
+        // this is identity-only and cannot take metadata backing.
+        metadata
+            .prepare_for_main_subprocess(config, main_heap.subprocess())
+            .map_err(|error| {
+                MainHeapThreadAttachmentBeginError::Rejected(
+                    MainHeapThreadAttachmentError::TheapMetadata(error),
+                )
+            })?;
         // SAFETY: test callers carry the same root/current-thread ownership
         // proof and retain the leaked metadata fixture for the full lifetime.
         unsafe { Self::begin_with_metadata(main_heap, metadata, config) }

@@ -4,20 +4,24 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/subproc.c:12-15,95-101`
-// (`mi_process_subproc_main`), `include/mimalloc/types.h:651-680`
-// (`mi_subproc_t` counters), `include/mimalloc/types.h:690-701` (`mi_tld_t`),
-// and `src/init.c:155-157,236-282`
-// (`mi_process_tld_main`, `mi_tld_create`, and `mi_tld_free`).
+// Source map: pinned mimalloc v3.5.0 `src/subproc.c:12-46,95-101`
+// (`mi_process_subproc_main`, `_mi_meta_zalloc`, and
+// `_mi_meta_zalloc_aligned`), `include/mimalloc/types.h:651-680`
+// (the bounded `mi_subproc_t` fields), `include/mimalloc/types.h:690-701`
+// (`mi_tld_t`), and `src/init.c:155-157,184-205,236-282`
+// (`mi_process_tld_main`, the detached metadata-Theap publication,
+// `mi_tld_create`, and `mi_tld_free`).
 
 //! Bounded main-subprocess thread-registration ownership.
 //!
 //! Upstream places a complete `mi_subproc_t` in static storage. This module
-//! intentionally represents only the process-main identity plus the two
+//! intentionally represents only the process-main identity, the detached
+//! metadata-Theap identity needed before `_mi_meta_zalloc`, and the two
 //! counters directly required by `mi_tld_create`/`mi_tld_free`: the relaxed
 //! total-thread sequence and the relaxed current-thread count. It is not a
-//! Rust layout claim for `mi_subproc_t`, and it supplies no subprocess list,
-//! heap, arena, statistics, or public subprocess API.
+//! Rust layout claim for `mi_subproc_t`: `theap_meta` is an identity-admission
+//! gate, not the C lock/layout or normal C backing route. It supplies no
+//! subprocess list, heap, arena, statistics, or public subprocess API.
 //!
 //! A [`ThreadRegistrationTicket`] is the old result of the source relaxed
 //! `thread_total_count` increment. Tickets are consumed even when a later
@@ -33,9 +37,9 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
-use crate::types::{LiveThreadId, MemoryId, ThreadLocalData, ThreadSequence};
+use crate::types::{LiveThreadId, MemoryId, Theap, ThreadLocalData, ThreadSequence};
 
 const MAIN_TLD_COLD: u8 = 0;
 const MAIN_TLD_CLAIMED: u8 = 1;
@@ -80,6 +84,16 @@ impl MainStaticTldSlot {
 pub(crate) struct MainSubprocess {
     thread_count: AtomicUsize,
     thread_total_count: AtomicUsize,
+    /// The one source `subproc->theap_meta` identity selected during process
+    /// initialization.
+    ///
+    /// Pinned C writes this non-atomic field once after it initializes the
+    /// detached static Theap, then asserts it is non-null before taking the
+    /// metadata lock. Rust retains only an identity pointer and uses a
+    /// Release/Acquire one-way publication to make a stale or second static
+    /// image fail closed. It grants neither dereference authority nor a
+    /// general subprocess-Theap API.
+    theap_meta: AtomicPtr<Theap>,
     /// Rust-side selection of the source sequence-zero TLD branch.
     ///
     /// This does not replace either source counter. It only prevents a
@@ -90,9 +104,10 @@ pub(crate) struct MainSubprocess {
     main_tld: UnsafeCell<MainStaticTldSlot>,
 }
 
-// SAFETY: the counter fields are atomic. The sole UnsafeCell is initialized
-// only by the unique sequence-zero ticket, then reached exclusively through
-// its `!Send` TLD owner; it is never reused after retirement.
+// SAFETY: the counters and one-way metadata-Theap identity are atomic. The
+// sole UnsafeCell is initialized only by the unique sequence-zero ticket,
+// then reached exclusively through its `!Send` TLD owner; it is never reused
+// after retirement.
 unsafe impl Sync for MainSubprocess {}
 
 impl MainSubprocess {
@@ -100,6 +115,7 @@ impl MainSubprocess {
         Self {
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
+            theap_meta: AtomicPtr::new(core::ptr::null_mut()),
             bootstrap_selection: AtomicU8::new(BOOTSTRAP_OPEN),
             main_tld_state: AtomicU8::new(MAIN_TLD_COLD),
             main_tld: UnsafeCell::new(MainStaticTldSlot::new()),
@@ -262,6 +278,50 @@ impl MainSubprocess {
     #[inline]
     pub(crate) const fn as_ptr(&self) -> *mut Self {
         core::ptr::from_ref(self).cast_mut()
+    }
+
+    /// Release-publishes this process's one static detached metadata-Theap
+    /// identity exactly once.
+    ///
+    /// # Safety
+    ///
+    /// `theap` must be the fully initialized detached metadata image selected
+    /// for this exact subprocess, must live at a pinned process-lifetime
+    /// address, and must remain valid for every later identity comparison.
+    /// This method never dereferences it, but publishing a stale, incomplete,
+    /// or cross-subprocess image would let a later metadata route mistake it
+    /// for the source process owner. A failed publication never overwrites the
+    /// prior slot.
+    #[inline]
+    pub(crate) unsafe fn publish_detached_metadata_theap(
+        &self,
+        theap: NonNull<Theap>,
+    ) -> bool {
+        self.theap_meta
+            .compare_exchange(
+                core::ptr::null_mut(),
+                theap.as_ptr(),
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// Checks only whether `theap` is the exact previously published detached
+    /// metadata image. It does not dereference the slot or grant allocation
+    /// authority.
+    #[inline]
+    pub(crate) fn matches_published_detached_metadata_theap(&self, theap: NonNull<Theap>) -> bool {
+        core::ptr::eq(self.theap_meta.load(Ordering::Acquire), theap.as_ptr())
+    }
+
+    /// Test-only observation of whether the source metadata-Theap identity is
+    /// non-null. This deliberately reveals neither its address nor a usable
+    /// Theap reference.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_has_published_metadata_theap(&self) -> bool {
+        !self.theap_meta.load(Ordering::Acquire).is_null()
     }
 
     #[cfg(any(test, feature = "native-runtime-test-audit"))]

@@ -247,7 +247,10 @@ impl ThreadLocalDataOwner {
     ///
     /// This has exactly the same current-thread and exclusive-lifecycle
     /// obligations as [`Self::begin`]. `metadata` must remain a unique
-    /// process-lived metadata owner for every allocation it returns.
+    /// process-lived metadata owner for every allocation it returns and must
+    /// already be bound to `subprocess` by
+    /// [`MetaAllocator::prepare_for_main_subprocess`]. This test hook never
+    /// turns a cold allocation request into process initialization.
     #[cfg(test)]
     pub(crate) unsafe fn begin_with_test_metadata(
         subprocess: &'static MainSubprocess,
@@ -262,7 +265,10 @@ impl ThreadLocalDataOwner {
     /// Creates the same later-ticket attached-TLD transition with an explicit
     /// process-main metadata owner. This is the narrow integration seam for
     /// the private dynamic-Theap owner; the selected capability must remain
-    /// the owner of every returned TLD/Theap/backing allocation.
+    /// the owner of every returned TLD/Theap/backing allocation. The pair
+    /// must already have completed
+    /// [`MetaAllocator::prepare_for_main_subprocess`]; this later-ticket path
+    /// may consume a ticket before it reaches metadata demand.
     pub(crate) unsafe fn begin_later_dynamic_attachment_with_metadata(
         subprocess: &'static MainSubprocess,
         metadata: Pin<&'static MetaAllocator>,
@@ -688,7 +694,12 @@ mod tests {
     }
 
     fn fixture() -> (&'static MainSubprocess, Pin<&'static MetaAllocator>) {
-        (MainSubprocess::test_static_owner(), MetaAllocator::test_static_owner())
+        let subprocess = MainSubprocess::test_static_owner();
+        let metadata = MetaAllocator::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source process publishes metadata before TLD demand");
+        (subprocess, metadata)
     }
 
     #[test]

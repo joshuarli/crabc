@@ -2165,7 +2165,7 @@ class ContractTests(unittest.TestCase):
                     "kind": "rust-unit",
                     "target": (
                         "meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_"
-                        "before_publication"
+                        "before_private_backing_publication"
                     ),
                 },
                 {
@@ -2201,6 +2201,15 @@ class ContractTests(unittest.TestCase):
                     "target": (
                         "meta::tests::bound_metadata_rejects_a_foreign_subprocess_"
                         "before_first_backing"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "meta-cold-demand-requires-prepared-theap-publication",
+                    "kind": "rust-unit",
+                    "target": (
+                        "meta::tests::cold_direct_metadata_demand_requires_"
+                        "prepared_theap_publication"
                     ),
                 },
                 {

@@ -965,6 +965,8 @@ impl ThreadLocalBackingOwner {
     /// exist for this thread, and no other code may mutate the dynamic root
     /// until this owner tears it down. The caller must eventually call
     /// [`Self::teardown`] while still on this exact direct TLS identity.
+    /// Process initialization must already have bound and published the
+    /// process metadata image; this entry does not establish that edge.
     pub(crate) unsafe fn begin(config: MemoryConfig) -> Result<Self, ThreadLocalBackingError> {
         // SAFETY: forwarded unchanged to the common constructor; production
         // always binds the committed process-static metadata owner.
@@ -985,6 +987,9 @@ impl ThreadLocalBackingOwner {
     ///
     /// Identical to [`Self::begin`], plus `metadata`/`subprocess` must be the
     /// selected process-lived pair that releases every returned allocation.
+    /// That pair must already have completed
+    /// [`MetaAllocator::prepare_for_main_subprocess`]; this constructor does
+    /// not convert a cold backing request into process initialization.
     pub(crate) unsafe fn begin_with_metadata(
         metadata: Pin<&'static MetaAllocator>,
         subprocess: &'static MainSubprocess,
@@ -1300,6 +1305,24 @@ mod tests {
             version,
         )
         .expect("the test version is source-valid")
+    }
+
+    /// Builds a test-only current-thread backing owner after the exact
+    /// isolated process pair has completed the identity-only metadata
+    /// preparation edge. Production must prepare its global pair during
+    /// process startup before it uses [`ThreadLocalBackingOwner::begin`].
+    unsafe fn begin_with_prepared_test_metadata(
+    ) -> Result<ThreadLocalBackingOwner, ThreadLocalBackingError> {
+        let metadata = MetaAllocator::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .map_err(ThreadLocalBackingError::Metadata)?;
+        // SAFETY: the test caller owns this current thread's isolated backing
+        // lifecycle and tears it down before the thread exits.
+        unsafe {
+            ThreadLocalBackingOwner::begin_with_metadata(metadata, subprocess, memory_config())
+        }
     }
 
     #[test]
@@ -1629,7 +1652,7 @@ mod tests {
             let fast_before = crate::compiler_tls::fast_slot_peek();
             let default_before = crate::compiler_tls::default_theap();
             let cached_before = crate::compiler_tls::cached_theap();
-            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }
+            let mut owner = unsafe { begin_with_prepared_test_metadata() }
                 .expect("the fresh child root is the immutable empty image");
             let mut payload = 0x41usize;
             let value = (&mut payload as *mut usize).cast();
@@ -1683,7 +1706,7 @@ mod tests {
                 "the flexible source request includes the declared slots[1] prefix"
             );
             assert_eq!(DynamicThreadLocalBacking::allocation_size(0), None);
-            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+            let mut owner = unsafe { begin_with_prepared_test_metadata() }.unwrap();
             let mut first_payload = 0x11usize;
             let mut second_payload = 0x22usize;
             let mut third_payload = 0x33usize;
@@ -1729,6 +1752,9 @@ mod tests {
     fn current_thread_backing_rezalloc_failure_preserves_the_old_malloc_capability_then_retries() {
         let metadata = MetaAllocator::test_static_owner();
         let subprocess = MainSubprocess::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source pair publishes metadata before resize demand");
         thread::spawn(move || {
             let mut owner = unsafe {
                 ThreadLocalBackingOwner::begin_with_metadata(
@@ -1808,7 +1834,7 @@ mod tests {
     #[test]
     fn current_thread_backing_rejects_stale_generation_and_null_out_of_range_needs_no_growth() {
         thread::spawn(|| {
-            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+            let mut owner = unsafe { begin_with_prepared_test_metadata() }.unwrap();
             let stale = key(4, 1);
             let replacement = key(4, 2);
             let missing = key(512, 1);
@@ -1842,7 +1868,7 @@ mod tests {
     #[test]
     fn current_thread_backing_rejects_the_source_count_above_the_16_bit_ceiling() {
         thread::spawn(|| {
-            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+            let mut owner = unsafe { begin_with_prepared_test_metadata() }.unwrap();
             let mut payload = 0x99usize;
             let value = (&mut payload as *mut usize).cast();
             assert_eq!(expanded_slot_count(0, 65_534), Ok(65_535));
@@ -1867,12 +1893,16 @@ mod tests {
     #[test]
     fn current_thread_backing_allocation_failure_keeps_the_empty_root_and_retries() {
         let metadata = MetaAllocator::test_static_owner();
+        let subprocess = metadata.test_default_subprocess();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source pair publishes metadata before faulted backing demand");
         thread::spawn(move || {
             let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, crabc_core::Errno::NOMEM));
             let mut owner = unsafe {
                 ThreadLocalBackingOwner::begin_with_metadata(
                     metadata,
-                    MainSubprocess::global(),
+                    subprocess,
                     memory_config(),
                 )
             }
@@ -1906,11 +1936,15 @@ mod tests {
         const MAX_TAIL_FILLERS: usize = 8192;
 
         let metadata = MetaAllocator::test_static_owner();
+        let subprocess = metadata.test_default_subprocess();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source pair publishes metadata before growth demand");
         thread::spawn(move || {
             let mut owner = unsafe {
                 ThreadLocalBackingOwner::begin_with_metadata(
                     metadata,
-                    MainSubprocess::global(),
+                    subprocess,
                     memory_config(),
                 )
             }
@@ -1987,7 +2021,7 @@ mod tests {
             let worker_start = std::sync::Arc::clone(&start);
             let worker_sender = sender.clone();
             workers.push(thread::spawn(move || {
-                let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+                let mut owner = unsafe { begin_with_prepared_test_metadata() }.unwrap();
                 let identity = current_thread_identity().expect("the worker has a native TLS identity");
                 let fast_before = crate::compiler_tls::fast_slot_peek();
                 let default_before = crate::compiler_tls::default_theap();

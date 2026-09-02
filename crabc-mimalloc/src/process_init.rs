@@ -1275,6 +1275,10 @@ mod tests {
                 "the source-static detached image binds before the global PageMap attempt"
             );
             assert!(
+                subprocess.test_has_published_metadata_theap(),
+                "the initialized detached Theap is published through the selected source subprocess before the global PageMap attempt",
+            );
+            assert!(
                 metadata.test_private_page_map_address().is_none(),
                 "the failed global PageMap attempt cannot have formed metadata backing"
             );

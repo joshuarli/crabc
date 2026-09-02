@@ -142,6 +142,25 @@ impl ExclusiveTheapBootstrap {
             && self.theap.is_bound_to_main_subprocess(subprocess)
     }
 
+    /// Returns the exact pinned detached metadata-Theap identity after its
+    /// bounded detached-metadata image is initialized.
+    ///
+    /// This returns an identity only: it cannot start a session, expose the
+    /// Theap, or mutate it. `MetaAllocator` uses it to make the source
+    /// `subproc->theap_meta = &mi_process_theap_meta` assignment one-way after
+    /// `mi_theap_init` has completed the represented detached fields. It does
+    /// not claim the actual source main-Heap linkage or metadata lock.
+    #[inline]
+    pub(crate) fn detached_metadata_theap_identity(
+        self: Pin<&Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Option<NonNull<Theap>> {
+        let state = self.get_ref();
+        (state.bound_owner == Some(TheapOwner::Detached)
+            && state.is_detached_for_main_subprocess(subprocess))
+            .then(|| NonNull::from(&state.theap))
+    }
+
     /// Attaches and publishes a live-thread theap after this image is pinned.
     ///
     /// This is the bounded source order from `_mi_thread_init_with_heap` and
@@ -183,9 +202,10 @@ impl ExclusiveTheapBootstrap {
     /// an allocator session or allocating backing storage.
     ///
     /// This is the bounded source `mi_process_theap_meta` portion of
-    /// `mi_heap_main_init_once`: the pinned Heap/TLD/Theap fields name the
-    /// selected main subprocess and publish the initialized Theap image, while
-    /// the first `_mi_meta_zalloc` remains responsible for acquiring a page.
+    /// `mi_heap_main_init_once`: the represented Heap/TLD/Theap fields name
+    /// the selected main subprocess. `MetaAllocator` later publishes this
+    /// fully formed image identity; the first `_mi_meta_zalloc` remains
+    /// responsible for acquiring a page.
     pub(crate) fn bind_detached_for_main_subprocess(
         self: Pin<&mut Self>,
         subprocess: &'static MainSubprocess,

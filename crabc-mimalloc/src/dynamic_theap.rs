@@ -744,6 +744,8 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     /// terminal owner that cannot finish teardown must stay alive (or be
     /// deliberately leaked) for as long as its thread/TLS/process state and
     /// heap storage can be observed; dropping it must not manufacture cleanup.
+    /// Process initialization must already have bound and published the global
+    /// metadata image; this later-ticket path never performs that preparation.
     /// Ticket zero is explicitly reserved for `MainStaticTheapAttachment`;
     /// this method returns `FirstTicketReserved` without consuming it.
     pub(crate) unsafe fn begin(
@@ -802,7 +804,9 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     /// # Safety
     ///
     /// The obligations are identical to [`Self::begin`], and all components
-    /// must name the same selected main-subprocess identity.
+    /// must name the same selected main-subprocess identity. `metadata` and
+    /// `subprocess` must already have completed
+    /// [`MetaAllocator::prepare_for_main_subprocess`].
     unsafe fn begin_with_components(
         config: MemoryConfig,
         heap: Pin<&'heap mut Heap>,
@@ -2805,9 +2809,14 @@ mod tests {
         Pin<&'static MetaAllocator>,
         &'static OwnedThreadLocalKeyRegistry,
     ) {
+        let subprocess = MainSubprocess::test_static_owner();
+        let metadata = MetaAllocator::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source process publishes metadata before dynamic demand");
         (
-            MainSubprocess::test_static_owner(),
-            MetaAllocator::test_static_owner(),
+            subprocess,
+            metadata,
             OwnedThreadLocalKeyRegistry::test_static_owner(),
         )
     }
