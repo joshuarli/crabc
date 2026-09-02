@@ -1,5 +1,5 @@
-#ifndef _CRABC_AR_H
-#define _CRABC_AR_H
+#ifndef _AR_H
+#define _AR_H
 
 #ifdef __cplusplus
 extern "C" {

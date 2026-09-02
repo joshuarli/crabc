@@ -401,6 +401,55 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                 f"{sorted(owned_names & differing_names)}",
             )
 
+    def test_leaf_headers_use_pinned_musl_include_guards(self) -> None:
+        """Keep isolated public-header identities out of private guard namespaces."""
+        expected_headers = {
+            "ar.h": ("_AR_H", (5, 5, 5, 5, 5, 5, 5)),
+            "paths.h": ("_PATHS_H", (25, 25, 25, 25, 25, 25, 25)),
+            "stdalign.h": ("_STDALIGN_H", (5, 3, 5, 5, 5, 5, 3)),
+            "stdc-predef.h": ("_STDC_PREDEF_H", (3, 3, 3, 3, 3, 3, 3)),
+            "sysexits.h": ("_SYSEXITS_H", (19, 19, 19, 19, 19, 19, 19)),
+        }
+        profiles = (
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-bsd",
+            "cxx17-strict",
+        )
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+
+        for header_name, (guard, matched_counts) in expected_headers.items():
+            source = (ROOT / "include" / header_name).read_text(encoding="utf-8")
+            self.assertTrue(
+                source.startswith(f"#ifndef {guard}\n#define {guard}\n"),
+                f"{header_name} must use musl's {guard} include guard",
+            )
+            rows = [
+                row for row in checked["rows"] if row["header"] == header_name
+            ]
+            self.assertEqual([row["profile"] for row in rows], list(profiles))
+            for row, matched_count in zip(rows, matched_counts, strict=True):
+                self.assertEqual(row["comparison"], "matched")
+                self.assertEqual(row["candidate_status"], "ok")
+                self.assertEqual(row["reference_status"], "ok")
+                self.assertEqual(row["candidate"], row["reference"])
+                self.assertEqual(
+                    row["difference"],
+                    {
+                        "candidate_only": [],
+                        "candidate_only_count": 0,
+                        "incompatible": [],
+                        "incompatible_count": 0,
+                        "matched_count": matched_count,
+                        "reference_only": [],
+                        "reference_only_count": 0,
+                    },
+                    f"{header_name}:{row['profile']} must differ from musl in no facts",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

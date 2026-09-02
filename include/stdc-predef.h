@@ -1,5 +1,5 @@
-#ifndef _CRABC_STDC_PREDEF_H
-#define _CRABC_STDC_PREDEF_H
+#ifndef _STDC_PREDEF_H
+#define _STDC_PREDEF_H
 
 #define __STDC_ISO_10646__ 201206L
 #if !defined(__GCC_IEC_559) || __GCC_IEC_559 > 0

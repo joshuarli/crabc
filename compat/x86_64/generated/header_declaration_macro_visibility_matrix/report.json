@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "17ce5d8d8326bf7879e56ce01895087f4ba6b50f2b9558f1b17df3f45c9c40b3"
+    "source_abi_report_sha256": "6a5aeee76624b4ab02559eb27267a34173b344239b300bb6a2d7172d1029813f"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -2214,18 +2214,13 @@
           "macro": 4,
           "record": 1
         },
-        "sha256": "b243f6f53f6580bcfe258d87215d0382af210c5e21c9f272c59047b37ffd4974"
+        "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_AR_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "ar.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-gnu",
       "reference": {
         "count": 5,
@@ -2235,15 +2230,10 @@
         },
         "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_AR_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2252,18 +2242,13 @@
           "macro": 4,
           "record": 1
         },
-        "sha256": "b243f6f53f6580bcfe258d87215d0382af210c5e21c9f272c59047b37ffd4974"
+        "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_AR_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "ar.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 5,
@@ -2273,15 +2258,10 @@
         },
         "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_AR_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2290,18 +2270,13 @@
           "macro": 4,
           "record": 1
         },
-        "sha256": "b243f6f53f6580bcfe258d87215d0382af210c5e21c9f272c59047b37ffd4974"
+        "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_AR_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "ar.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-strict",
       "reference": {
         "count": 5,
@@ -2311,15 +2286,10 @@
         },
         "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_AR_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2328,18 +2298,13 @@
           "macro": 4,
           "record": 1
         },
-        "sha256": "b243f6f53f6580bcfe258d87215d0382af210c5e21c9f272c59047b37ffd4974"
+        "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_AR_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "ar.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 5,
@@ -2349,15 +2314,10 @@
         },
         "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_AR_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2366,18 +2326,13 @@
           "macro": 4,
           "record": 1
         },
-        "sha256": "b243f6f53f6580bcfe258d87215d0382af210c5e21c9f272c59047b37ffd4974"
+        "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_AR_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "ar.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 5,
@@ -2387,15 +2342,10 @@
         },
         "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_AR_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2404,18 +2354,13 @@
           "macro": 4,
           "record": 1
         },
-        "sha256": "b243f6f53f6580bcfe258d87215d0382af210c5e21c9f272c59047b37ffd4974"
+        "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_AR_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "ar.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-bsd",
       "reference": {
         "count": 5,
@@ -2425,15 +2370,10 @@
         },
         "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_AR_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2442,18 +2382,13 @@
           "macro": 4,
           "record": 1
         },
-        "sha256": "b243f6f53f6580bcfe258d87215d0382af210c5e21c9f272c59047b37ffd4974"
+        "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_AR_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "ar.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "cxx17-strict",
       "reference": {
         "count": 5,
@@ -2463,15 +2398,10 @@
         },
         "sha256": "4858a2e2e4b7fb04255ae806db9c4abb8d17cbbc3a2180eb72b84f24ec730a6d"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_AR_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -298634,18 +298564,13 @@
         "kind_counts": {
           "macro": 25
         },
-        "sha256": "d20d4ebf63c1949e7205c2096f8214efacf74c5ef37103ee00e39a5d2b0eb8ea"
+        "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_PATHS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "paths.h",
-      "matched_identity_count": 24,
+      "matched_identity_count": 25,
       "profile": "c11-gnu",
       "reference": {
         "count": 25,
@@ -298654,15 +298579,10 @@
         },
         "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_PATHS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -298670,18 +298590,13 @@
         "kind_counts": {
           "macro": 25
         },
-        "sha256": "d20d4ebf63c1949e7205c2096f8214efacf74c5ef37103ee00e39a5d2b0eb8ea"
+        "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_PATHS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "paths.h",
-      "matched_identity_count": 24,
+      "matched_identity_count": 25,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 25,
@@ -298690,15 +298605,10 @@
         },
         "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_PATHS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -298706,18 +298616,13 @@
         "kind_counts": {
           "macro": 25
         },
-        "sha256": "d20d4ebf63c1949e7205c2096f8214efacf74c5ef37103ee00e39a5d2b0eb8ea"
+        "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_PATHS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "paths.h",
-      "matched_identity_count": 24,
+      "matched_identity_count": 25,
       "profile": "c11-strict",
       "reference": {
         "count": 25,
@@ -298726,15 +298631,10 @@
         },
         "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_PATHS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -298742,18 +298642,13 @@
         "kind_counts": {
           "macro": 25
         },
-        "sha256": "d20d4ebf63c1949e7205c2096f8214efacf74c5ef37103ee00e39a5d2b0eb8ea"
+        "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_PATHS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "paths.h",
-      "matched_identity_count": 24,
+      "matched_identity_count": 25,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 25,
@@ -298762,15 +298657,10 @@
         },
         "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_PATHS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -298778,18 +298668,13 @@
         "kind_counts": {
           "macro": 25
         },
-        "sha256": "d20d4ebf63c1949e7205c2096f8214efacf74c5ef37103ee00e39a5d2b0eb8ea"
+        "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_PATHS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "paths.h",
-      "matched_identity_count": 24,
+      "matched_identity_count": 25,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 25,
@@ -298798,15 +298683,10 @@
         },
         "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_PATHS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -298814,18 +298694,13 @@
         "kind_counts": {
           "macro": 25
         },
-        "sha256": "d20d4ebf63c1949e7205c2096f8214efacf74c5ef37103ee00e39a5d2b0eb8ea"
+        "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_PATHS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "paths.h",
-      "matched_identity_count": 24,
+      "matched_identity_count": 25,
       "profile": "c11-bsd",
       "reference": {
         "count": 25,
@@ -298834,15 +298709,10 @@
         },
         "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_PATHS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -298850,18 +298720,13 @@
         "kind_counts": {
           "macro": 25
         },
-        "sha256": "d20d4ebf63c1949e7205c2096f8214efacf74c5ef37103ee00e39a5d2b0eb8ea"
+        "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_PATHS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "paths.h",
-      "matched_identity_count": 24,
+      "matched_identity_count": 25,
       "profile": "cxx17-strict",
       "reference": {
         "count": 25,
@@ -298870,15 +298735,10 @@
         },
         "sha256": "d35e0290e6deb73767341c1da1d9b0ed19d56163865ebe4f9f495ec7b696b5d7"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_PATHS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -352035,18 +351895,13 @@
         "kind_counts": {
           "macro": 5
         },
-        "sha256": "be483d3993ebf47128b4b6c9cc56027b078eaf120e8dfb436655eb9b6f81fa3d"
+        "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDALIGN_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdalign.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-gnu",
       "reference": {
         "count": 5,
@@ -352055,15 +351910,10 @@
         },
         "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDALIGN_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -352071,18 +351921,13 @@
         "kind_counts": {
           "macro": 3
         },
-        "sha256": "36930de76bf418d50b7ba22646530312ff67761688af5809b73b7d12ea54b66b"
+        "sha256": "e43661e48d7d2e49132c0bc5fad0add0f889359cdac318c387a9512d44f6bb7a"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDALIGN_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdalign.h",
-      "matched_identity_count": 2,
+      "matched_identity_count": 3,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 3,
@@ -352091,15 +351936,10 @@
         },
         "sha256": "e43661e48d7d2e49132c0bc5fad0add0f889359cdac318c387a9512d44f6bb7a"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDALIGN_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -352107,18 +351947,13 @@
         "kind_counts": {
           "macro": 5
         },
-        "sha256": "be483d3993ebf47128b4b6c9cc56027b078eaf120e8dfb436655eb9b6f81fa3d"
+        "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDALIGN_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdalign.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-strict",
       "reference": {
         "count": 5,
@@ -352127,15 +351962,10 @@
         },
         "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDALIGN_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -352143,18 +351973,13 @@
         "kind_counts": {
           "macro": 5
         },
-        "sha256": "be483d3993ebf47128b4b6c9cc56027b078eaf120e8dfb436655eb9b6f81fa3d"
+        "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDALIGN_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdalign.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 5,
@@ -352163,15 +351988,10 @@
         },
         "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDALIGN_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -352179,18 +351999,13 @@
         "kind_counts": {
           "macro": 5
         },
-        "sha256": "be483d3993ebf47128b4b6c9cc56027b078eaf120e8dfb436655eb9b6f81fa3d"
+        "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDALIGN_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdalign.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 5,
@@ -352199,15 +352014,10 @@
         },
         "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDALIGN_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -352215,18 +352025,13 @@
         "kind_counts": {
           "macro": 5
         },
-        "sha256": "be483d3993ebf47128b4b6c9cc56027b078eaf120e8dfb436655eb9b6f81fa3d"
+        "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDALIGN_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdalign.h",
-      "matched_identity_count": 4,
+      "matched_identity_count": 5,
       "profile": "c11-bsd",
       "reference": {
         "count": 5,
@@ -352235,15 +352040,10 @@
         },
         "sha256": "54d2b4cce91d1eb77e8c070aaa6f2ce94b6dd0b235812d64f391516d878cafde"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDALIGN_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -352251,18 +352051,13 @@
         "kind_counts": {
           "macro": 3
         },
-        "sha256": "36930de76bf418d50b7ba22646530312ff67761688af5809b73b7d12ea54b66b"
+        "sha256": "e43661e48d7d2e49132c0bc5fad0add0f889359cdac318c387a9512d44f6bb7a"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDALIGN_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdalign.h",
-      "matched_identity_count": 2,
+      "matched_identity_count": 3,
       "profile": "cxx17-strict",
       "reference": {
         "count": 3,
@@ -352271,15 +352066,10 @@
         },
         "sha256": "e43661e48d7d2e49132c0bc5fad0add0f889359cdac318c387a9512d44f6bb7a"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDALIGN_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -353112,18 +352902,13 @@
         "kind_counts": {
           "macro": 3
         },
-        "sha256": "b48c28428527193053c7640c8abeb7e5402328b27bcf6eea2cbb14162849a178"
+        "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDC_PREDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdc-predef.h",
-      "matched_identity_count": 2,
+      "matched_identity_count": 3,
       "profile": "c11-gnu",
       "reference": {
         "count": 3,
@@ -353132,15 +352917,10 @@
         },
         "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDC_PREDEF_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -353148,18 +352928,13 @@
         "kind_counts": {
           "macro": 3
         },
-        "sha256": "b48c28428527193053c7640c8abeb7e5402328b27bcf6eea2cbb14162849a178"
+        "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDC_PREDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdc-predef.h",
-      "matched_identity_count": 2,
+      "matched_identity_count": 3,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 3,
@@ -353168,15 +352943,10 @@
         },
         "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDC_PREDEF_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -353184,18 +352954,13 @@
         "kind_counts": {
           "macro": 3
         },
-        "sha256": "b48c28428527193053c7640c8abeb7e5402328b27bcf6eea2cbb14162849a178"
+        "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDC_PREDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdc-predef.h",
-      "matched_identity_count": 2,
+      "matched_identity_count": 3,
       "profile": "c11-strict",
       "reference": {
         "count": 3,
@@ -353204,15 +352969,10 @@
         },
         "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDC_PREDEF_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -353220,18 +352980,13 @@
         "kind_counts": {
           "macro": 3
         },
-        "sha256": "b48c28428527193053c7640c8abeb7e5402328b27bcf6eea2cbb14162849a178"
+        "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDC_PREDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdc-predef.h",
-      "matched_identity_count": 2,
+      "matched_identity_count": 3,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 3,
@@ -353240,15 +352995,10 @@
         },
         "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDC_PREDEF_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -353256,18 +353006,13 @@
         "kind_counts": {
           "macro": 3
         },
-        "sha256": "b48c28428527193053c7640c8abeb7e5402328b27bcf6eea2cbb14162849a178"
+        "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDC_PREDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdc-predef.h",
-      "matched_identity_count": 2,
+      "matched_identity_count": 3,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 3,
@@ -353276,15 +353021,10 @@
         },
         "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDC_PREDEF_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -353292,18 +353032,13 @@
         "kind_counts": {
           "macro": 3
         },
-        "sha256": "b48c28428527193053c7640c8abeb7e5402328b27bcf6eea2cbb14162849a178"
+        "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDC_PREDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdc-predef.h",
-      "matched_identity_count": 2,
+      "matched_identity_count": 3,
       "profile": "c11-bsd",
       "reference": {
         "count": 3,
@@ -353312,15 +353047,10 @@
         },
         "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDC_PREDEF_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -353328,18 +353058,13 @@
         "kind_counts": {
           "macro": 3
         },
-        "sha256": "b48c28428527193053c7640c8abeb7e5402328b27bcf6eea2cbb14162849a178"
+        "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDC_PREDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdc-predef.h",
-      "matched_identity_count": 2,
+      "matched_identity_count": 3,
       "profile": "cxx17-strict",
       "reference": {
         "count": 3,
@@ -353348,15 +353073,10 @@
         },
         "sha256": "c58b265efd0bfb9e5a6dcc273baf625be4e3ac8ae4a2d647edd437efca5acf90"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDC_PREDEF_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -524363,18 +524083,13 @@
         "kind_counts": {
           "macro": 19
         },
-        "sha256": "6ab7a472446ddfffed700d42b5e4aa7d7815bff2be592412235fd0665e9caa32"
+        "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_SYSEXITS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sysexits.h",
-      "matched_identity_count": 18,
+      "matched_identity_count": 19,
       "profile": "c11-gnu",
       "reference": {
         "count": 19,
@@ -524383,15 +524098,10 @@
         },
         "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_SYSEXITS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -524399,18 +524109,13 @@
         "kind_counts": {
           "macro": 19
         },
-        "sha256": "6ab7a472446ddfffed700d42b5e4aa7d7815bff2be592412235fd0665e9caa32"
+        "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_SYSEXITS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sysexits.h",
-      "matched_identity_count": 18,
+      "matched_identity_count": 19,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 19,
@@ -524419,15 +524124,10 @@
         },
         "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_SYSEXITS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -524435,18 +524135,13 @@
         "kind_counts": {
           "macro": 19
         },
-        "sha256": "6ab7a472446ddfffed700d42b5e4aa7d7815bff2be592412235fd0665e9caa32"
+        "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_SYSEXITS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sysexits.h",
-      "matched_identity_count": 18,
+      "matched_identity_count": 19,
       "profile": "c11-strict",
       "reference": {
         "count": 19,
@@ -524455,15 +524150,10 @@
         },
         "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_SYSEXITS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -524471,18 +524161,13 @@
         "kind_counts": {
           "macro": 19
         },
-        "sha256": "6ab7a472446ddfffed700d42b5e4aa7d7815bff2be592412235fd0665e9caa32"
+        "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_SYSEXITS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sysexits.h",
-      "matched_identity_count": 18,
+      "matched_identity_count": 19,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 19,
@@ -524491,15 +524176,10 @@
         },
         "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_SYSEXITS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -524507,18 +524187,13 @@
         "kind_counts": {
           "macro": 19
         },
-        "sha256": "6ab7a472446ddfffed700d42b5e4aa7d7815bff2be592412235fd0665e9caa32"
+        "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_SYSEXITS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sysexits.h",
-      "matched_identity_count": 18,
+      "matched_identity_count": 19,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 19,
@@ -524527,15 +524202,10 @@
         },
         "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_SYSEXITS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -524543,18 +524213,13 @@
         "kind_counts": {
           "macro": 19
         },
-        "sha256": "6ab7a472446ddfffed700d42b5e4aa7d7815bff2be592412235fd0665e9caa32"
+        "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_SYSEXITS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sysexits.h",
-      "matched_identity_count": 18,
+      "matched_identity_count": 19,
       "profile": "c11-bsd",
       "reference": {
         "count": 19,
@@ -524563,15 +524228,10 @@
         },
         "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_SYSEXITS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -524579,18 +524239,13 @@
         "kind_counts": {
           "macro": 19
         },
-        "sha256": "6ab7a472446ddfffed700d42b5e4aa7d7815bff2be592412235fd0665e9caa32"
+        "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_SYSEXITS_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sysexits.h",
-      "matched_identity_count": 18,
+      "matched_identity_count": 19,
       "profile": "cxx17-strict",
       "reference": {
         "count": 19,
@@ -524599,15 +524254,10 @@
         },
         "sha256": "a0ed210474dc35ee168962b4d7b0477dcb574334b957feec5eddc194c2f88474"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_SYSEXITS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -551081,10 +550731,10 @@
     "runtime": false
   },
   "summary": {
-    "candidate_only_identity_count": 41326,
+    "candidate_only_identity_count": 41291,
     "candidate_only_identity_kind_counts": {
       "function": 6835,
-      "macro": 17932,
+      "macro": 17897,
       "record": 975,
       "typedef": 15187,
       "variable": 397
@@ -551093,19 +550743,19 @@
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 173,
-      "mismatch": 1107,
+      "matched": 208,
+      "mismatch": 1072,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "1107 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+      "1072 comparable pinned header/profile rows have declaration or macro identity visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
-    "matched_identity_count": 209577,
-    "mismatch_row_count": 1107,
+    "matched_identity_count": 209612,
+    "mismatch_row_count": 1072,
     "oracle_not_applicable_candidate_fact_count": 243,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -551114,11 +550764,11 @@
     "project_only_candidate_fact_count": 1964,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 85787,
+    "reference_only_identity_count": 85752,
     "reference_only_identity_kind_counts": {
       "enum": 66,
       "function": 1189,
-      "macro": 82024,
+      "macro": 81989,
       "record": 922,
       "typedef": 1549,
       "variable": 37
@@ -551126,8 +550776,8 @@
     "row_count": 1337,
     "source_form_comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 159,
-      "mismatch": 1121,
+      "matched": 194,
+      "mismatch": 1086,
       "oracle-not-applicable": 1
     },
     "source_form_difference_count": 22208,

@@ -1,5 +1,5 @@
-#ifndef _CRABC_STDALIGN_H
-#define _CRABC_STDALIGN_H
+#ifndef _STDALIGN_H
+#define _STDALIGN_H
 
 #ifndef __cplusplus
 #if __STDC_VERSION__ < 201112L && defined(__GNUC__)
