@@ -2100,13 +2100,71 @@ class ContractTests(unittest.TestCase):
             ["page-map"],
         )
         page_map = next(component for component in summary["components"] if component["id"] == "page-map")
+        self.assertEqual(
+            page_map["checks"][0]["kind"],
+            "c-rust-page-map-success-differential",
+        )
         self.assertEqual(page_map["checks"][0]["target"], "page_map::tests::emit_m2_page_map_init_c_rust_trace")
         self.assertIn(
-            "documented C static-empty-root",
+            "static-empty-root",
             page_map["remaining_conditions"][1],
         )
         self.assertTrue(summary["exclusions"])
-        self.assertIn("the successful Rust PageMap trace is not C/Rust differential parity", summary["milestone"]["nonclaims"])
+        self.assertTrue(
+            any(
+                "does not cover cold-root initialization failure" in nonclaim
+                for nonclaim in summary["milestone"]["nonclaims"]
+            )
+        )
+
+    @staticmethod
+    def _m2_page_map_trace(*, rust: bool) -> dict[str, int]:
+        trace = {key: 1 for key in RUNNER.M2_PAGE_MAP_TRACE_KEYS}
+        trace.update(
+            {
+                "m2.page_map.control.page_size": 4096,
+                "m2.page_map.control.max_vabits": 48,
+                "m2.page_map.layout.header_bytes": 56 if rust else 88,
+                "m2.page_map.layout.lock_bytes": 4 if rust else 40,
+                "m2.page_map.init.reserve_count": 524288,
+                "m2.page_map.init.reserved_count": 524794 if rust else 524790,
+                "m2.page_map.init.committed_count": 16890 if rust else 16886,
+                "m2.page_map.extend.map_index": 16891 if rust else 16887,
+                "m2.page_map.extend.start_sub_index": 8191,
+                "m2.page_map.extend.slice_count": 2,
+                "m2.page_map.extend.committed_before": 16890 if rust else 16886,
+                "m2.page_map.extend.committed_after": 24570 if rust else 24566,
+                "m2.page_map.destroy.root_unpublished_before": 1 if rust else 0,
+            }
+        )
+        return trace
+
+    def test_m2_page_map_trace_schema_accepts_the_controlled_selected_record(self) -> None:
+        c_trace = self._m2_page_map_trace(rust=False)
+        output = "CRABC_MI_M2_PAGE_MAP_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_PAGE_MAP_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_page_map_trace(output, source="pinned C")
+        RUNNER.validate_m2_page_map_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_page_map_trace(rust=True)
+        RUNNER.validate_m2_page_map_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_page_map_trace(parsed_c, rust_trace)
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_PAGE_MAP_TRACE_KEYS)
+            - len(RUNNER.M2_PAGE_MAP_HEADER_DEPENDENT_KEYS)
+            - 1,
+        )
+        self.assertEqual(comparison["root_ownership_difference"]["pinned_c"], 0)
+        self.assertEqual(comparison["root_ownership_difference"]["rust"], 1)
+
+    def test_m2_page_map_trace_comparison_rejects_an_unmet_selected_relation(self) -> None:
+        c_trace = self._m2_page_map_trace(rust=False)
+        rust_trace = self._m2_page_map_trace(rust=True)
+        rust_trace["m2.page_map.register.first_lookup_matches"] = 0
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_page_map_trace(c_trace, rust_trace)
 
     def test_m2_parser_is_native_only_and_mutually_exclusive(self) -> None:
         with mock.patch.object(sys, "argv", ["run.py", "--m2"]):

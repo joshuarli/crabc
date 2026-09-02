@@ -354,6 +354,36 @@ result may refine it only when it can prove retained ownership.
   for shared threads, or page-bearing runtime integration beyond the recorded
   bounded ticket-zero and sequential later-thread slices.
 
+### `CRABC-MI-PAGE-MAP-HEADER-AND-ROOT-OWNER` — recorded M2 success-differential boundary
+
+- **Upstream/Rust:** pinned `src/page-map.c:228-457,367-394`, including
+  `mi_page_map_t`, `mi_page_map_init_once`, `mi_page_map_set_range`, and
+  `_mi_page_map_unsafe_destroy`; represented by `page_map::PageMapHeader`,
+  `PageMap`, and `PageMapRoot`.
+- **Category:** Linux/AArch64, source-private M2 success-path evidence only.
+  It has no public C ABI effect and does not establish process lifecycle,
+  allocation routing, or fault parity.
+- **Difference:** under the pinned Linux/musl fixture, C embeds its
+  40-byte `pthread_mutex_t` `mi_lock_t` in an 88-byte PageMap header. The
+  `#![no_std]` Rust port embeds its 4-byte `PrivateLock` in a 56-byte header.
+  Because the source sizing formula includes that header, C records
+  `reserved/initial-committed = 524790/16886` and Rust records
+  `524794/16890`; their selected lazy-extension delta is the same 7,680
+  entries. C destroys a still-published global root and restores
+  `mi_page_map_empty`; Rust's separately owned `PageMapRoot` must be
+  unpublished before `PageMap::destroy`. These are explicit representation and
+  ownership-boundary records, not silently accepted exact-equality fields.
+- **Evidence:** `./scripts/dev.sh allocator-m2` builds the direct pinned-C
+  source fixture and compares the fixed 4-KiB/48-bit selected trace with
+  `page_map::tests::emit_m2_page_map_init_c_rust_trace`. It requires every
+  other controlled transition field to match and records both header/root
+  values in `m2-memory-substrate-latest.json`.
+- **Decision/removal:** accepted for this selected no_std PageMap witness.
+  A future change may alter the representation only with a source-order,
+  ownership, differential, and performance review. This entry does not waive
+  the remaining M2 PageMap failure, cold-root, concurrent-lifetime, or
+  allocator-integration conditions.
+
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 
 - **Upstream/Rust:** `src/arena.c:341-406,525-569,1573-1611,1676-1791,1794-1912`,

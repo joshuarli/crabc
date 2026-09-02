@@ -186,6 +186,7 @@ M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
 M2_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-v3.5.0.json"
 M2_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "m2-memory-substrate-latest.json"
 M2_MEMORY_SUBSTRATE_CARGO_TARGET = ARTIFACT_ROOT / "m2-memory-substrate/cargo-target"
+M2_PAGE_MAP_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m2-memory-substrate/page-map-trace"
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -252,17 +253,59 @@ M2_MEMORY_SUBSTRATE_EXCLUSION_DISPOSITIONS = frozenset(
     {"deferred-to-m3", "deferred-to-m8", "outside-m2"}
 )
 M2_PAGE_MAP_TRACE_KEYS = (
-    "m2.page_map.initial.root_present",
-    "m2.page_map.initial.committed_nonzero",
-    "m2.page_map.initial.committed_le_reserved",
-    "m2.page_map.initial.submap_zero_present",
-    "m2.page_map.registration.committed_non_decreasing",
-    "m2.page_map.registration.lookup_matches",
-    "m2.page_map.unregister.lookup_absent",
-    "m2.page_map.reregister.ok",
-    "m2.page_map.reregister.lookup_matches",
-    "m2.page_map.reregister.committed_non_decreasing",
+    "m2.page_map.control.page_size",
+    "m2.page_map.control.has_overcommit_false",
+    "m2.page_map.control.max_vabits",
+    "m2.page_map.layout.header_bytes",
+    "m2.page_map.layout.lock_bytes",
+    "m2.page_map.init.root_empty_before",
+    "m2.page_map.init.root_published",
+    "m2.page_map.init.reserve_count",
+    "m2.page_map.init.reserved_count",
+    "m2.page_map.init.committed_count",
+    "m2.page_map.init.committed_lt_reserved",
+    "m2.page_map.init.submap_zero_present",
+    "m2.page_map.extend.map_index",
+    "m2.page_map.extend.start_sub_index",
+    "m2.page_map.extend.slice_count",
+    "m2.page_map.extend.committed_before",
+    "m2.page_map.extend.committed_after",
+    "m2.page_map.extend.committed_increased",
+    "m2.page_map.extend.first_submap_present",
+    "m2.page_map.extend.second_submap_present",
+    "m2.page_map.extend.submaps_distinct",
+    "m2.page_map.register.first_lookup_matches",
+    "m2.page_map.register.second_lookup_matches",
+    "m2.page_map.unregister.first_lookup_absent",
+    "m2.page_map.unregister.second_lookup_absent",
+    "m2.page_map.rollback.register_failed",
+    "m2.page_map.rollback.submap_present",
+    "m2.page_map.rollback.entry_cleared",
+    "m2.page_map.rollback.out_of_bounds_absent",
+    "m2.page_map.destroy.root_unpublished_before",
+    "m2.page_map.destroy.root_absent_after",
 )
+# The source formula deliberately incorporates the concrete mapped header.
+# Pinned C carries a musl `pthread_mutex_t`; the no_std port uses its mapped
+# private futex lock.  Their header-size-dependent entry counts can therefore
+# differ without changing the selected source-relative state transitions.
+# Keep each value in the record and report both sides; never silently compare
+# or normalize it as an exact-equality field.
+M2_PAGE_MAP_HEADER_DEPENDENT_KEYS = (
+    "m2.page_map.layout.header_bytes",
+    "m2.page_map.layout.lock_bytes",
+    "m2.page_map.init.reserved_count",
+    "m2.page_map.init.committed_count",
+    "m2.page_map.extend.map_index",
+    "m2.page_map.extend.committed_before",
+    "m2.page_map.extend.committed_after",
+)
+# C owns the global page-map root and resets it in `_mi_page_map_unsafe_destroy`.
+# Rust keeps `PageMapRoot` as a separate owner and must unpublish it before the
+# typed `PageMap::destroy` precondition can hold.  This explicit record keeps
+# that lifecycle distinction visible while both traces prove an absent root
+# after destruction.
+M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY = "m2.page_map.destroy.root_unpublished_before"
 M1_FOUNDATIONS_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
     {
@@ -827,6 +870,16 @@ M1_COMPILER_TLS_ORACLE_SOURCES = tuple(
 # definition singular.
 M1_COMPILER_TLS_SAME_TLD_TRACE_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/init.c"
+)
+
+# The selected M2 PageMap producer directly includes the three source units
+# whose private state and source-order initialization are under test. Keep
+# those units out of the ordinary C source list so every definition remains
+# singular in the dedicated executable.
+M2_PAGE_MAP_ORACLE_SOURCES = tuple(
+    item
+    for item in ORACLE_SOURCES
+    if item not in {"src/os.c", "src/page-map.c", "src/init.c"}
 )
 
 # The reviewed M4 and M5 adapters are intentionally partial adaptations, not a
@@ -2328,6 +2381,169 @@ int main(void) {
   U("m1.raw.entropy.sixteen_success", entropy_sixteen);
   U("m1.raw.threadpool.false", !_mi_prim_thread_is_in_threadpool());
   puts("CRABC_MI_M1_RAW_TRACE_END");
+  return 0;
+}
+"""
+
+
+# This fixture directly includes the pinned C `src/os.c`, `src/page-map.c`,
+# and `src/init.c` so it can force the selected non-overcommit branch and
+# observe the source-private two-level map lifecycle. The dedicated source
+# list omits those three units. Setup follows the source process-init order
+# through `_mi_page_map_init`; the trace then uses the source range writer with
+# a synthetic page marker, avoiding unstable virtual addresses while covering
+# lazy extension, lookup, unregister, natural boundary rollback, and an absent
+# root after destruction. The global-C versus owner-Rust root order and the
+# static empty-root/once failure behavior are intentionally explicit
+# differences, not part of exact success equality.
+M2_PAGE_MAP_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+
+// Keep source-private definitions in this translation unit. The normal C
+// source list omits these exact three files to preserve one-definition C
+// linkage and this source order mirrors init.c's prerequisites.
+#include "os.c"
+#include "page-map.c"
+#include "init.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+int main(void) {
+  _mi_detect_cpu_features();
+  _mi_options_init();
+  mi_option_set_enabled(mi_option_pagemap_commit, false);
+  if (mi_option_is_enabled(mi_option_pagemap_commit)) return 10;
+  mi_option_set(mi_option_max_vabits, MI_MAX_VABITS);
+  if (mi_option_get(mi_option_max_vabits) != MI_MAX_VABITS) return 11;
+  _mi_stats_init();
+  _mi_os_init();
+  // Force the selected reserve-then-commit path independently of host
+  // overcommit policy; this is a fixture precondition, not a production mode.
+  mi_os_mem_config.has_overcommit = false;
+  mi_heap_main_init();
+
+  const bool root_empty_before = (_mi_page_map() == &mi_page_map_empty);
+  if (!_mi_page_map_init()) return 12;
+  mi_page_map_t* const page_map = _mi_page_map();
+  if (page_map == NULL) return 13;
+
+  const size_t initial_committed =
+      mi_atomic_load_relaxed(&page_map->committed_count);
+  const size_t reserved_count =
+      (page_map->reserved_size < sizeof(mi_page_map_t)
+          ? 0
+          : 1 + (page_map->reserved_size - sizeof(mi_page_map_t)) / sizeof(mi_submap_t));
+  size_t vbits = (size_t)mi_option_get_clamp(mi_option_max_vabits, 0, MI_MAX_VABITS);
+  if (vbits == 0) vbits = _mi_os_virtual_address_bits();
+  if (vbits < MI_PAGE_MAP_SUB_SHIFT + MI_ARENA_SLICE_SHIFT) {
+    vbits = MI_PAGE_MAP_SUB_SHIFT + MI_ARENA_SLICE_SHIFT;
+  }
+  if (vbits < MI_MIN_VABITS) vbits = MI_MIN_VABITS;
+  if (vbits > MI_MAX_VABITS) vbits = MI_MAX_VABITS;
+  const size_t reserve_count =
+      (MI_ZU(1) << (vbits - MI_PAGE_MAP_SUB_SHIFT - MI_ARENA_SLICE_SHIFT));
+  const bool root_published = (page_map != &mi_page_map_empty);
+  const bool committed_lt_reserved = initial_committed < reserved_count;
+  const bool submap_zero_present =
+      (mi_atomic_load_ptr_relaxed(mi_page_t*, &page_map->submaps[0]) != NULL);
+
+  // Start one root entry beyond the initial committed prefix and at the last
+  // sub-entry. Two slices therefore cross into two lazily allocated submaps.
+  mi_page_t page = mi_init_struct_zero;
+  const size_t map_index = initial_committed + 1;
+  const size_t sub_index = MI_PAGE_MAP_SUB_COUNT - 1;
+  const size_t slice_count = 2;
+  if (map_index + 1 >= reserved_count) return 14;
+  const size_t committed_before =
+      mi_atomic_load_relaxed(&page_map->committed_count);
+  const bool register_ok = mi_page_map_set_range(
+      page_map, &page, map_index, sub_index, slice_count);
+  const size_t committed_after =
+      mi_atomic_load_relaxed(&page_map->committed_count);
+  const size_t submap_count =
+      (page_map->submaps[map_index] != NULL) +
+      (page_map->submaps[map_index + 1] != NULL);
+  const bool first_submap_present = page_map->submaps[map_index] != NULL;
+  const bool second_submap_present = page_map->submaps[map_index + 1] != NULL;
+  const bool submaps_distinct =
+      first_submap_present && second_submap_present &&
+      (page_map->submaps[map_index] != page_map->submaps[map_index + 1]);
+  const bool lookup_first =
+      (page_map->submaps[map_index][sub_index] == &page);
+  const bool lookup_second =
+      (page_map->submaps[map_index + 1][0] == &page);
+
+  const bool unregister_ok = mi_page_map_set_range(
+      page_map, NULL, map_index, sub_index, slice_count);
+  const bool unregister_first_absent =
+      (page_map->submaps[map_index][sub_index] == NULL);
+  const bool unregister_second_absent =
+      (page_map->submaps[map_index + 1][0] == NULL);
+
+  // Commit the final root entry so the source's range writer reaches its
+  // second iteration and can prove rollback after the out-of-bounds index.
+  if (!mi_page_map_commit_entries(page_map, reserved_count - 1)) return 15;
+  const size_t final_index = reserved_count - 1;
+  const bool rollback_failed = !mi_page_map_set_range(
+      page_map, &page, final_index, MI_PAGE_MAP_SUB_COUNT - 1, 2);
+  const bool rollback_submap_present = page_map->submaps[final_index] != NULL;
+  const bool rollback_first_cleared =
+      page_map->submaps[final_index][MI_PAGE_MAP_SUB_COUNT - 1] == NULL;
+  const bool rollback_out_of_bounds_absent = (final_index + 1 >= reserved_count);
+  const bool all_relations =
+      initial_committed != 0 && reserved_count >= reserve_count &&
+      root_empty_before && root_published && committed_lt_reserved &&
+      submap_zero_present && register_ok &&
+      committed_after >= committed_before && committed_after > committed_before &&
+      submap_count == 2 && submaps_distinct && lookup_first && lookup_second &&
+      unregister_ok && unregister_first_absent && unregister_second_absent &&
+      rollback_failed && rollback_submap_present &&
+      rollback_first_cleared && rollback_out_of_bounds_absent;
+  if (!all_relations) return 16;
+
+  const bool root_unpublished_before = (_mi_page_map() == &mi_page_map_empty);
+  _mi_page_map_unsafe_destroy();
+  const bool root_absent_after = (_mi_page_map() == &mi_page_map_empty);
+  if (!root_absent_after) return 17;
+
+  puts("CRABC_MI_M2_PAGE_MAP_TRACE_BEGIN");
+  U("m2.page_map.control.page_size", _mi_os_page_size());
+  U("m2.page_map.control.has_overcommit_false", !mi_os_mem_config.has_overcommit);
+  U("m2.page_map.control.max_vabits", mi_option_get(mi_option_max_vabits));
+  U("m2.page_map.layout.header_bytes", sizeof(mi_page_map_t));
+  U("m2.page_map.layout.lock_bytes", sizeof(mi_lock_t));
+  U("m2.page_map.init.root_empty_before", root_empty_before);
+  U("m2.page_map.init.root_published", root_published);
+  U("m2.page_map.init.reserve_count", reserve_count);
+  U("m2.page_map.init.reserved_count", reserved_count);
+  U("m2.page_map.init.committed_count", initial_committed);
+  U("m2.page_map.init.committed_lt_reserved", committed_lt_reserved);
+  U("m2.page_map.init.submap_zero_present", submap_zero_present);
+  U("m2.page_map.extend.map_index", map_index);
+  U("m2.page_map.extend.start_sub_index", sub_index);
+  U("m2.page_map.extend.slice_count", slice_count);
+  U("m2.page_map.extend.committed_before", committed_before);
+  U("m2.page_map.extend.committed_after", committed_after);
+  U("m2.page_map.extend.committed_increased", committed_after > committed_before);
+  U("m2.page_map.extend.first_submap_present", first_submap_present);
+  U("m2.page_map.extend.second_submap_present", second_submap_present);
+  U("m2.page_map.extend.submaps_distinct", submaps_distinct);
+  U("m2.page_map.register.first_lookup_matches", lookup_first);
+  U("m2.page_map.register.second_lookup_matches", lookup_second);
+  U("m2.page_map.unregister.first_lookup_absent", unregister_first_absent);
+  U("m2.page_map.unregister.second_lookup_absent", unregister_second_absent);
+  U("m2.page_map.rollback.register_failed", rollback_failed);
+  U("m2.page_map.rollback.submap_present", rollback_submap_present);
+  U("m2.page_map.rollback.entry_cleared", rollback_first_cleared);
+  U("m2.page_map.rollback.out_of_bounds_absent", rollback_out_of_bounds_absent);
+  U("m2.page_map.destroy.root_unpublished_before", root_unpublished_before);
+  U("m2.page_map.destroy.root_absent_after", root_absent_after);
+  puts("CRABC_MI_M2_PAGE_MAP_TRACE_END");
   return 0;
 }
 """
@@ -5022,7 +5238,12 @@ def validate_m2_memory_substrate_contract(
                 not isinstance(check_id, str)
                 or not re.fullmatch(r"[a-z][a-z0-9-]*", check_id)
                 or check_id in check_ids
-                or raw_check.get("kind") not in {"rust-unit", "rust-page-map-success-trace"}
+                or raw_check.get("kind")
+                not in {
+                    "rust-unit",
+                    "rust-page-map-success-trace",
+                    "c-rust-page-map-success-differential",
+                }
                 or not isinstance(target_name, str)
                 or not isinstance(raw_check.get("expected_passed_test_count"), int)
                 or isinstance(raw_check.get("expected_passed_test_count"), bool)
@@ -5140,7 +5361,77 @@ def m2_memory_substrate_check_command(
     return command
 
 
-def run_m2_memory_substrate_checks(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
+def run_m2_page_map_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the selected source-private C PageMap lifecycle with Rust."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-page-map-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_page_map_trace(
+            compiler,
+            source,
+            M2_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "page_map::tests::emit_m2_page_map_init_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 PageMap success trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_page_map_trace(rust_output, source="Rust")
+    validate_m2_page_map_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 PageMap success trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_page_map_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "controlled pinned-C src/os.c, src/page-map.c, and src/init.c source-order "
+            "producer compared with the Rust PageMap success lifecycle: initial partial "
+            "commitment, two-submap lazy extension, lookup/unregister, natural final-boundary "
+            "rollback, and an absent post-destroy root. Header-dependent raw counts and the "
+            "C-global versus Rust-owner root-unpublication order remain explicit recorded "
+            "differences; the cold static-empty-root/once failure difference is excluded."
+        ),
+        "status": comparison["status"],
+    }
+
+
+def run_m2_memory_substrate_checks(
+    summary: Mapping[str, Any], pin: Mapping[str, str], *, offline: bool
+) -> list[dict[str, Any]]:
     """Run only the explicitly selected M2 checks in a private target directory."""
 
     environment = os.environ.copy()
@@ -5148,6 +5439,26 @@ def run_m2_memory_substrate_checks(summary: Mapping[str, Any]) -> list[dict[str,
     records: list[dict[str, Any]] = []
     for component in summary["components"]:
         for check in component["checks"]:
+            if check["kind"] == "c-rust-page-map-success-differential":
+                differential = run_m2_page_map_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
             command = m2_memory_substrate_check_command(summary["execution"], check)
             result = command_record(
                 command,
@@ -5165,18 +5476,8 @@ def run_m2_memory_substrate_checks(summary: Mapping[str, Any]) -> list[dict[str,
                 )
             trace: dict[str, int] | None = None
             if check["kind"] == "rust-page-map-success-trace":
-                trace = parse_address_independent_trace(
-                    output,
-                    begin="CRABC_MI_M2_PAGE_MAP_TRACE_BEGIN",
-                    end="CRABC_MI_M2_PAGE_MAP_TRACE_END",
-                    description="M2 PageMap success trace",
-                )
-                if set(trace) != set(M2_PAGE_MAP_TRACE_KEYS):
-                    raise HarnessError(
-                        "M2 PageMap success trace keys differ from the fixed contract"
-                    )
-                if any(value != 1 for value in trace.values()):
-                    raise HarnessError("M2 PageMap success trace contains an unmet relation")
+                trace = parse_m2_page_map_trace(output, source="Rust")
+                validate_m2_page_map_trace(trace, source="Rust")
             records.append(
                 {
                     "component": component["id"],
@@ -5304,12 +5605,11 @@ def m2_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
 def run_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     """Execute the current partial M2 gate and bind it to one clean commit."""
 
-    del offline  # The focused Rust check needs only the already-built workspace.
     source_before = m2_memory_substrate_source_state()
     pin = load_pin()
     contract = read_json(M2_MEMORY_SUBSTRATE_CONTRACT)
     summary = validate_m2_memory_substrate_contract(contract, pin)
-    focused_checks = run_m2_memory_substrate_checks(summary)
+    focused_checks = run_m2_memory_substrate_checks(summary, pin, offline=offline)
     source_after = m2_memory_substrate_source_state()
     report = m2_memory_substrate_report(
         contract=contract,
@@ -10145,6 +10445,151 @@ def parse_m1_compiler_tls_trace(output: str) -> dict[str, int]:
     )
 
 
+def parse_m2_page_map_trace(output: str, *, source: str) -> dict[str, int]:
+    """Parse the fixed address-free selected PageMap lifecycle record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_PAGE_MAP_TRACE_BEGIN",
+        end="CRABC_MI_M2_PAGE_MAP_TRACE_END",
+        description=f"{source} M2 PageMap trace",
+    )
+    if set(trace) != set(M2_PAGE_MAP_TRACE_KEYS):
+        missing = sorted(set(M2_PAGE_MAP_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_PAGE_MAP_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 PageMap trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_page_map_trace(trace: Mapping[str, int], *, source: str) -> None:
+    """Validate stable controls and relations before C/Rust comparison."""
+
+    if set(trace) != set(M2_PAGE_MAP_TRACE_KEYS):
+        raise HarnessError(f"{source} M2 PageMap trace keys differ from the fixed contract")
+    for key in M2_PAGE_MAP_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(f"{source} M2 PageMap trace field is not an integer: {key}")
+    expected_one = (
+        "m2.page_map.control.has_overcommit_false",
+        "m2.page_map.init.root_empty_before",
+        "m2.page_map.init.root_published",
+        "m2.page_map.init.committed_lt_reserved",
+        "m2.page_map.init.submap_zero_present",
+        "m2.page_map.extend.committed_increased",
+        "m2.page_map.extend.first_submap_present",
+        "m2.page_map.extend.second_submap_present",
+        "m2.page_map.extend.submaps_distinct",
+        "m2.page_map.register.first_lookup_matches",
+        "m2.page_map.register.second_lookup_matches",
+        "m2.page_map.unregister.first_lookup_absent",
+        "m2.page_map.unregister.second_lookup_absent",
+        "m2.page_map.rollback.register_failed",
+        "m2.page_map.rollback.submap_present",
+        "m2.page_map.rollback.entry_cleared",
+        "m2.page_map.rollback.out_of_bounds_absent",
+        "m2.page_map.destroy.root_absent_after",
+    )
+    if any(trace[key] != 1 for key in expected_one):
+        raise HarnessError(f"{source} M2 PageMap trace contains an unmet relation")
+    if trace["m2.page_map.control.page_size"] != 4 * 1024:
+        raise HarnessError(f"{source} M2 PageMap trace is not controlled to 4KiB pages")
+    if trace["m2.page_map.control.max_vabits"] != 48:
+        raise HarnessError(f"{source} M2 PageMap trace is not controlled to 48 virtual-address bits")
+    if trace["m2.page_map.init.reserve_count"] != 524288:
+        raise HarnessError(f"{source} M2 PageMap reserve count changed from the frozen two-level geometry")
+    if trace["m2.page_map.layout.header_bytes"] <= 0 or trace["m2.page_map.layout.lock_bytes"] <= 0:
+        raise HarnessError(f"{source} M2 PageMap trace has an empty mapped-header representation")
+    if trace["m2.page_map.init.reserved_count"] < trace["m2.page_map.init.reserve_count"]:
+        raise HarnessError(f"{source} M2 PageMap reserved count is below its source reserve count")
+    if trace["m2.page_map.init.committed_count"] <= 0:
+        raise HarnessError(f"{source} M2 PageMap committed prefix is empty")
+    if trace["m2.page_map.init.committed_count"] >= trace["m2.page_map.init.reserved_count"]:
+        raise HarnessError(f"{source} M2 PageMap initial prefix is not partial")
+    if trace["m2.page_map.extend.start_sub_index"] != (1 << 13) - 1:
+        raise HarnessError(f"{source} M2 PageMap extension does not start at a submap boundary")
+    if trace["m2.page_map.extend.slice_count"] != 2:
+        raise HarnessError(f"{source} M2 PageMap extension span changed")
+    if trace["m2.page_map.extend.map_index"] != trace["m2.page_map.init.committed_count"] + 1:
+        raise HarnessError(f"{source} M2 PageMap extension index is not source-relative")
+    if trace["m2.page_map.extend.committed_before"] != trace["m2.page_map.init.committed_count"]:
+        raise HarnessError(f"{source} M2 PageMap extension baseline drifted")
+    if trace["m2.page_map.extend.committed_after"] < trace["m2.page_map.extend.committed_before"]:
+        raise HarnessError(f"{source} M2 PageMap committed prefix regressed")
+    if (
+        trace["m2.page_map.extend.committed_after"]
+        - trace["m2.page_map.extend.committed_before"]
+        != 7680
+    ):
+        raise HarnessError(f"{source} M2 PageMap extension no longer reaches the selected source commit boundary")
+    root_unpublished_before = trace[M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY]
+    if root_unpublished_before not in {0, 1}:
+        raise HarnessError(f"{source} M2 PageMap root ownership observation is not boolean")
+    if source == "pinned C" and root_unpublished_before != 0:
+        raise HarnessError("pinned C M2 PageMap root unexpectedly disappeared before destruction")
+    if source == "Rust" and root_unpublished_before != 1:
+        raise HarnessError("Rust M2 PageMap root was not unpublished before typed destruction")
+
+
+def compare_m2_page_map_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Compare stable transitions while recording intentional representation differences."""
+
+    validate_m2_page_map_trace(c_trace, source="pinned C")
+    validate_m2_page_map_trace(rust_trace, source="Rust")
+    exact_keys = tuple(
+        key
+        for key in M2_PAGE_MAP_TRACE_KEYS
+        if key not in M2_PAGE_MAP_HEADER_DEPENDENT_KEYS
+        and key != M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY
+    )
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in exact_keys
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 PageMap success trace differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(exact_keys),
+        "header_dependent": {
+            "classification": (
+                "the C header embeds musl pthread state while the no_std Rust header "
+                "embeds a private futex lock; raw entry counts remain explicit evidence "
+                "and are checked by per-trace source-relative invariants"
+            ),
+            "fields": list(M2_PAGE_MAP_HEADER_DEPENDENT_KEYS),
+            "pinned_c": {
+                key: c_trace[key] for key in M2_PAGE_MAP_HEADER_DEPENDENT_KEYS
+            },
+            "rust": {
+                key: rust_trace[key] for key in M2_PAGE_MAP_HEADER_DEPENDENT_KEYS
+            },
+        },
+        "root_ownership_difference": {
+            "classification": (
+                "C destroys then resets its global static root; Rust's separately owned "
+                "PageMapRoot is unpublished before PageMap::destroy"
+            ),
+            "field": M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY,
+            "pinned_c": c_trace[M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY],
+            "rust": rust_trace[M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY],
+        },
+        "status": "matched",
+    }
+
+
 def parse_rust_test_count(output: str) -> int:
     matches = re.findall(
         r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
@@ -11196,6 +11641,60 @@ def build_m1_raw_primitive_trace(
                 "src/os.c",
                 "src/prim/prim.c",
                 "src/prim/unix/prim.c",
+            ),
+        ),
+    }
+
+
+def build_m2_page_map_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build and execute the selected pinned-C two-level PageMap producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-page-map-trace-probe.c"
+    trace_binary = profile_dir / "m2-page-map-trace-probe"
+    trace_source.write_text(M2_PAGE_MAP_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M2_PAGE_MAP_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 PageMap trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 PageMap trace execution")
+    record = parse_m2_page_map_trace(str(run["stdout"]), source="pinned C")
+    validate_m2_page_map_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "src/init.c",
+                "src/os.c",
+                "src/page-map.c",
             ),
         ),
     }

@@ -43,15 +43,15 @@
         {
           "expected_passed_test_count": 1,
           "id": "successful-page-map-lifecycle",
-          "kind": "rust-page-map-success-trace",
+          "kind": "c-rust-page-map-success-differential",
           "target": "page_map::tests::emit_m2_page_map_init_c_rust_trace"
         }
       ],
       "completion_status": "partial",
       "id": "page-map",
       "remaining_conditions": [
-        "add the pinned-C producer and compare the full selected lifecycle trace, including extension and release failure branches",
-        "resolve the documented C static-empty-root versus Rust poisoned cold-initialization failure difference"
+        "cover PageMap extension and release failure-injection branches with ownership-preserving evidence",
+        "resolve the documented C static-empty-root versus Rust poisoned cold-root initialization-failure difference"
       ],
       "source_units": [
         "src/page-map.c",
@@ -164,8 +164,7 @@
     "completion_rule": "M2 is complete only when all eight categories are complete, every named condition is cleared, and current-commit native Linux/AArch64 evidence covers the full selected substrate and failure matrix.",
     "id": "m2",
     "nonclaims": [
-      "the successful Rust PageMap trace is not C/Rust differential parity",
-      "the successful PageMap trace does not cover cold-root initialization failure or fault injection",
+      "the selected PageMap success differential compares source-relative transitions only, records header-layout and root-owner differences, and does not cover cold-root initialization failure or fault injection",
       "this gate does not claim a production allocator backend or any later allocator milestone",
       "this gate does not claim non-AArch64 support"
     ],
