@@ -321,17 +321,17 @@ impl ProcessMainInitializationStorage {
                 return Err(ProcessMainInitError::HeapFoundation(error));
             }
         };
-        let metadata_ready = match metadata.prepare_for_main_subprocess(config, subprocess) {
-            Ok(ready) => ready,
+        let metadata_bound = match metadata.prepare_for_main_subprocess(config, subprocess) {
+            Ok(bound) => bound,
             Err(error) => {
                 selection.retain();
                 self.publish_terminal_state_and_release(completion, RETAINED);
                 return Err(ProcessMainInitError::Metadata(error));
             }
         };
-        debug_assert!(metadata_ready.matches(metadata));
-        debug_assert!(core::ptr::eq(metadata_ready.subprocess().as_ptr(), subprocess.as_ptr()));
-        debug_assert_eq!(metadata_ready.memory_config(), config);
+        debug_assert!(metadata_bound.matches(metadata));
+        debug_assert!(core::ptr::eq(metadata_bound.subprocess().as_ptr(), subprocess.as_ptr()));
+        debug_assert_eq!(metadata_bound.memory_config(), config);
 
         let page_map = match page_map_storage.initialize(config, subprocess) {
             Ok(page_map) => page_map,
@@ -345,7 +345,8 @@ impl ProcessMainInitializationStorage {
         // SAFETY: preflight established current-thread/root ownership; the
         // source-shaped once claim and selected linear token exclude another
         // ticket-zero route; `foundation` exists in its final static slot;
-        // detached metadata is ready; and the exact selected PageMap has
+        // detached metadata identity is bound but has no backing; and the
+        // exact selected PageMap has
         // been initialized before compiler-TLS root publication.
         let attachment = match unsafe {
             MainStaticTheapAttachment::begin_after_heap_foundation(foundation, selection)
@@ -805,7 +806,7 @@ mod tests {
     };
     use crate::main_heap_page::MainHeapThreadProcessPageAllocator;
     use crate::main_heap_thread::MainHeapThreadAttachment;
-    use crate::meta::MetaAllocator;
+    use crate::meta::{MetaAllocator, MetaError};
     use crate::os::{fault, MapAccess, PageSize};
     use crate::process_arena::{ProcessPageArenaLease, ProcessSharedArenaStorage};
     use crate::single_thread::PageAllocatorEngine;
@@ -879,11 +880,10 @@ mod tests {
                 ready.page_map().unwrap().root().unwrap(),
                 "the coordinator publishes the exact process PageMap root"
             );
-            assert!(metadata.test_is_ready_for(config, subprocess));
-            assert_ne!(
-                metadata.test_private_page_map_address().unwrap(),
-                ready.page_map().unwrap().page_map().unwrap() as *const _ as usize,
-                "the detached metadata map is never reused as the global PageMap"
+            assert!(metadata.test_is_bound_for(config, subprocess));
+            assert!(
+                metadata.test_private_page_map_address().is_none(),
+                "source startup binds the detached metadata Theap but does not map its first arena"
             );
             assert!(
                 ProcessSharedArenaStorage::global().test_is_cold(),
@@ -1134,7 +1134,9 @@ mod tests {
             initializer_result_sender
                 .send(matches!(
                     result,
-                    Err(ProcessMainInitError::Metadata(MetaError::InitializationFailed))
+                    Err(ProcessMainInitError::PageMap(
+                        ProcessPageMapError::Initialization(crabc_core::Errno::NOMEM)
+                    ))
                 ))
                 .expect("the failure-race witness remains live");
         });
@@ -1179,7 +1181,7 @@ mod tests {
             initializer_result_receiver
                 .recv_timeout(Duration::from_secs(2))
                 .expect("the initializer reaches its injected terminal failure"),
-            "the injected source-order metadata failure remains observable"
+            "the injected source-order global PageMap failure remains observable"
         );
         let racer_observed_retained = racer_result_receiver
             .recv_timeout(Duration::from_secs(2))
@@ -1241,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_prepare_failure_after_heap_foundation_never_publishes_a_global_map_or_tls_root() {
+    fn process_main_binds_metadata_before_global_page_map_failure() {
         thread::spawn(|| {
             let config = memory_config();
             let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
@@ -1250,6 +1252,7 @@ mod tests {
                 1,
                 crabc_core::Errno::NOMEM,
             ));
+
             assert!(matches!(
                 unsafe {
                     storage.initialize_with_test_components(
@@ -1260,10 +1263,21 @@ mod tests {
                         page_map_storage,
                     )
                 },
-                Err(ProcessMainInitError::Metadata(MetaError::InitializationFailed))
+                Err(ProcessMainInitError::PageMap(
+                    ProcessPageMapError::Initialization(crabc_core::Errno::NOMEM)
+                ))
             ));
+            assert_eq!(fault.observed(), 1);
             fault.set(fault::Plan::disabled());
 
+            assert!(
+                metadata.test_is_bound_for(config, subprocess),
+                "the source-static detached image binds before the global PageMap attempt"
+            );
+            assert!(
+                metadata.test_private_page_map_address().is_none(),
+                "the failed global PageMap attempt cannot have formed metadata backing"
+            );
             assert_eq!(storage.state.load(Ordering::Acquire), RETAINED);
             assert_eq!(subprocess.total_thread_count(), 0);
             assert_eq!(subprocess.live_thread_count(), 0);
@@ -1275,7 +1289,61 @@ mod tests {
             ));
         })
         .join()
-        .expect("metadata-failure test thread completes");
+        .expect("global-PageMap-ordering test thread completes");
+    }
+
+    #[test]
+    fn process_main_defers_private_metadata_backing_until_first_demand() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let mut owner = unsafe {
+                storage.initialize_with_test_components(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the source-order process startup binds empty detached metadata");
+
+            assert!(metadata.test_is_bound_for(config, subprocess));
+            assert!(
+                metadata.test_private_page_map_address().is_none(),
+                "process startup must not form detached metadata backing before its first request"
+            );
+
+            let fault = fault::install(fault::Plan::at(
+                fault::Point::Map,
+                1,
+                crabc_core::Errno::NOMEM,
+            ));
+            assert!(matches!(
+                metadata.zalloc_for_main_subprocess(config, subprocess, 8),
+                Err(MetaError::InitializationFailed)
+            ));
+            assert_eq!(fault.observed(), 1);
+            assert!(
+                metadata.test_private_page_map_address().is_none(),
+                "an unpublished first-backing failure leaves no private PageMap"
+            );
+            fault.set(fault::Plan::disabled());
+
+            let mut allocation = metadata
+                .zalloc_for_main_subprocess(config, subprocess, 8)
+                .expect("the first detached metadata request creates its private backing");
+            assert!(metadata.test_private_page_map_address().is_some());
+            metadata
+                .free(&mut allocation)
+                .expect("the first metadata capability releases through its detached owner");
+
+            owner
+                .teardown()
+                .expect("the bounded ticket-zero owner tears down");
+        })
+        .join()
+        .expect("deferred-metadata-backing test thread completes");
     }
 
     #[test]

@@ -62,8 +62,13 @@ use crate::types::{
 use crate::subproc::MainSubprocess;
 
 const COLD: u8 = 0;
-const READY: u8 = 1;
-const FAILED: u8 = 2;
+/// The process-static detached metadata image names one immutable source
+/// subprocess/configuration tuple but has not taken a first backing map.
+const BOUND: u8 = 1;
+/// The detached image has its bounded private backing and may service metadata
+/// allocation/free operations.
+const READY: u8 = 2;
+const FAILED: u8 = 3;
 
 const ALLOCATION_LIVE: u8 = 0;
 const ALLOCATION_MOVING: u8 = 1;
@@ -116,7 +121,7 @@ pub(crate) enum MetaError {
     /// The private futex operation itself failed unexpectedly.
     Lock(Errno),
     /// The supplied immutable OS-memory observations differ from the values
-    /// that created the process-lived metadata arena and page map.
+    /// that bound this process-lived detached metadata image.
     ConfigurationMismatch,
     /// This metadata owner was initialized for a different bounded
     /// process-main identity. One owner may not silently serve two
@@ -917,20 +922,21 @@ pub(crate) struct MetaAllocationAudit {
     pub(crate) high_water_capability_count: usize,
 }
 
-/// An opaque readiness witness for the detached source metadata route.
+/// An opaque binding witness for the detached source metadata route.
 ///
 /// It intentionally exposes neither the metadata PageMap nor its private
 /// arena/registry. `mi_process_theap_meta` is initialized while forming the
-/// source main Heap, but it is not the process-global PageMap or a candidate
+/// source main Heap, before the source process-global PageMap and before any
+/// first metadata allocation. It is not a candidate
 /// `ProcessPageArenaLease` backing.
 #[derive(Clone, Copy)]
-pub(crate) struct MetaAllocatorReady {
+pub(crate) struct MetaAllocatorBound {
     allocator: Pin<&'static MetaAllocator>,
     config: MemoryConfig,
     subprocess: &'static MainSubprocess,
 }
 
-impl MetaAllocatorReady {
+impl MetaAllocatorBound {
     #[inline]
     pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
         self.subprocess
@@ -1003,25 +1009,33 @@ impl MetaAllocator {
         unsafe { Pin::new_unchecked(owner) }
     }
 
-    /// Observes only whether this detached metadata owner reached READY for
-    /// one exact process tuple. It deliberately exposes no allocator/map
-    /// capability and is used to prove process-startup ordering in isolated
-    /// regressions.
+    /// Observes only whether this detached metadata owner bound one exact
+    /// process tuple. It deliberately exposes no allocator/map capability and
+    /// is used to prove process-startup ordering in isolated regressions.
     #[cfg(test)]
-    pub(crate) fn test_is_ready_for(
+    pub(crate) fn test_is_bound_for(
         self: Pin<&'static Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> bool {
+        let Ok(entry) = self.enter() else {
+            return false;
+        };
         let this = self.get_ref();
-        if this.status.load(Ordering::Acquire) != READY {
+        if !matches!(entry.status(), BOUND | READY) {
             return false;
         }
-        // SAFETY: READY Release-publishes this immutable final slot before
-        // the Acquire state observation above.
+        // SAFETY: BOUND Release-publishes this immutable final slot before the
+        // held private lock observes it. READY retains that same tuple. The
+        // same lock excludes the mutable detached session from racing this
+        // bootstrap-image observation.
         let stored_config = unsafe { *(*this.config.get()).assume_init_ref() };
         stored_config == config
             && core::ptr::eq(this.subprocess.load(Ordering::Acquire), subprocess.as_ptr())
+            // SAFETY: BOUND also writes the final pinned bootstrap slot before
+            // its Release publication; READY retains that exact image.
+            && unsafe { (&*this.bootstrap.get()).assume_init_ref() }
+                .is_detached_for_main_subprocess(subprocess)
     }
 
     /// Test-only observation of the PageMap bootstrap mapping retained before
@@ -1078,8 +1092,9 @@ impl MetaAllocator {
         }
     }
 
-    /// Returns the final private PageMap slot address after metadata readiness
-    /// without turning it into a usable map reference. This proves the
+    /// Returns the final private PageMap slot address after first metadata
+    /// backing readiness without turning it into a usable map reference. This
+    /// proves process startup did not take that backing and that the
     /// process-global map stays a distinct owner.
     #[cfg(test)]
     pub(crate) fn test_private_page_map_address(self: Pin<&'static Self>) -> Option<usize> {
@@ -1101,19 +1116,21 @@ impl MetaAllocator {
         }
     }
 
-    /// Ensures the detached metadata Theap/image is ready for one selected
-    /// source main subprocess without allocating a caller-visible metadata
-    /// block. This is the source `mi_process_theap_meta` ordering seam used
-    /// by process initialization: it remains a separate private map/arena
-    /// owner and never publishes through `ProcessPageMapStorage`.
+    /// Binds the detached metadata Theap/image for one selected source main
+    /// subprocess without allocating a caller-visible metadata block or its
+    /// private backing. This is the source `mi_process_theap_meta` ordering
+    /// seam used by process initialization: it remains a separate private
+    /// map/arena owner, never publishes through `ProcessPageMapStorage`, and
+    /// takes its first backing only when a metadata caller actually requests
+    /// one.
     pub(crate) fn prepare_for_main_subprocess(
         self: Pin<&'static Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> Result<MetaAllocatorReady, MetaError> {
+    ) -> Result<MetaAllocatorBound, MetaError> {
         let mut entry = self.enter()?;
-        entry.ensure_ready(config, subprocess)?;
-        Ok(MetaAllocatorReady {
+        entry.ensure_bound(config, subprocess)?;
+        Ok(MetaAllocatorBound {
             allocator: self,
             config,
             subprocess,
@@ -1452,21 +1469,63 @@ impl MetaAllocator {
         );
     }
 
-    fn initialize(
+    /// Forms the source-static detached metadata Theap image without mapping a
+    /// private arena or PageMap.
+    ///
+    /// The caller holds `lock`, COLD excludes every projection, and the
+    /// bootstrap slot has never been initialized. Pinned C performs this
+    /// identity setup in `mi_heap_main_init_once`; its first `_mi_meta_zalloc`
+    /// later obtains ordinary backing on demand.
+    fn bind_empty_detached_identity(
+        self: Pin<&'static Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        let this = self.get_ref();
+        debug_assert_eq!(this.status.load(Ordering::Acquire), COLD);
+
+        // SAFETY: COLD and the held private lock make this the one write to
+        // the process-static, pinned bootstrap slot before any session may
+        // borrow its self-referential fields.
+        unsafe { (*this.bootstrap.get()).write(ExclusiveTheapBootstrap::new()) };
+        let bootstrap = unsafe { Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut()) };
+        if bootstrap
+            .bind_detached_for_main_subprocess(subprocess)
+            .is_err()
+        {
+            // Binding a valid static detached image cannot normally fail. If
+            // a Rust guard nevertheless rejects it, its final slot may have
+            // been touched; retain rather than overwrite that process state.
+            this.status.store(FAILED, Ordering::Release);
+            return Err(MetaError::InitializationRetained);
+        }
+
+        // SAFETY: the immutable tuple is written before BOUND's Release
+        // publication and is never replaced on a clean backing retry.
+        unsafe { (*this.config.get()).write(config) };
+        this.subprocess.store(subprocess.as_ptr(), Ordering::Release);
+        this.status.store(BOUND, Ordering::Release);
+        Ok(())
+    }
+
+    /// Initializes the bounded Rust backing for an already source-bound
+    /// detached metadata image on its first real metadata request.
+    fn initialize_backing(
         self: Pin<&'static Self>,
         entry: &mut MetaEntry,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
+        debug_assert_eq!(this.status.load(Ordering::Acquire), BOUND);
         let page_map = match PageMap::initialize(config, MAX_VABITS, false) {
             Ok(page_map) => page_map,
             Err(PageMapInitializationError::Failed { .. }) => {
                 return Err(MetaError::InitializationFailed);
             }
             Err(PageMapInitializationError::Retained { mapping, .. }) => {
-                // SAFETY: `entry` owns the initialization lock, COLD excludes
-                // every reader, and the private PageMap never reached its
+                // SAFETY: `entry` owns the initialization lock, BOUND exposes
+                // no backing projection, and the private PageMap never reached its
                 // final PageMap slot. Preserve the still-live mapping in its
                 // distinct terminal owner before publishing FAILED.
                 unsafe { this.write_retained_page_map_initialization_mapping(mapping) };
@@ -1476,11 +1535,11 @@ impl MetaAllocator {
                 return Err(MetaError::InitializationRetained);
             }
         };
-        // SAFETY: `entry` owns the sole initialization lock and COLD prevents
-        // any reader from projecting this final static slot.
+        // SAFETY: `entry` owns the sole initialization lock and BOUND exposes
+        // no private PageMap projection.
         unsafe { (*this.page_map.get()).write(page_map) };
         // SAFETY: `entry` holds the metadata owner's private initialization
-        // lock, and COLD means no arena was written or published. This is the
+        // lock, and BOUND means no arena was written or published. This is the
         // unique pre-publication transition for the process-long registry
         // identity; no concurrent insert can observe or race this count-zero
         // state.
@@ -1488,7 +1547,7 @@ impl MetaAllocator {
             this.registry
                 .bind_subprocess_before_publication(subprocess.as_ptr())
         } {
-            // A COLD metadata owner can reach this only after a prior failed
+            // A BOUND metadata owner can reach this only after a prior failed
             // initialization bound a different process-main identity. Never
             // construct an arena under a second identity; release the private
             // page map if possible and leave a retained failure otherwise.
@@ -1515,15 +1574,16 @@ impl MetaAllocator {
                     // owner had already formed its private PageMap. Both
                     // final slots are now the exact terminal owners; never
                     // destroy the PageMap and then forget the live arena map.
-                    // SAFETY: `entry` owns initialization, COLD excludes all
-                    // readers, and this mapping slot is still uninitialized.
+                    // SAFETY: `entry` owns initialization, BOUND exposes no
+                    // backing reader, and this mapping slot is still
+                    // uninitialized.
                     unsafe { (*this.mapping.get()).write(mapping) };
                     this.status.store(FAILED, Ordering::Release);
                     return Err(MetaError::InitializationRetained);
                 }
             },
         };
-        // SAFETY: same COLD/lock proof as the page-map slot above.
+        // SAFETY: same BOUND/lock proof as the page-map slot above.
         unsafe { (*this.mapping.get()).write(mapping) };
         // SAFETY: the preceding in-place write initialized this unique mapping
         // owner and the metadata lock excludes all other projection.
@@ -1562,12 +1622,13 @@ impl MetaAllocator {
             }
         };
 
-        // SAFETY: the static slot is the final address used by the detached
-        // theap's self references. It cannot move because callers hold Pin.
-        unsafe { (*this.bootstrap.get()).write(ExclusiveTheapBootstrap::new()) };
+        // SAFETY: BOUND initialized this final pinned slot before it
+        // Release-published the source detached Theap identity. The private
+        // lock excludes a second session while this first backing becomes
+        // ready.
         let bootstrap = unsafe { Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut()) };
         let page_map = unsafe { (&mut *this.page_map.get()).assume_init_mut() };
-        let allocator = match SingleThreadAllocator::activate_detached(
+        let allocator = match SingleThreadAllocator::activate_bound_detached(
             bootstrap,
             subprocess,
             arena,
@@ -1584,8 +1645,6 @@ impl MetaAllocator {
         // SAFETY: every reference captured by `allocator` names one prior
         // final static slot. No operation can observe it before READY.
         unsafe { (*this.allocator.get()).write(allocator) };
-        unsafe { (*this.config.get()).write(config) };
-        this.subprocess.store(subprocess.as_ptr(), Ordering::Release);
         this.status.store(READY, Ordering::Release);
         let _ = entry;
         Ok(())
@@ -1596,8 +1655,9 @@ impl MetaAllocator {
     ///
     /// # Safety
     ///
-    /// `initialize` still owns the metadata private lock, status is COLD, no
-    /// PageMap or arena was published, and this final slot is uninitialized.
+    /// `initialize_backing` still owns the metadata private lock, status is
+    /// BOUND, no private PageMap or arena was published, and this final slot
+    /// is uninitialized.
     #[inline]
     unsafe fn write_retained_page_map_initialization_mapping(&self, mapping: Mapping) {
         unsafe { (*self.retained_page_map_initialization_mapping.get()).write(mapping) };
@@ -1605,9 +1665,9 @@ impl MetaAllocator {
 
     fn cleanup_page_map_after_failed_init(self: Pin<&'static Self>) -> Result<(), MetaError> {
         let this = self.get_ref();
-        // SAFETY: the unshared page map was written in COLD state and no root
-        // or allocator can reach it. Successful destroy releases all direct
-        // mappings before a retry may overwrite this inert slot.
+        // SAFETY: the unshared page map was written while BOUND exposed no
+        // backing projection. Successful destroy releases all direct mappings
+        // before the same bound image retries its first backing request.
         match unsafe { (&mut *this.page_map.get()).assume_init_mut().destroy() } {
             Ok(()) => Err(MetaError::InitializationFailed),
             Err(_) => {
@@ -1622,7 +1682,7 @@ impl MetaAllocator {
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
         // SAFETY: failure happened before the arena was registry-published;
-        // the mapping is private to this COLD initialization attempt.
+        // the mapping is private to this BOUND backing attempt.
         let mapping_result = unsafe { (&mut *this.mapping.get()).assume_init_mut().unmap() };
         let page_map_result = unsafe { (&mut *this.page_map.get()).assume_init_mut().destroy() };
         if mapping_result.is_ok() && page_map_result.is_ok() {
@@ -1642,35 +1702,58 @@ struct MetaEntry {
 }
 
 impl MetaEntry {
-    fn ensure_ready(
+    /// Ensures the source-static detached metadata image names this exact
+    /// process tuple. BOUND deliberately does not make a backing PageMap,
+    /// arena, or allocator projection available.
+    fn ensure_bound(
         &mut self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         match self.status() {
-            READY => {
-                // SAFETY: READY release-publishes this initialized immutable
-                // configuration before any later lock holder can read it.
-                let stored = unsafe { self.owner.get_ref().config.get().read().assume_init() };
-                if stored == config
-                    && core::ptr::eq(
-                        self.owner
-                            .get_ref()
-                            .subprocess
-                            .load(Ordering::Acquire),
-                        subprocess.as_ptr(),
-                    )
-                {
-                    Ok(())
-                } else if stored == config {
-                    Err(MetaError::SubprocessMismatch)
-                } else {
-                    Err(MetaError::ConfigurationMismatch)
-                }
-            }
-            COLD => self.owner.initialize(self, config, subprocess),
+            COLD => self.owner.bind_empty_detached_identity(config, subprocess),
+            BOUND | READY => self.validate_bound_tuple(config, subprocess),
             FAILED => Err(MetaError::InitializationRetained),
             _ => Err(MetaError::InitializationRetained),
+        }
+    }
+
+    fn ensure_ready(
+        &mut self,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        self.ensure_bound(config, subprocess)?;
+        match self.status() {
+            READY => Ok(()),
+            BOUND => self.owner.initialize_backing(self, config, subprocess),
+            FAILED => Err(MetaError::InitializationRetained),
+            _ => Err(MetaError::InitializationRetained),
+        }
+    }
+
+    fn validate_bound_tuple(
+        &self,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        // SAFETY: BOUND Release-publishes this immutable tuple before the
+        // current held lock can observe it; READY retains the same tuple.
+        let stored = unsafe { self.owner.get_ref().config.get().read().assume_init() };
+        if stored == config
+            && core::ptr::eq(
+                self.owner
+                    .get_ref()
+                    .subprocess
+                    .load(Ordering::Acquire),
+                subprocess.as_ptr(),
+            )
+        {
+            Ok(())
+        } else if stored == config {
+            Err(MetaError::SubprocessMismatch)
+        } else {
+            Err(MetaError::ConfigurationMismatch)
         }
     }
 
@@ -2136,23 +2219,63 @@ mod tests {
             allocator.zalloc(config(), 8),
             Err(MetaError::InitializationFailed)
         ));
-        assert_eq!(allocator.status.load(Ordering::Acquire), COLD);
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
         fault.set(fault::Plan::at(fault::Point::Map, 2, Errno::NOMEM));
         assert!(matches!(
             allocator.zalloc(config(), 8),
             Err(MetaError::InitializationFailed)
         ));
         assert_eq!(fault.observed(), 2, "the second map is the metadata arena");
-        assert_eq!(allocator.status.load(Ordering::Acquire), COLD);
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
         fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
         assert!(matches!(
             allocator.zalloc(config(), 8),
             Err(MetaError::InitializationFailed)
         ));
-        assert_eq!(allocator.status.load(Ordering::Acquire), COLD);
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
         fault.set(fault::Plan::disabled());
         let mut retry = allocator.zalloc(config(), 8).unwrap();
         allocator.free(&mut retry).unwrap();
+    }
+
+    #[test]
+    fn bound_metadata_rejects_a_foreign_subprocess_before_first_backing() {
+        let allocator = static_allocator();
+        let selected = MainSubprocess::test_static_owner();
+        let foreign = MainSubprocess::test_static_owner();
+
+        let _binding = allocator
+            .prepare_for_main_subprocess(config(), selected)
+            .expect("the source-static detached image binds without private backing");
+        assert!(allocator.test_is_bound_for(config(), selected));
+        assert!(allocator.test_private_page_map_address().is_none());
+
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(
+            matches!(
+                allocator.zalloc_for_main_subprocess(config(), foreign, 8),
+                Err(MetaError::SubprocessMismatch)
+            ),
+            "a foreign identity rejects before the deferred backing path can map"
+        );
+        assert_eq!(fault.observed(), 0);
+        assert!(allocator.test_private_page_map_address().is_none());
+
+        assert!(
+            matches!(
+                allocator.zalloc_for_main_subprocess(config(), selected, 8),
+                Err(MetaError::InitializationFailed)
+            ),
+            "the selected first request consumes the still-pending backing failure"
+        );
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+
+        fault.set(fault::Plan::disabled());
+        let mut allocation = allocator
+            .zalloc_for_main_subprocess(config(), selected, 8)
+            .expect("the same bound identity retries its first backing request");
+        allocator.free(&mut allocation).unwrap();
     }
 
     #[test]

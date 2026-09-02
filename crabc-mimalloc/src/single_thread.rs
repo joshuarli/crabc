@@ -7685,7 +7685,45 @@ impl<'bootstrap, 'arena, 'map>
         thread_sequence: usize,
     ) -> Result<Self, BootstrapError> {
         let session = bootstrap.activate_detached_for_main_subprocess(subprocess)?;
-        Ok(Self {
+        Ok(Self::from_detached_session(
+            session,
+            arena,
+            requested_arena,
+            page_map,
+            thread_sequence,
+        ))
+    }
+
+    /// Activates an allocator over the process-startup-bound detached metadata
+    /// image. The image was initialized before the global PageMap, but it
+    /// lends its one mutable page session only once a real metadata request
+    /// has acquired the private backing required by this bounded port.
+    pub(crate) fn activate_bound_detached(
+        bootstrap: Pin<&'bootstrap mut ExclusiveTheapBootstrap>,
+        subprocess: &'static MainSubprocess,
+        arena: ArenaView<'arena>,
+        requested_arena: ArenaId,
+        page_map: &'map mut PageMap,
+        thread_sequence: usize,
+    ) -> Result<Self, BootstrapError> {
+        let session = bootstrap.begin_bound_detached_session(subprocess)?;
+        Ok(Self::from_detached_session(
+            session,
+            arena,
+            requested_arena,
+            page_map,
+            thread_sequence,
+        ))
+    }
+
+    fn from_detached_session(
+        session: ExclusiveTheapSession<'bootstrap>,
+        arena: ArenaView<'arena>,
+        requested_arena: ArenaId,
+        page_map: &'map mut PageMap,
+        thread_sequence: usize,
+    ) -> Self {
+        Self {
             session,
             arena,
             requested_arena,
@@ -7709,7 +7747,7 @@ impl<'bootstrap, 'arena, 'map>
             #[cfg(test)]
             page_area_commit_lease: None,
             shutdown_complete: false,
-        })
+        }
     }
 }
 

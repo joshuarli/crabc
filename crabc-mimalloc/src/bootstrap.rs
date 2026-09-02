@@ -92,7 +92,14 @@ pub(crate) struct ExclusiveTheapBootstrap {
     heap: Heap,
     tld: ThreadLocalData,
     theap: Theap,
-    active_owner: Option<TheapOwner>,
+    /// The one owner whose source image has been initialized in this pinned
+    /// storage. A detached metadata image may be bound during process startup
+    /// before it has an arena/PageMap backing or an allocator session.
+    bound_owner: Option<TheapOwner>,
+    /// A source image may lend exactly one mutable allocator session. Binding
+    /// the detached static image is deliberately separate from issuing that
+    /// session so `mi_heap_main_init_once` can precede first metadata demand.
+    session_issued: bool,
     // Raw-pointer marker prevents accidental Send/Sync claims for this
     // exclusive mutable state; `PhantomPinned` makes pointer wiring durable.
     _not_send_or_sync: PhantomData<*mut ()>,
@@ -111,15 +118,15 @@ impl ExclusiveTheapBootstrap {
             heap: Heap::bootstrap_empty(),
             tld: ThreadLocalData::detached(),
             theap: Theap::empty(),
-            active_owner: None,
+            bound_owner: None,
+            session_issued: false,
             _not_send_or_sync: PhantomData,
             _pin: PhantomPinned,
         }
     }
 
-    /// Test-only proof that every detached bootstrap image names one selected
-    /// bounded process-main subprocess identity.
-    #[cfg(test)]
+    /// Checks that a detached bootstrap image names one selected bounded
+    /// process-main subprocess identity.
     pub(crate) fn is_detached_for_main_subprocess(
         &self,
         subprocess: &MainSubprocess,
@@ -137,10 +144,11 @@ impl ExclusiveTheapBootstrap {
     /// ordinary theap fields, then publish the heap pointer last. The returned
     /// session is the sole local owner; it neither installs nor reads TLS.
     pub(crate) fn activate_live(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         thread_id: LiveThreadId,
     ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
-        self.activate_owner(TheapOwner::Live(thread_id), None)
+        self.as_mut().bind_owner(TheapOwner::Live(thread_id), None)?;
+        self.begin_bound_session(TheapOwner::Live(thread_id))
     }
 
     /// Activates the source detached metadata-theap form.
@@ -159,23 +167,56 @@ impl ExclusiveTheapBootstrap {
     /// detached allocator state, so its heap, TLD, and theap agree on the
     /// same bounded source `subproc` pointer.
     pub(crate) fn activate_detached_for_main_subprocess(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         subprocess: &'static MainSubprocess,
     ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
-        self.activate_owner(TheapOwner::Detached, Some(subprocess))
+        self.as_mut().bind_detached_for_main_subprocess(subprocess)?;
+        self.begin_bound_detached_session(subprocess)
     }
 
-    fn activate_owner(
+    /// Initializes the process-static detached metadata image without issuing
+    /// an allocator session or allocating backing storage.
+    ///
+    /// This is the bounded source `mi_process_theap_meta` portion of
+    /// `mi_heap_main_init_once`: the pinned Heap/TLD/Theap fields name the
+    /// selected main subprocess and publish the initialized Theap image, while
+    /// the first `_mi_meta_zalloc` remains responsible for acquiring a page.
+    pub(crate) fn bind_detached_for_main_subprocess(
+        self: Pin<&mut Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), BootstrapError> {
+        self.bind_owner(TheapOwner::Detached, Some(subprocess))
+    }
+
+    /// Lends the one mutable session for an already bound detached metadata
+    /// image.
+    ///
+    /// The caller must name the same source main subprocess used at binding.
+    /// This is intentionally unavailable for an unbound image and cannot
+    /// reissue a session after an earlier caller retained it.
+    pub(crate) fn begin_bound_detached_session(
+        mut self: Pin<&mut Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+        let state = self.as_ref().get_ref();
+        if state.bound_owner != Some(TheapOwner::Detached)
+            || !state.is_detached_for_main_subprocess(subprocess)
+        {
+            return Err(BootstrapError::InvalidThreadState);
+        }
+        self.begin_bound_session(TheapOwner::Detached)
+    }
+
+    fn bind_owner(
         self: Pin<&mut Self>,
         owner: TheapOwner,
         detached_subprocess: Option<&'static MainSubprocess>,
-    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+    ) -> Result<(), BootstrapError> {
         // SAFETY: `Self` is !Unpin and this method never moves a field. The
         // newly stored self-referential raw pointers target the pinned `heap`
-        // and `tld` fields and remain valid while the returned session borrows
-        // this Pin.
+        // and `tld` fields and remain valid while this pinned image exists.
         let state = unsafe { self.get_unchecked_mut() };
-        if state.active_owner.is_some() {
+        if state.bound_owner.is_some() {
             return Err(BootstrapError::AlreadyInitialized);
         }
 
@@ -196,8 +237,22 @@ impl ExclusiveTheapBootstrap {
         if !bound {
             return Err(BootstrapError::InvalidThreadState);
         }
-        state.active_owner = Some(owner);
+        state.bound_owner = Some(owner);
+        Ok(())
+    }
 
+    fn begin_bound_session(
+        self: Pin<&mut Self>,
+        owner: TheapOwner,
+    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+        let state = unsafe { self.get_unchecked_mut() };
+        if state.bound_owner != Some(owner) {
+            return Err(BootstrapError::InvalidThreadState);
+        }
+        if state.session_issued {
+            return Err(BootstrapError::AlreadyInitialized);
+        }
+        state.session_issued = true;
         Ok(ExclusiveTheapSession {
             // SAFETY: `state` came from the pinned receiver and remains in
             // place for the session lifetime. Reborrowing it restores the
@@ -209,7 +264,7 @@ impl ExclusiveTheapBootstrap {
 
     #[inline]
     pub(crate) const fn active_thread(&self) -> Option<LiveThreadId> {
-        match self.active_owner {
+        match self.bound_owner {
             Some(TheapOwner::Live(thread_id)) => Some(thread_id),
             Some(TheapOwner::Detached) | None => None,
         }
@@ -709,6 +764,42 @@ mod tests {
         drop(session);
         assert!(matches!(
             bootstrap.as_mut().activate_detached(),
+            Err(BootstrapError::AlreadyInitialized)
+        ));
+    }
+
+    #[test]
+    fn detached_binding_initializes_the_static_image_before_issuing_its_one_session() {
+        let bootstrap = ExclusiveTheapBootstrap::new();
+        let mut bootstrap = core::pin::pin!(bootstrap);
+        let subprocess = MainSubprocess::test_static_owner();
+        let foreign = MainSubprocess::test_static_owner();
+
+        bootstrap
+            .as_mut()
+            .bind_detached_for_main_subprocess(subprocess)
+            .expect("the static detached image binds without an allocator session");
+        {
+            let state = bootstrap.as_ref().get_ref();
+            assert!(state.is_detached_for_main_subprocess(subprocess));
+            assert!(state.theap.is_initialized());
+            assert_eq!(state.active_thread(), None);
+            assert!(!state.session_issued);
+        }
+        assert!(matches!(
+            bootstrap.as_mut().begin_bound_detached_session(foreign),
+            Err(BootstrapError::InvalidThreadState)
+        ));
+
+        let session = bootstrap
+            .as_mut()
+            .begin_bound_detached_session(subprocess)
+            .expect("the first demand lends the one already bound detached session");
+        assert_eq!(session.thread_id(), None);
+        drop(session);
+
+        assert!(matches!(
+            bootstrap.as_mut().begin_bound_detached_session(subprocess),
             Err(BootstrapError::AlreadyInitialized)
         ));
     }
