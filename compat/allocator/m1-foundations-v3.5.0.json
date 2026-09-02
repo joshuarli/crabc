@@ -555,6 +555,11 @@
         },
         {
           "expected_passed_test_count": 1,
+          "id": "compiler-tls-count-zero-root-teardown",
+          "target": "compiler_tls::tests::thread_teardown_preserves_the_source_count_zero_dynamic_root"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "versioned-tls-key",
           "target": "thread_local::tests::packed_key_uses_the_complete_linux_64_16_bit_index_and_48_bit_version_fields"
         },
@@ -580,6 +585,15 @@
             "unit_verified"
           ],
           "upstream": "include/mimalloc/prim-tls.h"
+        },
+        {
+          "kind": "item",
+          "name": "current-thread-allocator-owned-regular-tls-backing",
+          "required_statuses": [
+            "implemented",
+            "unit_verified"
+          ],
+          "upstream": "src/threadlocal.c"
         }
       ]
     }

@@ -321,9 +321,9 @@ pub(crate) fn roots_are_pristine_for_main_static_attachment() -> bool {
 /// This preserves the source split between `mi_thread_theaps_done` and
 /// `_mi_thread_locals_thread_done`: fast is cleared, default and cached are
 /// restored to the immutable empty theap, while the untouched count-zero
-/// dynamic backing remains installed. Do not replace this with
-/// [`reset_for_thread_teardown`], which would incorrectly turn that empty
-/// dynamic source image into null.
+/// dynamic backing remains installed. [`reset_for_thread_teardown`] recognizes
+/// that image too, but this narrower operation makes the static attachment's
+/// root ownership explicit and leaves the helper root untouched.
 #[inline(always)]
 pub(crate) fn clear_main_static_attachment_roots() {
     set_fast_slot(None);
@@ -359,21 +359,37 @@ fn thread_id_helper_address() -> Option<LiveThreadId> {
 
 /// Resets all source pointer roots at the allocation-free thread-teardown boundary.
 ///
-/// The dynamic backing becomes null only after its lifecycle owner has freed
-/// any nonempty image. The fast slot is cleared, while default and cached
-/// theaps return to the immutable empty image. This function performs no
-/// metadata reclamation, theap decref, page abandonment, or pthread work.
+/// As in pinned `_mi_thread_locals_thread_done`, the dynamic backing becomes
+/// null only for a live image whose source `count` is nonzero; the immutable
+/// count-zero process image stays installed. The allocation/lifecycle owner
+/// must keep a nonempty root live through this check and performs its own
+/// metadata release separately. The fast slot is cleared, while default and
+/// cached theaps return to the immutable empty image. This function performs
+/// no metadata reclamation, theap decref, page abandonment, or pthread work.
 /// It deliberately cannot reset a `thread_local::PersistentCompilerTlsOwnerCell`
 /// embedded in a runtime compiler-TLS record. The runtime must first complete
 /// that owner's explicit source teardown transition, so resetting source
 /// roots cannot make a live page-bearing owner look vacant.
 #[inline(always)]
 pub(crate) fn reset_for_thread_teardown() {
+    let dynamic_root_is_nonempty = match dynamic_backing_peek() {
+        Some(backing) => {
+            // SAFETY: a non-null root is either the immutable process image
+            // or an installed live dynamic backing. The install contract
+            // retains that image through its root reset, and this thread is
+            // its sole compiler-TLS reader.
+            unsafe { backing.as_ref() }.count() > 0
+        }
+        None => false,
+    };
+    if dynamic_root_is_nonempty {
+        clear_dynamic_backing();
+    }
+
     // SAFETY: each calling thread alone writes all five source pointer roots,
     // including the otherwise-unused helper root. The immutable process image
     // remains live forever.
     unsafe {
-        DYNAMIC_BACKING_ROOT = core::ptr::null_mut();
         FAST_SLOT_ROOT = core::ptr::null_mut();
         DEFAULT_THEAP_ROOT = empty_default_theap_ptr();
         CACHED_THEAP_ROOT = empty_default_theap_ptr();
@@ -494,6 +510,28 @@ mod tests {
         })
         .join()
         .expect("the native install/reset check completes");
+    }
+
+    #[test]
+    fn thread_teardown_preserves_the_source_count_zero_dynamic_root() {
+        thread::spawn(|| {
+            let empty_backing = dynamic_backing_peek()
+                .expect("a fresh thread starts at the source count-zero image");
+            assert!(is_empty_dynamic_backing(empty_backing));
+            // SAFETY: this exact pointer names the immutable process-lifetime
+            // source image, so observing its count cannot race or outlive it.
+            assert_eq!(unsafe { empty_backing.as_ref() }.count(), 0);
+
+            reset_for_thread_teardown();
+
+            assert_eq!(
+                dynamic_backing_peek(),
+                Some(empty_backing),
+                "pinned _mi_thread_locals_thread_done clears only a nonempty dynamic image"
+            );
+        })
+        .join()
+        .expect("the count-zero root teardown check completes");
     }
 
     #[test]

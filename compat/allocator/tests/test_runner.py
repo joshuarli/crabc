@@ -1946,6 +1946,24 @@ class ContractTests(unittest.TestCase):
             },
             bootstrap["source_map_records"],
         )
+        compiler_tls = next(
+            component
+            for component in summary["components"]
+            if component["id"] == "compiler-tls-roots"
+        )
+        self.assertIn(
+            "compiler-tls-count-zero-root-teardown",
+            [check["id"] for check in compiler_tls["checks"]],
+        )
+        self.assertIn(
+            {
+                "kind": "item",
+                "name": "current-thread-allocator-owned-regular-tls-backing",
+                "required_statuses": ["implemented", "unit_verified"],
+                "upstream": "src/threadlocal.c",
+            },
+            compiler_tls["source_map_records"],
+        )
         raw_primitives = next(
             component
             for component in summary["components"]
