@@ -15808,9 +15808,9 @@ id = "libc.resolver"
 order = 100
 depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.posix-runtime", "libc.text-math-locale-stdio"]
 category = "c-abi"
-description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, legacy inet_network parser-composition, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic and network-part extraction, hstrerror message, h_errno status-slot accessor/object, dependency-free dn_skipname wire-name span codec, dependency-free dn_expand wire-name expansion codec, immutable _ns_flagdata nameserver flag-accessor table, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, dependency-free ns_put32 caller-owned 32-bit wire-write codec, dependency-composed ns_skiprr resource-record span codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
+description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, legacy inet_network parser-composition, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic and network-part extraction, hstrerror message, h_errno status-slot accessor/object, opt-in resolver-runtime archive, dependency-free dn_skipname wire-name span codec, dependency-free dn_expand wire-name expansion codec, immutable _ns_flagdata nameserver flag-accessor table, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, dependency-free ns_put32 caller-owned 32-bit wire-write codec, dependency-composed ns_skiprr resource-record span codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
 aarch64_gates = ["resolver-network", "libc-test"]
-source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/ns_flagdata.rs", "libc/src/c_abi/x86_64/ns_get16.rs", "libc/src/c_abi/x86_64/ns_get32.rs", "libc/src/c_abi/x86_64/ns_put16.rs", "libc/src/c_abi/x86_64/ns_put32.rs", "libc/src/c_abi/x86_64/ns_skiprr.rs", "compat/resolver-network"]
+source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/ns_flagdata.rs", "libc/src/c_abi/x86_64/ns_get16.rs", "libc/src/c_abi/x86_64/ns_get32.rs", "libc/src/c_abi/x86_64/ns_put16.rs", "libc/src/c_abi/x86_64/ns_put32.rs", "libc/src/c_abi/x86_64/ns_skiprr.rs", "libc/src/c_abi/x86_64/resolver_runtime.rs", "compat/x86_64/run_libc_resolver_runtime.sh", "compat/resolver-network"]
 x86_abi_prerequisites = ["socket and DNS wire I/O syscall boundary", "x86 socket/address record layouts"]
 x86_header_prerequisites = ["netdb.h, arpa/inet.h, resolv.h, arpa/nameser.h, sys/socket.h, and netinet/in.h selected contracts."]
 native_evidence = [{ state = "required", command = "Define a native x86 isolated resolver-network differential gate", scope = "Use the same local-only DNS environment; do not add NSS, DoH, DoT, or mDNS." }]
@@ -16107,6 +16107,69 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX GNU/BSD netdb oracle for src/network/h_errno.c and h_errno.lo: link-visible four-byte h_errno storage, accessor spelling, and the selected legacy status-slot boundary; resolver configuration, DNS, netdb databases, and foreign-thread behavior remain unselected." },
   { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 no-argument pointer return, four-byte global object, direct initial-exec TLS relocation, and freestanding static ELF linkage contract for the selected accessor/object." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-resolver-runtime"
+description = "Private native x86 opt-in static C resolver-runtime artifact inside still-planned `libc.resolver`, not `compat.resolver-network`, resolver-family completion, or public x86 support. Only the `x86-resolver-runtime` feature archive replaces the frozen static `res_init` and `getaddrinfo` providers and adds exactly `__res_state`, `dn_comp`, `res_mkquery`, `res_query`, `res_querydomain`, `res_search`, and `res_send`; `static_c_abi_exports.txt` remains closed. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It starts a local UDP DNS server before chrooting the client into a disposable root containing only fixture `/etc/hosts` and `/etc/resolv.conf`, so both arms resolve the exact hosts alias, search-domain A/CNAME path, direct query, querydomain path, NXDOMAIN, and bare res_search query without ambient files or external DNS. The fixture validates each outgoing DNS QNAME/QTYPE, `dn_comp` caller-buffer output and no-new-errno short-buffer failure, resolver-state snapshot fields, and selected main/one-worker `h_errno` isolation. Pinned musl keeps `__res_mkquery` and `__res_send` hidden strong with weak same-address public aliases; `res_search` is a weak same-address alias of public strong `res_query`, not an independent search-policy implementation. The selected state owner snapshots only conventional hosts/resolv configuration, uses Static Initial TLS with no dynamic resolver, and retains C-owned snapshot mmap/munmap lifetime. It excludes services/getnameinfo, NSS/plugins, cache, resolver hooks, mDNS, DoH, DoT, DNSSEC, IDNA, EDNS, PTR/reverse lookup, general pthread/TCB/TLS lifecycle, libc.so, CRT, loader, sysroot, family promotion, and public support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/resolver_runtime.rs",
+  "libc/src/c_abi/x86_64/h_errno.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/inet_address.rs",
+  "libc/src/c_abi/x86_64/numeric_netdb.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "crabc-core/src/resolver.rs",
+  "include/errno.h",
+  "include/netdb.h",
+  "include/resolv.h",
+  "include/arpa/nameser.h",
+  "include/netinet/in.h",
+  "include/sys/socket.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/resolver_runtime_header_abi_probe.c",
+  "compat/x86_64/resolver_runtime_header_abi_probe.cpp",
+  "compat/x86_64/run_resolver_runtime_header_abi.sh",
+  "compat/x86_64/libc_resolver_runtime_probe.c",
+  "compat/x86_64/libc_resolver_runtime_start.S",
+  "compat/x86_64/run_libc_resolver_runtime.sh",
+  "compat/x86_64/feature_archive_roster.py",
+  "compat/x86_64/header_callable_inventory.py",
+  "compat/x86_64/header_callable_inventory.json",
+  "compat/x86_64/header_callable_visibility_matrix.py",
+  "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
+  "compat/x86_64/header_abi_matrix.py",
+  "compat/x86_64/generated/header_abi_matrix/report.json",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_feature_archive_roster.py",
+  "compat/x86_64/tests/test_header_callable_inventory.py",
+  "compat/x86_64/tests/test_resolver_runtime_aliases.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected GNU C boundary is System V AMD64 LP64: `__res_state(void)` returns a caller-observed `struct __res_state *` in rax; `res_init(void)` returns int in eax; `res_query`, `res_search`, and `res_querydomain` take their C strings, class/type ints, and caller-owned byte result buffer in the ordinary integer/pointer registers; `res_mkquery`, `res_send`, and `dn_comp` retain their exact project `<resolv.h>` pointer/int signatures. `h_errno` is the separately selected four-byte status object/accessor with selected direct initial-exec TLS only; callers own all query, answer, and dn_comp buffers.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps the selected historical spellings to src/network/res_mkquery.c, src/network/res_send.c, src/network/res_query.c, src/network/res_querydomain.c, src/network/dn_comp.c, src/network/lookup_name.c, src/network/lookup_ipliteral.c, and src/network/getaddrinfo.c. Direct inspection of the pinned x86 libc.a requires hidden global `__res_mkquery`/`__res_send` with weak same-address public aliases and public global `res_query` with weak same-address `res_search`; no hidden `__res_query` is claimed.",
+  "The disposable root/UDP fixture is harness-only: Linux x86-64 chroot=161 and chdir=80 isolate fixed conventional paths, while loopback UDP proves the selected A/CNAME/NXDOMAIN transport. The selected implementation uses only Static Initial TLS v1 and C-owned resolver snapshots with mmap=9/munmap=11; foreign-thread/general-TCB access, dynamic TLS, and any system resolver daemon or external network are outside the contract.",
+]
+x86_header_prerequisites = [
+  "The dedicated pinned-musl/project GNU C11/C++17 resolver-runtime gate preprocesses only the declared header roots and proves the exact `<netdb.h>`, `<resolv.h>`, `<arpa/nameser.h>`, and `<netinet/in.h>` state/constant/function-pointer records for `__res_state`, `__h_errno_location`, `res_init`, `res_query`, `res_querydomain`, `res_search`, `res_mkquery`, `res_send`, and `dn_comp`. Its C++ object requires all nine resolver references to remain unmangled; this is declaration/layout evidence, not installed-header or family completion.",
+  "The runtime fixture independently traces project errno/netdb/netinet/resolv/socket/wait/unistd headers before both pinned-musl and feature-selected static execution. It proves no ambient libc header/CRT route, but does not turn the private archive into a default C ABI or public x86 support claim.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-resolver-runtime", scope = "Pinned-musl 1.2.6 project-header C execution followed by the opt-in `x86-resolver-runtime` crabc archive and a true `-nostdlib -static --no-undefined` candidate. The gate runs the dedicated GNU C/C++ declaration/layout matrix, proves exact feature delta/replacement ownership while the default static export roster remains closed, and checks the pinned/archive/final-ELF hidden `__res_mkquery` and `__res_send` aliases plus weak same-address `res_search`/public `res_query`. In a root-only disposable chroot with fixture hosts/resolv.conf and loopback UDP it verifies exact QNAME/QTYPE sequence, hosts-first alias, search-domain A/CNAME, direct query/querydomain, NXDOMAIN, bare query alias behavior, dn_comp success and unchanged errno short-buffer failure, resolver-state fields, selected h_errno worker isolation, initial TLS without dynamic forms, resolver snapshot mmap/munmap, and no interpreter/DT_NEEDED/unresolved symbols. It excludes external DNS, services/getnameinfo, NSS/plugins, cache, hooks, mDNS/DoH/DoT/DNSSEC/IDNA/EDNS/PTR, general pthread/TLS/TCB lifecycle, libc.so, CRT, loader, sysroot, resolver-network completion, family promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 and its x86 static libc.a", role = "Musl MIT source, project-header declaration, bounded hosts/resolv/DNS behavior, dn_comp error behavior, and direct archive ELF oracle for the selected resolver spellings and res_search/res_query alias identity." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Loopback UDP socket exchange, fixture-only chroot/chdir, initial-exec TLS relocation, and mmap/munmap resolver-snapshot observations used by the hermetic static candidate." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 resolver/netdb C and C++ linkage, hidden/weak same-address symbol bindings, initial-exec TLS, and true-static final-ELF closure contract." },
 ]
 
 [[family.verified_artifact]]
@@ -18983,14 +19046,17 @@ aliases = []
 
 [[feature_archive]]
 id = "x86-resolver-runtime"
-state = "planned"
+state = "verified"
+evidence_record = "static-c-resolver-runtime"
 runner = "compat/x86_64/run_libc_resolver_runtime.sh"
+dispatch_command = "libc-resolver-runtime"
 baseline_features = ["x86-h-errno"]
 enabled_features = ["x86-resolver-runtime"]
 additive_callables = ["__res_state", "dn_comp", "res_mkquery", "res_query", "res_querydomain", "res_search", "res_send"]
 replacement_callables = ["getaddrinfo", "res_init"]
 aliases = [
   { name = "res_mkquery", target = "__res_mkquery", binding = "weak-same-address" },
+  { name = "res_search", target = "res_query", binding = "weak-same-address" },
   { name = "res_send", target = "__res_send", binding = "weak-same-address" },
 ]
 

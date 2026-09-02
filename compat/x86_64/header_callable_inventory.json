@@ -1,34 +1,6 @@
 {
   "callable_provider_partition": {
-    "declared_unverified_feature_archives": [
-      {
-        "aliases": [
-          {
-            "binding": "weak-same-address",
-            "name": "res_mkquery",
-            "target": "__res_mkquery"
-          },
-          {
-            "binding": "weak-same-address",
-            "name": "res_send",
-            "target": "__res_send"
-          }
-        ],
-        "evidence_record": null,
-        "id": "x86-resolver-runtime",
-        "members": [
-          "__res_state",
-          "dn_comp",
-          "res_mkquery",
-          "res_query",
-          "res_querydomain",
-          "res_search",
-          "res_send"
-        ],
-        "runner": "compat/x86_64/run_libc_resolver_runtime.sh",
-        "state": "planned"
-      }
-    ],
+    "declared_unverified_feature_archives": [],
     "default_static": {
       "members": [
         "_Exit",
@@ -1100,7 +1072,7 @@
           "getaddrinfo",
           "res_init"
         ],
-        "state": "planned"
+        "state": "verified"
       }
     ],
     "unprovided": {
@@ -1611,6 +1583,38 @@
           "ualarm"
         ],
         "runner": "compat/x86_64/run_libc_ualarm.sh",
+        "state": "verified"
+      },
+      {
+        "aliases": [
+          {
+            "binding": "weak-same-address",
+            "name": "res_mkquery",
+            "target": "__res_mkquery"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "res_search",
+            "target": "res_query"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "res_send",
+            "target": "__res_send"
+          }
+        ],
+        "evidence_record": "static-c-resolver-runtime",
+        "id": "x86-resolver-runtime",
+        "members": [
+          "__res_state",
+          "dn_comp",
+          "res_mkquery",
+          "res_query",
+          "res_querydomain",
+          "res_search",
+          "res_send"
+        ],
+        "runner": "compat/x86_64/run_libc_resolver_runtime.sh",
         "state": "verified"
       },
       {
@@ -424009,7 +424013,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "1d6ca1812a0f661b2dd9a2c307db70ae68fc0e798096df2546d5ea6cb878d3b5",
+    "parity_ledger_sha256": "b5c0cc11dd500e2daf94aaedb67978b8726ef18c46af963fa039eab4221c0511",
     "static_c_abi_exports_sha256": "4bae318653f77305fe753238496833793609417c453b2cebbf225b7a665f43e8"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -442881,10 +442885,10 @@
       "missing": 56
     },
     "callable_provider_counts": {
-      "declared_unverified_feature_archives": 7,
+      "declared_unverified_feature_archives": 0,
       "default_static": 1048,
       "unprovided": 417,
-      "verified_feature_archives": 40
+      "verified_feature_archives": 47
     },
     "candidate_external_callable_count": 1512,
     "candidate_public_header_count": 191,

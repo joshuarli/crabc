@@ -248,7 +248,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         )
         self.assertEqual(verified["x86-ualarm"], {"ualarm"})
         self.assertEqual(
-            planned["x86-resolver-runtime"],
+            verified["x86-resolver-runtime"],
             {
                 "__res_state",
                 "dn_comp",

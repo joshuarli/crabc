@@ -40,11 +40,6 @@ class ResolverRuntimeAliasTests(unittest.TestCase):
                     rf'(?s)#\[inline\(never\)\]\s*#\[no_mangle\]\s*'
                     rf'pub unsafe extern "C" fn {private}\s*\(',
                 )
-        self.assertRegex(
-            runtime,
-            r'(?s)#\[no_mangle\]\s*#\[linkage = "weak"\]\s*'
-            r'pub unsafe extern "C" fn res_search\s*\(',
-        )
         self.assertNotRegex(
             runtime,
             r'(?m)^pub unsafe extern "C" fn res_mkquery\s*\(',
@@ -53,6 +48,76 @@ class ResolverRuntimeAliasTests(unittest.TestCase):
             runtime,
             r'(?m)^pub unsafe extern "C" fn res_send\s*\(',
         )
+
+    def test_query_and_search_share_musls_public_query_implementation(self) -> None:
+        """Keep the legacy resolver query names on musl's alias boundary."""
+        runtime = RUNTIME.read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for directive in (
+            '".weak res_search"',
+            '".set res_search, res_query"',
+        ):
+            with self.subTest(directive=directive):
+                self.assertIn(directive, runtime)
+        self.assertRegex(
+            runtime,
+            r'(?s)#\[inline\(never\)\]\s*#\[no_mangle\]\s*'
+            r'pub unsafe extern "C" fn res_query\s*\(',
+        )
+        self.assertNotRegex(
+            runtime,
+            r'(?m)^pub unsafe extern "C" fn res_search\s*\(',
+        )
+        self.assertIn("assert_weak_same_address_alias_pair", runner)
+        self.assertIn("res_query res_search", runner)
+        self.assertIn('"$candidate_symbols" res_query res_search', runner)
+
+    def test_runtime_fixture_exercises_each_selected_query_spelling(self) -> None:
+        """Make the opt-in runtime fixture validate names, not just a reply."""
+        fixture = PROBE.read_text(encoding="utf-8")
+
+        for required in (
+            "question_matches",
+            "question_type",
+            "dn_comp(\"dns.fixture.test\"",
+            "compressed_name",
+            "errno != E2BIG",
+            "res_querydomain(\"dns\", \"fixture.test\"",
+            "res_search != res_query",
+            "dns.fixture.test",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, fixture)
+
+    def test_cpp_header_gate_keeps_all_selected_resolver_spellings_unmangled(self) -> None:
+        cxx_probe = ROOT / "compat" / "x86_64" / "resolver_runtime_header_abi_probe.cpp"
+        header_runner = ROOT / "compat" / "x86_64" / "run_resolver_runtime_header_abi.sh"
+        probe = cxx_probe.read_text(encoding="utf-8")
+        runner = header_runner.read_text(encoding="utf-8")
+
+        for spelling in (
+            "res_init_signature",
+            "res_querydomain_signature",
+            "res_search_signature",
+            "res_mkquery_signature",
+            "dn_comp_signature",
+        ):
+            with self.subTest(spelling=spelling):
+                self.assertIn(spelling, probe)
+        for symbol in (
+            "__res_state",
+            "__h_errno_location",
+            "res_init",
+            "res_query",
+            "res_querydomain",
+            "res_search",
+            "res_mkquery",
+            "res_send",
+            "dn_comp",
+        ):
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, runner)
 
     def test_internal_paths_use_hidden_implementations_and_public_header_stays_public(self) -> None:
         runtime = RUNTIME.read_text(encoding="utf-8")

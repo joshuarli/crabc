@@ -44407,6 +44407,300 @@ def require_h_errno_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatch, f"h_errno dispatcher omits {snippet}")
 
 
+def require_resolver_runtime_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the opt-in resolver runtime below resolver-network promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("id") == "static-c-resolver-runtime"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-resolver-runtime artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-resolver-runtime must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-resolver-runtime must not claim a resolver capability",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-resolver-runtime needs a description")
+    for phrase in (
+        "opt-in static C resolver-runtime artifact",
+        "still-planned `libc.resolver`",
+        "not `compat.resolver-network`",
+        "x86-resolver-runtime",
+        "static_c_abi_exports.txt` remains closed",
+        "exact hosts alias",
+        "QNAME/QTYPE",
+        "dn_comp",
+        "no-new-errno short-buffer failure",
+        "h_errno` isolation",
+        "__res_mkquery",
+        "__res_send",
+        "`res_search` is a weak same-address alias of public strong `res_query`",
+        "not an independent search-policy implementation",
+        "Static Initial TLS",
+        "mmap/munmap",
+        "NSS/plugins",
+        "public support",
+    ):
+        require(phrase in description, f"static-c-resolver-runtime description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-resolver-runtime.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/resolver_runtime.rs",
+        "libc/src/c_abi/x86_64/h_errno.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/inet_address.rs",
+        "libc/src/c_abi/x86_64/numeric_netdb.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "crabc-core/src/resolver.rs",
+        "include/netdb.h",
+        "include/resolv.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/resolver_runtime_header_abi_probe.c",
+        "compat/x86_64/resolver_runtime_header_abi_probe.cpp",
+        "compat/x86_64/run_resolver_runtime_header_abi.sh",
+        "compat/x86_64/libc_resolver_runtime_probe.c",
+        "compat/x86_64/libc_resolver_runtime_start.S",
+        "compat/x86_64/run_libc_resolver_runtime.sh",
+        "compat/x86_64/feature_archive_roster.py",
+        "compat/x86_64/header_callable_inventory.py",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_feature_archive_roster.py",
+        "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_resolver_runtime_aliases.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-resolver-runtime source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-resolver-runtime.x86_abi_prerequisites",
+    )
+    prerequisite_text = "\n".join(prerequisites)
+    for phrase in (
+        "System V AMD64 LP64",
+        "__res_state(void)",
+        "res_query",
+        "res_querydomain",
+        "res_mkquery",
+        "res_send",
+        "dn_comp",
+        "h_errno",
+        "src/network/res_query.c",
+        "no hidden `__res_query`",
+        "Static Initial TLS v1",
+        "mmap=9/munmap=11",
+        "chroot=161",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-resolver-runtime ABI prerequisites omit {phrase}",
+        )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-resolver-runtime.x86_header_prerequisites",
+    )
+    header_text = "\n".join(headers)
+    for phrase in (
+        "GNU C11/C++17",
+        "<netdb.h>",
+        "<resolv.h>",
+        "__res_state",
+        "__h_errno_location",
+        "res_querydomain",
+        "res_search",
+        "res_mkquery",
+        "res_send",
+        "dn_comp",
+        "unmangled",
+        "default C ABI",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-resolver-runtime header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-resolver-runtime needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-resolver-runtime"},
+        "static-c-resolver-runtime must use the closed libc-resolver-runtime command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-resolver-runtime evidence needs a scope")
+    for phrase in (
+        "x86-resolver-runtime",
+        "-nostdlib -static",
+        "default static export roster remains closed",
+        "weak same-address `res_search`/public `res_query`",
+        "QNAME/QTYPE",
+        "querydomain",
+        "unchanged errno short-buffer failure",
+        "h_errno worker isolation",
+        "mmap/munmap",
+        "resolver-network completion",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-resolver-runtime evidence omits {phrase}")
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-resolver-runtime needs oracle records")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "res_search/res_query alias identity" in entry["role"]
+            and "dn_comp" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-resolver-runtime must retain its pinned-musl behavior and alias oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "chroot/chdir" in entry["role"]
+            and "mmap/munmap" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-resolver-runtime must retain its hermetic Linux fixture boundary",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "hidden/weak same-address" in entry["role"]
+            and "true-static" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-resolver-runtime must retain its SysV alias and static ELF boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    for symbol in (
+        "__res_state",
+        "dn_comp",
+        "res_mkquery",
+        "res_query",
+        "res_querydomain",
+        "res_search",
+        "res_send",
+    ):
+        require(
+            symbol not in static_exports,
+            f"static-c-resolver-runtime must keep {symbol} out of default static exports",
+        )
+
+    cargo_manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    require(
+        'x86-resolver-runtime = ["dep:crabc-core", "x86-h-errno"]'
+        in cargo_manifest,
+        "x86 resolver runtime Cargo feature closure drifted",
+    )
+    static_root = (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        '#[cfg(feature = "x86-resolver-runtime")]\n#[path = "resolver_runtime.rs"]\nmod resolver_runtime;',
+        '#[cfg(not(feature = "x86-resolver-runtime"))]\n#[path = "res_init.rs"]\nmod res_init;',
+    ):
+        require(snippet in static_root, f"x86 static C ABI omits resolver runtime selection {snippet}")
+    source = (ROOT / "libc/src/c_abi/x86_64/resolver_runtime.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "src/network/res_query.c",
+        '".hidden __res_mkquery",',
+        '".set res_mkquery, __res_mkquery",',
+        '".hidden __res_send",',
+        '".set res_send, __res_send",',
+        '".weak res_search",',
+        '".set res_search, res_query",',
+        "Pinned musl returns -1 for a destination",
+    ):
+        require(snippet in source, f"resolver runtime source omits {snippet}")
+    require(
+        'pub unsafe extern "C" fn res_search' not in source,
+        "resolver runtime must not replace musl's res_search alias with a wrapper",
+    )
+
+    fixture = (ROOT / "compat/x86_64/libc_resolver_runtime_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "expected_questions",
+        "question_matches",
+        'dn_comp("dns.fixture.test"',
+        "errno != E2BIG",
+        'res_querydomain("dns", "fixture.test"',
+        "res_search != res_query",
+    ):
+        require(snippet in fixture, f"resolver runtime fixture omits {snippet}")
+    header_runner = (
+        ROOT / "compat/x86_64/run_resolver_runtime_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "res_querydomain res_search res_mkquery res_send dn_comp",
+        "C++ probe lacks unmangled",
+        "mangled resolver reference",
+    ):
+        require(snippet in header_runner, f"resolver runtime header gate omits {snippet}")
+    runner = (ROOT / "compat/x86_64/run_libc_resolver_runtime.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "--features x86-resolver-runtime",
+        "-nostdlib -static",
+        "R_X86_64_TPOFF",
+        '"$oracle_elf_symbols" res_query res_search',
+        '"$archive_elf_symbols" res_query res_search',
+        '"$candidate_symbols" res_query res_search',
+        "mmap",
+        "munmap",
+    ):
+        require(snippet in runner, f"resolver runtime runner omits {snippet}")
+    dispatch = (ROOT / "scripts/dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("resolver-runtime-header-abi)", "libc-resolver-runtime)"):
+        require(snippet in dispatch, f"resolver runtime dispatcher omits {snippet}")
+
+
 def require_endhostent_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's stateless netdb terminator alias out of resolver state."""
     artifacts = require_verified_artifacts(
@@ -72709,6 +73003,7 @@ def validate_ledger(
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
     require_h_errno_artifact(by_id["libc.resolver"])
+    require_resolver_runtime_artifact(by_id["libc.resolver"])
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
     require_issetugid_artifact(by_id["libc.c-abi-compat"])
     require_legacy_misc_slice(by_id["libc.c-abi-compat"])

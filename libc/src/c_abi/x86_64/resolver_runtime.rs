@@ -14,9 +14,10 @@
 //! The source/behavior oracle is pinned musl 1.2.6, release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, MIT licensed:
 //!
-//! - `src/network/res_mkquery.c`, `res_send.c`, `res_query.c`, and
-//!   `res_querydomain.c` supply the selected historical resolver spellings;
-//!   `res_query.c` supplies musl's `res_query`/`res_search` weak alias
+//! - `src/network/res_mkquery.c`, `src/network/res_send.c`,
+//!   `src/network/res_query.c`, and `src/network/res_querydomain.c` supply
+//!   the selected historical resolver spellings; `src/network/res_query.c`
+//!   supplies musl's `res_query`/`res_search` weak alias
 //!   boundary; `src/network/h_errno.c` is instead owned by the separate
 //!   `h_errno` artifact composed by this feature;
 //! - `src/network/lookup_name.c` and `lookup_ipliteral.c` establish the
@@ -680,12 +681,13 @@ unsafe fn make_query(
     Ok(written as c_int)
 }
 
-// Pinned musl makes each private resolver implementation a hidden strong ELF
-// symbol and exposes the historical spelling as a weak same-address alias.
-// Keeping this in assembly avoids a forwarding wrapper, which would change
-// both pointer identity and ordinary weak-override behavior.  Resolver-internal
-// callers below use the hidden names; C consumers use only the public names
-// declared by `<resolv.h>`.
+// Pinned musl makes its private query-builder and transport implementations
+// hidden strong ELF symbols and exposes their historical spellings as weak
+// same-address aliases. It also gives `res_search` the same address as the
+// public strong `res_query` entry. Keeping these aliases in assembly avoids a
+// forwarding wrapper, which would change pointer identity and ordinary weak-
+// override behavior. Resolver-internal callers below use the hidden builder
+// and transport names; C consumers use only spellings declared by `<resolv.h>`.
 core::arch::global_asm!(
     ".hidden __res_mkquery",
     ".weak res_mkquery",
@@ -693,6 +695,8 @@ core::arch::global_asm!(
     ".hidden __res_send",
     ".weak res_send",
     ".set res_send, __res_send",
+    ".weak res_search",
+    ".set res_search, res_query",
 );
 
 /// Encode one selected recursive Internet DNS question in caller storage.
@@ -753,7 +757,8 @@ pub unsafe extern "C" fn dn_comp(
     };
     let name_length = written - 16;
     if name_length > output.len() {
-        unsafe { set_errno(EMSGSIZE) };
+        // Pinned musl returns -1 for a destination that cannot hold the
+        // complete encoded name without publishing a new errno value.
         return -1;
     }
     output[..name_length].copy_from_slice(&query[12..12 + name_length]);
@@ -902,6 +907,7 @@ unsafe fn query_response(
     }
 }
 
+#[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn res_query(
     name: *const c_char,
@@ -947,55 +953,6 @@ pub unsafe extern "C" fn res_querydomain(
         core::ptr::copy_nonoverlapping(domain, combined.as_mut_ptr().add(name_length + separator), domain_length + 1);
     }
     unsafe { query_response(combined.as_ptr(), class, type_, answer, answer_length) }
-}
-
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn res_search(
-    name: *const c_char,
-    class: c_int,
-    type_: c_int,
-    answer: *mut u8,
-    answer_length: c_int,
-) -> c_int {
-    unsafe { ensure_initialized() };
-    let Some(length) = (unsafe { c_string_length(name, 254) }) else {
-        unsafe { set_errno(EINVAL) };
-        return -1;
-    };
-    let absolute = length != 0 && unsafe { name.add(length - 1).read() } == b'.' as c_char;
-    let dots = (0..length)
-        .filter(|index| unsafe { name.add(*index).read() } == b'.' as c_char)
-        .count();
-    let ndots = unsafe { RESOLVER_RES_STATE.resolver_flags & 0xf } as usize;
-    let search_first = !absolute && dots < ndots;
-    if search_first {
-        for index in 0..MAXDNSRCH {
-            let domain = unsafe { RESOLVER_RES_STATE.dnsrch[index] };
-            if domain.is_null() {
-                break;
-            }
-            let result = unsafe { res_querydomain(name, domain, class, type_, answer, answer_length) };
-            if result >= 0 || unsafe { current_h_errno() } == TRY_AGAIN {
-                return result;
-            }
-        }
-    }
-    let direct = unsafe { res_query(name, class, type_, answer, answer_length) };
-    if direct >= 0 || absolute || unsafe { current_h_errno() } == TRY_AGAIN {
-        return direct;
-    }
-    for index in 0..MAXDNSRCH {
-        let domain = unsafe { RESOLVER_RES_STATE.dnsrch[index] };
-        if domain.is_null() {
-            break;
-        }
-        let result = unsafe { res_querydomain(name, domain, class, type_, answer, answer_length) };
-        if result >= 0 || unsafe { current_h_errno() } == TRY_AGAIN {
-            return result;
-        }
-    }
-    -1
 }
 
 unsafe fn hosts_lookup(

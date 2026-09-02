@@ -56,9 +56,18 @@ class FeatureArchiveRosterTests(unittest.TestCase):
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
         self.assertEqual(len(rows), 20)
+        self.assertEqual([item.identifier for item in rows if item.state == "planned"], [])
+        resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
+        self.assertEqual(resolver.state, "verified")
+        self.assertEqual(resolver.evidence_record, "static-c-resolver-runtime")
+        self.assertEqual(resolver.dispatch_command, "libc-resolver-runtime")
         self.assertEqual(
-            [item.identifier for item in rows if item.state == "planned"],
-            ["x86-resolver-runtime"],
+            resolver.aliases,
+            (
+                ROSTER.ArchiveAlias("res_mkquery", "__res_mkquery", "weak-same-address"),
+                ROSTER.ArchiveAlias("res_search", "res_query", "weak-same-address"),
+                ROSTER.ArchiveAlias("res_send", "__res_send", "weak-same-address"),
+            ),
         )
         self.assertEqual(
             next(item for item in rows if item.identifier == "x86-environment-runtime").additive_callables,

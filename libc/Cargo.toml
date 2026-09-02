@@ -51,8 +51,8 @@ x86-h-errno = []
 x86-ualarm = []
 # Private Linux/x86-64 resolver-runtime evidence. The C ABI state owner uses
 # the separately evidenced h_errno state owner plus the existing stateless
-# no_std DNS transport, but remains opt-in until this bounded package has its
-# own complete native evidence and family accounting.
+# no_std DNS transport. It remains opt-in after its bounded evidence closes so
+# the frozen default archive does not silently acquire resolver state or I/O.
 x86-resolver-runtime = ["dep:crabc-core", "x86-h-errno"]
 # Private Linux/x86-64 evidence for the existing bounded SHA-crypt C ABI.
 # `sha-crypt` owns the MCF result temporarily. The target-local adapter bridges

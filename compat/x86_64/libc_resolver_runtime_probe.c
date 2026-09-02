@@ -81,6 +81,21 @@ static size_t question_end(const unsigned char *packet, size_t length)
     return 0;
 }
 
+static unsigned question_type(const unsigned char *packet, size_t end)
+{
+    return ((unsigned)packet[end - 4] << 8) | packet[end - 3];
+}
+
+static int question_matches(const unsigned char *packet, size_t length,
+    const unsigned char *name, size_t name_length, unsigned type)
+{
+    size_t end = question_end(packet, length);
+    return end != 0 && end - 4 == 12 + name_length &&
+        bytes_equal(packet + 12, name, name_length) &&
+        question_type(packet, end) == type && packet[end - 2] == 0 &&
+        packet[end - 1] == C_IN;
+}
+
 static size_t append_u16(unsigned char *packet, size_t offset, unsigned value)
 {
     packet[offset++] = (unsigned char)(value >> 8);
@@ -97,10 +112,36 @@ static size_t append_u32(unsigned char *packet, size_t offset, uint32_t value)
     return offset;
 }
 
+struct expected_question {
+    const unsigned char *name;
+    size_t name_length;
+    unsigned type;
+    int missing;
+};
+
+static const unsigned char dns_fixture_name[] = {
+    3, 'd', 'n', 's', 7, 'f', 'i', 'x', 't', 'u', 'r', 'e',
+    4, 't', 'e', 's', 't', 0,
+};
+static const unsigned char missing_fixture_name[] = {
+    7, 'm', 'i', 's', 's', 'i', 'n', 'g', 7, 'f', 'i', 'x', 't',
+    'u', 'r', 'e', 4, 't', 'e', 's', 't', 0,
+};
+static const unsigned char dns_name[] = { 3, 'd', 'n', 's', 0 };
+
+static const struct expected_question expected_questions[] = {
+    { dns_fixture_name, sizeof(dns_fixture_name), T_A, 0 },
+    { dns_fixture_name, sizeof(dns_fixture_name), T_A, 0 },
+    { dns_fixture_name, sizeof(dns_fixture_name), T_A, 0 },
+    { dns_fixture_name, sizeof(dns_fixture_name), T_A, 0 },
+    { missing_fixture_name, sizeof(missing_fixture_name), T_A, 1 },
+    { dns_name, sizeof(dns_name), T_A, 0 },
+};
+
 static int serve_dns(int descriptor)
 {
     unsigned iteration;
-    for (iteration = 0; iteration < 5; ++iteration) {
+    for (iteration = 0; iteration < sizeof(expected_questions) / sizeof(expected_questions[0]); ++iteration) {
         unsigned char request[512];
         unsigned char response[512];
         struct sockaddr_in peer;
@@ -108,19 +149,20 @@ static int serve_dns(int descriptor)
         ssize_t received = recvfrom(descriptor, request, sizeof(request), 0,
             (struct sockaddr *)&peer, &peer_length);
         size_t end, offset;
-        int missing;
+        const struct expected_question *expected = &expected_questions[iteration];
         if (received < 12) return 1;
         end = question_end(request, (size_t)received);
         if (end == 0) return 2;
-        missing = request[12] == 7 &&
-            bytes_equal(request + 13, (const unsigned char *)"missing", 7);
+        if (!question_matches(request, (size_t)received, expected->name,
+                expected->name_length, expected->type))
+            return 3;
         response[0] = request[0]; response[1] = request[1];
-        response[2] = 0x81; response[3] = missing ? 0x83 : 0x80;
+        response[2] = 0x81; response[3] = expected->missing ? 0x83 : 0x80;
         response[4] = 0; response[5] = 1;
-        response[6] = 0; response[7] = missing ? 0 : 2;
+        response[6] = 0; response[7] = expected->missing ? 0 : 2;
         response[8] = response[9] = response[10] = response[11] = 0;
         for (offset = 12; offset < end; ++offset) response[offset] = request[offset];
-        if (!missing) {
+        if (!expected->missing) {
             static const unsigned char cname[] = {
                 9, 'c','a','n','o','n','i','c','a','l',
                 7, 'f','i','x','t','u','r','e',
@@ -143,7 +185,7 @@ static int serve_dns(int descriptor)
         }
         if (sendto(descriptor, response, offset, 0, (struct sockaddr *)&peer,
                 peer_length) != (ssize_t)offset)
-            return 3;
+            return 4;
     }
     return 0;
 }
@@ -248,8 +290,13 @@ int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
 {
     static const unsigned char host_address[4] = { 192, 0, 2, 44 };
     static const unsigned char dns_address[4] = { 203, 0, 113, 9 };
+    static const unsigned char compressed_name[] = {
+        3, 'd', 'n', 's', 7, 'f', 'i', 'x', 't', 'u', 'r', 'e',
+        4, 't', 'e', 's', 't', 0,
+    };
     unsigned char answer[512];
     unsigned char query[512];
+    unsigned char compressed[sizeof(compressed_name)];
     struct __res_state *state;
     int query_length, server, status, result;
 
@@ -282,6 +329,16 @@ int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
         0, query, sizeof(query));
     if (query_length < 12 || query[2] != 1 || query[5] != 1)
         return 6;
+    errno = E2BIG;
+    if (dn_comp("dns.fixture.test", compressed, sizeof(compressed), 0, 0) !=
+            (int)sizeof(compressed_name) ||
+        !bytes_equal(compressed, compressed_name, sizeof(compressed_name)) ||
+        errno != E2BIG)
+        return 8;
+    errno = E2BIG;
+    if (dn_comp("dns.fixture.test", compressed, sizeof(compressed) - 1, 0, 0) != -1 ||
+        errno != E2BIG)
+        return 9;
     if (res_send(query, query_length, answer, sizeof(answer)) < 12)
         return 7;
     if ((result = check_addrinfo("host-alias", host_address, "host.fixture")) != 0)
@@ -294,6 +351,13 @@ int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
     if (h_errno != 0 || state->res_h_errno != 0)
         return 31;
 #endif
+    if (res_querydomain("dns", "fixture.test", C_IN, T_A, answer,
+            sizeof(answer)) < 12)
+        return 40;
+#ifdef CRABC_RESOLVER_RUNTIME_FREESTANDING
+    if (h_errno != 0 || state->res_h_errno != 0)
+        return 41;
+#endif
     if (res_query("missing.fixture.test", C_IN, T_A, answer, sizeof(answer)) != -1)
         return 32;
     if (h_errno != HOST_NOT_FOUND)
@@ -302,6 +366,8 @@ int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
     if (state->res_h_errno != HOST_NOT_FOUND)
         return 34;
 #endif
+    if (res_search != res_query)
+        return 42;
     if (res_search("dns", C_IN, T_A, answer, sizeof(answer)) < 12)
         return 35;
 #ifdef CRABC_RESOLVER_RUNTIME_FREESTANDING

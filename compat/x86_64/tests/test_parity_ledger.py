@@ -66,10 +66,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 350)
+        self.assertEqual(report["verified_artifact_count"], 351)
         self.assertEqual(report["feature_archive_count"], 20)
-        self.assertEqual(report["verified_feature_archive_count"], 19)
-        self.assertEqual(report["planned_feature_archive_count"], 1)
+        self.assertEqual(report["verified_feature_archive_count"], 20)
+        self.assertEqual(report["planned_feature_archive_count"], 0)
         self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -128,8 +128,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(report, {
             "feature_archive_count": 20,
-            "planned_feature_archive_count": 1,
-            "verified_feature_archive_count": 19,
+            "planned_feature_archive_count": 0,
+            "verified_feature_archive_count": 20,
         })
 
         feature_archives = data["feature_archive"]
@@ -168,9 +168,28 @@ class X86ParityLedgerTests(unittest.TestCase):
             if entry["id"] == "x86-resolver-runtime"
         )
         assert isinstance(resolver, dict)
-        resolver["state"] = "verified"
+        resolver.pop("evidence_record")
         with self.assertRaisesRegex(ledger.LedgerError, "keys drifted"):
             ledger.validate_feature_archive_roster(data, self.verified_records(data))
+
+    def test_resolver_runtime_artifact_keeps_its_opt_in_alias_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        ledger.require_resolver_runtime_artifact(family)
+
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts
+            if entry["id"] == "static-c-resolver-runtime"
+        )
+        assert isinstance(artifact, dict)
+        artifact["description"] = artifact["description"].replace(
+            "weak same-address alias of public strong `res_query`",
+            "separate res_search implementation",
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "res_search"):
+            ledger.require_resolver_runtime_artifact(family)
 
     def test_string_copy_strdupa_header_contract_stays_non_runtime(self) -> None:
         """Keep the exact macro below archive and allocator ownership."""

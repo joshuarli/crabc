@@ -58,6 +58,25 @@ assert_weak_hidden_alias_pair() {
         fail "${label} ${public_symbol} is not the same-address alias of ${hidden_symbol}"
 }
 
+assert_weak_same_address_alias_pair() {
+    local symbols_path="$1"
+    local target_symbol="$2"
+    local alias_symbol="$3"
+    local label="$4"
+    local target_value
+    local alias_value
+
+    grep -Eq "FUNC +GLOBAL +DEFAULT +.*${target_symbol}$" "$symbols_path" ||
+        fail "${label} ${target_symbol} is not a public global function"
+    grep -Eq "FUNC +WEAK +DEFAULT +.*${alias_symbol}$" "$symbols_path" ||
+        fail "${label} ${alias_symbol} is not a weak default function"
+    target_value="$(symbol_value "$symbols_path" "$target_symbol")"
+    alias_value="$(symbol_value "$symbols_path" "$alias_symbol")"
+    [ -n "$target_value" ] || fail "${label} ${target_symbol} has no ELF value"
+    [ "$target_value" = "$alias_value" ] ||
+        fail "${label} ${alias_symbol} is not the same-address alias of ${target_symbol}"
+}
+
 assert_weak_default_function() {
     local symbols_path="$1"
     local symbol="$2"
@@ -141,6 +160,8 @@ assert_weak_hidden_alias_pair "$oracle_elf_symbols" __res_mkquery \
     res_mkquery "pinned-musl archive"
 assert_weak_hidden_alias_pair "$oracle_elf_symbols" __res_send res_send \
     "pinned-musl archive"
+assert_weak_same_address_alias_pair "$oracle_elf_symbols" res_query res_search \
+    "pinned-musl archive"
 assert_weak_default_function "$oracle_elf_symbols" res_search \
     "pinned-musl archive"
 
@@ -190,6 +211,8 @@ assert_weak_hidden_alias_pair "$archive_elf_symbols" __res_mkquery \
     res_mkquery "feature archive"
 assert_weak_hidden_alias_pair "$archive_elf_symbols" __res_send res_send \
     "feature archive"
+assert_weak_same_address_alias_pair "$archive_elf_symbols" res_query res_search \
+    "feature archive"
 assert_weak_default_function "$archive_elf_symbols" res_search "feature archive"
 extract_resolver_object "$archive" "$resolver_object"
 objdump -dr "$resolver_object" >"$resolver_disassembly"
@@ -226,6 +249,8 @@ done
 assert_weak_hidden_alias_pair "$candidate_symbols" __res_mkquery res_mkquery \
     candidate
 assert_weak_hidden_alias_pair "$candidate_symbols" __res_send res_send candidate
+assert_weak_same_address_alias_pair "$candidate_symbols" res_query res_search \
+    candidate
 assert_weak_default_function "$candidate_symbols" res_search candidate
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then

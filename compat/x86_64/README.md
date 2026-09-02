@@ -51,6 +51,13 @@ still-planned `libc.posix-runtime` and `libc.pthread-tls` families, not a
 pthread/TLS lifecycle vertical, family completion, owned-sysroot proof,
 promotion, or public support claim.
 
+`libc-resolver-runtime` is a separately verified opt-in static C artifact in
+the still-planned `libc.resolver` family. Its hermetic pinned-musl/candidate
+gate fixes fixture `/etc/hosts`, `/etc/resolv.conf`, and loopback UDP DNS
+inside a disposable chroot, checks resolver aliases and TLS state, and keeps
+the default static export roster unchanged. It is not the `resolver-network`
+gate, resolver-family completion, or public x86 support.
+
 This lane runs the fixed `crabc-core` lib suite and the separately admitted
 direct `crabc-rs` subset for the `x86_64-unknown-linux-musl` target, including
 only the proved `fs::flock` whole-file advisory locking, `fs::sendfile`

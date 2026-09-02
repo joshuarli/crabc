@@ -232,9 +232,17 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(posix_runtime["verified_artifact_count"], 161)
         self.assertEqual(posix_runtime["verified_slice_count"], 6)
+        resolver = next(
+            row for row in report["families"] if row["id"] == "libc.resolver"
+        )
+        self.assertEqual(resolver["verified_artifact_count"], 17)
+        self.assertIn(
+            {"family": "libc.resolver", "id": "static-c-resolver-runtime"},
+            report["selected_private_artifacts"],
+        )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            350,
+            351,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
