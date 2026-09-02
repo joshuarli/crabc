@@ -1203,7 +1203,7 @@ internals without narrowing any public binary80 boundary. It selects no
 elementary/fenv-sensitive/numeric-parsing capability, general libc/libm,
 family completion, x86 promotion, or public support.
 
-The x86 lane now has twenty-four private static artifacts inside still-planned
+The x86 lane retains private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -1304,20 +1304,32 @@ attributes, lifecycle/synchronization/TSS, dynamic/loader TLS, CRT, sysroot,
 family completion, promotion, and public x86 support remain excluded.
 
 The separate `./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared`
-artifact is a twenty-third private static artifact in that same still-planned
+artifact remains a record-only private static leaf in that same still-planned
 family. It selects only `pthread_barrierattr_setpshared` and
 `pthread_barrierattr_getpshared` over the public four-byte attribute word:
 musl's accepted `0`/`1` values replace it with `0`/`INT_MIN`, invalid inputs
 leave it unchanged, and any nonzero raw word reads back as shared. The fixture
-uses caller-owned raw storage without a lifecycle call; no selected barrier
-initializer consumes the record. It therefore does not select barrier
-initialization, waiting, destruction, process-shared barrier operation,
-threads, TLS, synchronization, cancellation, CRT, loader, sysroot, family
-completion, promotion, or public x86 support.
+uses caller-owned raw storage without a lifecycle call or the separately
+selected barrier block. Its record-only proof therefore does not establish
+barrier initialization, waiting, destruction, or process-shared barrier
+operation; threads, TLS, synchronization, cancellation, CRT, loader, sysroot,
+family completion, promotion, and public x86 support remain excluded.
+
+The separate `./scripts/dev-x86_64.sh libc-pthread-barrier` artifact selects
+the complete seven-name public barrier surface inside that same still-planned
+family: attribute lifecycle/pshared records, count validation, two reusable
+private selected-worker rounds with exactly one serial result each, and one
+shared-futex cross-fork round followed by quiescent destroy. Its true static
+candidate ports musl's private stack-instance and shared vmlock protocols over
+the exact 32-byte, align-eight public record. Fixture-local mapping, fork,
+wait, clock, and exit plumbing does not select a C process runtime. Arbitrary
+destroy races, broad pthread synchronization/lifecycle, cancellation,
+dynamic/loader TLS, CRT/sysroot integration, family completion, promotion,
+x86-64 parity, and public x86 support remain excluded.
 
 The separate `./scripts/dev-x86_64.sh pthread-spin-destroy-header-abi` and
-`./scripts/dev-x86_64.sh libc-pthread-spin-destroy` gates add a twenty-fourth
-private static artifact in that same still-planned family. They compare the
+`./scripts/dev-x86_64.sh libc-pthread-spin-destroy` gates add a separately
+recorded private static artifact in that same still-planned family. They compare the
 unconditional C/C++ `pthread_spin_destroy(pthread_spinlock_t *)` declaration
 and unmangled linkage with pinned musl, then isolate musl's source-closed
 return-zero object and one extracted crabc object in an archive-free static

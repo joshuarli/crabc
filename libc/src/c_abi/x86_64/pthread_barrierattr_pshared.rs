@@ -14,10 +14,11 @@
 //! record-pair over the installed four-byte `pthread_barrierattr_t` word. It
 //! has no allocation, syscall, C-`errno`, TLS, TCB, attribute lifecycle,
 //! barrier state-machine, synchronization, cancellation, or thread lifecycle
-//! behavior. No selected barrier initializer consumes the record here, and no
-//! selected init/destroy sibling is imported into this branch. A shared record
-//! bit is not barrier initialization, barrier waiting, process-shared barrier operation,
-//! general pthread support, or public x86 support.
+//! behavior. This standalone fixture does not invoke the separately selected
+//! operational barrier block, and no init/destroy sibling is imported into
+//! this module. Its raw record proof alone is not barrier initialization,
+//! barrier waiting, process-shared barrier operation, general pthread support,
+//! or public x86 support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread barrier-attribute pshared leaf requires little-endian Linux/x86-64");

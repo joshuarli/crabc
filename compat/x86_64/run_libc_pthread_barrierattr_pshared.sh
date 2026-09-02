@@ -151,7 +151,7 @@ fi
 for marker in 'src/thread/pthread_barrierattr_setpshared.c::pthread_barrierattr_setpshared' \
     'src/thread/pthread_attr_get.c::pthread_barrierattr_getpshared' \
     'pshared > 1U' 'a->__attr = pshared ? INT_MIN : 0' \
-    '*pshared = !!a->__attr' 'No selected barrier initializer consumes the record'; do
+    '*pshared = !!a->__attr' 'This standalone fixture does not invoke the separately selected'; do
     grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_barrierattr_pshared.rs ||
         fail "pthread barrierattr pshared source lacks ${marker}"
 done

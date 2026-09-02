@@ -1850,7 +1850,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
             "libc-pthread-name",
-            "libc-pthread-barrierattr-pshared|libc-pthread-spin-init",
+            "libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init",
             "libc-pthread-spin-destroy",
             "libc-pthread-detach",
             "libc-thrd-yield",
@@ -1978,6 +1978,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-cpuclock", source)
         self.assertIn("libc-pthread-name", source)
         self.assertIn("libc-pthread-barrierattr-pshared", source)
+        self.assertIn("libc-pthread-barrier", source)
         self.assertIn("pthread-spin-destroy-header-abi", source)
         self.assertIn("libc-pthread-spin-destroy", source)
         self.assertIn("libc-termios-control", source)
@@ -9159,7 +9160,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "a->__attr = pshared ? INT_MIN : 0",
             "*pshared = !!a->__attr",
             "four-byte `pthread_barrierattr_t`",
-            "No selected barrier initializer",
+            "This standalone fixture does not invoke the separately selected",
             "process-shared barrier operation",
             "no allocation,",
             "C-`errno`",
@@ -9274,6 +9275,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         artifact_runner_path = (
             ROOT / "compat" / "x86_64" / "run_libc_pthread_barrier.sh"
         )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
         static_exports = {
             line
             for line in (
@@ -9281,6 +9291,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             ).read_text(encoding="utf-8").splitlines()
             if line and not line.startswith("#")
         }
+        runner = RUNNER.read_text(encoding="utf-8")
 
         for path in (implementation_path, probe_path, start_path, artifact_runner_path):
             self.assertTrue(path.is_file(), f"missing pthread barrier input: {path}")
@@ -9345,6 +9356,40 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_barrierattr_init_signature",
+                "crabc_pthread_barrierattr_destroy_signature",
+                "crabc_pthread_barrier_init_signature",
+                "crabc_pthread_barrier_destroy_signature",
+                "crabc_pthread_barrier_wait_signature",
+                "pthread_barrierattr_init signature",
+                "pthread_barrierattr_destroy signature",
+                "pthread_barrier_init signature",
+                "pthread_barrier_destroy signature",
+                "pthread_barrier_wait signature",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "crabc_force_pthread_barrierattr_init",
+            "crabc_force_pthread_barrierattr_destroy",
+            "crabc_force_pthread_barrier_init",
+            "crabc_force_pthread_barrier_destroy",
+            "crabc_force_pthread_barrier_wait",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        self.assertIn(
+            "pthread_barrierattr_setpshared pthread_barrierattr_getpshared\n"
+            "        pthread_barrierattr_init pthread_barrierattr_destroy "
+            "pthread_barrier_init pthread_barrier_destroy pthread_barrier_wait",
+            header_runner,
+        )
+        self.assertIn(
+            "pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|"
+            "pthread_barrierattr_init|pthread_barrierattr_destroy|"
+            "pthread_barrier_init|pthread_barrier_destroy|pthread_barrier_wait",
+            header_runner,
+        )
         self.assertTrue(
             {
                 "pthread_barrierattr_init",
@@ -9356,6 +9401,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "pthread_barrier_wait",
             }
             <= static_exports
+        )
+        self.assertIn("run_libc_pthread_barrier_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_barrier.sh", runner
+        )
+        self.assertIn(
+            '    libc-pthread-barrier)\n        [ "$#" -eq 0 ] || fail "libc-pthread-barrier takes no arguments"',
+            runner,
         )
 
     def test_libc_static_c_abi_pthread_spin_destroy_stays_source_closed(
@@ -10626,7 +10679,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_cond_signal pthread_cond_broadcast\n        pthread_rwlock_init pthread_rwlock_destroy pthread_rwlock_rdlock",
             "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_yield thrd_current thrd_equal",
             "call_once",
-            "pthread_rwlockattr_getpshared|pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|pthread_once",
+            "pthread_rwlockattr_getpshared|pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|pthread_barrierattr_init|pthread_barrierattr_destroy|pthread_barrier_init|pthread_barrier_destroy|pthread_barrier_wait|pthread_once",
             "thrd_equal|call_once|tss_create|tss_delete|tss_get|tss_set|mtx_init",
         ):
             self.assertIn(required, header_runner)

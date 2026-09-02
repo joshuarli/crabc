@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 356)
+        self.assertEqual(report["verified_artifact_count"], 357)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -3361,11 +3361,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1512)
-        self.assertEqual(provider_audit["default_static_callable_count"], 1049)
+        self.assertEqual(provider_audit["default_static_callable_count"], 1054)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 416)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 411)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -15214,7 +15214,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Twenty-four separately verified static artifacts", pthread_tls["description"]
+            "Twenty-five separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -15237,7 +15237,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 24)
+        self.assertEqual(len(artifacts), 36)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -15265,8 +15265,19 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-name",
                 "static-c-pthread-spin-destroy",
                 "static-c-pthread-barrierattr-pshared",
+                "static-c-pthread-barrier",
                 "static-c-pthread-spin-init",
                 "static-c-thrd-yield",
+                "static-c-pthread-condattr-pshared",
+                "static-c-pthread-condattr-clock",
+                "static-c-pthread-mutexattr-robust-query",
+                "static-c-pthread-mutexattr-protocol-query",
+                "static-c-pthread-mutexattr-pshared-query",
+                "static-c-pthread-mutexattr-type-query",
+                "static-c-pthread-mutexattr-type-setter",
+                "static-c-pthread-mutex-prioceiling-query",
+                "static-c-pthread-setconcurrency",
+                "static-c-pthread-getconcurrency",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -15292,6 +15303,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         name = by_id["static-c-pthread-name"]
         spin_destroy = by_id["static-c-pthread-spin-destroy"]
         barrierattr_pshared = by_id["static-c-pthread-barrierattr-pshared"]
+        barrier = by_id["static-c-pthread-barrier"]
         spin_init = by_id["static-c-pthread-spin-init"]
         thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
@@ -15584,10 +15596,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "all-zero or `INT_MIN`",
             "any nonzero raw word to shared",
             "invalid values preserve the word",
-            "caller-owned raw record storage",
-            "No selected barrier initializer consumes this record",
-            "not barrier initialization, barrier waiting, or process-shared barrier operation",
-            "init/destroy lifecycle",
+            "pshared-only fixture deliberately provides caller-owned raw record storage",
+            "separately selected operational barrier block",
+            "raw record evidence is therefore not a proof of barrier initialization",
             "another barrier attribute",
             "a barrier state machine",
             "threads, TCB/TLS ownership, synchronization, cancellation",
@@ -15609,6 +15620,40 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, barrierattr_pshared_scope)
+        self.assertEqual(
+            barrier["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-barrier",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "seven-entry selected surface",
+            "`pthread_barrierattr_init`/`destroy`",
+            "pshared set/get pair",
+            "`pthread_barrier_init`/`destroy`/`wait`",
+            "32-byte, eight-byte-aligned public barrier records",
+            "reusable process-private stack-instance protocol",
+            "process-shared futex/vmlock protocol",
+            "one cross-fork round and quiescent destroy",
+            "two reusable selected-worker rounds with exactly one serial return",
+            "arbitrary barrier destruction races",
+            "broad pthread synchronization or lifecycle",
+            "family completion, promotion, x86-64 parity, or public x86 support",
+        ):
+            self.assertIn(phrase, barrier["description"])
+        barrier_scope = barrier["native_evidence"][0]["scope"]
+        for phrase in (
+            "attribute lifecycle/pshared records",
+            "count validation",
+            "two reusable private selected-worker rounds",
+            "one shared-futex cross-fork round followed by quiescent destroy",
+            "all seven public exports",
+            "futex=202",
+            "x86 atomic handoff",
+            "arbitrary destroy races",
+            "general pthread synchronization/lifecycle",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, barrier_scope)
         self.assertEqual(
             spin_init["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-spin-init",

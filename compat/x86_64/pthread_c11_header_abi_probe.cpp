@@ -172,6 +172,12 @@ using crabc_pthread_barrierattr_setpshared_signature = int (*)
 	(pthread_barrierattr_t *, int);
 using crabc_pthread_barrierattr_getpshared_signature = int (*)
 	(const pthread_barrierattr_t *, int *);
+using crabc_pthread_barrierattr_init_signature = int (*)(pthread_barrierattr_t *);
+using crabc_pthread_barrierattr_destroy_signature = int (*)(pthread_barrierattr_t *);
+using crabc_pthread_barrier_init_signature = int (*)
+	(pthread_barrier_t *, const pthread_barrierattr_t *, unsigned);
+using crabc_pthread_barrier_destroy_signature = int (*)(pthread_barrier_t *);
+using crabc_pthread_barrier_wait_signature = int (*)(pthread_barrier_t *);
 using crabc_once_init_signature = void (*)();
 using crabc_pthread_once_signature = int (*)(
 	pthread_once_t *, crabc_once_init_signature);
@@ -285,6 +291,16 @@ static_assert(__is_same(decltype(&pthread_barrierattr_setpshared),
 	crabc_pthread_barrierattr_setpshared_signature), "pthread_barrierattr_setpshared signature");
 static_assert(__is_same(decltype(&pthread_barrierattr_getpshared),
 	crabc_pthread_barrierattr_getpshared_signature), "pthread_barrierattr_getpshared signature");
+static_assert(__is_same(decltype(&pthread_barrierattr_init),
+	crabc_pthread_barrierattr_init_signature), "pthread_barrierattr_init signature");
+static_assert(__is_same(decltype(&pthread_barrierattr_destroy),
+	crabc_pthread_barrierattr_destroy_signature), "pthread_barrierattr_destroy signature");
+static_assert(__is_same(decltype(&pthread_barrier_init),
+	crabc_pthread_barrier_init_signature), "pthread_barrier_init signature");
+static_assert(__is_same(decltype(&pthread_barrier_destroy),
+	crabc_pthread_barrier_destroy_signature), "pthread_barrier_destroy signature");
+static_assert(__is_same(decltype(&pthread_barrier_wait),
+	crabc_pthread_barrier_wait_signature), "pthread_barrier_wait signature");
 static_assert(__is_same(decltype(&pthread_once), crabc_pthread_once_signature),
 	"pthread_once signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
@@ -433,6 +449,16 @@ static crabc_pthread_barrierattr_setpshared_signature const crabc_force_pthread_
 	__attribute__((used)) = &pthread_barrierattr_setpshared;
 static crabc_pthread_barrierattr_getpshared_signature const crabc_force_pthread_barrierattr_getpshared
 	__attribute__((used)) = &pthread_barrierattr_getpshared;
+static crabc_pthread_barrierattr_init_signature const crabc_force_pthread_barrierattr_init
+	__attribute__((used)) = &pthread_barrierattr_init;
+static crabc_pthread_barrierattr_destroy_signature const crabc_force_pthread_barrierattr_destroy
+	__attribute__((used)) = &pthread_barrierattr_destroy;
+static crabc_pthread_barrier_init_signature const crabc_force_pthread_barrier_init
+	__attribute__((used)) = &pthread_barrier_init;
+static crabc_pthread_barrier_destroy_signature const crabc_force_pthread_barrier_destroy
+	__attribute__((used)) = &pthread_barrier_destroy;
+static crabc_pthread_barrier_wait_signature const crabc_force_pthread_barrier_wait
+	__attribute__((used)) = &pthread_barrier_wait;
 static crabc_pthread_once_signature const crabc_force_pthread_once
 	__attribute__((used)) = &pthread_once;
 static crabc_thrd_create_signature const crabc_force_thrd_create

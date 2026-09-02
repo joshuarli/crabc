@@ -636,7 +636,12 @@
         "prlimit",
         "pselect",
         "pthread_atfork",
+        "pthread_barrier_destroy",
+        "pthread_barrier_init",
+        "pthread_barrier_wait",
+        "pthread_barrierattr_destroy",
         "pthread_barrierattr_getpshared",
+        "pthread_barrierattr_init",
         "pthread_barrierattr_setpshared",
         "pthread_cancel",
         "pthread_cond_broadcast",
@@ -1346,11 +1351,6 @@
         "pthread_attr_setscope",
         "pthread_attr_setstack",
         "pthread_attr_setstacksize",
-        "pthread_barrier_destroy",
-        "pthread_barrier_init",
-        "pthread_barrier_wait",
-        "pthread_barrierattr_destroy",
-        "pthread_barrierattr_init",
         "pthread_cond_timedwait",
         "pthread_condattr_destroy",
         "pthread_condattr_init",
@@ -424021,8 +424021,8 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "2a1fdaf2fef0e14a22116fd999b966be38892138e606a502e58b76ba575f55c1",
-    "static_c_abi_exports_sha256": "339175ad79847dc7862c789bc46fca78fab49e6b214304b6a17b871c27b06cd4"
+    "parity_ledger_sha256": "fb24e2f3004c61ae5c6a71d886f682a5ca40057bb9dd121adb6fead6fdecaf67",
+    "static_c_abi_exports_sha256": "3f0a015bd0fc34d845c97aca5531d4c14be47b2c7ddf74b5868b577e3105bc8d"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -442713,11 +442713,6 @@
       "pthread_attr_setscope",
       "pthread_attr_setstack",
       "pthread_attr_setstacksize",
-      "pthread_barrier_destroy",
-      "pthread_barrier_init",
-      "pthread_barrier_wait",
-      "pthread_barrierattr_destroy",
-      "pthread_barrierattr_init",
       "pthread_cond_timedwait",
       "pthread_condattr_destroy",
       "pthread_condattr_init",
@@ -442893,8 +442888,8 @@
     },
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
-      "default_static": 1049,
-      "unprovided": 416,
+      "default_static": 1054,
+      "unprovided": 411,
       "verified_feature_archives": 47
     },
     "candidate_external_callable_count": 1512,
@@ -442909,7 +442904,7 @@
       "ok": 2617,
       "oracle-not-applicable": 1
     },
-    "static_export_complement_count": 463
+    "static_export_complement_count": 458
   },
   "target": "x86_64-unknown-linux-musl"
 }

@@ -393,6 +393,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-cpuclock  run the static x86 crabc-libc bounded pthread CPU-clock slice
   libc-pthread-name  run the static x86 crabc-libc bounded pthread task-name slice
   libc-pthread-barrierattr-pshared  run the static x86 crabc-libc barrier-attribute pshared record slice
+  libc-pthread-barrier  run the static x86 crabc-libc private/shared pthread-barrier slice
   libc-pthread-spin-destroy  run the static x86 crabc-libc private pthread spin-destruction leaf
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
   libc-pthread-rwlock  run the static x86 crabc-libc pthread read/write-lock slice
@@ -839,17 +840,26 @@ foreign names, musl's procfs path, cancellation, a general prctl C API,
 scheduler/affinity attributes, lifecycle/synchronization/TSS, a pthread TCB or
 thread list, dynamic TLS, CRT, loader, sysroot, general pthread/TLS behavior,
 or public x86 support.
-`libc-pthread-barrierattr-pshared` is a separate static project-header fixture
-that first runs through pinned musl, then links only the selected archive. It
-selects only the four-byte public `pthread_barrierattr_t` record's
-`pthread_barrierattr_setpshared`/`pthread_barrierattr_getpshared` behavior:
-accepted private/shared inputs replace its whole word with `0`/`INT_MIN`,
-invalid inputs preserve it, and any nonzero raw word queries as shared. The
-fixture deliberately constructs caller-owned record words and does not call an
-attribute lifecycle function. It does not select barrier initialization,
-waiting, destruction, or process-shared barrier operation; thread, TLS,
-synchronization, cancellation, CRT, loader, sysroot, pthread-family
-completion, or public x86 support.
+`libc-pthread-barrierattr-pshared` remains a separate static project-header
+fixture that first runs through pinned musl, then links only its record leaf
+from the selected archive. It selects the four-byte public
+`pthread_barrierattr_t` record's `pthread_barrierattr_setpshared`/
+`pthread_barrierattr_getpshared` behavior: accepted private/shared inputs
+replace its whole word with `0`/`INT_MIN`, invalid inputs preserve it, and any
+nonzero raw word queries as shared. The fixture deliberately constructs
+caller-owned record words and does not call an attribute lifecycle function or
+the separately selected barrier block. Its record-only proof does not
+establish barrier initialization, waiting, destruction, or process-shared
+barrier operation; thread, TLS, synchronization, cancellation, CRT, loader,
+sysroot, pthread-family completion, or public x86 support.
+`libc-pthread-barrier` is the separate complete static project-header barrier
+fixture. It first runs through pinned musl, then links a true
+`-nostdlib -static` candidate for attribute lifecycle/pshared records, count
+validation, two reusable private selected-worker rounds, and one shared-futex
+cross-fork round followed by quiescent destroy. The fixture's mapping, fork,
+wait, clock, and exit plumbing is test-only. It does not claim arbitrary
+destroy races, a general pthread synchronization/lifecycle runtime,
+cancellation, pthread-family completion, or public x86 support.
 `libc-pthread-spin-init` is a separate static project-header fixture that first
 runs through pinned musl, then links only the selected archive. It selects only
 `pthread_spin_init`'s four-byte public `pthread_spinlock_t` record reset: every
@@ -4336,6 +4346,10 @@ run_libc_pthread_barrierattr_pshared_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_barrierattr_pshared.sh
 }
 
+run_libc_pthread_barrier_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_barrier.sh
+}
+
 run_libc_pthread_condattr_pshared_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_condattr_pshared.sh
 }
@@ -5092,7 +5106,7 @@ case "$command" in
     libc-pthread-affinity) ;;
     libc-pthread-cpuclock) ;;
     libc-pthread-name) ;;
-    libc-pthread-barrierattr-pshared|libc-pthread-spin-init) ;;
+    libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init) ;;
     libc-pthread-spin-destroy) ;;
     libc-pthread-detach) ;;
     libc-thrd-yield) ;;
@@ -6696,6 +6710,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-barrierattr-pshared takes no arguments"
         ensure_image
         run_libc_pthread_barrierattr_pshared_probe
+        ;;
+    libc-pthread-barrier)
+        [ "$#" -eq 0 ] || fail "libc-pthread-barrier takes no arguments"
+        ensure_image
+        run_libc_pthread_barrier_probe
         ;;
     libc-pthread-condattr-pshared)
         [ "$#" -eq 0 ] || fail "libc-pthread-condattr-pshared takes no arguments"

@@ -266,6 +266,27 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt"} & unprovided)
         self.assertIn("fputws", unprovided)
 
+    def test_pthread_barrier_provider_block_is_default_static_not_unprovided(self) -> None:
+        """Keep the selected barrier ABI in the default archive provider partition."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
+        unprovided = set(partition["unprovided"]["members"])
+        barrier_entries = {
+            "pthread_barrierattr_init",
+            "pthread_barrierattr_destroy",
+            "pthread_barrierattr_setpshared",
+            "pthread_barrierattr_getpshared",
+            "pthread_barrier_init",
+            "pthread_barrier_destroy",
+            "pthread_barrier_wait",
+        }
+
+        self.assertTrue(barrier_entries <= default_static)
+        self.assertFalse(barrier_entries & unprovided)
+
     def test_netinet_macro_batch_is_present_with_its_exact_feature_split(self) -> None:
         """Keep this header-only reduction separate from archive-callable work."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
