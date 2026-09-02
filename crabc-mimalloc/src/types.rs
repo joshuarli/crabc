@@ -4309,6 +4309,27 @@ mod tests {
             "offsetof.mi_memid_t.initially_zero",
             offset_of!(MemoryId, initially_zero)
         );
+        // `LAYOUT_PROBE` has always emitted this complete C image. Keep the
+        // Rust record equally complete so the release-oracle comparison owns
+        // the random-context ABI rather than relying only on local asserts.
+        record!("sizeof.mi_random_ctx_t", size_of::<TheapRandomImage>());
+        record!("alignof.mi_random_ctx_t", align_of::<TheapRandomImage>());
+        record!(
+            "offsetof.mi_random_ctx_t.input",
+            offset_of!(TheapRandomImage, input)
+        );
+        record!(
+            "offsetof.mi_random_ctx_t.output",
+            offset_of!(TheapRandomImage, output)
+        );
+        record!(
+            "offsetof.mi_random_ctx_t.output_available",
+            offset_of!(TheapRandomImage, output_available)
+        );
+        record!(
+            "offsetof.mi_random_ctx_t.weak",
+            offset_of!(TheapRandomImage, weak)
+        );
         record!("sizeof.mi_page_t", size_of::<Page>());
         record!("alignof.mi_page_t", align_of::<Page>());
         record!("offsetof.mi_page_t.xthread_free", offset_of!(Page, xthread_free));
