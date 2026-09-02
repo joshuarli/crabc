@@ -41,7 +41,7 @@ use crate::atomic::{
 use crate::abandoned::{MappedAbandonedClaim, MappedAbandonedPages};
 use crate::bitmap::{
     AbandonedBitmapClaim, BinnedBitmapLayout, BinnedBitmapView, BitmapLayout,
-    BitmapView, BCHUNK_SIZE,
+    BitmapView, BFIELD_BITS, BCHUNK_SIZE,
 };
 use crate::config::{
     ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, ARENA_SLICE_SIZE,
@@ -2042,11 +2042,11 @@ impl<'arena> ArenaView<'arena> {
                 continue;
             }
 
-            // `_mi_bitmap_forall_setc_rangesn` visits at most one bchunk at a
-            // time. Preserve that grouping before the source fallback tries
-            // individual slices if a concurrent allocation blocks the full run.
-            let remaining_in_chunk = BCHUNK_BITS - (slice_index % BCHUNK_BITS);
-            let maximum = core::cmp::min(remaining_in_chunk, arena.slice_count - slice_index);
+            // `_mi_bitmap_forall_setc_rangesn` visits at most one source bitmap
+            // field at a time. Preserve that grouping before the source fallback
+            // tries individual slices if a concurrent allocation blocks the full run.
+            let remaining_in_field = BFIELD_BITS - (slice_index % BFIELD_BITS);
+            let maximum = core::cmp::min(remaining_in_field, arena.slice_count - slice_index);
             let mut slice_count = 1usize;
             while slice_count < maximum {
                 let Some(next_scheduled) = purge.is_set_range(slice_index + slice_count, 1)
@@ -2661,6 +2661,64 @@ mod tests {
         assert_eq!(purge.is_set_range(slice_index, 1), Some(true));
         assert_eq!(free.is_set_range(slice_index, 1), Some(true));
         assert!(view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire) > 0);
+    }
+
+    #[test]
+    fn scheduled_purge_splits_a_run_at_each_source_bitmap_field_boundary() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let script = CommitScript::new(false);
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                Some(CommitHook::new(
+                    scripted_commit,
+                    (&script as *const CommitScript).cast_mut().cast(),
+                )),
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        assert_eq!(view.arena().info_slices, 9);
+
+        // Hold the usable prefix so the next exact free claim starts at 63.
+        // Pinned `mi_arena_try_purge` uses the generic
+        // `_mi_bitmap_forall_setc_rangesn(..., 1, ...)` visitor, whose runs
+        // cannot cross a 64-bit `mi_bfield_t` boundary.
+        let prefix = view
+            .try_claim_suitable_slices(ArenaId::none(), 54, true, 0)
+            .expect("the selected 9..63 prefix is usable");
+        assert_eq!(prefix.slice_index(), view.arena().info_slices);
+        assert_eq!(prefix.slice_count(), crate::bitmap::BFIELD_BITS - 10);
+
+        let boundary = view
+            .try_claim_suitable_slices(ArenaId::none(), 2, true, 0)
+            .expect("the selected 63..65 boundary span is usable");
+        assert_eq!(boundary.slice_index(), crate::bitmap::BFIELD_BITS - 1);
+        assert_eq!(boundary.slice_count(), 2);
+        assert!(boundary.release());
+
+        let calls_before = script.calls.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(view.collect_scheduled_purge(PageSize::new(4096).unwrap(), true));
+        assert_eq!(
+            script.calls.load(std::sync::atomic::Ordering::Relaxed),
+            calls_before + 2,
+            "the source visitor invokes the default decommit callback once per 64-bit field"
+        );
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(free.is_set_range(crate::bitmap::BFIELD_BITS - 1, 2), Some(true));
+        assert_eq!(purge.is_clear_range(crate::bitmap::BFIELD_BITS - 1, 2), Some(true));
+
+        assert!(prefix.release());
     }
 
     #[test]

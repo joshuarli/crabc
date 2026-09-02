@@ -2097,7 +2097,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(summary["milestone"]["status"], "partial")
         self.assertEqual(
             [component["id"] for component in summary["components"] if component["checks"]],
-            ["vm-primitives", "metadata", "page-map"],
+            ["vm-primitives", "metadata", "page-map", "arenas"],
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2312,6 +2312,23 @@ class ContractTests(unittest.TestCase):
             page_map["remaining_conditions"],
             [],
         )
+        arenas = next(component for component in summary["components"] if component["id"] == "arenas")
+        self.assertEqual(
+            arenas["checks"],
+            [
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "arena-purge-source-bfield-boundary",
+                    "kind": "rust-unit",
+                    "target": (
+                        "arena::tests::scheduled_purge_splits_a_run_at_each_source_bitmap_"
+                        "field_boundary"
+                    ),
+                }
+            ],
+        )
+        self.assertEqual(arenas["completion_status"], "partial")
+        self.assertTrue(arenas["remaining_conditions"])
         self.assertTrue(summary["exclusions"])
         self.assertTrue(
             any(

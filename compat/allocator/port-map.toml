@@ -2609,10 +2609,10 @@ performance_qualified = false
 [[item]]
 upstream = "src/arena.c"
 name = "default-delayed-external-arena-purge"
-source_region = "mi_arena_schedule_purge/mi_arena_purge/mi_arena_purge_range/_mi_arenas_collect with purge_decommits=1"
+source_region = "mi_arena_schedule_purge/mi_arena_purge/mi_arena_purge_range/_mi_bitmap_forall_setc_rangesn/_mi_arenas_collect with purge_decommits=1"
 rust_module = "crabc_mimalloc::arena, crabc_mimalloc::os, and crabc_mimalloc::single_thread"
-rust_item = "schedule_arena_purge/ArenaView::collect_scheduled_purge/decommit_arena_range/SingleThreadAllocator::collect_retired"
-intentional_difference = "The frozen default retains the source 4-second schedule, pinned skip, free-bitmap ownership claim, and non-owning decommit. Direct clock failure skips optional scheduling instead of losing a terminal slice owner; alternate reset policy, registry-wide collection, statistics, and concurrent allocator lifecycle remain absent."
+rust_item = "schedule_arena_purge/ArenaView::collect_scheduled_purge (including the source 64-bit BFIELD callback grouping)/decommit_arena_range/SingleThreadAllocator::collect_retired"
+intentional_difference = "The frozen default retains the source 4-second schedule, pinned skip, free-bitmap ownership claim, per-64-bit-source-field callback grouping, and non-owning decommit. Direct clock failure skips optional scheduling instead of losing a terminal slice owner; alternate reset policy, registry-wide collection, statistics, and concurrent allocator lifecycle remain absent."
 tests = ["crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/os_host_model.rs", "crabc-mimalloc/src/single_thread.rs"]
 exported = false
 implemented = true
