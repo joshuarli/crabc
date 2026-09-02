@@ -2105,14 +2105,29 @@ class ContractTests(unittest.TestCase):
             "c-rust-page-map-success-differential",
         )
         self.assertEqual(page_map["checks"][0]["target"], "page_map::tests::emit_m2_page_map_init_c_rust_trace")
-        self.assertIn(
-            "static-empty-root",
-            page_map["remaining_conditions"][1],
+        self.assertEqual(
+            page_map["checks"][1]["kind"],
+            "c-rust-page-map-cold-init-differential",
+        )
+        self.assertEqual(
+            page_map["checks"][1]["target"],
+            "process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace",
+        )
+        self.assertEqual(
+            page_map["remaining_conditions"],
+            [
+                "cover PageMap extension and release failure-injection branches with "
+                "ownership-preserving evidence",
+                "resolve the directly witnessed C static-empty-root versus Rust "
+                "poisoned cold-root safety divergence when a complete "
+                "process-lifecycle owner can supply source-equivalent cold lookup "
+                "or explicitly close the semantic gap",
+            ],
         )
         self.assertTrue(summary["exclusions"])
         self.assertTrue(
             any(
-                "does not cover cold-root initialization failure" in nonclaim
+                "cold-init differential records" in nonclaim
                 for nonclaim in summary["milestone"]["nonclaims"]
             )
         )
@@ -2165,6 +2180,48 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.page_map.register.first_lookup_matches"] = 0
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_page_map_trace(c_trace, rust_trace)
+
+    @staticmethod
+    def _m2_page_map_cold_init_trace(*, rust: bool) -> dict[str, int]:
+        trace = {key: 0 for key in RUNNER.M2_PAGE_MAP_COLD_INIT_TRACE_KEYS}
+        trace.update(
+            {
+                "m2.page_map.cold.first_init_failed": 1,
+                "m2.page_map.cold.dynamic_root_unpublished": 1,
+                "m2.page_map.cold.init_body_attempt_count": 1,
+                "m2.page_map.cold.static_empty_root": 0 if rust else 1,
+                "m2.page_map.cold.absent_root": 1 if rust else 0,
+                "m2.page_map.cold.second_call_returns_success": 0 if rust else 1,
+                "m2.page_map.cold.second_call_returns_poisoned": 1 if rust else 0,
+                "m2.page_map.cold.null_lookup_returns_null": 0 if rust else 1,
+                "m2.page_map.cold.cold_lookup_route_unavailable": 1 if rust else 0,
+            }
+        )
+        return trace
+
+    def test_m2_page_map_cold_init_trace_models_the_explicit_safety_divergence(self) -> None:
+        c_trace = self._m2_page_map_cold_init_trace(rust=False)
+        rust_trace = self._m2_page_map_cold_init_trace(rust=True)
+
+        output = "CRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_page_map_cold_init_trace(output, source="pinned C")
+        RUNNER.validate_m2_page_map_cold_init_trace(parsed_c, source="pinned C")
+        RUNNER.validate_m2_page_map_cold_init_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_page_map_cold_init_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "modeled-safety-divergence")
+        self.assertEqual(comparison["matched_value_count"], 3)
+        self.assertEqual(comparison["safety_divergence"]["pinned_c"]["static_empty_root"], 1)
+        self.assertEqual(comparison["safety_divergence"]["rust"]["absent_root"], 1)
+
+    def test_m2_page_map_cold_init_trace_rejects_a_replayed_once_body(self) -> None:
+        c_trace = self._m2_page_map_cold_init_trace(rust=False)
+        rust_trace = self._m2_page_map_cold_init_trace(rust=True)
+        rust_trace["m2.page_map.cold.init_body_attempt_count"] = 2
+        with self.assertRaisesRegex(RUNNER.HarnessError, "replayed"):
+            RUNNER.compare_m2_page_map_cold_init_trace(c_trace, rust_trace)
 
     def test_m2_parser_is_native_only_and_mutually_exclusive(self) -> None:
         with mock.patch.object(sys, "argv", ["run.py", "--m2"]):

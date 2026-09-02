@@ -319,8 +319,9 @@ registry/subprocess ownership.
   `process_page_map::ProcessPageMapStorage`, `ProcessPageMapLease`, and
   `ProcessPageMapMutationLease` over `page_map::PageMap`.
 - **Category:** private incomplete process-initialization and page-owner
-  boundary. It has no C ABI surface or valid allocation-trace differential
-  entry.
+  boundary. It has no C ABI surface or valid allocation-trace differential;
+  its separate M2 source-private cold-init record names the failure boundary
+  without selecting general allocation routing.
 - **Difference:** C begins with a non-null static empty page map so early
   `free(NULL)` lookup remains valid, then its once body swaps in the mapped
   root. The Rust owner begins cold with no root and has no free/lookup route
@@ -344,13 +345,20 @@ registry/subprocess ownership.
   publication; `page_lifecycle_is_exclusive_and_an_unfinished_owner_poisoned_the_root`
   proves the nonrecursive lifecycle and terminal drop boundary; and the three
   mapping/commit-failure regressions prove the no-root terminal failure edge.
+  `process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace`
+  and the paired `./scripts/dev.sh allocator-m2` pinned-C producer inject one
+  first PageMap allocation failure. They agree that the body fails once, no
+  dynamic map publishes, and the body is not replayed; they intentionally
+  record C's static empty root/null lookup/later-success result separately
+  from Rust's absent root/rejected lookup/typed poison. This is a safety
+  divergence witness, not a C ABI or full-process-lifecycle comparison.
   `process_init::tests::process_main_initialization_orders_heap_metadata_map_then_ticket_zero_roots`
   proves the coordinator publishes this distinct root before ticket-zero TLS
   roots. `main_static_page::tests::unfinished_static_page_engine_poison_retains_the_page_and_process_map_owner`
   and `main_heap_page::tests::unfinished_later_page_engine_poison_retains_the_attachment_and_process_map`
   additionally prove that a poisoned root retains a live registration rather
-  than erasing it. Exact C differential comparison is inapplicable until a
-  real process lifecycle and allocator ABI exist.
+  than erasing it. General process-lifecycle and allocator-ABI comparison
+  remain inapplicable until their owners exist.
 - **Decision/removal:** accepted until the remaining full process lifecycle
   supplies the C empty-root behavior where required, general map concurrency,
   the remaining page/producer owners, and process-main quiescence/root

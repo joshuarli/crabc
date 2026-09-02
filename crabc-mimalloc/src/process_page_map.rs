@@ -2717,6 +2717,78 @@ mod tests {
         ));
     }
 
+    /// Emits the Rust half of the failed-first PageMap initialization record.
+    ///
+    /// Pinned C retains its `mi_page_map_empty` sentinel after the once body
+    /// fails and lets a later call report success without replaying that body.
+    /// This typed owner intentionally does not expose a sentinel as a live
+    /// [`PageMap`]: the failed map allocation leaves no owned map, no root is
+    /// published, and every later initialization request is terminally
+    /// rejected. The trace proves the shared single-attempt/no-dynamic-root
+    /// facts while making the differing cold-lookup-route policy explicit.
+    #[test]
+    fn emit_m2_page_map_cold_init_failure_rust_trace() {
+        let storage = ProcessPageMapStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+
+        let first_init_failed = matches!(
+            storage.initialize(memory_config(), subprocess),
+            Err(ProcessPageMapError::Initialization(Errno::NOMEM))
+        );
+        let root_absent_after_first = storage.root.load().is_none();
+        let first_attempt_count = fault.observed();
+        let second_call_returns_poisoned = matches!(
+            storage.initialize(memory_config(), subprocess),
+            Err(ProcessPageMapError::Poisoned)
+        );
+        let init_body_attempt_count = fault.observed();
+        let absent_root = storage.root.load().is_none();
+        let dynamic_root_unpublished = root_absent_after_first && absent_root;
+        // There is deliberately no lookup operation to invoke while cold: a
+        // poisoned owner with no published root cannot yield a valid lease.
+        let cold_lookup_route_unavailable =
+            storage.state.load(Ordering::Acquire) == POISONED && absent_root;
+
+        assert!(first_init_failed);
+        assert!(dynamic_root_unpublished);
+        assert_eq!(first_attempt_count, 1);
+        assert_eq!(init_body_attempt_count, 1);
+        assert!(second_call_returns_poisoned);
+        assert!(cold_lookup_route_unavailable);
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+        std::println!("CRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_BEGIN");
+        emit!("m2.page_map.cold.first_init_failed", first_init_failed);
+        emit!(
+            "m2.page_map.cold.dynamic_root_unpublished",
+            dynamic_root_unpublished
+        );
+        emit!(
+            "m2.page_map.cold.init_body_attempt_count",
+            init_body_attempt_count
+        );
+        emit!("m2.page_map.cold.static_empty_root", false);
+        emit!("m2.page_map.cold.absent_root", absent_root);
+        emit!("m2.page_map.cold.second_call_returns_success", false);
+        emit!(
+            "m2.page_map.cold.second_call_returns_poisoned",
+            second_call_returns_poisoned
+        );
+        // The C-only null-lookup observation has no Rust operation to run;
+        // the paired route field records that it is unavailable by state.
+        emit!("m2.page_map.cold.null_lookup_returns_null", false);
+        emit!(
+            "m2.page_map.cold.cold_lookup_route_unavailable",
+            cold_lookup_route_unavailable
+        );
+        std::println!("CRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_END");
+    }
+
     #[test]
     fn unpublished_top_level_commit_failure_consumes_the_once_owner_without_a_root() {
         let storage = ProcessPageMapStorage::test_static_owner();

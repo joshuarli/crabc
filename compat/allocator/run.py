@@ -306,6 +306,30 @@ M2_PAGE_MAP_HEADER_DEPENDENT_KEYS = (
 # that lifecycle distinction visible while both traces prove an absent root
 # after destruction.
 M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY = "m2.page_map.destroy.root_unpublished_before"
+# The first failed C `_mi_page_map_init` body keeps its static empty root and
+# consumes the source once gate. Rust deliberately avoids exposing a fake live
+# root: its typed process owner retains no map and becomes terminally poisoned.
+# The cold-failure trace compares the shared failure facts while retaining this
+# deliberate safety divergence as first-class evidence. The C-only
+# `null_lookup_returns_null` observation is zero on Rust because no valid
+# cold lookup operation exists there; `cold_lookup_route_unavailable` names
+# that state rather than implying an attempted Rust lookup returned non-null.
+M2_PAGE_MAP_COLD_INIT_TRACE_KEYS = (
+    "m2.page_map.cold.first_init_failed",
+    "m2.page_map.cold.dynamic_root_unpublished",
+    "m2.page_map.cold.init_body_attempt_count",
+    "m2.page_map.cold.static_empty_root",
+    "m2.page_map.cold.absent_root",
+    "m2.page_map.cold.second_call_returns_success",
+    "m2.page_map.cold.second_call_returns_poisoned",
+    "m2.page_map.cold.null_lookup_returns_null",
+    "m2.page_map.cold.cold_lookup_route_unavailable",
+)
+M2_PAGE_MAP_COLD_INIT_MATCHED_KEYS = (
+    "m2.page_map.cold.first_init_failed",
+    "m2.page_map.cold.dynamic_root_unpublished",
+    "m2.page_map.cold.init_body_attempt_count",
+)
 M1_FOUNDATIONS_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
     {
@@ -2544,6 +2568,91 @@ int main(void) {
   U("m2.page_map.destroy.root_unpublished_before", root_unpublished_before);
   U("m2.page_map.destroy.root_absent_after", root_absent_after);
   puts("CRABC_MI_M2_PAGE_MAP_TRACE_END");
+  return 0;
+}
+"""
+
+
+# This independent process deliberately fails the one allocation performed by
+# `mi_page_map_init_once`. It cannot share the normal-success producer because
+# the source once body is intentionally consumed after its first failure.
+# `os.c` retains the real allocator primitive; only lexical calls compiled
+# from the directly included `page-map.c` route through the one-shot wrapper.
+M2_PAGE_MAP_COLD_INIT_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+
+#include "os.c"
+
+static bool m2_fail_next_page_map_alloc;
+static size_t m2_page_map_alloc_attempt_count;
+
+static void* m2_page_map_alloc_aligned(
+    mi_subproc_t* subproc,
+    size_t size,
+    size_t alignment,
+    bool commit,
+    bool allow_large,
+    mi_memid_t* memid)
+{
+  m2_page_map_alloc_attempt_count++;
+  if (m2_fail_next_page_map_alloc) {
+    m2_fail_next_page_map_alloc = false;
+    *memid = _mi_memid_none();
+    return NULL;
+  }
+  return _mi_os_alloc_aligned(subproc, size, alignment, commit, allow_large, memid);
+}
+
+// Preserve the ordinary `os.c` definition and redirect only source calls
+// lexically emitted from the selected `page-map.c` body.
+#define _mi_os_alloc_aligned m2_page_map_alloc_aligned
+#include "page-map.c"
+#undef _mi_os_alloc_aligned
+
+#include "init.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+int main(void) {
+  _mi_detect_cpu_features();
+  _mi_options_init();
+  mi_option_set_enabled(mi_option_pagemap_commit, false);
+  mi_option_set(mi_option_max_vabits, MI_MAX_VABITS);
+  _mi_stats_init();
+  _mi_os_init();
+  mi_os_mem_config.has_overcommit = false;
+  mi_heap_main_init();
+
+  m2_page_map_alloc_attempt_count = 0;
+  m2_fail_next_page_map_alloc = true;
+  const bool first_init_failed = !_mi_page_map_init();
+  const bool root_after_first_static_empty = (_mi_page_map() == &mi_page_map_empty);
+  const bool second_call_returns_success = _mi_page_map_init();
+  const bool static_empty_root = (_mi_page_map() == &mi_page_map_empty);
+  const bool null_lookup_returns_null = (_mi_checked_ptr_page(NULL) == NULL);
+  const bool dynamic_root_unpublished = root_after_first_static_empty && static_empty_root;
+  const bool all_relations =
+      first_init_failed && dynamic_root_unpublished &&
+      m2_page_map_alloc_attempt_count == 1 && second_call_returns_success &&
+      static_empty_root && null_lookup_returns_null;
+  if (!all_relations) return 10;
+
+  puts("CRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_BEGIN");
+  U("m2.page_map.cold.first_init_failed", first_init_failed);
+  U("m2.page_map.cold.dynamic_root_unpublished", dynamic_root_unpublished);
+  U("m2.page_map.cold.init_body_attempt_count", m2_page_map_alloc_attempt_count);
+  U("m2.page_map.cold.static_empty_root", static_empty_root);
+  U("m2.page_map.cold.absent_root", false);
+  U("m2.page_map.cold.second_call_returns_success", second_call_returns_success);
+  U("m2.page_map.cold.second_call_returns_poisoned", false);
+  U("m2.page_map.cold.null_lookup_returns_null", null_lookup_returns_null);
+  U("m2.page_map.cold.cold_lookup_route_unavailable", false);
+  puts("CRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_END");
   return 0;
 }
 """
@@ -5243,6 +5352,7 @@ def validate_m2_memory_substrate_contract(
                     "rust-unit",
                     "rust-page-map-success-trace",
                     "c-rust-page-map-success-differential",
+                    "c-rust-page-map-cold-init-differential",
                 }
                 or not isinstance(target_name, str)
                 or not isinstance(raw_check.get("expected_passed_test_count"), int)
@@ -5429,6 +5539,73 @@ def run_m2_page_map_differential(
     }
 
 
+def run_m2_page_map_cold_init_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Record the selected C/Rust failed-first PageMap initialization boundary."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-page-map-cold-init-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_page_map_cold_init_trace(
+            compiler,
+            source,
+            M2_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 PageMap cold-init trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_page_map_cold_init_trace(rust_output, source="Rust")
+    validate_m2_page_map_cold_init_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 PageMap cold-init trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_page_map_cold_init_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "one source-private pinned-C first PageMap allocation failure compared with "
+            "the Rust typed process owner. Both records prove one failed init body, no "
+            "published dynamic map, and no replay. The C static empty-root/null-lookup "
+            "and later-success result versus Rust absent-root/no-cold-lookup-route and typed "
+            "poison are explicit safety-divergence fields, not equality claims."
+        ),
+        "status": comparison["status"],
+    }
+
+
 def run_m2_memory_substrate_checks(
     summary: Mapping[str, Any], pin: Mapping[str, str], *, offline: bool
 ) -> list[dict[str, Any]]:
@@ -5441,6 +5618,26 @@ def run_m2_memory_substrate_checks(
         for check in component["checks"]:
             if check["kind"] == "c-rust-page-map-success-differential":
                 differential = run_m2_page_map_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
+            if check["kind"] == "c-rust-page-map-cold-init-differential":
+                differential = run_m2_page_map_cold_init_differential(
                     pin,
                     offline=offline,
                     timeout_seconds=summary["execution"]["timeout_seconds"],
@@ -10590,6 +10787,118 @@ def compare_m2_page_map_trace(
     }
 
 
+def parse_m2_page_map_cold_init_trace(output: str, *, source: str) -> dict[str, int]:
+    """Parse the fixed failed-first-initialization PageMap record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_BEGIN",
+        end="CRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_END",
+        description=f"{source} M2 PageMap cold-init trace",
+    )
+    if set(trace) != set(M2_PAGE_MAP_COLD_INIT_TRACE_KEYS):
+        missing = sorted(set(M2_PAGE_MAP_COLD_INIT_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_PAGE_MAP_COLD_INIT_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 PageMap cold-init trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_page_map_cold_init_trace(trace: Mapping[str, int], *, source: str) -> None:
+    """Validate one side of the deliberate failed-cold-init safety boundary."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown M2 PageMap cold-init trace source: {source}")
+    if set(trace) != set(M2_PAGE_MAP_COLD_INIT_TRACE_KEYS):
+        raise HarnessError(f"{source} M2 PageMap cold-init trace keys differ from the fixed contract")
+    for key in M2_PAGE_MAP_COLD_INIT_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(f"{source} M2 PageMap cold-init trace field is not an integer: {key}")
+    for key in (
+        "m2.page_map.cold.first_init_failed",
+        "m2.page_map.cold.dynamic_root_unpublished",
+    ):
+        if trace[key] != 1:
+            raise HarnessError(f"{source} M2 PageMap cold-init trace contains an unmet failure relation")
+    if trace["m2.page_map.cold.init_body_attempt_count"] != 1:
+        raise HarnessError(f"{source} M2 PageMap cold-init trace replayed its once body")
+
+    expected = (
+        {
+            "m2.page_map.cold.static_empty_root": 1,
+            "m2.page_map.cold.absent_root": 0,
+            "m2.page_map.cold.second_call_returns_success": 1,
+            "m2.page_map.cold.second_call_returns_poisoned": 0,
+            "m2.page_map.cold.null_lookup_returns_null": 1,
+            "m2.page_map.cold.cold_lookup_route_unavailable": 0,
+        }
+        if source == "pinned C"
+        else {
+            "m2.page_map.cold.static_empty_root": 0,
+            "m2.page_map.cold.absent_root": 1,
+            "m2.page_map.cold.second_call_returns_success": 0,
+            "m2.page_map.cold.second_call_returns_poisoned": 1,
+            "m2.page_map.cold.null_lookup_returns_null": 0,
+            "m2.page_map.cold.cold_lookup_route_unavailable": 1,
+        }
+    )
+    for key, value in expected.items():
+        if trace[key] != value:
+            raise HarnessError(
+                f"{source} M2 PageMap cold-init trace changed its recorded safety boundary: {key}"
+            )
+
+
+def compare_m2_page_map_cold_init_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Compare shared cold-init failure facts without concealing the root difference."""
+
+    validate_m2_page_map_cold_init_trace(c_trace, source="pinned C")
+    validate_m2_page_map_cold_init_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_PAGE_MAP_COLD_INIT_MATCHED_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 PageMap cold-init trace differs from pinned C: " + "; ".join(mismatches)
+        )
+    divergence_keys = {
+        "static_empty_root": "m2.page_map.cold.static_empty_root",
+        "absent_root": "m2.page_map.cold.absent_root",
+        "second_call_returns_success": "m2.page_map.cold.second_call_returns_success",
+        "second_call_returns_poisoned": "m2.page_map.cold.second_call_returns_poisoned",
+        "null_lookup_returns_null": "m2.page_map.cold.null_lookup_returns_null",
+        "cold_lookup_route_unavailable": "m2.page_map.cold.cold_lookup_route_unavailable",
+    }
+    return {
+        "matched_value_count": len(M2_PAGE_MAP_COLD_INIT_MATCHED_KEYS),
+        "shared_failure_facts": {
+            key: c_trace[key] for key in M2_PAGE_MAP_COLD_INIT_MATCHED_KEYS
+        },
+        "safety_divergence": {
+            "classification": (
+                "pinned C retains mi_page_map_empty for a null-safe lookup after its "
+                "consumed failed once body; Rust retains no fake live root, exposes no cold "
+                "lookup route in its absent-root/poisoned state, and reports the consumed "
+                "attempt as a terminal typed poison"
+            ),
+            "pinned_c": {name: c_trace[key] for name, key in divergence_keys.items()},
+            "rust": {name: rust_trace[key] for name, key in divergence_keys.items()},
+        },
+        "status": "modeled-safety-divergence",
+    }
+
+
 def parse_rust_test_count(output: str) -> int:
     matches = re.findall(
         r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
@@ -11684,6 +11993,60 @@ def build_m2_page_map_trace(
     require_success(run, "pinned C M2 PageMap trace execution")
     record = parse_m2_page_map_trace(str(run["stdout"]), source="pinned C")
     validate_m2_page_map_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "src/init.c",
+                "src/os.c",
+                "src/page-map.c",
+            ),
+        ),
+    }
+
+
+def build_m2_page_map_cold_init_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build one fresh pinned-C failed-first PageMap initialization producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-page-map-cold-init-trace-probe.c"
+    trace_binary = profile_dir / "m2-page-map-cold-init-trace-probe"
+    trace_source.write_text(M2_PAGE_MAP_COLD_INIT_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M2_PAGE_MAP_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 PageMap cold-init trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 PageMap cold-init trace execution")
+    record = parse_m2_page_map_cold_init_trace(str(run["stdout"]), source="pinned C")
+    validate_m2_page_map_cold_init_trace(record, source="pinned C")
     return {
         "command": command,
         "record": record,
