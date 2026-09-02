@@ -70,12 +70,41 @@
           "id": "process-page-map-paired-trailing-submap-cleanup-owner",
           "kind": "rust-unit",
           "target": "process_page_map::tests::paired_initial_trailing_submap_commit_and_cleanup_unmap_failure_retains_the_exact_mapping"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-lazy-extension-commit-owner",
+          "kind": "rust-unit",
+          "target": "page_map::tests::lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-lazy-submap-map-owner",
+          "kind": "rust-unit",
+          "target": "page_map::tests::lazy_submap_mapping_failure_preserves_the_page_map_for_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-destroy-lazy-submap-release-owner",
+          "kind": "rust-unit",
+          "target": "page_map::tests::destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-destroy-top-release-owner",
+          "kind": "rust-unit",
+          "target": "page_map::tests::destroy_top_mapping_release_failure_retains_the_exact_mapping_for_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-lazy-publication-private-lock",
+          "kind": "rust-unit",
+          "target": "page_map::tests::concurrent_lazy_submap_publication_allocates_once_under_the_page_map_lock"
         }
       ],
       "completion_status": "partial",
       "id": "page-map",
       "remaining_conditions": [
-        "cover lazy PageMap extension and destruction release failure-injection branches with ownership-preserving evidence",
         "resolve the directly witnessed C static-empty-root versus Rust poisoned cold-root safety divergence when a complete process-lifecycle owner can supply source-equivalent cold lookup or explicitly close the semantic gap"
       ],
       "source_units": [

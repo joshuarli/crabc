@@ -400,9 +400,18 @@ registry/subprocess ownership.
   carries the live `Mapping`, `ProcessPageMapStorage` retains it before
   terminal poison for both initial commit branches, and `MetaAllocator` uses
   a distinct terminal slot for its caller path. The paired regressions release
-  that exact owner only after the injected cleanup fault is disabled. This is
-  a Rust safety strengthening over C's void/best-effort release boundary, not
-  a source-equivalent retry claim.
+  that exact owner only after the injected cleanup fault is disabled.
+  `page_map::tests::{lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry,lazy_submap_mapping_failure_preserves_the_page_map_for_retry,destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry,destroy_top_mapping_release_failure_retains_the_exact_mapping_for_retry}`
+  separately inject the real `Commit`, `Map`, and `Unmap` seams: they prove
+  the original top-level mapping survives lazy failure, a failed submap
+  reclaim leaves its exact raw slot, and a failed final release leaves its
+  exact top-level owner for retry. The source-shaped CAS loser is not an
+  independently injectable path: fields and atomic-slot access are private
+  to `page_map.rs`, and every current publisher owns the same private lock
+  and reloads before publication. A future competing writer must retain a
+  losing candidate before it may make that branch reachable. These are Rust
+  safety strengthenings over C's void/best-effort release boundary, not
+  source-equivalent retry claims.
 
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 

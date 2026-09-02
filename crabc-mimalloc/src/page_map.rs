@@ -543,6 +543,14 @@ impl PageMap {
             // SAFETY: ensure_committed proved this raw pointer word committed
             // before the source page-map lock was acquired.
             let slot = unsafe { atomic_submap_slot(self.header()?, index) };
+            // The pinned source retains this defensive CAS even under its
+            // page-map lock. In this Rust port, `PageMapHeader::submaps` and
+            // `atomic_submap_slot` are private to this module, and every
+            // current writer takes this same lock and reloads the slot above.
+            // A loser is therefore unreachable in the present ownership
+            // graph; it remains source-shaped rather than a fault-injection
+            // release path. Any future competing writer must take this lock
+            // or first give a losing candidate an explicit retained owner.
             match slot.compare_exchange(
                 null_mut(),
                 candidate_base,
@@ -755,7 +763,7 @@ mod tests {
     use crate::config::{
         ARENA_SLICE_SIZE, MAX_VABITS, MIN_VABITS, PAGE_MAP_SUB_COUNT,
     };
-    use crate::os::PageSize;
+    use crate::os::{PageSize, fault};
     use crate::types::EMPTY_PAGE;
 
     fn memory_config(overcommit: bool) -> MemoryConfig {
@@ -1201,6 +1209,153 @@ mod tests {
         );
         assert!(unsafe { page_map.checked_lookup(start) }.is_null());
         unsafe { page_map.destroy() }.expect("rollback leaves all mapping ownership intact");
+    }
+
+    #[test]
+    fn lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial map");
+        let committed_before = page_map
+            .committed_count()
+            .expect("the initialized map exposes its committed prefix");
+        let target = committed_before
+            .checked_add(1)
+            .expect("the selected map has a representable lazy-extension index");
+        let top_mapping = page_map
+            .mapping
+            .base()
+            .expect("the top-level mapping remains owned before the extension");
+        let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+
+        assert_eq!(page_map.ensure_submap_at(target), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(page_map.committed_count(), Ok(committed_before));
+        assert_eq!(page_map.submap_at(target), Ok(None));
+        assert_eq!(page_map.test_lazy_submap_allocation_count(), 0);
+        assert_eq!(page_map.mapping.base(), Ok(top_mapping));
+
+        fault.set(fault::Plan::disabled());
+        let submap = page_map
+            .ensure_submap_at(target)
+            .expect("the same top-level mapping retries the lazy extension");
+        assert_eq!(page_map.submap_at(target), Ok(Some(submap)));
+        assert_eq!(page_map.test_lazy_submap_allocation_count(), 1);
+        // SAFETY: this test owns the only PageMap client and has no root or
+        // registered range to quiesce before the retryable release.
+        unsafe { page_map.destroy() }.expect("the retried map release succeeds");
+    }
+
+    #[test]
+    fn lazy_submap_mapping_failure_preserves_the_page_map_for_retry() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial map");
+        let committed_before = page_map
+            .committed_count()
+            .expect("the initialized map exposes its committed prefix");
+        let target = committed_before
+            .checked_add(1)
+            .expect("the selected map has a representable lazy-extension index");
+        let top_mapping = page_map
+            .mapping
+            .base()
+            .expect("the top-level mapping remains owned before the extension");
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+
+        assert_eq!(page_map.ensure_submap_at(target), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1);
+        assert!(
+            page_map.committed_count().expect("a failed lazy map keeps the PageMap live")
+                > committed_before
+        );
+        assert_eq!(page_map.submap_at(target), Ok(None));
+        assert_eq!(page_map.test_lazy_submap_allocation_count(), 1);
+        assert_eq!(page_map.mapping.base(), Ok(top_mapping));
+
+        fault.set(fault::Plan::disabled());
+        let submap = page_map
+            .ensure_submap_at(target)
+            .expect("the same PageMap retries the lazy submap mapping");
+        assert_eq!(page_map.submap_at(target), Ok(Some(submap)));
+        assert_eq!(page_map.test_lazy_submap_allocation_count(), 2);
+        // SAFETY: this test owns the only PageMap client and has no root or
+        // registered range to quiesce before the retryable release.
+        unsafe { page_map.destroy() }.expect("the retried map release succeeds");
+    }
+
+    #[test]
+    fn destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial map");
+        let first_index = page_map
+            .committed_count()
+            .expect("the initialized map exposes its committed prefix")
+            .checked_add(1)
+            .expect("the selected map has a representable first lazy index");
+        let second_index = first_index
+            .checked_add(1)
+            .expect("the selected map has a representable second lazy index");
+        let first = page_map
+            .ensure_submap_at(first_index)
+            .expect("the first lazy submap is published");
+        let second = page_map
+            .ensure_submap_at(second_index)
+            .expect("the second lazy submap is published");
+        assert_ne!(first, second);
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+
+        // SAFETY: this test owns the only PageMap client and has no root or
+        // registered range. The injected failure must retain the first raw
+        // published-submap owner in its exact slot.
+        assert_eq!(unsafe { page_map.destroy() }, Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(page_map.submap_at(first_index), Ok(Some(first)));
+        assert_eq!(page_map.submap_at(second_index), Ok(Some(second)));
+        assert!(page_map.committed_count().is_ok());
+
+        fault.set(fault::Plan::disabled());
+        // SAFETY: the failed release did not clear either ownership slot, and
+        // this test still supplies the destruction quiescence precondition.
+        unsafe { page_map.destroy() }.expect("the retained submap slots retry to release");
+    }
+
+    #[test]
+    fn destroy_top_mapping_release_failure_retains_the_exact_mapping_for_retry() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial map");
+        let first_index = page_map
+            .committed_count()
+            .expect("the initialized map exposes its committed prefix")
+            .checked_add(1)
+            .expect("the selected map has a representable first lazy index");
+        let second_index = first_index
+            .checked_add(1)
+            .expect("the selected map has a representable second lazy index");
+        page_map
+            .ensure_submap_at(first_index)
+            .expect("the first lazy submap is published");
+        page_map
+            .ensure_submap_at(second_index)
+            .expect("the second lazy submap is published");
+        let top_mapping = page_map
+            .mapping
+            .base()
+            .expect("the top-level mapping remains owned before destruction");
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 3, Errno::NOMEM));
+
+        // SAFETY: this test owns the only PageMap client and has no root or
+        // registered range. Two successful lazy-submap releases precede the
+        // injected top-level release failure.
+        assert_eq!(unsafe { page_map.destroy() }, Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 3);
+        assert_eq!(page_map.submap_at(first_index), Ok(None));
+        assert_eq!(page_map.submap_at(second_index), Ok(None));
+        assert_eq!(page_map.mapping.base(), Ok(top_mapping));
+        assert!(page_map.committed_count().is_ok());
+
+        fault.set(fault::Plan::disabled());
+        // SAFETY: only the original top-level Mapping remains, and this test
+        // still supplies the destruction quiescence precondition.
+        unsafe { page_map.destroy() }.expect("the retained top mapping retries to release");
     }
 
     #[test]

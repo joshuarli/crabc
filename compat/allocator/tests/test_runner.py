@@ -2115,6 +2115,7 @@ class ContractTests(unittest.TestCase):
             ],
         )
         page_map = next(component for component in summary["components"] if component["id"] == "page-map")
+        self.assertEqual(len(page_map["checks"]), 9)
         self.assertEqual(
             page_map["checks"][0]["kind"],
             "c-rust-page-map-success-differential",
@@ -2153,10 +2154,68 @@ class ContractTests(unittest.TestCase):
             },
         )
         self.assertEqual(
+            page_map["checks"][4],
+            {
+                "expected_passed_test_count": 1,
+                "id": "page-map-lazy-extension-commit-owner",
+                "kind": "rust-unit",
+                "target": (
+                    "page_map::tests::lazy_extension_commit_failure_preserves_the_top_level_"
+                    "mapping_for_retry"
+                ),
+            },
+        )
+        self.assertEqual(
+            page_map["checks"][5],
+            {
+                "expected_passed_test_count": 1,
+                "id": "page-map-lazy-submap-map-owner",
+                "kind": "rust-unit",
+                "target": (
+                    "page_map::tests::lazy_submap_mapping_failure_preserves_the_page_map_"
+                    "for_retry"
+                ),
+            },
+        )
+        self.assertEqual(
+            page_map["checks"][6],
+            {
+                "expected_passed_test_count": 1,
+                "id": "page-map-destroy-lazy-submap-release-owner",
+                "kind": "rust-unit",
+                "target": (
+                    "page_map::tests::destroy_lazy_submap_release_failure_retains_the_exact_"
+                    "slot_for_retry"
+                ),
+            },
+        )
+        self.assertEqual(
+            page_map["checks"][7],
+            {
+                "expected_passed_test_count": 1,
+                "id": "page-map-destroy-top-release-owner",
+                "kind": "rust-unit",
+                "target": (
+                    "page_map::tests::destroy_top_mapping_release_failure_retains_the_exact_"
+                    "mapping_for_retry"
+                ),
+            },
+        )
+        self.assertEqual(
+            page_map["checks"][8],
+            {
+                "expected_passed_test_count": 1,
+                "id": "page-map-lazy-publication-private-lock",
+                "kind": "rust-unit",
+                "target": (
+                    "page_map::tests::concurrent_lazy_submap_publication_allocates_once_under_"
+                    "the_page_map_lock"
+                ),
+            },
+        )
+        self.assertEqual(
             page_map["remaining_conditions"],
             [
-                "cover lazy PageMap extension and destruction release failure-injection branches with "
-                "ownership-preserving evidence",
                 "resolve the directly witnessed C static-empty-root versus Rust "
                 "poisoned cold-root safety divergence when a complete "
                 "process-lifecycle owner can supply source-equivalent cold lookup "
