@@ -2421,6 +2421,13 @@ checkout before it can be called current runtime evidence there. The
 for its older partial contract only. Deferred lifecycle and whole-unit
 exclusions remain nonclaims, not implicit M1 coverage.
 
+The M1 gate was rerun from a clean detached native checkout at
+`33e9fc801935c02ac30bc50c82674ece93ebca95`: it exited 0 and produced that
+checkout's `m1-foundations-latest.json` with all six components complete and
+no unmet component IDs. Thus M1 is current evidence for the allocator source
+revision that introduced the M2 cold-init record; it remains only the bounded
+six-component milestone described above.
+
 ## M2 current partial gate
 
 `compat/allocator/m2-memory-substrate-v3.5.0.json` is the current M2
@@ -2473,6 +2480,11 @@ Run `./scripts/dev.sh allocator-m2` from a clean native checkout to write the
 current-commit `.work/reports/allocator/m2-memory-substrate-latest.json`
 report. Its expected exit is 3 until all eight categories are complete; a
 report with that exit documents the active gap rather than advancing M2.
+At `33e9fc801935c02ac30bc50c82674ece93ebca95`, that clean native command
+exited 3 after both PageMap checks passed: the success lifecycle remained
+`matched`, while the cold-init check recorded three shared failure facts as
+`modeled-safety-divergence`. The report retains all eight categories and both
+PageMap conditions as unmet.
 
 ## Active boundary and priority rule
 
