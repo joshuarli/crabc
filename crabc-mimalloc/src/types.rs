@@ -4346,9 +4346,17 @@ impl Theap {
     }
 
     /// Binds the empty source image to one process-lived detached metadata
-    /// theap. It deliberately accepts only the source detached TLD identity;
-    /// callers serialize every mutation with the metadata private lock and
-    /// must never route remote frees or abandonment through this theap.
+    /// theap. It accepts only the source-state subset required for this
+    /// bounded Linux/AArch64 first-head branch: a matching subprocess
+    /// identity, an empty theap head, and no thread-pool option adjustment.
+    /// [`crate::bootstrap::ExclusiveTheapBootstrap`] establishes the fuller
+    /// detached `mi_tld_init` image. A nonempty source head takes
+    /// `_mi_random_split`; that unported list/split path is rejected before
+    /// any field mutation rather than being misrepresented as first-head
+    /// initialization. The pinned bootstrap owns this Theap's stable address
+    /// while its random image is initialized. Callers serialize every mutation
+    /// with the metadata private lock and must never route remote frees or
+    /// abandonment through this theap.
     pub(crate) fn bind_exclusive_detached(
         &mut self,
         heap: &mut Heap,
@@ -4367,6 +4375,21 @@ impl Theap {
             return false;
         }
         if self.is_initialized() {
+            return false;
+        }
+        if owner.is_detached()
+            && (!tld.is_subprocess_attached_no_theap()
+                || !core::ptr::eq(heap.subprocess, tld.subprocess)
+                || tld.is_in_threadpool())
+        {
+            // `theap.c:_mi_theap_init` initializes a new random image only
+            // for `head == NULL`; a nonempty head is a distinct, locked
+            // snapshot-and-split route. This bounded bootstrap additionally
+            // pairs the detached TLD with its same-subprocess private Heap
+            // and excludes the source thread-pool retain adjustment. It
+            // models only that fresh `mi_tld_init` checkpoint, so reject
+            // instead of inventing a split or mutating provenance before an
+            // incompatible bounded owner can publish it.
             return false;
         }
 
@@ -4389,6 +4412,15 @@ impl Theap {
         // bounded lifecycle freezes that normal-release value rather than
         // introducing mutable option state.
         self.page_full_retain = 2;
+        if owner.is_detached() {
+            // The preceding fresh-TLD guard proves `mi_tld_init`'s null
+            // detached head before `mi_process_theap_meta` enters
+            // `_mi_theap_init`, so this is precisely its normal first-head
+            // random branch. The private bootstrap intentionally does not
+            // model TLD-list insertion or the nonempty-head split route.
+            self.random.initialize();
+            self.cookie = self.random.next() as usize | 1;
+        }
         // The normal source default permits abandonment. This detached
         // bootstrap is separately source-special-cased as non-abandoning with
         // retain two; it supports only the bounded owner-local collector,
@@ -5862,6 +5894,89 @@ mod tests {
             );
         }
         assert_static_empty_memory_id(&empty_theap.memid);
+    }
+
+    #[test]
+    fn detached_exclusive_binding_rejects_an_invalid_fresh_tld_checkpoint_before_mutation() {
+        fn assert_unchanged_static_source_image(candidate: &Theap) {
+            assert!(!candidate.is_initialized());
+            assert!(candidate.subproc.load(Ordering::Relaxed).is_null());
+            assert_eq!(candidate.tld, detached_thread_local_ptr());
+            assert_eq!(candidate.refcount(), 1);
+            assert!(!candidate.random.is_initialized());
+            assert_eq!(candidate.cookie, 0);
+            assert_eq!(candidate.page_full_retain, 0);
+            assert!(candidate.allows_page_abandon());
+            assert!(!candidate.allows_page_reclaim());
+            assert!(candidate.is_detached());
+            assert_eq!(candidate.memid.kind(), MemoryKind::Static);
+            assert!(candidate.memid.is_pinned());
+            assert!(candidate.memid.initially_committed());
+            assert!(!candidate.memid.initially_zero());
+            let static_memory = candidate
+                .memid
+                .static_memory()
+                .expect("the unchanged static source image projects its zero union");
+            assert!(static_memory.base.is_null());
+            assert_eq!(static_memory.size, 0);
+        }
+
+        let subprocess = MainSubprocess::test_static_owner();
+        let foreign_subprocess = MainSubprocess::test_static_owner();
+
+        let mut nonempty_heap = Heap::bootstrap_empty();
+        nonempty_heap.bind_main_subprocess(subprocess);
+        let mut nonempty_tld = ThreadLocalData::detached();
+        nonempty_tld.attach_detached_main_subprocess(subprocess);
+        assert!(nonempty_tld.is_subprocess_attached_no_theap());
+        let mut existing_head = Theap::empty();
+        let existing_head = core::ptr::from_mut(&mut existing_head);
+        nonempty_tld.theaps = existing_head;
+        let mut nonempty_candidate = Theap::empty();
+
+        assert!(
+            !nonempty_candidate.bind_exclusive_detached(&mut nonempty_heap, &mut nonempty_tld),
+            "the bounded detached bootstrap must reject the unported source random-split path"
+        );
+        assert_eq!(
+            nonempty_tld.theaps, existing_head,
+            "rejection must not repair, relink, or replace the caller's TLD head"
+        );
+        assert_unchanged_static_source_image(&nonempty_candidate);
+
+        let mut mismatched_heap = Heap::bootstrap_empty();
+        mismatched_heap.bind_main_subprocess(foreign_subprocess);
+        let mut empty_tld = ThreadLocalData::detached();
+        empty_tld.attach_detached_main_subprocess(subprocess);
+        assert!(empty_tld.is_subprocess_attached_no_theap());
+        let mut mismatched_candidate = Theap::empty();
+
+        assert!(
+            !mismatched_candidate.bind_exclusive_detached(&mut mismatched_heap, &mut empty_tld),
+            "the bounded detached bootstrap must reject mismatched Heap/TLD subprocess identities"
+        );
+        assert!(
+            empty_tld.is_subprocess_attached_no_theap(),
+            "rejection must leave the fresh detached-TLD checkpoint unchanged"
+        );
+        assert_unchanged_static_source_image(&mismatched_candidate);
+
+        let mut threadpool_heap = Heap::bootstrap_empty();
+        threadpool_heap.bind_main_subprocess(subprocess);
+        let mut threadpool_tld = ThreadLocalData::detached();
+        threadpool_tld.attach_detached_main_subprocess(subprocess);
+        threadpool_tld.is_in_threadpool = true;
+        let mut threadpool_candidate = Theap::empty();
+
+        assert!(
+            !threadpool_candidate.bind_exclusive_detached(&mut threadpool_heap, &mut threadpool_tld),
+            "the bounded detached bootstrap must reject the source thread-pool option adjustment"
+        );
+        assert!(
+            threadpool_tld.is_subprocess_attached_no_theap() && threadpool_tld.is_in_threadpool(),
+            "rejection must not normalize the caller's thread-pool checkpoint"
+        );
+        assert_unchanged_static_source_image(&threadpool_candidate);
     }
 
     #[test]

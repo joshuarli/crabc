@@ -16,9 +16,11 @@
 //
 // This is deliberately only an allocation-free, exclusive single-thread
 // bootstrap. It has no compiler TLS slot, pthread key, first-class heap,
-// random, remote-free, teardown, or concurrent-init lifecycle. Its detached
-// metadata image now records the bounded main-subprocess identity only; this
-// remains distinct from a live TLD/theap attachment or subprocess lifecycle.
+// general random reinitialization/split, remote-free, teardown, or
+// concurrent-init lifecycle. Its detached metadata image records one bounded
+// first-head random/cookie initialization and main-subprocess identity only;
+// this remains distinct from a live TLD/theap attachment or subprocess
+// lifecycle.
 
 use core::marker::{PhantomData, PhantomPinned};
 use core::pin::Pin;
@@ -793,6 +795,14 @@ mod tests {
             );
             let fields = state.theap.test_main_static_fields();
             assert_eq!(fields.memid.kind(), MemoryKind::Static);
+            assert!(
+                fields.random_initialized,
+                "the detached metadata Theap initializes its first-head random image before demand"
+            );
+            assert!(
+                fields.cookie_is_odd,
+                "the detached metadata Theap derives its source cookie before publication"
+            );
             let static_memory = fields
                 .memid
                 .static_memory()
