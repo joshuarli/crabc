@@ -10440,6 +10440,57 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-sched-setaffinity"
+description = "Private native x86 selected-static-archive one-symbol GNU scheduler-affinity mutation compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sched_setaffinity`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/sched/affinity.c::sched_setaffinity` directly invokes Linux x86 raw syscall 203 with a thread selector, byte count, and read-only mask: successful zero leaves initial-TLS errno unchanged, while a raw error becomes `-1` through initial-TLS errno without mutating the caller's mask. The common body obtains the current nonempty mask with its fixture-local raw 204 only, then safely reapplies that exact mask through the C wrapper with stale errno and unchanged input before a raw postcondition proves no broadened result. It separately proves empty-mask `EINVAL`, missing `INT_MAX` `ESRCH`, and full-size null-mask `EFAULT`. The strict/POSIX/X/Open profiles hide the GNU-only spelling, while GNU C and C++17 prove exact `int sched_setaffinity(pid_t, size_t, const cpu_set_t *)`, the 128-byte align-8 LP64 mask layout, and unmangled C linkage. It selects neither `sched_getaffinity`, CPU allocation/count/macro helpers, scheduler policy or parameters, pthread affinity or lifecycle, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, scheduler-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_setaffinity.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/sched.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_setaffinity_header_abi_probe.c",
+  "compat/x86_64/sched_setaffinity_header_abi_probe.cpp",
+  "compat/x86_64/sched_setaffinity_header_visibility_probe.c",
+  "compat/x86_64/run_sched_setaffinity_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_setaffinity_probe.c",
+  "compat/x86_64/libc_sched_setaffinity_start.S",
+  "compat/x86_64/run_libc_sched_setaffinity.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes signed four-byte pid_t in edi, size_t in rsi, and const cpu_set_t * in rdx, then receives int sched_setaffinity(pid_t, size_t, const cpu_set_t *) in eax. Linux x86 raw syscall 203 uses the same three register values and returns zero or a negative errno; the selected C ABI translates only raw Linux errors.",
+  "Pinned musl 1.2.6 `src/sched/affinity.c::sched_setaffinity` is the complete MIT source mapping: its syscall(SYS_sched_setaffinity, tid, size, set) reaches __syscall_ret, which preserves errno on success and returns -1 after publishing raw Linux errors. The closed Rust leaf contains neither sched_getaffinity nor CPU helper, tail-clearing, pthread, or scheduler-policy logic.",
+  "The common pinned-musl/candidate C body obtains a raw-current nonempty mask through fixture-local 204, safely reapplies the exact mask through the selected C wrapper with stale ERANGE and unchanged input, then rejects a raw postcondition with bits outside that prior mask. It separately proves EINVAL for an empty mask, ESRCH for INT_MAX, and EFAULT for a full-size null mask. Its start delegates only archive Static Initial TLS v1 bootstrap required for errno; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl strict/POSIX/X/Open C and C++17 visibility matrix proves the GNU-only scheduler-affinity mutation API is absent outside GNU. GNU C and C++17 then prove exact `int sched_setaffinity(pid_t, size_t, const cpu_set_t *)`, four-byte pid_t, eight-byte size_t, 128-byte align-8 cpu_set_t with __bits at offset zero, and unmangled C++ C linkage. The project trace proves sched.h, sys/types.h, and time.h provenance; the static fixture additionally preprocesses errno.h, sys/syscall.h, and bits/syscall.h to prove Linux 203 while its fixture-local 204 observation remains unexported. This is a bounded C ABI/header proof, not CPU-helper, scheduler-family, installed-header, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-setaffinity", scope = "Pinned-musl 1.2.6 C reference plus strict/POSIX/X/Open/GNU C/C++ header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, selected/exported affinity observation, CPU helpers, scheduler policy/parameters, pthread state/lifecycle, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus sched_setaffinity disassembly with raw syscall 203, no raw 204 in sched_setaffinity, and no direct memory C ABI call; and executes nonempty exact-mask no-broaden reapplication with stale errno plus EINVAL, ESRCH, and EFAULT errors. The fixture-local raw 204 observation remains unexported. It adds no scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, GNU declaration, cpu_set_t layout, and behavior oracle for src/sched/affinity.c::sched_setaffinity: direct syscall status, C errno translation, const input, and stale errno on success." },
+  { kind = "linux-uapi", source = "Linux 5.10 x86-64 syscall ABI", role = "Raw sched_setaffinity syscall 203 replaces a task mask and provides the EINVAL/ESRCH/EFAULT error behavior exercised with safe current-mask reapplication by the differential fixture." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "pid_t/size_t/const-mask-pointer/int register ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-rand-r"
 description = "Private native x86 selected-static-archive `rand_r` leaf inside still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `rand_r`, with no undefined symbol, relocation, or final-ELF dependency on a global PRNG, TLS, syscall, entropy, allocator, or generic runtime surface. It executes pinned musl 1.2.6 `src/prng/rand_r.c` behavior first through pinned musl and then through `-nostdlib -static`: one caller-owned four-byte `unsigned` seed receives exactly `seed * 1103515245 + 12345` modulo 2^32, then musl's four XOR-shift/mask tempering stages produce the returned nonnegative 31-bit `int`. The fixture covers zero, one, mixed-bit, and all-one inputs, exact post-call seed words, exact return values, and the function-pointer C ABI. The leaf is stateless and allocation-free, with no errno, TLS, syscall, locale, entropy, mutable runtime, or other random entry point. It establishes no `rand`/`srand`, BSD random-family, `drand48`-family, global PRNG, cryptographic/entropy, thread, or synchronization contract. It does not promote general random behavior, `libc.text-math-locale-stdio`, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

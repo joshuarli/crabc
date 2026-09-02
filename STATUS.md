@@ -2794,6 +2794,22 @@ unmangled declaration. This is not scheduler support: mutation, parameters,
 priority bounds, `sched_yield`, affinity, pthread scheduling attributes,
 lifecycle, family/platform parity, promotion, and public x86 support remain
 outside the artifact.
+
+`./scripts/dev-x86_64.sh libc-sched-setaffinity` is a separate private
+`static-c-sched-setaffinity` artifact inside planned `libc.posix-runtime`.
+Its GNU-only C/C++ header gate retains exactly
+`sched_setaffinity(pid_t, size_t, const cpu_set_t *)` and the 128-byte,
+align-8 `cpu_set_t` layout while strict/POSIX/X/Open profiles hide it. Its
+pinned-musl/true-static C body maps only musl 1.2.6
+`src/sched/affinity.c::sched_setaffinity`: direct Linux x86 syscall 203
+preserves stale `errno` on success and translates raw errors through the
+initial-TLS C slot. The fixture obtains a valid current mask only through a
+fixture-local raw observation, reapplies that exact nonempty mask without
+broadening it, and proves `EINVAL` for an empty mask, `ESRCH` for `INT_MAX`,
+and `EFAULT` for a null full-size mask. It does not select `sched_getaffinity`,
+CPU helpers, scheduler policy/parameters, pthread affinity/lifecycle, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-alarm` is a separate private `static-c-alarm`
 artifact inside planned `libc.posix-runtime`. Its one-symbol
 pinned-musl/freestanding-static C proof maps only musl 1.2.6

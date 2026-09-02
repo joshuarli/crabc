@@ -127,6 +127,7 @@ __CPU_op_func_S(XOR, ^)
 
 int clone(int (*)(void *), void *, int, void *, ...);
 int sched_getaffinity(pid_t, size_t, cpu_set_t *);
+int sched_setaffinity(pid_t, size_t, const cpu_set_t *);
 int sched_getcpu(void);
 #endif
 

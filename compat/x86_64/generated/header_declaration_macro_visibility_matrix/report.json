@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "db69c1ebcaf96dd400ef0ac6395e14346f296dcf655bd95a7d92fb002ead4a58"
+    "source_abi_report_sha256": "124f54e5ff7ffcaa64942a660e6a6f3be508dce61dcc3132bee8a14b582a706c"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -304312,15 +304312,15 @@
     },
     {
       "candidate": {
-        "count": 355,
+        "count": 356,
         "kind_counts": {
-          "function": 161,
+          "function": 162,
           "macro": 142,
           "record": 10,
           "typedef": 38,
           "variable": 4
         },
-        "sha256": "99a991921757fff7351dda26bcba340270861a3ace1f3bb32239766c3506feaa"
+        "sha256": "69ce73682a8ba674fd4365f167b2f6a2e1af8a8eef77a4c43a4f428637be5574"
       },
       "candidate_only": [
         {
@@ -304423,7 +304423,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_identity_count": 331,
+      "matched_identity_count": 332,
       "profile": "c11-gnu",
       "reference": {
         "count": 361,
@@ -304437,10 +304437,6 @@
         "sha256": "6e4ea7384b71eb56a4e19d8694fa2423161ba7852d3f598b6bf2ecaa9d785c64"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "sched_setaffinity"
-        },
         {
           "kind": "function",
           "name": "setns"
@@ -304564,15 +304560,15 @@
     },
     {
       "candidate": {
-        "count": 353,
+        "count": 354,
         "kind_counts": {
-          "function": 161,
+          "function": 162,
           "macro": 141,
           "record": 9,
           "typedef": 38,
           "variable": 4
         },
-        "sha256": "7fa5bd95c916b163686561d0a47ef29b22c81122c807f4bfd2203cdc324896e6"
+        "sha256": "211bea0acbd820b0c46ecac577cb05e389846834f82811784adfe77bf675fabc"
       },
       "candidate_only": [
         {
@@ -304675,7 +304671,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_identity_count": 329,
+      "matched_identity_count": 330,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 359,
@@ -304689,10 +304685,6 @@
         "sha256": "1c193c118615decbf6ba9510ca3c10e0985bf153d34b149600e3a968481c0822"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "sched_setaffinity"
-        },
         {
           "kind": "function",
           "name": "setns"
@@ -305842,15 +305834,15 @@
     },
     {
       "candidate": {
-        "count": 353,
+        "count": 354,
         "kind_counts": {
-          "function": 161,
+          "function": 162,
           "macro": 141,
           "record": 9,
           "typedef": 38,
           "variable": 4
         },
-        "sha256": "7fa5bd95c916b163686561d0a47ef29b22c81122c807f4bfd2203cdc324896e6"
+        "sha256": "211bea0acbd820b0c46ecac577cb05e389846834f82811784adfe77bf675fabc"
       },
       "candidate_only": [
         {
@@ -305953,7 +305945,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_identity_count": 329,
+      "matched_identity_count": 330,
       "profile": "cxx17-strict",
       "reference": {
         "count": 359,
@@ -305967,10 +305959,6 @@
         "sha256": "1c193c118615decbf6ba9510ca3c10e0985bf153d34b149600e3a968481c0822"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "sched_setaffinity"
-        },
         {
           "kind": "function",
           "name": "setns"
@@ -337976,15 +337964,15 @@
     },
     {
       "candidate": {
-        "count": 206,
+        "count": 207,
         "kind_counts": {
-          "function": 50,
+          "function": 51,
           "macro": 107,
           "record": 8,
           "typedef": 37,
           "variable": 4
         },
-        "sha256": "8068317787db7d030586ac3f119c5ab6864b176ed308159ae5b55c1f70262905"
+        "sha256": "fa8a19a8259534fcb9b8dc31503a76284d88d342b7ce63d3165c52d7ae1562f9"
       },
       "candidate_only": [
         {
@@ -338419,7 +338407,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_identity_count": 99,
+      "matched_identity_count": 100,
       "profile": "c11-gnu",
       "reference": {
         "count": 103,
@@ -338432,10 +338420,6 @@
         "sha256": "f8650c0db92ee476ac61cafec10b2e0eedc28104607c73c03bc0cb533d6f6cc0"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "sched_setaffinity"
-        },
         {
           "kind": "function",
           "name": "setns"
@@ -338455,15 +338439,15 @@
     },
     {
       "candidate": {
-        "count": 205,
+        "count": 206,
         "kind_counts": {
-          "function": 50,
+          "function": 51,
           "macro": 107,
           "record": 7,
           "typedef": 37,
           "variable": 4
         },
-        "sha256": "4cab2b4aa933a24f096821fcd2fb4b0c09178883e1df56ce7af2447e1ed954dd"
+        "sha256": "6e1cf38dbf6e61ee68876ad17699d6637ca0c93dc8471b6f74e60cdf4e646a6e"
       },
       "candidate_only": [
         {
@@ -338894,7 +338878,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_identity_count": 99,
+      "matched_identity_count": 100,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 103,
@@ -338907,10 +338891,6 @@
         "sha256": "b37a9d5acab5a6b82fb1798ccca8401b7d9d675a3971741dcd038b58d1c395e2"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "sched_setaffinity"
-        },
         {
           "kind": "function",
           "name": "setns"
@@ -340633,15 +340613,15 @@
     },
     {
       "candidate": {
-        "count": 205,
+        "count": 206,
         "kind_counts": {
-          "function": 50,
+          "function": 51,
           "macro": 107,
           "record": 7,
           "typedef": 37,
           "variable": 4
         },
-        "sha256": "4cab2b4aa933a24f096821fcd2fb4b0c09178883e1df56ce7af2447e1ed954dd"
+        "sha256": "6e1cf38dbf6e61ee68876ad17699d6637ca0c93dc8471b6f74e60cdf4e646a6e"
       },
       "candidate_only": [
         {
@@ -341072,7 +341052,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_identity_count": 99,
+      "matched_identity_count": 100,
       "profile": "cxx17-strict",
       "reference": {
         "count": 103,
@@ -341085,10 +341065,6 @@
         "sha256": "b37a9d5acab5a6b82fb1798ccca8401b7d9d675a3971741dcd038b58d1c395e2"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "sched_setaffinity"
-        },
         {
           "kind": "function",
           "name": "setns"
@@ -550754,7 +550730,7 @@
       "56 project-only header/profile rows remain pending C ABI policy",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
-    "matched_identity_count": 209612,
+    "matched_identity_count": 209618,
     "mismatch_row_count": 1072,
     "oracle_not_applicable_candidate_fact_count": 243,
     "oracle_not_applicable_row_count": 1,
@@ -550764,10 +550740,10 @@
     "project_only_candidate_fact_count": 1964,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 85752,
+    "reference_only_identity_count": 85746,
     "reference_only_identity_kind_counts": {
       "enum": 66,
-      "function": 1189,
+      "function": 1183,
       "macro": 81989,
       "record": 922,
       "typedef": 1549,

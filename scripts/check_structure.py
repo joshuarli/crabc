@@ -286,6 +286,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/signal_realtime_max.rs"),
     Path("libc/src/c_abi/x86_64/signal_realtime_min.rs"),
     Path("libc/src/c_abi/x86_64/sched_getscheduler.rs"),
+    Path("libc/src/c_abi/x86_64/sched_setaffinity.rs"),
     Path("libc/src/c_abi/x86_64/signal_alarm.rs"),
     # This exact timer adapter is feature-gated; admitting its source path
     # preserves the frozen default static archive rather than widening it.
@@ -4271,6 +4272,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "signal_realtime_min.rs"]',
         '#[path = "sched_getscheduler.rs"]',
         '#[path = "sched_setscheduler.rs"]',
+        '#[path = "sched_setaffinity.rs"]',
         '#[path = "signal_alarm.rs"]',
         '#[path = "signal_ualarm.rs"]',
         '#[path = "signal_pending.rs"]',

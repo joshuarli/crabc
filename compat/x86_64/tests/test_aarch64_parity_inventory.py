@@ -251,7 +251,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         posix_runtime = next(
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
-        self.assertEqual(posix_runtime["verified_artifact_count"], 162)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 163)
         self.assertEqual(posix_runtime["verified_slice_count"], 6)
         resolver = next(
             row for row in report["families"] if row["id"] == "libc.resolver"
@@ -270,7 +270,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            359,
+            360,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -296,6 +296,13 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {
                 "family": "libc.posix-runtime",
                 "id": "static-c-sched-setscheduler",
+            },
+            report["selected_private_artifacts"],
+        )
+        self.assertIn(
+            {
+                "family": "libc.posix-runtime",
+                "id": "static-c-sched-setaffinity",
             },
             report["selected_private_artifacts"],
         )
@@ -354,10 +361,10 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1142)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1143)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
-            1121,
+            1122,
         )
         self.assertEqual(
             report["unsupported_contracts"],
@@ -373,7 +380,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
         self.assertEqual(posix_runtime["contract_state"], "selected-private")
-        self.assertEqual(posix_runtime["verified_artifact_count"], 162)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 163)
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-sleep"},
             report["selected_private_artifacts"],

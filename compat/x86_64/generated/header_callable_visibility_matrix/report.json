@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "9bcfb4204fa5cf9dab777d2e020cba693b672d396e77a735dde39808c65cfdd3",
+    "callable_inventory_sha256": "c3e82fdbdfb6d7bb395ec2df475e90e1e77e6b8e4574c237a778c9bdb8a59d60",
     "matrix_contract_sha256": "b1fe98dc96929908506ee6895eaebe129549e072fe237ba1076501677512668a",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -27785,6 +27785,36 @@
       "reference_status": "ok"
     },
     {
+      "candidate_callable_count": 189,
+      "candidate_only": [
+        {
+          "classification": "external",
+          "name": "pthread_kill"
+        },
+        {
+          "classification": "external",
+          "name": "pthread_sigmask"
+        }
+      ],
+      "candidate_status": "ok",
+      "comparison": "mismatch",
+      "header": "pthread.h",
+      "matched_callable_count": 187,
+      "profile": "c11-gnu",
+      "reference_callable_count": 189,
+      "reference_only": [
+        {
+          "classification": "external",
+          "name": "setns"
+        },
+        {
+          "classification": "external",
+          "name": "unshare"
+        }
+      ],
+      "reference_status": "ok"
+    },
+    {
       "candidate_callable_count": 188,
       "candidate_only": [
         {
@@ -27800,47 +27830,9 @@
       "comparison": "mismatch",
       "header": "pthread.h",
       "matched_callable_count": 186,
-      "profile": "c11-gnu",
-      "reference_callable_count": 189,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "sched_setaffinity"
-        },
-        {
-          "classification": "external",
-          "name": "setns"
-        },
-        {
-          "classification": "external",
-          "name": "unshare"
-        }
-      ],
-      "reference_status": "ok"
-    },
-    {
-      "candidate_callable_count": 187,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pthread_kill"
-        },
-        {
-          "classification": "external",
-          "name": "pthread_sigmask"
-        }
-      ],
-      "candidate_status": "ok",
-      "comparison": "mismatch",
-      "header": "pthread.h",
-      "matched_callable_count": 185,
       "profile": "cxx17-gnu",
       "reference_callable_count": 188,
       "reference_only": [
-        {
-          "classification": "external",
-          "name": "sched_setaffinity"
-        },
         {
           "classification": "external",
           "name": "setns"
@@ -27937,7 +27929,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 187,
+      "candidate_callable_count": 188,
       "candidate_only": [
         {
           "classification": "external",
@@ -27951,14 +27943,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_callable_count": 185,
+      "matched_callable_count": 186,
       "profile": "cxx17-strict",
       "reference_callable_count": 188,
       "reference_only": [
-        {
-          "classification": "external",
-          "name": "sched_setaffinity"
-        },
         {
           "classification": "external",
           "name": "setns"
@@ -30174,7 +30162,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 74,
+      "candidate_callable_count": 75,
       "candidate_only": [
         {
           "classification": "external",
@@ -30304,14 +30292,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_callable_count": 43,
+      "matched_callable_count": 44,
       "profile": "c11-gnu",
       "reference_callable_count": 46,
       "reference_only": [
-        {
-          "classification": "external",
-          "name": "sched_setaffinity"
-        },
         {
           "classification": "external",
           "name": "setns"
@@ -30324,7 +30308,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 74,
+      "candidate_callable_count": 75,
       "candidate_only": [
         {
           "classification": "external",
@@ -30454,14 +30438,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_callable_count": 43,
+      "matched_callable_count": 44,
       "profile": "cxx17-gnu",
       "reference_callable_count": 46,
       "reference_only": [
-        {
-          "classification": "external",
-          "name": "sched_setaffinity"
-        },
         {
           "classification": "external",
           "name": "setns"
@@ -30914,7 +30894,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 74,
+      "candidate_callable_count": 75,
       "candidate_only": [
         {
           "classification": "external",
@@ -31044,14 +31024,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_callable_count": 43,
+      "matched_callable_count": 44,
       "profile": "cxx17-strict",
       "reference_callable_count": 46,
       "reference_only": [
-        {
-          "classification": "external",
-          "name": "sched_setaffinity"
-        },
         {
           "classification": "external",
           "name": "setns"
@@ -62200,7 +62176,7 @@
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
-    "matched_callable_count": 32148,
+    "matched_callable_count": 32154,
     "mismatch_row_count": 560,
     "oracle_not_applicable_candidate_visible_callable_count": 39,
     "oracle_not_applicable_row_count": 1,
@@ -62210,7 +62186,7 @@
     "project_only_callable_count": 414,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_callable_count": 2544,
+    "reference_only_callable_count": 2538,
     "row_count": 1337
   },
   "target": "x86_64-unknown-linux-musl"

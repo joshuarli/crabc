@@ -848,6 +848,7 @@ sched_getaffinity
 sched_getcpu
 sched_getparam
 sched_getscheduler
+sched_setaffinity
 sched_setparam
 sched_setscheduler
 sched_yield

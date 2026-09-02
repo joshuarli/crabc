@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 359)
+        self.assertEqual(report["verified_artifact_count"], 360)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -3329,7 +3329,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 41291, "reference_only": 85752},
+            {"candidate_only": 41291, "reference_only": 85746},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3360,8 +3360,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             provider_audit["command"],
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
-        self.assertEqual(provider_audit["candidate_external_callable_count"], 1512)
-        self.assertEqual(provider_audit["default_static_callable_count"], 1072)
+        self.assertEqual(provider_audit["candidate_external_callable_count"], 1513)
+        self.assertEqual(provider_audit["default_static_callable_count"], 1073)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
@@ -21317,6 +21317,98 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh scheduler-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sched-getscheduler command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sched_setaffinity_artifact_keeps_its_bounded_mutation_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-setaffinity"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/sched_setaffinity.rs",
+            "include/sched.h",
+            "compat/x86_64/sched_setaffinity_header_abi_probe.c",
+            "compat/x86_64/sched_setaffinity_header_abi_probe.cpp",
+            "compat/x86_64/sched_setaffinity_header_visibility_probe.c",
+            "compat/x86_64/run_sched_setaffinity_header_abi.sh",
+            "compat/x86_64/libc_sched_setaffinity_probe.c",
+            "compat/x86_64/libc_sched_setaffinity_start.S",
+            "compat/x86_64/run_libc_sched_setaffinity.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sched-setaffinity"},
+        )
+        for phrase in (
+            "one-symbol GNU scheduler-affinity mutation compatibility artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `sched_setaffinity`",
+            "`src/sched/affinity.c::sched_setaffinity`",
+            "raw syscall 203",
+            "initial-TLS errno unchanged",
+            "raw error becomes `-1`",
+            "current nonempty mask",
+            "reapplies that exact mask",
+            "no broadened result",
+            "empty-mask `EINVAL`",
+            "missing `INT_MAX` `ESRCH`",
+            "null-mask `EFAULT`",
+            "strict/POSIX/X/Open profiles hide the GNU-only spelling",
+            "`sched_getaffinity`, CPU allocation/count/macro helpers",
+            "scheduler-family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "pid_t" in prerequisite
+                and "edi" in prerequisite
+                and "rsi" in prerequisite
+                and "rdx" in prerequisite
+                and "eax" in prerequisite
+                and "raw syscall 203" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "__syscall_ret" in prerequisite
+                and "preserves errno on success" in prerequisite
+                and "tail-clearing" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "raw-current nonempty mask" in prerequisite
+                and "exact mask" in prerequisite
+                and "EINVAL" in prerequisite
+                and "ESRCH" in prerequisite
+                and "EFAULT" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-setaffinity"
+        )
+        artifact["description"] = "private scheduler helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-sched-setaffinity description omits"
         ):
             ledger.validate_ledger(data)
 

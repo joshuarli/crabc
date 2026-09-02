@@ -2349,6 +2349,7 @@ general facade admission, or C ABI support claim.
   libc-io-permissions  run the opt-in static x86 iopl/ioperm negative-path slice
   libc-personality  run the static x86 process-personality slice
   libc-sched-getaffinity  run the static x86 GNU scheduler-affinity observation slice
+  libc-sched-setaffinity  run the static x86 GNU scheduler-affinity mutation slice
   libc-sched-getparam  run the static x86 musl-ENOSYS scheduler-record observation slice
   libc-sched-setparam  run the static x86 musl-ENOSYS scheduler-parameter compatibility slice
   libc-sched-setscheduler  run the static x86 musl-ENOSYS scheduler-policy compatibility slice
@@ -2360,6 +2361,7 @@ general facade admission, or C ABI support claim.
   posix-spawnattr-getschedpolicy-header-abi  verify x86 C/C++ spawn-attribute scheduler-policy ABI
   posix-spawnattr-init-header-abi  verify x86 C/C++ spawn-attribute initialization ABI
   sched-getaffinity-header-abi  compile x86 GNU sched_getaffinity C/C++ declarations
+  sched-setaffinity-header-abi  compile x86 GNU sched_setaffinity C/C++ declarations
   sched-getparam-header-abi  compile x86 sched_getparam C/C++ declarations
   sched-setparam-header-abi  compile x86 sched_setparam C/C++ declarations
   sched-setscheduler-header-abi  compile x86 sched_setscheduler C/C++ declarations
@@ -3143,6 +3145,10 @@ run_libc_sched_getaffinity_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_getaffinity.sh
 }
 
+run_libc_sched_setaffinity_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sched_setaffinity.sh
+}
+
 run_libc_setfsuid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_setfsuid.sh
 }
@@ -3417,6 +3423,10 @@ run_sched_setscheduler_header_abi() {
 
 run_sched_getaffinity_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sched_getaffinity_header_abi.sh
+}
+
+run_sched_setaffinity_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sched_setaffinity_header_abi.sh
 }
 
 run_setfsuid_header_abi() {
@@ -4994,9 +5004,9 @@ case "$command" in
     psignal-header-abi|libc-psignal|libc-process-signal) ;;
     h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime) ;;
     legacy-misc-header-abi|libc-legacy-misc) ;;
-    ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
+    ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
-    sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
+    sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
     tee-header-abi|splice-header-abi) ;;
@@ -8761,6 +8771,11 @@ case "$command" in
         ensure_image
         run_libc_sched_getaffinity_probe
         ;;
+    libc-sched-setaffinity)
+        [ "$#" -eq 0 ] || fail "libc-sched-setaffinity takes no arguments"
+        ensure_image
+        run_libc_sched_setaffinity_probe
+        ;;
     libc-sched-getparam)
         [ "$#" -eq 0 ] || fail "libc-sched-getparam takes no arguments"
         ensure_image
@@ -8795,6 +8810,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "sched-getaffinity-header-abi takes no arguments"
         ensure_image
         run_sched_getaffinity_header_abi
+        ;;
+    sched-setaffinity-header-abi)
+        [ "$#" -eq 0 ] || fail "sched-setaffinity-header-abi takes no arguments"
+        ensure_image
+        run_sched_setaffinity_header_abi
         ;;
     sched-getparam-header-abi)
         [ "$#" -eq 0 ] || fail "sched-getparam-header-abi takes no arguments"

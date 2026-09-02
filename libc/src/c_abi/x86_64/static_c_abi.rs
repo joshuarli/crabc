@@ -863,6 +863,8 @@ mod sched_setparam;
 mod sched_setscheduler;
 #[path = "sched_getaffinity.rs"]
 mod sched_getaffinity;
+#[path = "sched_setaffinity.rs"]
+mod sched_setaffinity;
 #[path = "pthread_getconcurrency.rs"]
 mod pthread_getconcurrency;
 #[path = "pthread_setconcurrency.rs"]

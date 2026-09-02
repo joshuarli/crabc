@@ -1173,7 +1173,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "#define CPU_EQUAL(s1,s2)",
         ):
             self.assertIn(required, header)
-        self.assertNotIn("sched_setaffinity", header)
         for probe in (c_probe, cxx_probe):
             for required in (
                 "CRABC_EXPECT_CPU_MACROS",
@@ -1736,9 +1735,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "psignal-header-abi|libc-psignal|libc-process-signal",
             "h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime",
             "legacy-misc-header-abi|libc-legacy-misc",
-            "ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
+            "ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
-            "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
+            "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
             "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
             "tee-header-abi|splice-header-abi",
@@ -36093,6 +36092,154 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("run_libc_sched_getaffinity_probe()", dispatcher)
         self.assertIn("sched-getaffinity-header-abi)", dispatcher)
         self.assertIn("libc-sched-getaffinity)", dispatcher)
+
+
+    def test_libc_static_c_abi_sched_setaffinity_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_setaffinity.rs"
+        )
+        c_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_setaffinity_header_abi_probe.c"
+        )
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_setaffinity_header_abi_probe.cpp"
+        )
+        visibility_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "sched_setaffinity_header_visibility_probe.c"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_setaffinity_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sched_setaffinity_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sched_setaffinity_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_setaffinity.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            visibility_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sched_setaffinity input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        visibility = visibility_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_setaffinity.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static GNU scheduler-affinity mutation boundary",
+            "src/sched/affinity.c::sched_setaffinity",
+            "SYS_SCHED_SETAFFINITY",
+            "c_status(result)",
+            'pub unsafe extern "C" fn sched_setaffinity',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "SYS_SCHED_GETAFFINITY",
+            'pub unsafe extern "C" fn sched_getaffinity',
+            "pthread_",
+            "static_tls",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&sched_setaffinity)",
+            "sched_setaffinity_signature)(pid_t, size_t, const cpu_set_t *)",
+            "sizeof(cpu_set_t) == 128",
+            "offsetof(cpu_set_t, __bits) == 0",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&sched_setaffinity)",
+            "sched_setaffinity_signature",
+            "sizeof(cpu_set_t) == 128",
+            'extern "C" void crabc_sched_setaffinity_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        self.assertIn("sched_setaffinity", visibility)
+        for required in (
+            "strict posix xopen",
+            "sched_setaffinity_header_visibility_probe.c",
+            "unexpectedly exposes sched_setaffinity",
+            "unmangled sched_setaffinity",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_sched_setaffinity == 203",
+            "raw_sched_getaffinity",
+            "has_set_bit",
+            "check_current_task",
+            "check_empty_mask",
+            "check_missing_task",
+            "check_null_mask",
+            "CRABC_SCHED_SETAFFINITY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sched_setaffinity_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_sched_setaffinity_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_affinity_boundary",
+            "memcpy|memmove|memset|bzero|sched_getaffinity",
+            "sched_setaffinity does not issue syscall 203",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sched_setaffinity", static_exports)
+        self.assertIn('id = "static-c-sched-setaffinity"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-setaffinity"',
+            parity_ledger,
+        )
+        self.assertIn("run_sched_setaffinity_header_abi()", dispatcher)
+        self.assertIn("run_libc_sched_setaffinity_probe()", dispatcher)
+        self.assertIn("sched-setaffinity-header-abi)", dispatcher)
+        self.assertIn("libc-sched-setaffinity)", dispatcher)
 
 
     def test_libc_static_c_abi_setfsuid_artifact_stays_bounded(self) -> None:

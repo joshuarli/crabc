@@ -319,6 +319,18 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertTrue(attributes <= default_static)
         self.assertFalse(attributes & unprovided)
 
+    def test_sched_setaffinity_is_default_static_not_unprovided(self) -> None:
+        """Keep the selected GNU affinity mutation entry independently provider-owned."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
+        unprovided = set(partition["unprovided"]["members"])
+
+        self.assertIn("sched_setaffinity", default_static)
+        self.assertNotIn("sched_setaffinity", unprovided)
+
     def test_netinet_macro_batch_is_present_with_its_exact_feature_split(self) -> None:
         """Keep this header-only reduction separate from archive-callable work."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:

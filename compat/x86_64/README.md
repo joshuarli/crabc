@@ -3932,6 +3932,23 @@ strict/POSIX/X/Open/GNU C/C++ matrix retains the exact unmangled declaration.
 It does not select scheduler mutation or parameters, priority bounds,
 `sched_yield`, affinity, pthread scheduling attributes, lifecycle,
 scheduler-family completion, AArch64 parity, promotion, or public x86 support.
+
+`libc-sched-setaffinity` is a separate
+`static-c-sched-setaffinity` `verified_artifact` within planned
+`libc.posix-runtime`. Its one-symbol project-header C body first runs through
+pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It
+maps only musl's `src/sched/affinity.c::sched_setaffinity`: direct x86 syscall
+203 returns status through the C `-1`/initial-TLS-errno convention while
+success preserves stale errno. The separate GNU-only C/C++ header gate proves
+the const-correct `sched_setaffinity(pid_t, size_t, const cpu_set_t *)`
+declaration, 128-byte align-8 `cpu_set_t`, and unmangled linkage; its strict,
+POSIX, and X/Open profiles hide the API. The static fixture gets a valid mask
+only through fixture-local raw observation, reapplies that exact nonempty mask
+without broadening it, and covers empty `EINVAL`, missing `INT_MAX` `ESRCH`,
+and full-size-null `EFAULT`. It does not select exported affinity observation,
+CPU helpers, scheduler policy/parameters, pthread state/lifecycle,
+scheduler-family completion, promotion, or public x86 support.
+
 `libc-alarm` is a separate `static-c-alarm` `verified_artifact` within planned
 `libc.posix-runtime`. Its one-symbol project-header C body first runs through
 pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It
