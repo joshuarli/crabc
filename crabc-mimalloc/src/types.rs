@@ -1404,6 +1404,295 @@ impl NormalTldInitWriteTrace {
     }
 }
 
+/// Test-only sink for the one shared modeled normal `mi_tld_init` body.
+///
+/// This is deliberately narrower than either trace's surrounding lifecycle:
+/// it receives only the seven field writes. Each surrounding trace records
+/// its own linear final live-count registration; `StaticFirstTldCreateTrace`
+/// also adds ticket/static-memid and Release-publication observations without
+/// duplicating the field body.
+#[cfg(test)]
+trait NormalTldInitTraceSink {
+    fn record_subprocess(&mut self);
+    fn record_theap_head(&mut self);
+    fn record_lock(&mut self);
+    fn record_numa_node(&mut self);
+    fn record_thread_id(&mut self);
+    fn record_threadpool(&mut self);
+    fn record_thread_sequence(&mut self);
+}
+
+#[cfg(test)]
+impl NormalTldInitTraceSink for NormalTldInitWriteTrace {
+    #[inline]
+    fn record_subprocess(&mut self) {
+        Self::record_subprocess(self);
+    }
+
+    #[inline]
+    fn record_theap_head(&mut self) {
+        Self::record_theap_head(self);
+    }
+
+    #[inline]
+    fn record_lock(&mut self) {
+        Self::record_lock(self);
+    }
+
+    #[inline]
+    fn record_numa_node(&mut self) {
+        Self::record_numa_node(self);
+    }
+
+    #[inline]
+    fn record_thread_id(&mut self) {
+        Self::record_thread_id(self);
+    }
+
+    #[inline]
+    fn record_threadpool(&mut self) {
+        Self::record_threadpool(self);
+    }
+
+    #[inline]
+    fn record_thread_sequence(&mut self) {
+        Self::record_thread_sequence(self);
+    }
+
+}
+
+/// Test-only event witness for the selected ticket-zero static-TLD path.
+///
+/// The record starts at the existing Rust ticket issue, then observes the
+/// concrete static `MemoryId` installation, the *shared* modeled normal body,
+/// its linear live-count registration, and the actual `MAIN_TLD_LIVE` Release
+/// store. It does not model C's earlier main-subprocess predicate: Rust's
+/// selector and Heap foundation are deliberately established before ticket
+/// issue, and neither is treated as literal caller-order parity.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct StaticFirstTldCreateTrace {
+    next: usize,
+    ticket_zero_issued: usize,
+    static_memid: usize,
+    subprocess: usize,
+    theap_head: usize,
+    lock: usize,
+    numa_node: usize,
+    thread_id: usize,
+    threadpool: usize,
+    thread_sequence: usize,
+    live_registration: usize,
+    release_publication: usize,
+    poststate: Option<StaticFirstTldCreatePoststate>,
+}
+
+/// Address-independent poststate captured after the Rust static slot has
+/// actually Release-published, but before its larger Theap/TLS/root owner
+/// continues. Each size/base relation is local to Rust's own TLD image; this
+/// is not a C/Rust layout comparison.
+#[cfg(test)]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct StaticFirstTldCreatePoststate {
+    pub(crate) static_branch_selected: bool,
+    pub(crate) static_slot_identity_preserved: bool,
+    pub(crate) subprocess_matches_input: bool,
+    pub(crate) theap_head_null: bool,
+    pub(crate) lock_roundtrip: bool,
+    pub(crate) numa_node_injected_three: bool,
+    pub(crate) thread_id_matches_input: bool,
+    pub(crate) thread_id_live: bool,
+    pub(crate) threadpool_false: bool,
+    pub(crate) thread_sequence_zero: bool,
+    pub(crate) recurse_false: bool,
+    pub(crate) memid_static_kind: bool,
+    pub(crate) memid_base_is_static_slot: bool,
+    pub(crate) memid_size_is_own_tld_size: bool,
+    pub(crate) memid_pinned: bool,
+    pub(crate) memid_initially_committed: bool,
+    pub(crate) memid_initially_zero_false: bool,
+    pub(crate) metadata_allocation_bypassed: bool,
+}
+
+#[cfg(test)]
+impl StaticFirstTldCreateTrace {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    #[inline]
+    fn record_next(&mut self) -> usize {
+        self.next += 1;
+        self.next
+    }
+
+    /// Records the existing source-style relaxed total-ticket transition
+    /// after its ticket-zero precondition has been accepted.
+    #[inline]
+    pub(crate) fn record_ticket_zero_issued(&mut self) {
+        self.ticket_zero_issued = self.record_next();
+    }
+
+    /// Records semantic concrete-static provenance after it has been
+    /// installed in the newly materialized static TLD image.
+    #[inline]
+    pub(crate) fn record_static_memid(&mut self) {
+        self.static_memid = self.record_next();
+    }
+
+    /// Records the one linear live-count registration immediately after its
+    /// relaxed increment. This is an inherent fixed-sink call so the critical
+    /// registration-to-Release gap contains no trait-object dispatch.
+    #[inline]
+    pub(crate) fn record_live_registration(&mut self) {
+        self.live_registration = self.record_next();
+    }
+
+    /// Records the actual `MAIN_TLD_LIVE` Release store. This method is used
+    /// only immediately after that store by the private test wrapper; it has
+    /// no callback, allocation, or fallible behavior.
+    #[inline]
+    pub(crate) fn record_release_publication(&mut self) {
+        self.release_publication = self.record_next();
+    }
+
+    /// Captures only semantic fields from the already-Released static TLD
+    /// owner before its caller attaches a Theap. The source's static global
+    /// begins zeroed, while Rust's `MaybeUninit` slot has already materialized
+    /// its zero-shaped preimage at this point; this witness makes no storage
+    /// byte-image equivalence claim.
+    #[inline]
+    pub(crate) fn record_static_tld_poststate(
+        &mut self,
+        tld: &ThreadLocalData,
+        subprocess: &MainSubprocess,
+        thread: LiveThreadId,
+    ) {
+        let memid = tld.memory_id();
+        let static_memory = memid.static_memory();
+        let memid_static_kind = memid.kind() == MemoryKind::Static;
+        let memid_base_is_static_slot = static_memory.is_some_and(|memory| {
+            core::ptr::eq(memory.base.cast::<ThreadLocalData>(), core::ptr::from_ref(tld))
+        });
+        let memid_size_is_own_tld_size =
+            static_memory.is_some_and(|memory| memory.size == size_of::<ThreadLocalData>());
+        self.poststate = Some(StaticFirstTldCreatePoststate {
+            static_branch_selected: tld.thread_sequence().get() == 0 && memid_static_kind,
+            static_slot_identity_preserved: memid_base_is_static_slot,
+            subprocess_matches_input: tld.is_attached_to_main_subprocess(subprocess),
+            theap_head_null: tld.test_theap_head_is(null_mut()),
+            lock_roundtrip: tld.test_theaps_lock_starts_and_restores_unlocked(),
+            numa_node_injected_three: tld.numa_node() == 3,
+            thread_id_matches_input: tld.thread_id() == thread.get(),
+            thread_id_live: LiveThreadId::new(tld.thread_id()).is_some(),
+            threadpool_false: !tld.is_in_threadpool(),
+            thread_sequence_zero: tld.thread_sequence().get() == 0,
+            recurse_false: !tld.recursing(),
+            memid_static_kind,
+            memid_base_is_static_slot,
+            memid_size_is_own_tld_size,
+            memid_pinned: memid.is_pinned(),
+            memid_initially_committed: memid.initially_committed(),
+            memid_initially_zero_false: !memid.initially_zero(),
+            // This trace entry is available solely on the typed static-slot
+            // branch. It receives no metadata allocator/capability, so it
+            // witnesses the bounded Rust route rather than a C call-count.
+            metadata_allocation_bypassed: true,
+        });
+    }
+
+    #[inline]
+    pub(crate) fn poststate(&self) -> Option<StaticFirstTldCreatePoststate> {
+        self.poststate
+    }
+
+    #[inline]
+    pub(crate) fn ticket_zero_precedes_static_memid(&self) -> bool {
+        self.ticket_zero_issued == 1 && self.static_memid == 2
+    }
+
+    #[inline]
+    pub(crate) fn static_memid_precedes_normal_lock(&self) -> bool {
+        self.static_memid == 2 && self.lock == 5
+    }
+
+    #[inline]
+    pub(crate) fn modeled_normal_body_is_ordered(&self) -> bool {
+        self.subprocess == 3
+            && self.theap_head == 4
+            && self.lock == 5
+            && self.numa_node == 6
+            && self.thread_id == 7
+            && self.threadpool == 8
+            && self.thread_sequence == 9
+    }
+
+    #[inline]
+    pub(crate) fn threadpool_precedes_live_registration(&self) -> bool {
+        self.threadpool == 8 && self.live_registration == 10
+    }
+
+    #[inline]
+    pub(crate) fn total_ticket_precedes_live_registration(&self) -> bool {
+        self.ticket_zero_issued == 1 && self.live_registration == 10
+    }
+
+    #[inline]
+    pub(crate) fn live_registration_precedes_release_publication(&self) -> bool {
+        self.live_registration == 10 && self.release_publication == 11
+    }
+
+    #[inline]
+    pub(crate) fn has_selected_create_effect_order(&self) -> bool {
+        self.ticket_zero_precedes_static_memid()
+            && self.static_memid_precedes_normal_lock()
+            && self.modeled_normal_body_is_ordered()
+            && self.threadpool_precedes_live_registration()
+            && self.live_registration_precedes_release_publication()
+            && self.next == 11
+    }
+}
+
+#[cfg(test)]
+impl NormalTldInitTraceSink for StaticFirstTldCreateTrace {
+    #[inline]
+    fn record_subprocess(&mut self) {
+        self.subprocess = self.record_next();
+    }
+
+    #[inline]
+    fn record_theap_head(&mut self) {
+        self.theap_head = self.record_next();
+    }
+
+    #[inline]
+    fn record_lock(&mut self) {
+        self.lock = self.record_next();
+    }
+
+    #[inline]
+    fn record_numa_node(&mut self) {
+        self.numa_node = self.record_next();
+    }
+
+    #[inline]
+    fn record_thread_id(&mut self) {
+        self.thread_id = self.record_next();
+    }
+
+    #[inline]
+    fn record_threadpool(&mut self) {
+        self.threadpool = self.record_next();
+    }
+
+    #[inline]
+    fn record_thread_sequence(&mut self) {
+        self.thread_sequence = self.record_next();
+    }
+
+}
+
 impl ThreadLocalData {
     #[inline]
     pub(crate) const fn detached() -> Self {
@@ -1841,7 +2130,7 @@ impl ThreadLocalData {
         thread_sequence: ThreadSequence,
         numa_node_source: impl FnOnce() -> i32,
         subprocess: &'static MainSubprocess,
-        #[cfg(test)] mut trace: Option<&mut NormalTldInitWriteTrace>,
+        #[cfg(test)] mut trace: Option<&mut dyn NormalTldInitTraceSink>,
     ) -> bool {
         if !self.matches_normal_tld_init_direct_preimage()
             || !self.tld_init_preimage_lock_is_quiescent()
@@ -1852,31 +2141,31 @@ impl ThreadLocalData {
         self.subprocess = subprocess.as_ptr();
         #[cfg(test)]
         if let Some(trace) = trace.as_deref_mut() {
-            trace.record_subprocess();
+            NormalTldInitTraceSink::record_subprocess(trace);
         }
 
         self.theaps = null_mut();
         #[cfg(test)]
         if let Some(trace) = trace.as_deref_mut() {
-            trace.record_theap_head();
+            NormalTldInitTraceSink::record_theap_head(trace);
         }
 
         self.theaps_lock = PrivateLock::new();
         #[cfg(test)]
         if let Some(trace) = trace.as_deref_mut() {
-            trace.record_lock();
+            NormalTldInitTraceSink::record_lock(trace);
         }
 
         self.numa_node = numa_node_source();
         #[cfg(test)]
         if let Some(trace) = trace.as_deref_mut() {
-            trace.record_numa_node();
+            NormalTldInitTraceSink::record_numa_node(trace);
         }
 
         self.thread_id = thread_id.get();
         #[cfg(test)]
         if let Some(trace) = trace.as_deref_mut() {
-            trace.record_thread_id();
+            NormalTldInitTraceSink::record_thread_id(trace);
         }
 
         // `src/prim/unix/prim.c` returns false exactly.  The source helper
@@ -1885,13 +2174,13 @@ impl ThreadLocalData {
         self.is_in_threadpool = false;
         #[cfg(test)]
         if let Some(trace) = trace.as_deref_mut() {
-            trace.record_threadpool();
+            NormalTldInitTraceSink::record_threadpool(trace);
         }
 
         self.thread_seq = thread_sequence.get();
         #[cfg(test)]
         if let Some(trace) = trace.as_deref_mut() {
-            trace.record_thread_sequence();
+            NormalTldInitTraceSink::record_thread_sequence(trace);
         }
         true
     }
@@ -2031,6 +2320,74 @@ impl ThreadLocalData {
         subprocess: &'static MainSubprocess,
         memid: MemoryId,
     ) {
+        // SAFETY: the public unsafe contract above is forwarded unchanged to
+        // the one shared raw writer.
+        unsafe {
+            Self::write_subprocess_attached_no_theap_at_impl(
+                destination,
+                thread_id,
+                thread_sequence,
+                numa_node_source,
+                subprocess,
+                memid,
+                #[cfg(test)]
+                None,
+            );
+        }
+    }
+
+    /// Test-only instrumentation around the same raw static-slot writer.
+    ///
+    /// This accepts no TLD projection and cannot create a standalone static
+    /// owner. `main_theap` passes its stack-borrowed trace only while the
+    /// existing ticket-zero attachment retains the unpublished slot.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must be one fresh, properly aligned, writable,
+    /// exclusively held `ThreadLocalData` slot with no prior image, observer,
+    /// lock guard, or waiter. The caller must retain the enclosing static
+    /// storage/attachment transition through this image's Release publication
+    /// and then either its explicit teardown or its documented terminal
+    /// retention; the trace grants no additional aliasing or lifecycle
+    /// authority.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_write_subprocess_attached_no_theap_at_with_static_first_trace(
+        destination: *mut Self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        numa_node_source: impl FnOnce() -> i32,
+        subprocess: &'static MainSubprocess,
+        memid: MemoryId,
+        trace: &mut StaticFirstTldCreateTrace,
+    ) {
+        // SAFETY: the private static attachment forwards its unique fresh
+        // `MaybeUninit` slot and retains the enclosing static transition
+        // through teardown or its documented terminal-retention outcome.
+        unsafe {
+            Self::write_subprocess_attached_no_theap_at_impl(
+                destination,
+                thread_id,
+                thread_sequence,
+                numa_node_source,
+                subprocess,
+                memid,
+                Some(trace),
+            );
+        }
+    }
+
+    #[inline]
+    unsafe fn write_subprocess_attached_no_theap_at_impl(
+        destination: *mut Self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        numa_node_source: impl FnOnce() -> i32,
+        subprocess: &'static MainSubprocess,
+        memid: MemoryId,
+        #[cfg(test)] mut trace: Option<&mut StaticFirstTldCreateTrace>,
+    ) {
         // SAFETY: the caller proves exclusive aligned storage and no observer
         // can reach it before the complete image is installed. The first
         // write constructs a valid Rust object before its ordered field body
@@ -2041,13 +2398,18 @@ impl ThreadLocalData {
             // This is `mi_tld_create`'s outer provenance predecessor, not a
             // field touched by `mi_tld_init` itself.
             tld.memid = memid;
-            let initialized = tld
-                .initialize_normal_tld_field_prefix_after_direct_preimage_with_numa_source(
-                    thread_id,
-                    thread_sequence,
-                    numa_node_source,
-                    subprocess,
-                );
+            #[cfg(test)]
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.record_static_memid();
+            }
+            let initialized = tld.initialize_normal_tld_field_prefix_after_direct_preimage_impl(
+                thread_id,
+                thread_sequence,
+                numa_node_source,
+                subprocess,
+                #[cfg(test)]
+                trace.map(|trace| trace as &mut dyn NormalTldInitTraceSink),
+            );
             debug_assert!(
                 initialized,
                 "fresh raw TLD storage must satisfy the normal mi_tld_init preimage"

@@ -65,6 +65,8 @@ use crate::types::page_queue::{
     M1PageFreeCollectError, test_m1_collect_abandon_page_free,
 };
 #[cfg(test)]
+use crate::types::StaticFirstTldCreateTrace;
+#[cfg(test)]
 use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner};
 
 const COLD: u8 = 0;
@@ -798,8 +800,53 @@ impl MainStaticTheapAttachment {
     /// a callback or creates a configurable allocator policy.
     unsafe fn begin_after_heap_foundation_with_numa_source(
         foundation: MainStaticHeapFoundation,
+        selection: MainStaticBootstrapSelection,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
+    ) -> Result<Self, MainStaticTheapError> {
+        // SAFETY: this preserves the private caller-owned foundation and
+        // selector transition; production has no trace state.
+        unsafe {
+            Self::begin_after_heap_foundation_with_numa_source_impl(
+                foundation,
+                selection,
+                numa_node_source,
+                #[cfg(test)]
+                None,
+            )
+        }
+    }
+
+    /// Test-only trace entry around the same selected static attachment.
+    ///
+    /// The trace is borrowed from the test stack only for this call. The
+    /// returned owner remains the ordinary `MainStaticTheapAttachment`, so a
+    /// caller cannot observe a pending TLD/lease or retain instrumentation
+    /// beyond its source-shaped teardown ownership.
+    #[cfg(test)]
+    unsafe fn begin_after_heap_foundation_with_numa_source_and_static_first_trace(
+        foundation: MainStaticHeapFoundation,
+        selection: MainStaticBootstrapSelection,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
+        trace: &mut StaticFirstTldCreateTrace,
+    ) -> Result<Self, MainStaticTheapError> {
+        // SAFETY: as above, this only adds scalar recording to the owned
+        // selected attachment transition.
+        unsafe {
+            Self::begin_after_heap_foundation_with_numa_source_impl(
+                foundation,
+                selection,
+                numa_node_source,
+                Some(trace),
+            )
+        }
+    }
+
+    #[inline]
+    unsafe fn begin_after_heap_foundation_with_numa_source_impl(
+        foundation: MainStaticHeapFoundation,
         mut selection: MainStaticBootstrapSelection,
         numa_node_source: impl FnOnce(MemoryId) -> i32,
+        #[cfg(test)] mut trace: Option<&mut StaticFirstTldCreateTrace>,
     ) -> Result<Self, MainStaticTheapError> {
         if !foundation.matches_selection(&selection) {
             return Err(MainStaticTheapError::BootstrapSelection(
@@ -812,7 +859,14 @@ impl MainStaticTheapAttachment {
         let thread = current_thread_identity().ok_or(MainStaticTheapError::InvalidCurrentThread)?;
         storage.claim_ready_heap_for_initial_thread()?;
 
-        let ticket = selection.issue_first_ticket().map_err(|error| {
+        #[cfg(test)]
+        let ticket_result = match trace.as_deref_mut() {
+            Some(trace) => selection.test_issue_first_ticket_with_static_first_trace(trace),
+            None => selection.issue_first_ticket(),
+        };
+        #[cfg(not(test))]
+        let ticket_result = selection.issue_first_ticket();
+        let ticket = ticket_result.map_err(|error| {
             storage.mark_poisoned();
             match error {
                 MainStaticBootstrapSelectionError::FirstTicketAlreadyIssued => {
@@ -821,12 +875,36 @@ impl MainStaticTheapAttachment {
                 other => MainStaticTheapError::BootstrapSelection(other),
             }
         })?;
-        let (mut tld, registration) = ticket
-            .initialize_and_activate_first_main_tld_with_numa_source(thread, numa_node_source)
-            .map_err(|error| {
-                storage.mark_poisoned();
-                MainStaticTheapError::MainStaticTld(error)
-            })?;
+        #[cfg(test)]
+        let tld_result = match trace.as_deref_mut() {
+            Some(trace) => ticket
+                .test_initialize_and_activate_first_main_tld_with_static_first_trace(
+                    thread,
+                    numa_node_source,
+                    trace,
+                ),
+            None => ticket.initialize_and_activate_first_main_tld_with_numa_source(
+                thread,
+                numa_node_source,
+            ),
+        };
+        #[cfg(not(test))]
+        let tld_result = ticket.initialize_and_activate_first_main_tld_with_numa_source(
+            thread,
+            numa_node_source,
+        );
+        let (mut tld, registration) = tld_result.map_err(|error| {
+            storage.mark_poisoned();
+            MainStaticTheapError::MainStaticTld(error)
+        })?;
+
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            // The static TLD is already Release-published here, but no Theap
+            // has attached yet. Capture its source-slice poststate without
+            // exposing a raw TLD capability to the test.
+            trace.record_static_tld_poststate(tld.current_mut(), subprocess, thread);
+        }
 
         #[cfg(test)]
         if storage.take_test_busy_tld_list_before_initial_attachment() {
@@ -3217,6 +3295,285 @@ mod tests {
         })
         .join()
         .expect("heap-foundation test thread completes");
+    }
+
+    /// Emits the bounded C/Rust record for pinned `mi_tld_create`'s selected
+    /// source-static first-TLD arm (`src/init.c:253-272`). The Rust half uses
+    /// the existing ticket-zero static attachment path, so its selector and
+    /// Heap foundation deliberately precede ticket issue; that earlier Rust
+    /// ownership preparation is not a claim of C caller-order parity. Once
+    /// ticket zero issues, this trace witnesses concrete static provenance,
+    /// the shared normal body, its live registration, and the actual Release
+    /// publication before the larger Theap/TLS/root attachment continues.
+    #[test]
+    fn emit_m2_static_first_tld_create_c_rust_trace() {
+        thread::spawn(|| {
+            macro_rules! record {
+                ($name:literal, $value:expr) => {
+                    std::println!("{}={}", $name, $value as usize);
+                };
+            }
+
+            let (storage, subprocess) = fixture();
+            // `MainStaticTldSlot` is Rust `MaybeUninit`, not C's static-zero
+            // storage. These two scalar states prove only fresh semantic slot
+            // ownership before the private helper materializes its valid
+            // zero-shaped image.
+            let pre_static_slot_fresh = storage.test_state_is_cold()
+                && subprocess.test_main_tld_is_cold();
+            let pre_total_thread_count_zero = subprocess.total_thread_count() == 0;
+            let pre_live_thread_count_zero = subprocess.live_thread_count() == 0;
+            assert!(pre_static_slot_fresh);
+            assert!(pre_total_thread_count_zero);
+            assert!(pre_live_thread_count_zero);
+
+            let mut selection = subprocess
+                .reserve_static_bootstrap()
+                .expect("the fresh test subprocess selects ticket zero");
+            let pre_main_subprocess_selected = core::ptr::eq(selection.subprocess(), subprocess);
+            assert!(pre_main_subprocess_selected);
+            let foundation = MainStaticHeapFoundation::initialize(storage, subprocess, &mut selection)
+                .expect("the Rust static Heap foundation precedes its ticket-zero attachment");
+
+            let mut trace = StaticFirstTldCreateTrace::new();
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_after_heap_foundation_with_numa_source_and_static_first_trace(
+                    foundation,
+                    selection,
+                    |memid| {
+                        // This is the source-position NUMA observation: the
+                        // shared normal writer has already installed concrete
+                        // static provenance but has not reached thread-ID,
+                        // pool, live registration, or Release publication.
+                        assert_eq!(memid.kind(), MemoryKind::Static);
+                        let static_memory = memid
+                            .static_memory()
+                            .expect("the selected Rust static slot has concrete provenance");
+                        assert!(!static_memory.base.is_null());
+                        assert_eq!(static_memory.size, size_of::<ThreadLocalData>());
+                        assert!(memid.is_pinned());
+                        assert!(memid.initially_committed());
+                        assert!(!memid.initially_zero());
+                        assert!(subprocess.test_main_tld_is_claimed());
+                        assert_eq!(subprocess.total_thread_count(), 1);
+                        assert_eq!(subprocess.live_thread_count(), 0);
+                        3
+                    },
+                    &mut trace,
+                )
+            }
+            .expect("the selected ticket-zero static attachment succeeds");
+
+            let post = trace
+                .poststate()
+                .expect("the trace snapshots the published TLD before Theap attachment");
+            let post_total_thread_count_one = subprocess.total_thread_count() == 1;
+            let post_total_thread_count_incremented =
+                pre_total_thread_count_zero && post_total_thread_count_one;
+            let post_live_thread_count_one = subprocess.live_thread_count() == 1;
+            let post_live_thread_count_incremented =
+                pre_live_thread_count_zero && post_live_thread_count_one;
+            // C returns from `mi_tld_create` after live registration. Rust
+            // reaches this owner result only after its distinct
+            // `MAIN_TLD_LIVE` Release store; this is a labeled semantic
+            // correspondence, not a claim of the same primitive.
+            let post_result_visibility_after_live_registration =
+                trace.live_registration_precedes_release_publication()
+                    && subprocess.test_main_tld_is_live();
+            let normal_body_ordered = trace.modeled_normal_body_is_ordered();
+            let ticket_zero_before_static_memid = trace.ticket_zero_precedes_static_memid();
+            let static_memid_before_normal_lock = trace.static_memid_precedes_normal_lock();
+            let threadpool_before_live_increment = trace.threadpool_precedes_live_registration();
+            let total_increment_before_live_increment = trace.total_ticket_precedes_live_registration();
+            let live_increment_before_result_visibility =
+                trace.live_registration_precedes_release_publication();
+            let selected_create_effects_ordered = trace.has_selected_create_effect_order();
+
+            assert!(post.static_branch_selected);
+            assert!(post.static_slot_identity_preserved);
+            assert!(post.subprocess_matches_input);
+            assert!(post.theap_head_null);
+            assert!(post.lock_roundtrip);
+            assert!(post.numa_node_injected_three);
+            assert!(post.thread_id_matches_input);
+            assert!(post.thread_id_live);
+            assert!(post.threadpool_false);
+            assert!(post.thread_sequence_zero);
+            assert!(post.recurse_false);
+            assert!(post.memid_static_kind);
+            assert!(post.memid_base_is_static_slot);
+            assert!(post.memid_size_is_own_tld_size);
+            assert!(post.memid_pinned);
+            assert!(post.memid_initially_committed);
+            assert!(post.memid_initially_zero_false);
+            assert!(post.metadata_allocation_bypassed);
+            assert!(post_total_thread_count_one);
+            assert!(post_total_thread_count_incremented);
+            assert!(post_live_thread_count_one);
+            assert!(post_live_thread_count_incremented);
+            assert!(post_result_visibility_after_live_registration);
+            assert!(ticket_zero_before_static_memid);
+            assert!(static_memid_before_normal_lock);
+            assert!(normal_body_ordered);
+            assert!(threadpool_before_live_increment);
+            assert!(total_increment_before_live_increment);
+            assert!(live_increment_before_result_visibility);
+            assert!(selected_create_effects_ordered);
+
+            std::println!("CRABC_MI_M2_STATIC_FIRST_TLD_CREATE_TRACE_BEGIN");
+            record!(
+                "m2.initialization.static_first_tld.pre.main_subprocess_selected",
+                pre_main_subprocess_selected
+            );
+            record!(
+                "m2.initialization.static_first_tld.pre.static_slot_fresh",
+                pre_static_slot_fresh
+            );
+            record!(
+                "m2.initialization.static_first_tld.pre.total_thread_count_zero",
+                pre_total_thread_count_zero
+            );
+            record!(
+                "m2.initialization.static_first_tld.pre.live_thread_count_zero",
+                pre_live_thread_count_zero
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.static_branch_selected",
+                post.static_branch_selected
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.static_slot_identity_preserved",
+                post.static_slot_identity_preserved
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.subprocess_matches_input",
+                post.subprocess_matches_input
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.theap_head_null",
+                post.theap_head_null
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.lock_roundtrip",
+                post.lock_roundtrip
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.numa_node_injected_three",
+                post.numa_node_injected_three
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.thread_id_matches_input",
+                post.thread_id_matches_input
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.thread_id_live",
+                post.thread_id_live
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.threadpool_false",
+                post.threadpool_false
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.thread_sequence_zero",
+                post.thread_sequence_zero
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.recurse_false",
+                post.recurse_false
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_static_kind",
+                post.memid_static_kind
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_base_is_static_slot",
+                post.memid_base_is_static_slot
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_size_is_own_tld_size",
+                post.memid_size_is_own_tld_size
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_pinned",
+                post.memid_pinned
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_initially_committed",
+                post.memid_initially_committed
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_initially_zero_false",
+                post.memid_initially_zero_false
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.metadata_allocation_bypassed",
+                post.metadata_allocation_bypassed
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.total_thread_count_one",
+                post_total_thread_count_one
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.total_thread_count_incremented",
+                post_total_thread_count_incremented
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.live_thread_count_one",
+                post_live_thread_count_one
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.live_thread_count_incremented",
+                post_live_thread_count_incremented
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.result_visibility_after_live_registration",
+                post_result_visibility_after_live_registration
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.ticket_zero_before_static_memid",
+                ticket_zero_before_static_memid
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.static_memid_before_normal_lock",
+                static_memid_before_normal_lock
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.lock_before_numa",
+                normal_body_ordered
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.numa_before_thread_id",
+                normal_body_ordered
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.thread_id_before_threadpool",
+                normal_body_ordered
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.threadpool_before_live_increment",
+                threadpool_before_live_increment
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.total_increment_before_live_increment",
+                total_increment_before_live_increment
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.live_increment_before_result_visibility",
+                live_increment_before_result_visibility
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.selected_create_effects_ordered",
+                selected_create_effects_ordered
+            );
+            std::println!("CRABC_MI_M2_STATIC_FIRST_TLD_CREATE_TRACE_END");
+
+            owner
+                .teardown()
+                .expect("the traced static attachment tears down exactly once");
+            assert_eq!(subprocess.live_thread_count(), 0);
+        })
+        .join()
+        .expect("the static-first TLD trace thread completes");
     }
 
     #[test]

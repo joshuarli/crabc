@@ -542,6 +542,67 @@ assertion-invalid input, not C/Rust invalid-input parity.
   It does not compare literal Rust/C primitive invocation timing or any raw
   pointer, layout, or thread-ID value.
 
+### `CRABC-MI-STATIC-FIRST-TLD-CREATE-DIRECT` — recorded M2 selected static-success differential boundary
+
+- **Upstream/Rust:** pinned `src/init.c:155-157,253-272`, with source
+  main-subprocess identity in `src/subproc.c:12-15,95-101`, explicitly
+  excluding `_mi_subproc_main_init` at `src/subproc.c:316-322`, selected
+  `_mi_meta_zalloc` declaration/context in `include/mimalloc/internal.h:167-180`,
+  concrete static-memory-ID construction in
+  `include/mimalloc/internal.h:1316-1344`
+  and TLD/memid/counter fields in `include/mimalloc/types.h:288-339,651-701`,
+  increment/lock operations in
+  `include/mimalloc/atomic.h:87-99,446-471`, thread identity in
+  `include/mimalloc/prim-tls.h:185-190`, false thread-pool result in
+  `src/prim/unix/prim.c:1059-1061`, and `src/os.c:860-898` only for the
+  fixture's already-normalized NUMA `3`; represented by the existing static
+  attachment path in `main_theap`, `subproc`, and `types`, with the test-only
+  `StaticFirstTldCreateTrace` recorder.
+- **Category:** one direct selected first-main/static-TLD `mi_tld_create`
+  success-arm differential. It is not a complete process, main-subprocess,
+  metadata, or static-owner lifecycle.
+- **Difference:** the pinned-C fixture direct-includes `src/init.c` and calls
+  file-static `mi_tld_create(_mi_subproc_main())` exactly once on the actual
+  source main-subprocess/static-TLD identities with total/live counts zero and
+  only an inert nonnull `theap_meta` placeholder. It never calls
+  `_mi_subproc_main_init()`. C independently validates its literal
+  fetch-add -> main predicate -> static memid -> lock -> NUMA -> ID -> pool ->
+  live -> return observer sequence and observes no `_mi_meta_zalloc` call.
+  Rust instead enters its production ticket-zero static-slot attachment after
+  `reserve_static_bootstrap` and `MainStaticHeapFoundation`, so its selector
+  and foundation intentionally precede ticket issue. The compared record
+  starts only at ticket zero -> concrete static memid -> shared normal field
+  body -> live registration -> `MAIN_TLD_LIVE` Release. Thus C's predicate,
+  caller, preflight, primitive, and return-boundary timing are not common
+  relations. In particular, C invokes its thread-ID primitive after NUMA while
+  Rust validates the current identity before issuing a ticket. The C return
+  observer after live registration and Rust's immediately following Release
+  before owner return are a labeled semantic visibility correspondence, not
+  the same publication primitive.
+- **Difference:** C's zero-initialized source global and Rust's `MaybeUninit`
+  static storage are not compared byte-for-byte: Rust proves only a fresh
+  semantic COLD slot before materialization. Both records reduce static
+  provenance to address-independent relations—static kind, self-base,
+  own-TLD-size, pinned, initially committed, and initially-zero false—without
+  raw addresses or cross-language layout-size equality. C's metadata evidence
+  is zero wrapper calls; Rust's is a typed static path with no metadata
+  capability. Rust's selected `MainSubprocess` is a test-selected identity,
+  not a claim to be the C `_mi_subproc_main()` object.
+- **Evidence:**
+  `main_theap::tests::emit_m2_static_first_tld_create_c_rust_trace` enters
+  only through the real static selection/foundation/attachment path, prints
+  the 36 relation record, then explicitly tears down its attachment. The
+  pinned-C fixture in `compat/allocator/run.py` independently validates the
+  source-only predicate event and compares the shared 36 address-independent
+  relations. Parser regressions reject a broken total-before-live relation and
+  missing semantic static-memid or metadata-bypass relation.
+- **Decision/removal:** this record does not establish source static storage
+  layout, actual C main-subprocess initialization, `_mi_subproc_main_init`,
+  actual Theap or metadata initialization, generic/later/failed arms,
+  Heap/Theap/list/TLS/root publication, teardown/free, pthread ABI/layout,
+  races, NUMA discovery/options policy, or allocator integration. Those need
+  separate owner-bearing C/Rust evidence.
+
 ### `CRABC-MI-PROCESS-PAGE-MAP-COLD-ROOT` — accepted bounded cold-root safety divergence
 
 - **Upstream/Rust:** `src/page-map.c:228-365`, especially static
@@ -809,9 +870,12 @@ assertion-invalid input, not C/Rust invalid-input parity.
   does not close VM primitives or establish option override, diagnostics,
   topology-change handling, first-fill race policy, arena placement,
   field-by-field normal `mi_tld_create`/`mi_tld_init` order beyond the separate
-  direct-helper record, generic/later TLD callers, allocator integration, or
-  complete NUMA behavior. Neither the detached nor sequence-seven normal
-  direct-helper trace broadens this ticket-zero caller.
+  direct normal-helper and selected static-first success-arm records,
+  generic/later TLD callers, allocator integration, or complete NUMA behavior.
+  Neither the detached nor sequence-seven normal direct-helper trace broadens
+  this ticket-zero caller; the separate selected static-first success arm is
+  only its own bounded direct differential, not a general fixed-NUMA-wrapper
+  claim.
 
 ### `CRABC-MI-ORDINARY-BITMAP-HIGHEST-SET-STALE-CHUNKMAP` — accepted checked observer boundary
 

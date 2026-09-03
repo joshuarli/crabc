@@ -193,6 +193,9 @@ M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_ARTIFACT_ROOT = (
 M2_NORMAL_TLD_DIRECT_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/normal-tld-direct-trace"
 )
+M2_STATIC_FIRST_TLD_CREATE_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "m2-memory-substrate/static-first-tld-create-trace"
+)
 M2_PAGE_MAP_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m2-memory-substrate/page-map-trace"
 M2_BITMAP_ABANDONED_CLAIM_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/bitmap-abandoned-claim-trace"
@@ -359,6 +362,54 @@ M2_NORMAL_TLD_DIRECT_TRACE_KEYS = (
     "m2.initialization.normal_tld.order.thread_id_before_threadpool",
     "m2.initialization.normal_tld.order.threadpool_before_live_increment",
     "m2.initialization.normal_tld.order.exactly_five_observable_effects",
+)
+# This selected source caller record begins at `mi_tld_create`'s own
+# total-thread ticket and follows only its first-main/static-storage success
+# arm. C records its real main-subprocess predicate and its no-metadata route;
+# Rust instead enters its already selected main-static ticket/slot path after
+# the separately modeled Heap foundation. The common values deliberately begin
+# at the shared ticket-zero -> concrete-static-memid boundary and continue
+# through normal-body, live, and result-visibility relations; C's predicate
+# timing and Rust's prior selector/foundation are not literal-order parity.
+# Every provenance value is a semantic/address-independent relation, never a
+# raw static address, thread ID, or cross-language `mi_tld_t` layout size.
+M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS = (
+    "m2.initialization.static_first_tld.pre.main_subprocess_selected",
+    "m2.initialization.static_first_tld.pre.static_slot_fresh",
+    "m2.initialization.static_first_tld.pre.total_thread_count_zero",
+    "m2.initialization.static_first_tld.pre.live_thread_count_zero",
+    "m2.initialization.static_first_tld.post.static_branch_selected",
+    "m2.initialization.static_first_tld.post.static_slot_identity_preserved",
+    "m2.initialization.static_first_tld.post.subprocess_matches_input",
+    "m2.initialization.static_first_tld.post.theap_head_null",
+    "m2.initialization.static_first_tld.post.lock_roundtrip",
+    "m2.initialization.static_first_tld.post.numa_node_injected_three",
+    "m2.initialization.static_first_tld.post.thread_id_matches_input",
+    "m2.initialization.static_first_tld.post.thread_id_live",
+    "m2.initialization.static_first_tld.post.threadpool_false",
+    "m2.initialization.static_first_tld.post.thread_sequence_zero",
+    "m2.initialization.static_first_tld.post.recurse_false",
+    "m2.initialization.static_first_tld.post.memid_static_kind",
+    "m2.initialization.static_first_tld.post.memid_base_is_static_slot",
+    "m2.initialization.static_first_tld.post.memid_size_is_own_tld_size",
+    "m2.initialization.static_first_tld.post.memid_pinned",
+    "m2.initialization.static_first_tld.post.memid_initially_committed",
+    "m2.initialization.static_first_tld.post.memid_initially_zero_false",
+    "m2.initialization.static_first_tld.post.metadata_allocation_bypassed",
+    "m2.initialization.static_first_tld.post.total_thread_count_one",
+    "m2.initialization.static_first_tld.post.total_thread_count_incremented",
+    "m2.initialization.static_first_tld.post.live_thread_count_one",
+    "m2.initialization.static_first_tld.post.live_thread_count_incremented",
+    "m2.initialization.static_first_tld.post.result_visibility_after_live_registration",
+    "m2.initialization.static_first_tld.order.ticket_zero_before_static_memid",
+    "m2.initialization.static_first_tld.order.static_memid_before_normal_lock",
+    "m2.initialization.static_first_tld.order.lock_before_numa",
+    "m2.initialization.static_first_tld.order.numa_before_thread_id",
+    "m2.initialization.static_first_tld.order.thread_id_before_threadpool",
+    "m2.initialization.static_first_tld.order.threadpool_before_live_increment",
+    "m2.initialization.static_first_tld.order.total_increment_before_live_increment",
+    "m2.initialization.static_first_tld.order.live_increment_before_result_visibility",
+    "m2.initialization.static_first_tld.order.selected_create_effects_ordered",
 )
 M2_PAGE_MAP_TRACE_KEYS = (
     "m2.page_map.control.page_size",
@@ -1225,6 +1276,13 @@ M2_DETACHED_TLD_STATIC_PREIMAGE_ORACLE_SOURCES = tuple(
 # The normal direct-helper producer follows the same one-definition rule as
 # the detached producer, but has its own fixture and source/provenance record.
 M2_NORMAL_TLD_DIRECT_ORACLE_SOURCES = tuple(
+    item for item in ORACLE_SOURCES if item != "src/init.c"
+)
+
+# The static-first caller producer also direct-includes only init.c. It keeps
+# subproc.c in the ordinary source list because its real static main identity
+# is an explicit precondition of the selected branch.
+M2_STATIC_FIRST_TLD_CREATE_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/init.c"
 )
 
@@ -3534,6 +3592,354 @@ int main(void) {
 
   // Fixture hygiene only: this is not mi_tld_free or a lifecycle claim.
   mi_lock_done(&tld.theaps_lock);
+  return 0;
+}
+"""
+
+
+# This fixture direct-includes pinned `src/init.c` to call the source-private
+# `mi_tld_create` exactly once through its real main-subprocess/static-TLD
+# success arm.  Unlike the direct normal-helper fixture above, its preimage is
+# the source's own `_mi_subproc_main()` and `mi_process_tld_main` identities.
+# `MI_PRIM_HAS_PROCESS_ATTACH=1` leaves both uninitialized; the fixture sets
+# only the source-required non-null `theap_meta` field to an inert static
+# placeholder and initializes the two counters to zero.  It intentionally
+# does not call `_mi_subproc_main_init`, initialize a Heap/Theap, or allocate
+# metadata.  The metadata wrapper is a no-call witness for the selected arm.
+#
+# The wrappers record the exact C-only selected-body order: total ticket,
+# main-subprocess predicate, static memid, normal lock/NUMA/ID/pool, then live
+# registration.  The common record omits the C predicate's timing because the
+# Rust lifecycle path selects/founds its static storage before its ticket.
+M2_STATIC_FIRST_TLD_CREATE_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include <mimalloc.h>
+#include <mimalloc/atomic.h>
+#include <mimalloc/prim.h>
+#include <mimalloc/prim-tls.h>
+#include <mimalloc/internal.h>
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+static bool m2_static_first_recording = false;
+static size_t m2_static_first_event_count = 0;
+static size_t m2_static_first_total_increment_event = 0;
+static size_t m2_static_first_main_predicate_event = 0;
+static size_t m2_static_first_static_memid_event = 0;
+static size_t m2_static_first_lock_event = 0;
+static size_t m2_static_first_numa_event = 0;
+static size_t m2_static_first_thread_id_event = 0;
+static size_t m2_static_first_threadpool_event = 0;
+static size_t m2_static_first_live_increment_event = 0;
+static size_t m2_static_first_result_visibility_event = 0;
+static size_t m2_static_first_meta_zalloc_calls = 0;
+static mi_subproc_t* m2_static_first_subproc = NULL;
+static mi_tld_t* m2_static_first_static_memid_target = NULL;
+static size_t m2_static_first_static_memid_size = 0;
+static mi_threadid_t m2_static_first_thread_id_result = MI_THREADID_ABANDONED;
+static bool m2_static_first_threadpool_result = true;
+static bool m2_static_first_main_predicate_result = false;
+static mi_subproc_t* m2_static_first_main_predicate_target = NULL;
+static size_t m2_static_first_total_ticket_value = SIZE_MAX;
+static _Atomic(size_t)* m2_static_first_total_increment_target = NULL;
+static _Atomic(size_t)* m2_static_first_live_increment_target = NULL;
+
+// This placeholder exists only to satisfy mi_tld_create's asserted non-null
+// precondition. It is never initialized, dereferenced, or used as metadata.
+static mi_theap_t m2_static_first_inert_theap_meta = mi_init_struct_zero;
+
+static void m2_static_first_record(size_t* event) {
+  if (m2_static_first_recording) {
+    *event = ++m2_static_first_event_count;
+  }
+}
+
+// Define wrappers while the original header functions/macros remain visible.
+// Only aliases around the direct init.c include redirect the selected body.
+static void m2_static_first_lock_init(mi_lock_t* lock) {
+  m2_static_first_record(&m2_static_first_lock_event);
+  mi_lock_init(lock);
+}
+
+static int m2_static_first_numa_node(void) {
+  m2_static_first_record(&m2_static_first_numa_event);
+  return 3;
+}
+
+static mi_threadid_t m2_static_first_thread_id(void) {
+  m2_static_first_record(&m2_static_first_thread_id_event);
+  const mi_threadid_t result = _mi_prim_thread_id();
+  m2_static_first_thread_id_result = result;
+  return result;
+}
+
+static bool m2_static_first_thread_is_in_threadpool(void) {
+  m2_static_first_record(&m2_static_first_threadpool_event);
+  const bool result = _mi_prim_thread_is_in_threadpool();
+  m2_static_first_threadpool_result = result;
+  return result;
+}
+
+static bool m2_static_first_is_main(mi_subproc_t* subproc) {
+  m2_static_first_record(&m2_static_first_main_predicate_event);
+  m2_static_first_main_predicate_target = subproc;
+  const bool result = _mi_subproc_is_main(subproc);
+  m2_static_first_main_predicate_result = result;
+  return result;
+}
+
+static mi_memid_t m2_static_first_memid_create_static(void* p, size_t size) {
+  m2_static_first_record(&m2_static_first_static_memid_event);
+  m2_static_first_static_memid_target = (mi_tld_t*)p;
+  m2_static_first_static_memid_size = size;
+  return _mi_memid_create_static(p, size);
+}
+
+static void* m2_static_first_meta_zalloc(
+    mi_subproc_t* subproc, size_t size, mi_memid_t* memid) {
+  (void)subproc;
+  (void)size;
+  (void)memid;
+  m2_static_first_meta_zalloc_calls++;
+  return NULL;
+}
+
+static size_t m2_static_first_increment_relaxed(_Atomic(size_t)* target) {
+  const size_t result = mi_atomic_increment_relaxed(target);
+  if (target == &m2_static_first_subproc->thread_total_count) {
+    m2_static_first_record(&m2_static_first_total_increment_event);
+    m2_static_first_total_increment_target = target;
+    m2_static_first_total_ticket_value = result;
+  }
+  else if (target == &m2_static_first_subproc->thread_count) {
+    m2_static_first_record(&m2_static_first_live_increment_event);
+    m2_static_first_live_increment_target = target;
+  }
+  return result;
+}
+
+#define mi_lock_init(lock) m2_static_first_lock_init(lock)
+#define _mi_os_numa_node() m2_static_first_numa_node()
+#define _mi_prim_thread_id() m2_static_first_thread_id()
+#define _mi_prim_thread_is_in_threadpool() m2_static_first_thread_is_in_threadpool()
+#define _mi_subproc_is_main(subproc) m2_static_first_is_main(subproc)
+#define _mi_memid_create_static(p, size) m2_static_first_memid_create_static(p, size)
+#define _mi_meta_zalloc(subproc, size, memid) m2_static_first_meta_zalloc(subproc, size, memid)
+// The original is function-like, so undefine it only after the wrapper above
+// captured its real expansion; otherwise strict builds reject redefinition.
+#undef mi_atomic_increment_relaxed
+#define mi_atomic_increment_relaxed(target) m2_static_first_increment_relaxed(target)
+#include "init.c"
+#undef mi_atomic_increment_relaxed
+#undef _mi_meta_zalloc
+#undef _mi_memid_create_static
+#undef _mi_subproc_is_main
+#undef _mi_prim_thread_is_in_threadpool
+#undef _mi_prim_thread_id
+#undef _mi_os_numa_node
+#undef mi_lock_init
+
+static bool m2_static_first_lock_roundtrip(mi_lock_t* lock) {
+  if (!mi_lock_try_acquire(lock)) return false;
+  mi_lock_release(lock);
+  if (!mi_lock_try_acquire(lock)) return false;
+  mi_lock_release(lock);
+  return true;
+}
+
+static bool m2_static_first_memid_none(mi_memid_t memid) {
+  return memid.memkind == MI_MEM_NONE && memid.mem.os.base == NULL &&
+      memid.mem.os.size == 0 && !memid.is_pinned &&
+      !memid.initially_committed && !memid.initially_zero;
+}
+
+int main(void) {
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  m2_static_first_subproc = subproc;
+  subproc->theap_meta = &m2_static_first_inert_theap_meta;
+  mi_atomic_store_relaxed(&subproc->thread_total_count, 0);
+  mi_atomic_store_relaxed(&subproc->thread_count, 0);
+
+  const size_t pre_total_thread_count =
+      mi_atomic_load_relaxed(&subproc->thread_total_count);
+  const size_t pre_live_thread_count =
+      mi_atomic_load_relaxed(&subproc->thread_count);
+  const bool pre_main_subprocess_selected = (subproc == _mi_subproc_main());
+  const bool pre_theap_meta_nonnull = (subproc->theap_meta != NULL);
+  // Do not probe the source static lock before mi_tld_create initializes it.
+  const bool pre_static_slot_fresh =
+      mi_process_tld_main.thread_id == MI_THREADID_ABANDONED &&
+      mi_process_tld_main.thread_seq == 0 &&
+      mi_process_tld_main.numa_node == 0 &&
+      mi_process_tld_main.subproc == NULL && mi_process_tld_main.theaps == NULL &&
+      !mi_process_tld_main.recurse && !mi_process_tld_main.is_in_threadpool &&
+      m2_static_first_memid_none(mi_process_tld_main.memid);
+
+  m2_static_first_recording = true;
+  // Directly invoke the file-static selected caller exactly once.
+  mi_tld_t* returned = mi_tld_create(_mi_subproc_main());
+  // This fixture observer represents return/result visibility only after the
+  // selected source body completed; it is not an additional source effect.
+  m2_static_first_result_visibility_event = ++m2_static_first_event_count;
+  m2_static_first_recording = false;
+
+  const size_t post_total_thread_count =
+      mi_atomic_load_relaxed(&subproc->thread_total_count);
+  const size_t post_live_thread_count =
+      mi_atomic_load_relaxed(&subproc->thread_count);
+  const bool post_static_branch_selected =
+      m2_static_first_main_predicate_result && m2_static_first_total_ticket_value == 0 &&
+      returned == &mi_process_tld_main;
+  const bool post_static_slot_identity_preserved =
+      (returned == &mi_process_tld_main);
+  const bool post_subprocess_matches_input =
+      (returned != NULL && returned->subproc == subproc);
+  const bool post_theap_head_null = (returned != NULL && returned->theaps == NULL);
+  const bool post_lock_roundtrip =
+      (returned != NULL && m2_static_first_lock_roundtrip(&returned->theaps_lock));
+  const bool post_numa_node_injected_three =
+      (returned != NULL && returned->numa_node == 3);
+  const bool post_thread_id_matches_input =
+      (returned != NULL && returned->thread_id == m2_static_first_thread_id_result);
+  const bool post_thread_id_live =
+      (returned != NULL && returned->thread_id > MI_THREADID_DETACHED &&
+       (returned->thread_id & MI_PAGE_FLAG_MASK) == 0);
+  const bool post_threadpool_false =
+      (returned != NULL && !returned->is_in_threadpool &&
+       !m2_static_first_threadpool_result);
+  const bool post_thread_sequence_zero = (returned != NULL && returned->thread_seq == 0);
+  const bool post_recurse_false = (returned != NULL && !returned->recurse);
+  const bool post_memid_static_kind =
+      (returned != NULL && returned->memid.memkind == MI_MEM_STATIC);
+  const bool post_memid_base_is_static_slot =
+      (returned != NULL && returned->memid.mem.malloc.base == returned);
+  const bool post_memid_size_is_own_tld_size =
+      (returned != NULL && returned->memid.mem.malloc.size == sizeof(*returned));
+  const bool post_memid_pinned = (returned != NULL && returned->memid.is_pinned);
+  const bool post_memid_initially_committed =
+      (returned != NULL && returned->memid.initially_committed);
+  const bool post_memid_initially_zero_false =
+      (returned != NULL && !returned->memid.initially_zero);
+  const bool post_metadata_allocation_bypassed = (m2_static_first_meta_zalloc_calls == 0);
+  const bool post_total_thread_count_one = (post_total_thread_count == 1);
+  const bool post_total_thread_count_incremented =
+      (post_total_thread_count == pre_total_thread_count + 1);
+  const bool post_live_thread_count_one = (post_live_thread_count == 1);
+  const bool post_live_thread_count_incremented =
+      (post_live_thread_count == pre_live_thread_count + 1);
+  const bool post_result_visibility_after_live_registration =
+      (returned != NULL && m2_static_first_live_increment_event <
+       m2_static_first_result_visibility_event);
+  const bool ticket_zero_before_static_memid =
+      (m2_static_first_total_increment_event == 1 &&
+       m2_static_first_static_memid_event == 3);
+  const bool static_memid_before_normal_lock =
+      (m2_static_first_static_memid_event == 3 && m2_static_first_lock_event == 4);
+  const bool lock_before_numa =
+      (m2_static_first_lock_event == 4 && m2_static_first_numa_event == 5);
+  const bool numa_before_thread_id =
+      (m2_static_first_numa_event == 5 && m2_static_first_thread_id_event == 6);
+  const bool thread_id_before_threadpool =
+      (m2_static_first_thread_id_event == 6 && m2_static_first_threadpool_event == 7);
+  const bool threadpool_before_live_increment =
+      (m2_static_first_threadpool_event == 7 &&
+       m2_static_first_live_increment_event == 8);
+  const bool total_increment_before_live_increment =
+      (m2_static_first_total_increment_event == 1 &&
+       m2_static_first_live_increment_event == 8);
+  const bool live_increment_before_result_visibility =
+      (m2_static_first_live_increment_event == 8 &&
+       m2_static_first_result_visibility_event == 9);
+  // This is deliberately C-only: it includes the real source predicate.
+  const bool c_selected_create_effects_ordered =
+      (m2_static_first_event_count == 9 &&
+       m2_static_first_total_increment_event == 1 &&
+       m2_static_first_main_predicate_event == 2 &&
+       m2_static_first_static_memid_event == 3 && m2_static_first_lock_event == 4 &&
+       m2_static_first_numa_event == 5 && m2_static_first_thread_id_event == 6 &&
+       m2_static_first_threadpool_event == 7 &&
+       m2_static_first_live_increment_event == 8 &&
+       m2_static_first_result_visibility_event == 9);
+  // The shared aggregate deliberately omits the C-only predicate event.
+  const bool selected_create_effects_ordered =
+      ticket_zero_before_static_memid && static_memid_before_normal_lock &&
+      lock_before_numa && numa_before_thread_id && thread_id_before_threadpool &&
+      threadpool_before_live_increment && total_increment_before_live_increment &&
+      live_increment_before_result_visibility;
+
+  const bool all_relations =
+      pre_main_subprocess_selected && pre_theap_meta_nonnull && pre_static_slot_fresh &&
+      pre_total_thread_count == 0 && pre_live_thread_count == 0 &&
+      post_static_branch_selected && post_static_slot_identity_preserved &&
+      post_subprocess_matches_input && post_theap_head_null && post_lock_roundtrip &&
+      post_numa_node_injected_three && post_thread_id_matches_input && post_thread_id_live &&
+      post_threadpool_false && post_thread_sequence_zero && post_recurse_false &&
+      post_memid_static_kind && post_memid_base_is_static_slot &&
+      post_memid_size_is_own_tld_size && post_memid_pinned &&
+      post_memid_initially_committed && post_memid_initially_zero_false &&
+      post_metadata_allocation_bypassed && post_total_thread_count_one &&
+      post_total_thread_count_incremented && post_live_thread_count_one &&
+      post_live_thread_count_incremented && post_result_visibility_after_live_registration &&
+      m2_static_first_total_increment_target == &subproc->thread_total_count &&
+      m2_static_first_live_increment_target == &subproc->thread_count &&
+      m2_static_first_main_predicate_target == subproc &&
+      m2_static_first_static_memid_target == &mi_process_tld_main &&
+      m2_static_first_static_memid_size == sizeof(mi_process_tld_main) &&
+      ticket_zero_before_static_memid && static_memid_before_normal_lock &&
+      lock_before_numa && numa_before_thread_id && thread_id_before_threadpool &&
+      threadpool_before_live_increment && total_increment_before_live_increment &&
+      live_increment_before_result_visibility && c_selected_create_effects_ordered &&
+      selected_create_effects_ordered;
+  if (!all_relations) {
+    if (returned != NULL) mi_lock_done(&returned->theaps_lock);
+    return 10;
+  }
+
+  puts("CRABC_MI_M2_STATIC_FIRST_TLD_CREATE_TRACE_BEGIN");
+  U("m2.initialization.static_first_tld.pre.main_subprocess_selected", pre_main_subprocess_selected);
+  U("m2.initialization.static_first_tld.pre.static_slot_fresh", pre_static_slot_fresh);
+  U("m2.initialization.static_first_tld.pre.total_thread_count_zero", pre_total_thread_count == 0);
+  U("m2.initialization.static_first_tld.pre.live_thread_count_zero", pre_live_thread_count == 0);
+  U("m2.initialization.static_first_tld.post.static_branch_selected", post_static_branch_selected);
+  U("m2.initialization.static_first_tld.post.static_slot_identity_preserved", post_static_slot_identity_preserved);
+  U("m2.initialization.static_first_tld.post.subprocess_matches_input", post_subprocess_matches_input);
+  U("m2.initialization.static_first_tld.post.theap_head_null", post_theap_head_null);
+  U("m2.initialization.static_first_tld.post.lock_roundtrip", post_lock_roundtrip);
+  U("m2.initialization.static_first_tld.post.numa_node_injected_three", post_numa_node_injected_three);
+  U("m2.initialization.static_first_tld.post.thread_id_matches_input", post_thread_id_matches_input);
+  U("m2.initialization.static_first_tld.post.thread_id_live", post_thread_id_live);
+  U("m2.initialization.static_first_tld.post.threadpool_false", post_threadpool_false);
+  U("m2.initialization.static_first_tld.post.thread_sequence_zero", post_thread_sequence_zero);
+  U("m2.initialization.static_first_tld.post.recurse_false", post_recurse_false);
+  U("m2.initialization.static_first_tld.post.memid_static_kind", post_memid_static_kind);
+  U("m2.initialization.static_first_tld.post.memid_base_is_static_slot", post_memid_base_is_static_slot);
+  U("m2.initialization.static_first_tld.post.memid_size_is_own_tld_size", post_memid_size_is_own_tld_size);
+  U("m2.initialization.static_first_tld.post.memid_pinned", post_memid_pinned);
+  U("m2.initialization.static_first_tld.post.memid_initially_committed", post_memid_initially_committed);
+  U("m2.initialization.static_first_tld.post.memid_initially_zero_false", post_memid_initially_zero_false);
+  U("m2.initialization.static_first_tld.post.metadata_allocation_bypassed", post_metadata_allocation_bypassed);
+  U("m2.initialization.static_first_tld.post.total_thread_count_one", post_total_thread_count_one);
+  U("m2.initialization.static_first_tld.post.total_thread_count_incremented", post_total_thread_count_incremented);
+  U("m2.initialization.static_first_tld.post.live_thread_count_one", post_live_thread_count_one);
+  U("m2.initialization.static_first_tld.post.live_thread_count_incremented", post_live_thread_count_incremented);
+  U("m2.initialization.static_first_tld.post.result_visibility_after_live_registration", post_result_visibility_after_live_registration);
+  U("m2.initialization.static_first_tld.order.ticket_zero_before_static_memid", ticket_zero_before_static_memid);
+  U("m2.initialization.static_first_tld.order.static_memid_before_normal_lock", static_memid_before_normal_lock);
+  U("m2.initialization.static_first_tld.order.lock_before_numa", lock_before_numa);
+  U("m2.initialization.static_first_tld.order.numa_before_thread_id", numa_before_thread_id);
+  U("m2.initialization.static_first_tld.order.thread_id_before_threadpool", thread_id_before_threadpool);
+  U("m2.initialization.static_first_tld.order.threadpool_before_live_increment", threadpool_before_live_increment);
+  U("m2.initialization.static_first_tld.order.total_increment_before_live_increment", total_increment_before_live_increment);
+  U("m2.initialization.static_first_tld.order.live_increment_before_result_visibility", live_increment_before_result_visibility);
+  U("m2.initialization.static_first_tld.order.selected_create_effects_ordered", selected_create_effects_ordered);
+  puts("CRABC_MI_M2_STATIC_FIRST_TLD_CREATE_TRACE_END");
+
+  // Fixture hygiene only: this is neither mi_tld_free nor lifecycle evidence.
+  mi_lock_done(&returned->theaps_lock);
   return 0;
 }
 """
@@ -7026,6 +7432,7 @@ def validate_m2_memory_substrate_contract(
                     "rust-page-map-success-trace",
                     "c-rust-detached-tld-static-preimage-differential",
                     "c-rust-normal-tld-direct-differential",
+                    "c-rust-static-first-tld-create-differential",
                     "c-rust-bitmap-abandoned-claim-differential",
                     "c-rust-bitmap-clear-range-differential",
                     "c-rust-bitmap-rangesn-differential",
@@ -7292,6 +7699,85 @@ def run_m2_normal_tld_direct_differential(
             "static-main or metadata construction, _mi_subproc_main_init, Theap/list/TLS/root publication, "
             "general NUMA/options policy, "
             "pthread ABI/layout, teardown/free, races, or allocator integration."
+        ),
+        "status": comparison["status"],
+    }
+
+
+def run_m2_static_first_tld_create_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the selected first-main static `mi_tld_create` success arm."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-static-first-tld-create-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_static_first_tld_create_trace(
+            compiler,
+            source,
+            M2_STATIC_FIRST_TLD_CREATE_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "main_theap::tests::emit_m2_static_first_tld_create_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 static-first mi_tld_create trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_static_first_tld_create_trace(rust_output, source="Rust")
+    validate_m2_static_first_tld_create_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 static-first mi_tld_create trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_static_first_tld_create_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "one direct pinned-C/Rust first-main static-TLD create success arm: C directly calls "
+            "file-static src/init.c:253-272 mi_tld_create(_mi_subproc_main()) once with the source "
+            "main-subprocess/static-TLD identities, zero total/live counters, and only a non-null inert "
+            "theap_meta placeholder. It independently proves the selected C order total ticket -> real "
+            "main predicate -> concrete static memid -> normal lock/NUMA=3/ID/pool -> live registration, "
+            "and that _mi_meta_zalloc was not called. Rust uses its production static ticket/slot path "
+            "after its separately modeled heap foundation; the shared address-free record compares the "
+            "ticket-zero/static-memid boundary, semantic static-memid fields, selected modeled "
+            "normal-body poststate, and a "
+            "labeled result-visibility relation: C observes return after live registration while Rust "
+            "records the immediately following MAIN_TLD_LIVE Release before an owner can be returned. "
+            "It does not claim a common predicate, caller, preflight, primitive, or return-boundary "
+            "order: C invokes its thread-ID primitive after NUMA while Rust validates identity before "
+            "ticket issue. Nor does it claim literal parity for C predicate timing, source-static byte layout, "
+            "_mi_subproc_main_init or actual Theap/metadata initialization, "
+            "generic/later or failed arms, Heap/Theap/list/TLS/root publication, teardown/free, races, "
+            "pthread ABI/layout, NUMA discovery/options policy, or allocator integration."
         ),
         "status": comparison["status"],
     }
@@ -7882,6 +8368,26 @@ def run_m2_memory_substrate_checks(
                 continue
             if check["kind"] == "c-rust-normal-tld-direct-differential":
                 differential = run_m2_normal_tld_direct_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
+            if check["kind"] == "c-rust-static-first-tld-create-differential":
+                differential = run_m2_static_first_tld_create_differential(
                     pin,
                     offline=offline,
                     timeout_seconds=summary["execution"]["timeout_seconds"],
@@ -13184,6 +13690,77 @@ def compare_m2_normal_tld_direct_trace(
     }
 
 
+def parse_m2_static_first_tld_create_trace(
+    output: str, *, source: str
+) -> dict[str, int]:
+    """Parse the selected static-first `mi_tld_create` success-arm record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_STATIC_FIRST_TLD_CREATE_TRACE_BEGIN",
+        end="CRABC_MI_M2_STATIC_FIRST_TLD_CREATE_TRACE_END",
+        description=f"{source} M2 static-first-TLD create trace",
+    )
+    if set(trace) != set(M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS):
+        missing = sorted(set(M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 static-first-TLD create trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_static_first_tld_create_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Require every selected static-first caller relation."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown M2 static-first-TLD create trace source: {source}")
+    if set(trace) != set(M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS):
+        raise HarnessError(
+            f"{source} M2 static-first-TLD create trace keys differ from the fixed contract"
+        )
+    for key in M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} M2 static-first-TLD create trace field is not an integer: {key}"
+            )
+        if trace[key] != 1:
+            raise HarnessError(
+                f"{source} M2 static-first-TLD create trace contains an unmet relation: {key}"
+            )
+
+
+def compare_m2_static_first_tld_create_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require address-independent parity for the selected success arm."""
+
+    validate_m2_static_first_tld_create_trace(c_trace, source="pinned C")
+    validate_m2_static_first_tld_create_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 static-first-TLD create trace differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(M2_STATIC_FIRST_TLD_CREATE_TRACE_KEYS),
+        "status": "matched",
+    }
+
+
 def parse_m2_page_map_trace(output: str, *, source: str) -> dict[str, int]:
     """Parse the fixed address-free selected PageMap lifecycle record."""
 
@@ -15220,6 +15797,69 @@ def build_m2_normal_tld_direct_trace(
                 "include/mimalloc/prim-tls.h",
                 "include/mimalloc/types.h",
                 "src/init.c",
+                "src/os.c",
+                "src/prim/prim-tls.c",
+                "src/prim/prim.c",
+                "src/prim/unix/prim.c",
+            ),
+        ),
+    }
+
+
+def build_m2_static_first_tld_create_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the direct static-first `mi_tld_create` C producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-static-first-tld-create-trace-probe.c"
+    trace_binary = profile_dir / "m2-static-first-tld-create-trace-probe"
+    trace_source.write_text(M2_STATIC_FIRST_TLD_CREATE_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        # Keep the actual source static main subproc/TLD untouched before the
+        # one selected direct call; the fixture supplies only inert theap_meta.
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M2_STATIC_FIRST_TLD_CREATE_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 static-first mi_tld_create trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 static-first mi_tld_create trace execution")
+    record = parse_m2_static_first_tld_create_trace(str(run["stdout"]), source="pinned C")
+    validate_m2_static_first_tld_create_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc.h",
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "include/mimalloc/prim-tls.h",
+                "include/mimalloc/types.h",
+                "src/init.c",
+                "src/subproc.c",
                 "src/os.c",
                 "src/prim/prim-tls.c",
                 "src/prim/prim.c",

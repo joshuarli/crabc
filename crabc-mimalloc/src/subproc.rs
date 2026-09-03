@@ -50,7 +50,7 @@ use crabc_core::Result as CoreResult;
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::types::{Heap, LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, ThreadSequence};
 #[cfg(test)]
-use crate::types::NormalTldInitWriteTrace;
+use crate::types::{NormalTldInitWriteTrace, StaticFirstTldCreateTrace};
 
 const MAIN_TLD_COLD: u8 = 0;
 const MAIN_TLD_CLAIMED: u8 = 1;
@@ -724,6 +724,14 @@ impl MainSubprocess {
         std::boxed::Box::leak(std::boxed::Box::new(Self::new()))
     }
 
+    /// Proves the fresh static slot is still cold before the selected
+    /// ticket-zero attachment begins its claim/provenance transition.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_main_tld_is_cold(&self) -> bool {
+        self.main_tld_state.load(Ordering::Acquire) == MAIN_TLD_COLD
+    }
+
     /// Observes the test-only state between static-provenance formation and
     /// complete image publication without exposing the partial TLD image.
     #[cfg(test)]
@@ -771,6 +779,45 @@ impl MainSubprocess {
         thread: LiveThreadId,
         numa_node_source: impl FnOnce(MemoryId) -> i32,
     ) -> Result<PendingMainStaticThreadLocalData, MainStaticTldError> {
+        self.initialize_main_tld_unpublished_with_numa_source_impl(
+            sequence,
+            thread,
+            numa_node_source,
+            #[cfg(test)]
+            None,
+        )
+    }
+
+    /// Test-only trace entry for the same unpublished static-TLD transition.
+    ///
+    /// The trace is a stack borrow owned by the private attachment path; this
+    /// method returns only the same private pending token as production and
+    /// never grants an unpublished TLD projection.
+    #[cfg(test)]
+    #[inline]
+    fn test_initialize_main_tld_unpublished_with_numa_source(
+        &'static self,
+        sequence: ThreadSequence,
+        thread: LiveThreadId,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
+        trace: &mut StaticFirstTldCreateTrace,
+    ) -> Result<PendingMainStaticThreadLocalData, MainStaticTldError> {
+        self.initialize_main_tld_unpublished_with_numa_source_impl(
+            sequence,
+            thread,
+            numa_node_source,
+            Some(trace),
+        )
+    }
+
+    #[inline]
+    fn initialize_main_tld_unpublished_with_numa_source_impl(
+        &'static self,
+        sequence: ThreadSequence,
+        thread: LiveThreadId,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
+        #[cfg(test)] trace: Option<&mut StaticFirstTldCreateTrace>,
+    ) -> Result<PendingMainStaticThreadLocalData, MainStaticTldError> {
         if sequence.get() != 0 {
             return Err(MainStaticTldError::NotFirstTicket);
         }
@@ -794,6 +841,40 @@ impl MainSubprocess {
         // authority over this final static slot. The raw helper first writes
         // a valid zero-shaped image, then forms a mutable reference only for
         // the selected source-order normal arm.
+        #[cfg(test)]
+        match trace {
+            Some(trace) => {
+                // SAFETY: the unique claimed source-static slot remains
+                // unobservable until the private pending token completes its
+                // live registration and Release publication.
+                unsafe {
+                    ThreadLocalData::test_write_subprocess_attached_no_theap_at_with_static_first_trace(
+                        tld,
+                        thread,
+                        sequence,
+                        move || numa_node_source(memid),
+                        self,
+                        memid,
+                        trace,
+                    )
+                };
+            }
+            None => {
+                // SAFETY: as above, this is the production half of the
+                // shared source-static transition in a test build.
+                unsafe {
+                    ThreadLocalData::write_subprocess_attached_no_theap_at(
+                        tld,
+                        thread,
+                        sequence,
+                        move || numa_node_source(memid),
+                        self,
+                        memid,
+                    )
+                };
+            }
+        }
+        #[cfg(not(test))]
         unsafe {
             ThreadLocalData::write_subprocess_attached_no_theap_at(
                 tld,
@@ -803,7 +884,7 @@ impl MainSubprocess {
                 self,
                 memid,
             )
-        };
+        }
 
         Ok(PendingMainStaticThreadLocalData {
             subprocess: self,
@@ -927,6 +1008,29 @@ impl MainStaticBootstrapSelection {
     pub(crate) fn issue_first_ticket(
         &mut self,
     ) -> Result<ThreadRegistrationTicket, MainStaticBootstrapSelectionError> {
+        self.issue_first_ticket_impl(
+            #[cfg(test)]
+            None,
+        )
+    }
+
+    /// Test-only recording entry used only by the private static attachment
+    /// trace. It returns the ordinary linear ticket; no test gains a
+    /// standalone static-TLD or lease construction route.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_issue_first_ticket_with_static_first_trace(
+        &mut self,
+        trace: &mut StaticFirstTldCreateTrace,
+    ) -> Result<ThreadRegistrationTicket, MainStaticBootstrapSelectionError> {
+        self.issue_first_ticket_impl(Some(trace))
+    }
+
+    #[inline]
+    fn issue_first_ticket_impl(
+        &mut self,
+        #[cfg(test)] mut trace: Option<&mut StaticFirstTldCreateTrace>,
+    ) -> Result<ThreadRegistrationTicket, MainStaticBootstrapSelectionError> {
         if !self.heap_foundation_committed {
             return Err(MainStaticBootstrapSelectionError::HeapFoundationNotCommitted);
         }
@@ -948,6 +1052,14 @@ impl MainStaticBootstrapSelection {
         self.subprocess
             .bootstrap_selection
             .store(BOOTSTRAP_STATIC_TICKET_ISSUED, Ordering::Release);
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            // This records the actual existing total-count ticket only after
+            // its sequence-zero branch has been accepted. The selector's
+            // earlier foundation preparation is deliberately not recorded as
+            // C caller-order parity.
+            trace.record_ticket_zero_issued();
+        }
         Ok(ticket)
     }
 
@@ -1114,6 +1226,52 @@ impl ThreadRegistrationTicket {
         Ok((storage, registration))
     }
 
+    /// Test-only recording entry for the existing ticket-zero static owner.
+    ///
+    /// Only `main_theap`'s private attachment transition calls this method;
+    /// its stack-borrowed trace is never retained by, or allowed to escape
+    /// through, the pending token or returned owner, so it cannot become a
+    /// standalone TLD/lease API. Unlike the ordinary test-build path, this
+    /// deliberately bypasses the legacy scalar post-registration snapshot:
+    /// the trace records the one live increment and then the sole Release
+    /// store with no unrelated observation, callback, fallible operation, or
+    /// owner exposure in between.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_initialize_and_activate_first_main_tld_with_static_first_trace(
+        self,
+        thread: LiveThreadId,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
+        trace: &mut StaticFirstTldCreateTrace,
+    ) -> Result<(MainStaticThreadLocalData, ThreadRegistrationLease), MainStaticTldError> {
+        let storage = self
+            .subprocess
+            .test_initialize_main_tld_unpublished_with_numa_source(
+                self.sequence,
+                thread,
+                numa_node_source,
+                trace,
+            )?;
+        debug_assert!(storage
+            .current()
+            .matches_subprocess_attached_no_theap_lifecycle(
+                thread,
+                self.sequence,
+                self.subprocess,
+            ));
+        let registration = self.consume_after_normal_tld_body_with_static_first_trace(
+            storage.current(),
+            thread,
+            trace,
+        );
+        // The trace records the just-completed relaxed live increment. Its
+        // next operation is the one real `MAIN_TLD_LIVE` Release store; no
+        // Result/Option branch, callback, allocation, or owner projection is
+        // permitted in this gap.
+        let storage = storage.publish_with_static_first_trace(trace);
+        Ok((storage, registration))
+    }
+
     /// Test-only direct model of the entire selected normal `mi_tld_init`
     /// operation for one minimal helper preimage. The production static and
     /// metadata routes use the source-ordered field prefix with their owned
@@ -1215,6 +1373,22 @@ impl ThreadRegistrationTicket {
         registration
     }
 
+    /// Fixed scalar test witness for the static ticket-zero path. Unlike a
+    /// trait-object hook, this exact trace has no caller-provided dispatch in
+    /// the critical live-registration to Release-publication gap.
+    #[cfg(test)]
+    #[inline]
+    fn consume_after_normal_tld_body_with_static_first_trace(
+        self,
+        tld: &ThreadLocalData,
+        thread: LiveThreadId,
+        trace: &mut StaticFirstTldCreateTrace,
+    ) -> ThreadRegistrationLease {
+        let registration = self.consume_after_normal_tld_body(tld, thread);
+        trace.record_live_registration();
+        registration
+    }
+
     /// Consumes this ticket after its complete TLD image exists.
     ///
     /// # Safety
@@ -1292,11 +1466,41 @@ impl PendingMainStaticThreadLocalData {
 
     #[inline]
     fn publish(self) -> MainStaticThreadLocalData {
+        self.publish_impl(
+            #[cfg(test)]
+            None,
+        )
+    }
+
+    /// Records the actual Release-publication boundary around the same
+    /// private pending token. The trace remains a caller-stack borrow and is
+    /// never retained in this token or the returned owner.
+    #[cfg(test)]
+    #[inline]
+    fn publish_with_static_first_trace(
+        self,
+        trace: &mut StaticFirstTldCreateTrace,
+    ) -> MainStaticThreadLocalData {
+        self.publish_impl(Some(trace))
+    }
+
+    #[inline]
+    fn publish_impl(
+        self,
+        #[cfg(test)] mut trace: Option<&mut StaticFirstTldCreateTrace>,
+    ) -> MainStaticThreadLocalData {
         // This final Release store is deliberately after the caller has
         // consumed its ticket into the one live-count lease.
         self.subprocess
             .main_tld_state
             .store(MAIN_TLD_LIVE, Ordering::Release);
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            // Keep the test-only scalar event immediately adjacent to the
+            // one production Release store above. It has no callback,
+            // allocation, fallible path, or ownership effect.
+            trace.record_release_publication();
+        }
         MainStaticThreadLocalData {
             subprocess: self.subprocess,
             pointer: self.pointer,
