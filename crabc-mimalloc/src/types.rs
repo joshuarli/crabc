@@ -1527,12 +1527,17 @@ impl ThreadLocalData {
     /// than a broader complete-image replacement.
     ///
     /// Returns `false` without mutation unless `self` is the selected
-    /// detached static preimage. It never names a subprocess, changes a
-    /// counter, resets the lock, or adjusts a TLD field other than `memid`.
+    /// detached static preimage and its private list lock is quiescent. The
+    /// source static image is a valid initializer input; Rust additionally
+    /// refuses a busy private futex rather than reusing that poisoned image.
+    /// It never names a subprocess, changes a counter, resets the lock, or
+    /// adjusts a TLD field other than `memid`.
     #[must_use = "a refused detached static-memid predecessor leaves the source image unchanged"]
     #[inline]
     pub(crate) fn prepare_detached_static_memid(&mut self) -> bool {
-        if !self.matches_detached_static_preimage() {
+        if !self.matches_detached_static_preimage()
+            || !self.detached_static_preimage_lock_is_quiescent()
+        {
             return false;
         }
         self.memid = MemoryId::static_kind_only();
@@ -1551,7 +1556,11 @@ impl ThreadLocalData {
     /// separate lifecycle boundaries.
     ///
     /// Returns `false` without mutation unless `self` still has the exact
-    /// detached static image after the predecessor step.
+    /// detached static image after the predecessor step and its private list
+    /// lock is quiescent. The exclusive `&mut self` boundary rules out safe
+    /// aliases, guards, and waiters; the nonblocking probe additionally
+    /// refuses an already-busy lock instead of overwriting it with a new
+    /// initializer image.
     #[must_use = "a refused detached mi_tld_init step leaves the source image unchanged"]
     #[inline]
     pub(crate) fn initialize_detached_after_static_memid(
@@ -1559,6 +1568,9 @@ impl ThreadLocalData {
         subprocess: &'static MainSubprocess,
     ) -> bool {
         if !self.matches_detached_static_memid_preimage() {
+            return false;
+        }
+        if !self.detached_static_preimage_lock_is_quiescent() {
             return false;
         }
         self.subprocess = subprocess.as_ptr();
@@ -1578,6 +1590,26 @@ impl ThreadLocalData {
     fn matches_detached_static_memid_preimage(&self) -> bool {
         self.matches_detached_static_fields()
             && self.matches_zero_static_memid(false, false)
+    }
+
+    /// Probes the initializer-only private lock and restores its unlocked
+    /// state before either ordered detached helper writes a field.
+    ///
+    /// This is intentionally a Rust safety strengthening outside C's valid
+    /// static-preimage contract: a test-only or otherwise invalid Rust image
+    /// can carry a busy private futex, which neither source helper may safely
+    /// reclaim. The exclusive `&mut self` boundary rules out safe aliases,
+    /// guards, and waiters while the short probe is held.
+    #[inline]
+    fn detached_static_preimage_lock_is_quiescent(&self) -> bool {
+        let Some(quiescent_lock) = self.theaps_lock.try_lock() else {
+            return false;
+        };
+        // Drop deliberately restores the probe's unlocked state before the
+        // caller replaces any source-modeled field. Under the exclusive owner
+        // boundary it cannot need a futex wake.
+        drop(quiescent_lock);
+        true
     }
 
     #[inline]
@@ -6287,68 +6319,137 @@ mod tests {
         assert!(!kind_only.initially_zero());
     }
 
+    #[derive(Debug, PartialEq)]
+    struct DetachedStaticPreimageSnapshot {
+        thread_id: ThreadId,
+        thread_seq: usize,
+        numa_node: i32,
+        subprocess: *mut MainSubprocess,
+        theap_head: *mut Theap,
+        recurse: bool,
+        in_threadpool: bool,
+        memid_kind: MemoryKind,
+        memid_static_base: *mut u8,
+        memid_static_size: usize,
+        memid_pinned: bool,
+        memid_initially_committed: bool,
+        memid_initially_zero: bool,
+    }
+
+    fn detached_static_preimage_snapshot(
+        tld: &ThreadLocalData,
+    ) -> DetachedStaticPreimageSnapshot {
+        let static_memory = tld
+            .memid
+            .static_memory()
+            .expect("the selected detached image has static provenance");
+        DetachedStaticPreimageSnapshot {
+            thread_id: tld.thread_id,
+            thread_seq: tld.thread_seq,
+            numa_node: tld.numa_node,
+            subprocess: tld.subprocess,
+            theap_head: tld.theaps,
+            recurse: tld.recurse,
+            in_threadpool: tld.is_in_threadpool,
+            memid_kind: tld.memid.kind(),
+            memid_static_base: static_memory.base,
+            memid_static_size: static_memory.size,
+            memid_pinned: tld.memid.is_pinned(),
+            memid_initially_committed: tld.memid.initially_committed(),
+            memid_initially_zero: tld.memid.initially_zero(),
+        }
+    }
+
     #[test]
     fn detached_static_preimage_steps_refuse_out_of_order_without_mutation() {
-        fn selected_fields(
-            tld: &ThreadLocalData,
-        ) -> (
-            ThreadId,
-            usize,
-            i32,
-            *mut MainSubprocess,
-            *mut Theap,
-            bool,
-            bool,
-            MemoryKind,
-            bool,
-            bool,
-            bool,
-        ) {
-            (
-                tld.thread_id,
-                tld.thread_seq,
-                tld.numa_node,
-                tld.subprocess,
-                tld.theaps,
-                tld.recurse,
-                tld.is_in_threadpool,
-                tld.memid.kind(),
-                tld.memid.is_pinned(),
-                tld.memid.initially_committed(),
-                tld.memid.initially_zero(),
-            )
-        }
-
         let subprocess = MainSubprocess::test_static_owner();
         let mut tld = ThreadLocalData::detached();
-        let static_preimage = selected_fields(&tld);
+        let static_preimage = detached_static_preimage_snapshot(&tld);
         assert!(
             !tld.initialize_detached_after_static_memid(subprocess),
             "the helper must not absorb src/init.c:192's separate predecessor"
         );
-        assert_eq!(selected_fields(&tld), static_preimage);
+        assert_eq!(detached_static_preimage_snapshot(&tld), static_preimage);
         assert!(tld.test_theaps_lock_starts_and_restores_unlocked());
 
         assert!(tld.prepare_detached_static_memid());
-        let kind_only_preimage = selected_fields(&tld);
+        let kind_only_preimage = detached_static_preimage_snapshot(&tld);
         assert!(
             !tld.prepare_detached_static_memid(),
             "the predecessor accepts only MI_MEMID_STATIC, not its own result"
         );
-        assert_eq!(selected_fields(&tld), kind_only_preimage);
+        assert_eq!(detached_static_preimage_snapshot(&tld), kind_only_preimage);
         assert!(tld.test_theaps_lock_starts_and_restores_unlocked());
 
         assert!(tld.initialize_detached_after_static_memid(subprocess));
-        let initialized = selected_fields(&tld);
+        let initialized = detached_static_preimage_snapshot(&tld);
         assert!(
             !tld.initialize_detached_after_static_memid(subprocess),
             "the detached helper accepts only its source-order predecessor"
         );
         assert!(!tld.prepare_detached_static_memid());
-        assert_eq!(selected_fields(&tld), initialized);
+        assert_eq!(detached_static_preimage_snapshot(&tld), initialized);
         assert!(tld.test_theaps_lock_starts_and_restores_unlocked());
         assert_eq!(subprocess.total_thread_count(), 0);
         assert_eq!(subprocess.live_thread_count(), 0);
+    }
+
+    #[test]
+    fn detached_static_preimage_steps_refuse_busy_lock_without_mutation() {
+        let subprocess = MainSubprocess::test_static_owner();
+        let counters_before = (
+            subprocess.total_thread_count(),
+            subprocess.live_thread_count(),
+        );
+        assert_eq!(counters_before, (0, 0));
+
+        let mut before_predecessor = ThreadLocalData::detached();
+        let static_preimage = detached_static_preimage_snapshot(&before_predecessor);
+        before_predecessor.test_inject_busy_theaps_lock();
+        assert!(
+            !before_predecessor.prepare_detached_static_memid(),
+            "a busy private lock must not be reused by the static-memid predecessor"
+        );
+        assert_eq!(
+            detached_static_preimage_snapshot(&before_predecessor),
+            static_preimage
+        );
+        assert_eq!(
+            (
+                subprocess.total_thread_count(),
+                subprocess.live_thread_count(),
+            ),
+            counters_before
+        );
+        assert!(
+            !before_predecessor.test_theaps_lock_starts_and_restores_unlocked(),
+            "predecessor refusal retains the injected busy lock"
+        );
+
+        let mut between_stages = ThreadLocalData::detached();
+        assert!(between_stages.prepare_detached_static_memid());
+        let static_memid_preimage = detached_static_preimage_snapshot(&between_stages);
+        between_stages.test_inject_busy_theaps_lock();
+
+        assert!(
+            !between_stages.initialize_detached_after_static_memid(subprocess),
+            "a busy private lock must not be overwritten by the detached helper"
+        );
+        assert_eq!(
+            detached_static_preimage_snapshot(&between_stages),
+            static_memid_preimage
+        );
+        assert_eq!(
+            (
+                subprocess.total_thread_count(),
+                subprocess.live_thread_count(),
+            ),
+            counters_before
+        );
+        assert!(
+            !between_stages.test_theaps_lock_starts_and_restores_unlocked(),
+            "initializer refusal retains the injected busy lock rather than replacing it"
+        );
     }
 
     #[test]

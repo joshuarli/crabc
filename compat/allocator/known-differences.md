@@ -425,6 +425,10 @@ assertion-invalid input, not C/Rust invalid-input parity.
   static-memory flags, and unchanged zero total/live counters. They do not
   initialize a main subprocess, form a Heap/Theap/list/TLS/root, model the
   normal branch, or compare pthread-lock bytes.
+  The focused busy-lock regression separately proves both source-ordered Rust
+  staging helpers refuse rather than reuse or overwrite a non-quiescent
+  private list lock. That is a Rust safety strengthening outside C's valid
+  static-preimage contract, not C lock or process-initialization parity.
   `bootstrap::tests::detached_binding_initializes_the_static_image_before_issuing_its_one_session`
   proves the selected pre-demand detached metadata-Theap kind-only static
   provenance (including zero union), frozen normal enabled page-reclaim image,

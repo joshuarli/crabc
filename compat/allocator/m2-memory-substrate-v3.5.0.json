@@ -406,6 +406,12 @@
         },
         {
           "expected_passed_test_count": 1,
+          "id": "detached-tld-static-preimage-busy-lock-refusal",
+          "kind": "rust-unit",
+          "target": "types::tests::detached_static_preimage_steps_refuse_busy_lock_without_mutation"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "c-rust-detached-tld-static-preimage-differential",
           "kind": "c-rust-detached-tld-static-preimage-differential",
           "target": "types::tests::emit_m2_detached_tld_static_preimage_c_rust_trace"
