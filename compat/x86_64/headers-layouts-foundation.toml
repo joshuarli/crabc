@@ -1337,10 +1337,10 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 704, mismatch = 576, oracle-not-applicable = 1 }
-identity_difference_counts = { candidate_only = 16351, reference_only = 8877 }
-source_form_difference_count = 2877
-source_form_difference_row_count = 469
+comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 718, mismatch = 562, oracle-not-applicable = 1 }
+identity_difference_counts = { candidate_only = 16323, reference_only = 8765 }
+source_form_difference_count = 2821
+source_form_difference_row_count = 455
 source_form_only_difference_row_count = 78
 scope = "Derived from the checked compiler-generated declaration-form report, this all-header direct-public-include C11/C++17 matrix compares named function, typedef, record, enum, variable, and macro identities only for comparable rows. It preserves same-identity source-form differences as separately accounted context, records every current comparable identity gap, and accounts for project-only and oracle-not-applicable rows through checked candidate fact summaries and digests. It excludes declaration-form equality, macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, and public support."
 
@@ -1372,8 +1372,8 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 626, mismatch = 654, oracle-not-applicable = 1 }
-mismatch_fact_counts = { candidate_only_count = 16351, incompatible_count = 2877, reference_only_count = 8877 }
+comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 640, mismatch = 640, oracle-not-applicable = 1 }
+mismatch_fact_counts = { candidate_only_count = 16323, incompatible_count = 2821, reference_only_count = 8765 }
 scope = "Compiler-derived direct-public-include source declaration forms: function signatures with emitted linkage spellings, named typedefs, named record shapes, enum values, variables, and macro replacement forms across all seven C11/C++17 profiles. It records red source-form differences and one pinned-musl C11 strict aio.h oracle-not-applicable row, but does not classify raw spelling differences as ABI differences or prove record byte layouts, anonymous declarations, archive linkage, runtime behavior, family promotion, or public support."
 
 [[language_profile]]
@@ -1786,7 +1786,7 @@ state = "partial-verified"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
 evidence = ["all-header-declaration-macro-feature-visibility-matrix"]
-description = "The checked derived 1,337-row matrix compares compiler-visible named declaration and macro identities across the full C11/C++17 profile cross-product. It keeps 2,877 same-identity source-form differences separately accounted, records all 576 comparable identity mismatch rows, and accounts for project-only and oracle-not-applicable surface dispositions through checked candidate fact summaries and digests. It excludes declaration-form equality, layouts, linkage, runtime, and promotion closure."
+description = "The checked derived 1,337-row matrix compares compiler-visible named declaration and macro identities across the full C11/C++17 profile cross-product. It keeps 2,821 same-identity source-form differences separately accounted, records all 562 comparable identity mismatch rows, and accounts for project-only and oracle-not-applicable surface dispositions through checked candidate fact summaries and digests. It excludes declaration-form equality, layouts, linkage, runtime, and promotion closure."
 
 [[abi_facet]]
 id = "callable-feature-visibility"

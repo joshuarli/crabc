@@ -60,9 +60,14 @@ assert_header_provenance() {
             *) fail "$tree header trace escaped its declared roots: $path" ;;
         esac
     done < <(trace_paths "$trace")
-    # stdarg.h is explicitly included by both probes, but GCC supplies its
-    # va_list spelling from the permitted compiler-builtin tree. The project
-    # or musl declaration chain we own begins at stdio.h.
+    # stdarg.h is explicitly included by both probes. The candidate must resolve
+    # it from the project tree; the pinned-musl compiler may use its permitted
+    # compiler-builtin copy. stdio.h, features.h, and bits/alltypes.h must still
+    # resolve from the selected tree.
+    if [ "$tree" = candidate ]; then
+        grep -Fq "$root/stdarg.h" "$trace" ||
+            fail "$tree trace omitted $root/stdarg.h"
+    fi
     for header in stdio.h features.h bits/alltypes.h; do
         grep -Fq "$root/$header" "$trace" ||
             fail "$tree trace omitted $root/$header"
