@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "3cbee26104e75bf98a081bf084ff740815e129ecb53b27a611e6b931b89daf1a",
+    "callable_inventory_sha256": "2dd150c1d370098cdf9ccd3835d869b8422c4034017c5999f35519c39b3c2f99",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -65083,23 +65083,16 @@
           "record": 2,
           "typedef": 5
         },
-        "sha256": "9b30a42485433729bae0a4da3d041e042084ebdf71e172f084100f3aa19511d3"
+        "sha256": "863528bc83583c84f6066de1d509066910ae6c890460d2df6e765ebb9d6c7bd5"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "int (const posix_spawnattr_t *, int *)|mangled=posix_spawnattr_getschedpolicy",
-            "kind": "function",
-            "name": "posix_spawnattr_getschedpolicy",
-            "reference_signature": "int (const posix_spawnattr_t *restrict, int *restrict)|mangled=posix_spawnattr_getschedpolicy"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 53,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 54,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -65126,23 +65119,16 @@
           "record": 2,
           "typedef": 5
         },
-        "sha256": "3e553dea03e444251ba14f604be08bc47a7c29bf16aaa32d18d8cd0dc4e8a4ee"
+        "sha256": "202518a382038a8bd0a4d5d69b4cc8f17ff081f57a3e41b79d3c423ed2130b3a"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "int (const posix_spawnattr_t *, int *)|mangled=posix_spawnattr_getschedpolicy",
-            "kind": "function",
-            "name": "posix_spawnattr_getschedpolicy",
-            "reference_signature": "int (const posix_spawnattr_t *__restrict, int *__restrict)|mangled=posix_spawnattr_getschedpolicy"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 53,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 54,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -65162,38 +65148,25 @@
     },
     {
       "candidate": {
-        "count": 51,
+        "count": 52,
         "kind_counts": {
           "function": 21,
-          "macro": 23,
+          "macro": 24,
           "record": 2,
           "typedef": 5
         },
-        "sha256": "dba24c495f1067f09718ce59d51908657cc642d1bb4d04253bc16802dd927601"
+        "sha256": "538bc9ce1bf33796a0a0243aedc99a77ce5069045b52f6af0f895d84e450c5d6"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "int (const posix_spawnattr_t *, int *)|mangled=posix_spawnattr_getschedpolicy",
-            "kind": "function",
-            "name": "posix_spawnattr_getschedpolicy",
-            "reference_signature": "int (const posix_spawnattr_t *restrict, int *restrict)|mangled=posix_spawnattr_getschedpolicy"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 50,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "POSIX_SPAWN_USEVFORK",
-            "signature": "object-like: 64"
-          }
-        ],
-        "reference_only_count": 1
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 52,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "spawn.h",
       "profile": "c11-strict",
@@ -65211,38 +65184,25 @@
     },
     {
       "candidate": {
-        "count": 51,
+        "count": 52,
         "kind_counts": {
           "function": 21,
-          "macro": 23,
+          "macro": 24,
           "record": 2,
           "typedef": 5
         },
-        "sha256": "dba24c495f1067f09718ce59d51908657cc642d1bb4d04253bc16802dd927601"
+        "sha256": "538bc9ce1bf33796a0a0243aedc99a77ce5069045b52f6af0f895d84e450c5d6"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "int (const posix_spawnattr_t *, int *)|mangled=posix_spawnattr_getschedpolicy",
-            "kind": "function",
-            "name": "posix_spawnattr_getschedpolicy",
-            "reference_signature": "int (const posix_spawnattr_t *restrict, int *restrict)|mangled=posix_spawnattr_getschedpolicy"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 50,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "POSIX_SPAWN_USEVFORK",
-            "signature": "object-like: 64"
-          }
-        ],
-        "reference_only_count": 1
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 52,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "spawn.h",
       "profile": "c11-posix-2008",
@@ -65260,38 +65220,25 @@
     },
     {
       "candidate": {
-        "count": 51,
+        "count": 52,
         "kind_counts": {
           "function": 21,
-          "macro": 23,
+          "macro": 24,
           "record": 2,
           "typedef": 5
         },
-        "sha256": "dba24c495f1067f09718ce59d51908657cc642d1bb4d04253bc16802dd927601"
+        "sha256": "538bc9ce1bf33796a0a0243aedc99a77ce5069045b52f6af0f895d84e450c5d6"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "int (const posix_spawnattr_t *, int *)|mangled=posix_spawnattr_getschedpolicy",
-            "kind": "function",
-            "name": "posix_spawnattr_getschedpolicy",
-            "reference_signature": "int (const posix_spawnattr_t *restrict, int *restrict)|mangled=posix_spawnattr_getschedpolicy"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 50,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "POSIX_SPAWN_USEVFORK",
-            "signature": "object-like: 64"
-          }
-        ],
-        "reference_only_count": 1
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 52,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "spawn.h",
       "profile": "c11-xopen-700",
@@ -65316,23 +65263,16 @@
           "record": 2,
           "typedef": 5
         },
-        "sha256": "9b30a42485433729bae0a4da3d041e042084ebdf71e172f084100f3aa19511d3"
+        "sha256": "863528bc83583c84f6066de1d509066910ae6c890460d2df6e765ebb9d6c7bd5"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "int (const posix_spawnattr_t *, int *)|mangled=posix_spawnattr_getschedpolicy",
-            "kind": "function",
-            "name": "posix_spawnattr_getschedpolicy",
-            "reference_signature": "int (const posix_spawnattr_t *restrict, int *restrict)|mangled=posix_spawnattr_getschedpolicy"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 53,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 54,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -65359,23 +65299,16 @@
           "record": 2,
           "typedef": 5
         },
-        "sha256": "3e553dea03e444251ba14f604be08bc47a7c29bf16aaa32d18d8cd0dc4e8a4ee"
+        "sha256": "202518a382038a8bd0a4d5d69b4cc8f17ff081f57a3e41b79d3c423ed2130b3a"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "int (const posix_spawnattr_t *, int *)|mangled=posix_spawnattr_getschedpolicy",
-            "kind": "function",
-            "name": "posix_spawnattr_getschedpolicy",
-            "reference_signature": "int (const posix_spawnattr_t *__restrict, int *__restrict)|mangled=posix_spawnattr_getschedpolicy"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 53,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 54,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -207462,23 +207395,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 555,
-      "mismatch": 725,
+      "matched": 562,
+      "mismatch": 718,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "725 comparable header/profile rows have prototype or named declaration-form differences",
+      "718 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
       "candidate_only_count": 16295,
-      "incompatible_count": 3120,
-      "reference_only_count": 12074
+      "incompatible_count": 3113,
+      "reference_only_count": 12071
     },
-    "mismatch_row_count": 725,
+    "mismatch_row_count": 718,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337

@@ -374,6 +374,29 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             self.assertEqual(row["difference"]["incompatible_count"], 0)
             self.assertEqual(row["difference"]["reference_only_count"], 0)
 
+    def test_spawn_header_matches_pinned_musl_source_forms(self) -> None:
+        """Keep POSIX spawn declarations and feature-independent flags exact."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        profiles = {
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-bsd",
+            "cxx17-strict",
+        }
+        rows = [row for row in checked["rows"] if row["header"] == "spawn.h"]
+        self.assertEqual({row["profile"] for row in rows}, profiles)
+        for row in rows:
+            with self.subTest(profile=row["profile"]):
+                self.assertEqual(row["candidate_status"], "ok")
+                self.assertEqual(row["reference_status"], "ok")
+                self.assertEqual(row["comparison"], "matched")
+                self.assertEqual(row["difference"]["candidate_only_count"], 0)
+                self.assertEqual(row["difference"]["incompatible_count"], 0)
+                self.assertEqual(row["difference"]["reference_only_count"], 0)
+
     def test_quota_header_has_no_owned_pinned_musl_fact_differences(self) -> None:
         """Keep quota-header completion distinct from inherited stdint.h differences."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
