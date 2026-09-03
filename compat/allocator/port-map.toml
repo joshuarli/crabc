@@ -2467,6 +2467,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/subproc.c"
+name = "same-thread-metadata-direct-demand-recursion-guard"
+source_region = "mimalloc v3.5.0 src/subproc.c:29-66 _mi_meta_zalloc, _mi_meta_zalloc_aligned, and _mi_meta_rezalloc nonrecursive theap_meta_lock entry, including :51-52's mi_free/mi_stat_free recursive-lock hazard"
+rust_module = "crabc_mimalloc::meta"
+rust_item = "MetaAllocator::{enter,zalloc_for_main_subprocess,zalloc_aligned_for_main_subprocess,rezalloc_for_main_subprocess}, MetaEntry::drop, and recursive_metadata_entry_rejects_real_routes_before_backing_or_capability_mutation"
+intentional_difference = "Pinned C takes a nonrecursive metadata lock and has no same-thread rejection result; reentry would wait or deadlock. Rust records the AArch64 thread identity, returns MetaError::RecursiveEntry before ensure_ready or an old-capability claim, and clears its marker only after unlocking. The selected prepared-owner test holds that marker while direct zalloc, aligned zalloc, and rezalloc(None) reject before map/backing/capability creation, then holds it while rezalloc(Some) preserves the existing live capability before post-drop recovery. This is a Rust safety boundary, not a C/Rust differential or C lock-equivalence claim; callbacks, signals, cross-thread contention, PageMap, arena, OS, release/copy, and general metadata lifecycle paths remain open."
+tests = ["crabc-mimalloc/src/meta.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/theap.c"
 name = "nonexclusive-dynamic-theap-direct-malloc-lifetime-checkpoint"
 source_region = "later TLD initialization/create/free from src/init.c:236-282; selected `_mi_thread_init_with_heap` dynamic-TLD/Theap setup from src/init.c:306-360; no-page `mi_thread_theaps_done` and outer `_mi_thread_done` order from src/init.c:377-421,452-480; regular TLS-backing lifecycle from src/threadlocal.c:103-173,205-214; process-global key-registry lifecycle from src/threadlocal.c:221-315; source regular-slot/key setup from src/heap.c:37-42,128-147; and `_mi_theap_init` list linking, nonexclusive `_mi_theap_alloc`/`_mi_theap_create`, decr/free, and `_mi_tld_detach_theaps` from src/theap.c:236-369,415-450"

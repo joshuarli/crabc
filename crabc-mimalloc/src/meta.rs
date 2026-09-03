@@ -2826,6 +2826,102 @@ mod tests {
     }
 
     #[test]
+    fn recursive_metadata_entry_rejects_real_routes_before_backing_or_capability_mutation() {
+        let allocator = static_allocator();
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        let empty_audit = MetaAllocationAudit {
+            live_capability_count: 0,
+            high_water_capability_count: 0,
+        };
+
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+        assert!(allocator.test_private_page_map_address().is_none());
+        assert_eq!(allocator.test_allocation_audit(), empty_audit);
+        let attempts_before = allocator.test_entry_attempt_count();
+
+        let entry = allocator.enter().unwrap();
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::RecursiveEntry)
+        ));
+        assert!(matches!(
+            allocator.zalloc_aligned(config(), 8, 8),
+            Err(MetaError::RecursiveEntry)
+        ));
+        assert!(matches!(
+            allocator.rezalloc(config(), None, 8),
+            Err(MetaError::RecursiveEntry)
+        ));
+        assert_eq!(
+            allocator.test_entry_attempt_count(),
+            attempts_before + 4,
+            "the held entry plus every direct demand reaches the same-thread guard"
+        );
+        assert_eq!(fault.observed(), 0, "recursive demand cannot reach the map fault");
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+        assert!(allocator.test_private_page_map_address().is_none());
+        assert_eq!(allocator.test_allocation_audit(), empty_audit);
+
+        fault.set(fault::Plan::disabled());
+        drop(entry);
+
+        let mut old = allocator
+            .zalloc(config(), 32)
+            .expect("dropping the recursive entry restores direct metadata demand");
+        // SAFETY: `old` is a current exclusive metadata capability.
+        unsafe { core::ptr::write_bytes(old.pointer().as_ptr(), 0xa5, 32) };
+        let old_pointer = old.pointer();
+        let old_memory_id = old.memory_id();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 1,
+                high_water_capability_count: 1,
+            }
+        );
+
+        let attempts_before_rezalloc = allocator.test_entry_attempt_count();
+        let entry = allocator.enter().unwrap();
+        assert!(matches!(
+            allocator.rezalloc(config(), Some(&mut old), 64),
+            Err(MetaError::RecursiveEntry)
+        ));
+        assert_eq!(
+            allocator.test_entry_attempt_count(),
+            attempts_before_rezalloc + 2,
+            "rezalloc reaches the guard before it can claim the old capability"
+        );
+        assert!(old.is_live());
+        assert_eq!(old.pointer(), old_pointer);
+        assert!(old.matches_memory_id(old_memory_id));
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 1,
+                high_water_capability_count: 1,
+            }
+        );
+
+        drop(entry);
+        let mut replacement = allocator
+            .rezalloc(config(), Some(&mut old), 64)
+            .expect("dropping the recursive entry restores replacement demand");
+        // SAFETY: `replacement` owns its copied 32-byte source prefix.
+        assert!(unsafe { core::slice::from_raw_parts(replacement.pointer().as_ptr(), 32) }
+            .iter()
+            .all(|byte| *byte == 0xa5));
+        assert_eq!(allocator.free(&mut old), Err(MetaError::ReleasedOrStale));
+        allocator.free(&mut replacement).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 2,
+            }
+        );
+    }
+
+    #[test]
     fn entry_cleanup_does_not_erase_a_successor_marker() {
         let marker = AtomicUsize::new(24);
         clear_entry_thread_after_unlock(&marker, 12);

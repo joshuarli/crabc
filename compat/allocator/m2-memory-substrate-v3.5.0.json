@@ -298,11 +298,18 @@
       ]
     },
     {
-      "checks": [],
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "metadata-same-thread-reentry-before-backing-or-capability-mutation",
+          "kind": "rust-unit",
+          "target": "meta::tests::recursive_metadata_entry_rejects_real_routes_before_backing_or_capability_mutation"
+        }
+      ],
       "completion_status": "partial",
       "id": "allocator-recursion",
       "remaining_conditions": [
-        "prove every M2 metadata and substrate path remains allocation-free or uses the reviewed recursion boundary under same-thread reentry"
+        "prove every remaining M2 metadata and substrate path remains allocation-free or uses the reviewed recursion boundary under same-thread reentry beyond the selected prepared direct zalloc, aligned-zalloc, and rezalloc routes; cover C lock equivalence, reentrant callbacks or signals, cross-thread contention, and PageMap, arena, OS, release, and copy paths"
       ],
       "source_units": [
         "src/subproc.c",
@@ -369,6 +376,7 @@
       "the selected reset-advice regression proves only the private source snapshot/retry control flow with a deterministic advisory mock; it does not claim a live-kernel EAGAIN frequency or complete purge fault parity",
       "the selected arena-purge regressions prove only default one-slice delayed-purge callback splitting at a source 64-bit bitmap-field boundary and frozen-Linux default-decommit-error consumption; they do not claim general visitor behavior, configurable purge policy, general purge fault parity, registry-wide collection, concurrent arena use, or arena lifecycle parity",
       "the selected detached-metadata checks prove only that Rust binds its static detached metadata image before global PageMap publication and, for the bounded same-subprocess, empty-head, non-threadpool input, preserves kind-only static provenance and frozen normal enabled page-reclaim, initializes a possibly-weak random context, and derives an odd cookie before first session/backing. After that bounded image is fully formed, preparation one-way Release-CAS publishes its exact identity through a comparison-only Rust MainSubprocess slot; COLD direct zalloc, aligned zalloc, and rezalloc(None) refuse before the metadata lock, mapping, or capability creation. A nonempty head, mismatched subprocess, or thread-pool input is rejected before mutation rather than claiming C's locked list/split or option-adjustment path. This does not model the actual mi_subproc_t::theap_meta field/layout, theap_meta_lock, a dereference-capable subprocess API, actual main-Heap linkage, or normal C metadata backing, nor establish complete _mi_theap_init, metadata, initialization, mutable-options, or fault-injection parity",
+      "the selected same-thread metadata recursion regression proves only Rust marker rejection for prepared direct zalloc, aligned-zalloc, and rezalloc before first backing or old-capability claim, plus post-drop recovery. It is not a C nonrecursive-lock or deadlock equivalence claim and does not cover reentrant callbacks or signals, cross-thread contention or races, PageMap, arena, OS, release, copy, or general metadata lifecycle paths",
       "the selected later-TLD direct-Malloc check proves only an isolated ticket-zero static teardown without a metadata capability, one injected post-ready direct-zeroed metadata failure that consumes its later sequence without a live capability or lease, and one retry's typed subprocess-attached/no-theap Malloc capability through exact-owner teardown. It does not establish pinned C normal _mi_meta_zalloc backing, full mi_tld_init/mi_tld_free lock/list behavior, arbitrary thread/ticket behavior, or generic _mi_meta_free branch parity",
       "the selected nonexclusive dynamic-Theap direct-Malloc check proves only one child-thread, caller-pinned empty-Heap lifecycle after ticket zero: a sequence-one Malloc TLD and a nonexclusive Malloc Theap have the selected one-member TLD/Heap list shape. Its no-page implementation releases regular backing, then the exact Theap, then the TLD. The audit observes four attached metadata capabilities (TLD, Theap, regular backing, and the distinct registry bitmap), one registry bitmap after attachment teardown, and test-only quiescent registry shutdown returning that audit to zero. It does not establish normal C _mi_meta_zalloc backing, the exclusive-arena _mi_arenas_alloc branch, generic _mi_meta_free dispatch, arbitrary Theap/list/refcount policy, page ownership, concurrent lifecycle, or process/thread shutdown parity",
       "the selected thread-local live-rezalloc check proves only one isolated child-thread direct-Malloc regular-backing replacement after a first 16-slot image: an injected pre-allocation failure restores the old root, count, slots, and capability, then one 16-to-32 retry copies slot 15 and publishes slot 16. It observes one live capability with high-water two before teardown and zero live afterward. It does not establish normal C _mi_meta_zalloc backing, arbitrary growth, generic _mi_meta_free dispatch, full TLS/TLD/Theap/registry lifecycle, concurrency, pthread/process lifecycle, or ABI integration",

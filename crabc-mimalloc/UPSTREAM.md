@@ -551,6 +551,25 @@ full process initialization. The source map therefore remains a bounded
 identity/precondition checkpoint, not a `mi_subproc_t` or metadata-lifecycle
 port.
 
+### Same-thread direct metadata reentry guard
+
+Pinned `src/subproc.c:29-66` takes the nonrecursive `theap_meta_lock` for
+`_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, and `_mi_meta_rezalloc`; its
+`_mi_meta_rezalloc` comment at lines 51-52 specifically avoids a later
+`mi_free`/statistics recursive-lock hazard by dropping that lock before copy
+and free. C has no same-thread rejection result at this boundary. Rust instead
+has `MetaAllocator::enter` record the AArch64 thread identity and return
+`MetaError::RecursiveEntry` before `ensure_ready` can create private backing
+or before `rezalloc(Some(_))` can claim its old capability; `MetaEntry::drop`
+clears that marker only after unlocking. The selected regression holds that
+marker across prepared direct `zalloc`, aligned `zalloc`, `rezalloc(None)`,
+and `rezalloc(Some(_))`, then proves recovery after it is dropped.
+
+This is a narrow Rust safety boundary, not a C/Rust deadlock or mutex-semantics
+equivalence claim. It does not cover reentrant callbacks or signals,
+cross-thread contention/races, PageMap/arena/OS paths, release/copy work, or
+the general metadata lifecycle.
+
 ## Configuration profile
 
 The frozen production-oriented profile in Milestone 0 is Linux/AArch64

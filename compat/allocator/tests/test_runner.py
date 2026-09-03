@@ -2097,7 +2097,15 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(summary["milestone"]["status"], "partial")
         self.assertEqual(
             [component["id"] for component in summary["components"] if component["checks"]],
-            ["vm-primitives", "metadata", "bitmaps", "page-map", "arenas", "initialization"],
+            [
+                "vm-primitives",
+                "metadata",
+                "bitmaps",
+                "page-map",
+                "arenas",
+                "initialization",
+                "allocator-recursion",
+            ],
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2420,6 +2428,27 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(initialization["completion_status"], "partial")
         self.assertTrue(initialization["remaining_conditions"])
+        allocator_recursion = next(
+            component
+            for component in summary["components"]
+            if component["id"] == "allocator-recursion"
+        )
+        self.assertEqual(
+            allocator_recursion["checks"],
+            [
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "metadata-same-thread-reentry-before-backing-or-capability-mutation",
+                    "kind": "rust-unit",
+                    "target": (
+                        "meta::tests::recursive_metadata_entry_rejects_real_routes_before_"
+                        "backing_or_capability_mutation"
+                    ),
+                }
+            ],
+        )
+        self.assertEqual(allocator_recursion["completion_status"], "partial")
+        self.assertTrue(allocator_recursion["remaining_conditions"])
         arenas = next(component for component in summary["components"] if component["id"] == "arenas")
         self.assertEqual(
             arenas["checks"],
