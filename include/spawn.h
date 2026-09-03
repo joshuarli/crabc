@@ -2,9 +2,17 @@
 #define _SPAWN_H
 
 #include <features.h>
+
+#if defined(__x86_64__)
+#define __NEED_mode_t
+#define __NEED_pid_t
+#define __NEED_sigset_t
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
 #define __NEED_sigset_t
 #include <bits/alltypes.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {

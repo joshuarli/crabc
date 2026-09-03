@@ -65,7 +65,7 @@ sources = [
   "compat/x86_64/types_header_abi_probe.cpp",
   "compat/x86_64/run_types_header_abi.sh",
 ]
-headers = ["include/bits/alltypes.h", "include/sys/types.h"]
+headers = ["include/sys/types.h"]
 
 [[probe]]
 id = "stat"

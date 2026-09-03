@@ -66,7 +66,7 @@ if ! "$ORACLE_CC" -std=c11 -fno-builtin -Werror=implicit-function-declaration \
     cat "$header_trace" >&2
     fail "project GNU C CPU-set macro contract drifted"
 fi
-for header in sched.h sys/types.h time.h features.h bits/alltypes.h; do
+for header in sched.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "GNU C probe did not use the project <$header>"
 done

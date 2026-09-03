@@ -58,7 +58,7 @@ done
 header_trace="$work_dir/project-posix-header-trace"
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -U_GNU_SOURCE \
     -I"$ROOT_DIR/include" -H -fsyntax-only "$C_PROBE" >/dev/null 2>"$header_trace"
-for header in sched.h sys/types.h time.h; do
+for header in sched.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "project trace omitted $header"
 done

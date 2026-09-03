@@ -40,8 +40,13 @@ candidate_object="$work_dir/candidate-cxx.o"
     >/dev/null 2>"$header_trace"
 grep -Fq "$ROOT_DIR/include/utime.h" "$header_trace" ||
     fail "C probe did not use the project <utime.h>"
-grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace" ||
-    fail "C probe did not use the project <sys/types.h>"
+for header in features.h bits/alltypes.h; do
+    grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
+        fail "C probe did not use the project <$header>"
+done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "C probe unexpectedly retained the project <sys/types.h> type-owner shortcut"
+fi
 "$ORACLE_CC" -std=c++17 -x c++ -I"$ROOT_DIR/include" -c "$cxx_probe" \
     -o "$candidate_object"
 

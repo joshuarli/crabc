@@ -510,6 +510,98 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                     f"wordexp.h:{profile} {field} C linkage facts",
                 )
 
+    def test_shared_type_headers_keep_musl_type_ownership_boundaries(self) -> None:
+        """Shared type requests must not turn adjacent headers into type providers."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        profiles = (
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-bsd",
+            "cxx17-strict",
+        )
+
+        for profile in profiles:
+            row = rows[("sys/types.h", profile)]
+            self.assertEqual(
+                row["comparison"],
+                "matched",
+                f"sys/types.h:{profile} must retain musl's complete type vocabulary",
+            )
+
+        public_type_names = {
+            "blkcnt_t",
+            "blksize_t",
+            "clockid_t",
+            "dev_t",
+            "fsblkcnt_t",
+            "fsfilcnt_t",
+            "gid_t",
+            "id_t",
+            "ino_t",
+            "key_t",
+            "mode_t",
+            "nlink_t",
+            "off_t",
+            "once_flag",
+            "pid_t",
+            "pthread_attr_t",
+            "pthread_barrier_t",
+            "pthread_barrierattr_t",
+            "pthread_cond_t",
+            "pthread_condattr_t",
+            "pthread_key_t",
+            "pthread_mutex_t",
+            "pthread_mutexattr_t",
+            "pthread_once_t",
+            "pthread_rwlock_t",
+            "pthread_rwlockattr_t",
+            "pthread_spinlock_t",
+            "pthread_t",
+            "ssize_t",
+            "suseconds_t",
+            "thrd_t",
+            "timer_t",
+            "tss_t",
+            "uid_t",
+            "useconds_t",
+        }
+
+        def is_type_owner_fact(fact):
+            name = fact.get("name", "")
+            return (
+                name in public_type_names
+                or name.startswith("__DEFINED_")
+                or name.startswith("__NEED_")
+                or name
+                in {
+                    "_PTHREAD_TYPES_DEFINED",
+                    "_SYS_TYPES_H",
+                    "__pthread",
+                }
+            )
+
+        for header in ("pthread.h", "threads.h"):
+            for profile in profiles:
+                difference = rows[(header, profile)]["difference"]
+                for field in ("candidate_only", "incompatible", "reference_only"):
+                    facts = [
+                        fact
+                        for fact in difference[field]
+                        if is_type_owner_fact(fact)
+                    ]
+                    self.assertEqual(
+                        facts,
+                        [],
+                        f"{header}:{profile} {field} shared type-owner facts",
+                    )
+
     def test_stdio_wchar_and_monetary_declarations_match_musl_forms(self) -> None:
         """Header visibility must not promote deferred stream or locale providers."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

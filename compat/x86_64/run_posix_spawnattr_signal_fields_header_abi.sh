@@ -34,7 +34,7 @@ check_trace() {
     case "$tree" in reference) root="$MUSL_ROOT/include" ;; candidate) root="$PROJECT_INCLUDE" ;; *) fail "unknown header tree: $tree" ;; esac
     while IFS= read -r path; do case "$path" in "$root"/*|"$candidate_compiler_builtin_include"/*) ;; *) fail "$profile $tree trace escaped its declared header roots: $path" ;; esac; done < <(trace_paths "$trace")
     for header in spawn.h features.h bits/alltypes.h; do grep -Fq "$root/$header" "$trace" || fail "$profile $tree trace omitted $root/$header"; done
-    [ "$tree" != candidate ] || grep -Fq "$root/sys/types.h" "$trace" || fail "$profile project trace omitted $root/sys/types.h"
+    [ "$tree" != candidate ] || ! grep -Fq "$root/sys/types.h" "$trace" || fail "$profile project trace unexpectedly retained $root/sys/types.h"
 }
 check_cxx_linkage() {
     local tree="$1" profile="$2" object="$3" undefined name

@@ -5,8 +5,22 @@
 extern "C" {
 #endif
 
+#if defined(__x86_64__)
+#include <features.h>
+
+#define __NEED_struct_timespec
+#define __NEED_pid_t
+#define __NEED_time_t
+
+#ifdef _GNU_SOURCE
+#define __NEED_size_t
+#endif
+
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
 #include <time.h>
+#endif
 
 /* This reserve is public ABI, even though the currently implemented
  * scheduling calls consume only sched_priority.  Keep the musl 1.2.6

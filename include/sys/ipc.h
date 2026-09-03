@@ -6,7 +6,16 @@ extern "C" {
 #endif
 
 #include <features.h>
+#if defined(__x86_64__)
+#define __NEED_uid_t
+#define __NEED_gid_t
+#define __NEED_mode_t
+#define __NEED_key_t
+
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
+#endif
 
 /* Musl keeps the ABI backing spellings private outside its GNU/BSD
  * namespace, then maps the public compatibility spellings back under those

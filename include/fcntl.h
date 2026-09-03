@@ -2,7 +2,22 @@
 #define _FCNTL_H
 
 #include <features.h>
+
+#if defined(__x86_64__)
+#define __NEED_off_t
+#define __NEED_pid_t
+#define __NEED_mode_t
+
+#ifdef _GNU_SOURCE
+#define __NEED_size_t
+#define __NEED_ssize_t
+#define __NEED_struct_iovec
+#endif
+
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -240,7 +255,10 @@ int open_by_handle_at(int, struct file_handle *, int);
 #define SPLICE_F_NONBLOCK 2
 #define SPLICE_F_MORE 4
 #define SPLICE_F_GIFT 8
+#if !defined(__x86_64__)
+/* The legacy sys/types path does not request the GNU iovec record. */
 struct iovec;
+#endif
 int fallocate(int, int, off_t, off_t);
 ssize_t readahead(int, off_t, size_t);
 int sync_file_range(int, off_t, off_t, unsigned);

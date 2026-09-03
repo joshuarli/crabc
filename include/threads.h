@@ -2,6 +2,27 @@
 #define _THREADS_H
 
 #include <features.h>
+#if defined(__x86_64__)
+#include <time.h>
+
+#ifdef __cplusplus
+extern "C" {
+typedef unsigned long thrd_t;
+#else
+typedef struct __pthread *thrd_t;
+#define thread_local _Thread_local
+#endif
+
+typedef int once_flag;
+typedef unsigned tss_t;
+typedef int (*thrd_start_t)(void *);
+typedef void (*tss_dtor_t)(void *);
+
+#define __NEED_cnd_t
+#define __NEED_mtx_t
+#include <bits/alltypes.h>
+
+#else
 #include <sys/types.h>
 #include <time.h>
 
@@ -25,6 +46,8 @@ typedef void (*tss_dtor_t)(void *);
 
 #ifndef __cplusplus
 #define thread_local _Thread_local
+#endif
+
 #endif
 
 #define TSS_DTOR_ITERATIONS 4

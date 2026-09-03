@@ -47,6 +47,14 @@ grep -Fq "$ROOT_DIR/include/sys/mman.h" "$header_trace" || {
 grep -Fq "$ROOT_DIR/include/bits/mman.h" "$header_trace" || {
     fail "C probe did not use the project x86 bits/mman.h"
 }
+for header in features.h bits/alltypes.h; do
+    grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || {
+        fail "C probe did not use the project <$header>"
+    }
+done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "C probe unexpectedly retained the project <sys/types.h> type-owner shortcut"
+fi
 "$ORACLE_CC" -std=c++17 -x c++ -I "$ROOT_DIR/include" -fsyntax-only "$cxx_probe"
 
 printf 'x86 pinned-musl C/C++ <sys/mman.h> ABI: PASS\n'

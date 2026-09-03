@@ -123,8 +123,8 @@ check_trace() {
         grep -Fq "$root/$header" "$trace" ||
             fail "$profile $tree trace omitted $root/$header"
     done
-    if [ "$tree" = candidate ] && ! grep -Fq "$root/sys/types.h" "$trace"; then
-        fail "$profile project trace omitted $root/sys/types.h"
+    if [ "$tree" = candidate ] && grep -Fq "$root/sys/types.h" "$trace"; then
+        fail "$profile project trace unexpectedly retained $root/sys/types.h"
     fi
 }
 

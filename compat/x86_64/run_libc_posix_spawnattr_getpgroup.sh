@@ -122,7 +122,7 @@ readelf --symbols --wide "$musl_object" | grep -Eq \
 
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_posix_spawnattr_getpgroup_probe.c >/dev/null 2>"$header_trace"
-for header in spawn.h features.h sys/types.h bits/alltypes.h errno.h; do
+for header in spawn.h features.h bits/alltypes.h errno.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project $header"
 done

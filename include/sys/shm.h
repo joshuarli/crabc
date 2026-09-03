@@ -6,8 +6,18 @@ extern "C" {
 #endif
 
 #include <features.h>
+#if defined(__x86_64__)
+#define __NEED_time_t
+#define __NEED_size_t
+#define __NEED_pid_t
+
+#include <bits/alltypes.h>
+
+#include <sys/ipc.h>
+#else
 #include <sys/ipc.h>
 #include <sys/types.h>
+#endif
 
 #define SHMLBA 4096
 

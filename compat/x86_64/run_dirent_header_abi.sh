@@ -249,9 +249,12 @@ check_trace() {
     case "$tree" in
         candidate)
             root="$PROJECT_INCLUDE"
-            headers=(dirent.h features.h sys/types.h)
+            headers=(dirent.h features.h bits/alltypes.h)
             if grep -Fq "$MUSL_ROOT/include/" "$trace"; then
                 fail "$profile candidate trace reached pinned musl despite -nostdinc"
+            fi
+            if grep -Fq "$root/sys/types.h" "$trace"; then
+                fail "$profile candidate trace unexpectedly retained $root/sys/types.h"
             fi
             ;;
         reference)

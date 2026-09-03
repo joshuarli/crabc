@@ -7,7 +7,17 @@ extern "C" {
 
 #include <features.h>
 #include <sys/ipc.h>
+#if defined(__x86_64__)
+#define __NEED_pid_t
+#define __NEED_key_t
+#define __NEED_time_t
+#define __NEED_size_t
+#define __NEED_ssize_t
+
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
+#endif
 
 typedef unsigned long msgqnum_t;
 typedef unsigned long msglen_t;

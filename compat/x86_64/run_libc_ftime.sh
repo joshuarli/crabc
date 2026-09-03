@@ -120,7 +120,7 @@ errno_disassembly="$work_dir/errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_ftime_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h stdint.h sys/timeb.h sys/types.h time.h; do
+for header in errno.h stdint.h sys/timeb.h features.h bits/alltypes.h time.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture omitted project $header"
 done

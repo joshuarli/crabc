@@ -32,10 +32,13 @@ header_trace="$work_dir/header-trace"
 
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -H -fsyntax-only "$c_probe" \
     >/dev/null 2>"$header_trace"
-for header in mqueue.h sys/types.h sys/syscall.h bits/syscall.h; do
+for header in mqueue.h features.h bits/alltypes.h sys/syscall.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "C probe did not use the project <$header>"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "C probe unexpectedly retained the project <sys/types.h> type-owner shortcut"
+fi
 "$ORACLE_CC" -std=c++17 -x c++ -I "$ROOT_DIR/include" -fsyntax-only \
     "$cxx_probe"
 

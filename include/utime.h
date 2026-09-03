@@ -1,8 +1,16 @@
 #ifndef _CRABC_UTIME_H
 #define _CRABC_UTIME_H
 
+#if defined(__x86_64__)
+#include <features.h>
+
+#define __NEED_time_t
+
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
 #include <features.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {

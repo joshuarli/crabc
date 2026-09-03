@@ -110,7 +110,7 @@ cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D__STRICT_ANSI__ -U_GNU_SOURCE \
     -I "$ROOT_DIR/include" -E -H compat/x86_64/libc_mlockall_probe.c \
     >/dev/null 2>"$header_trace"
-for header in errno.h sys/mman.h sys/syscall.h sys/types.h bits/mman.h \
+for header in errno.h features.h sys/mman.h sys/syscall.h bits/alltypes.h bits/mman.h \
     bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture omitted project $header"

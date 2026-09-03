@@ -94,7 +94,7 @@ errno_disassembly="$work_dir/errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_clock_adjtime_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h sys/timex.h sys/time.h sys/select.h sys/types.h \
+for header in errno.h sys/timex.h sys/time.h sys/select.h \
     sys/syscall.h bits/alltypes.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project <$header>"

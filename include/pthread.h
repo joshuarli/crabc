@@ -6,14 +6,36 @@ extern "C" {
 #endif
 
 #include <features.h>
+#if defined(__x86_64__)
+#define __NEED_time_t
+#define __NEED_clockid_t
+#define __NEED_struct_timespec
+#define __NEED_sigset_t
+#define __NEED_pthread_t
+#define __NEED_pthread_attr_t
+#define __NEED_pthread_mutexattr_t
+#define __NEED_pthread_condattr_t
+#define __NEED_pthread_rwlockattr_t
+#define __NEED_pthread_barrierattr_t
+#define __NEED_pthread_mutex_t
+#define __NEED_pthread_cond_t
+#define __NEED_pthread_rwlock_t
+#define __NEED_pthread_barrier_t
+#define __NEED_pthread_spinlock_t
+#define __NEED_pthread_key_t
+#define __NEED_pthread_once_t
+#define __NEED_size_t
+#else
 #define __NEED_size_t
 #define __NEED_sigset_t
+#endif
 #include <bits/alltypes.h>
 /* `sched.h` owns the public `struct sched_param` tag shared by pthread APIs.
  * Include that definition so applications may include these headers in either
  * order without receiving two incompatible declarations. */
 #include <sched.h>
 #include <time.h>
+#if !defined(__x86_64__)
 #include <sys/types.h>
 
 #ifndef _PTHREAD_TYPES_DEFINED
@@ -68,6 +90,7 @@ typedef struct {
         unsigned long __s[7];
     } __u;
 } pthread_attr_t;
+#endif
 #endif
 
 #define PTHREAD_CREATE_JOINABLE 0

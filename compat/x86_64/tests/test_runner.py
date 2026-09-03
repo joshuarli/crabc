@@ -1198,6 +1198,40 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("sched_setaffinity", runner)
         self.assertIn("sched-cpu-macros-header-abi", dispatcher)
 
+    def test_sched_header_abi_runners_keep_musl_type_request_provenance(self) -> None:
+        """Direct sched gates must not reintroduce the legacy umbrella path."""
+        runner_names = (
+            "run_sched_cpu_macros_header_abi.sh",
+            "run_sched_cpucount_header_abi.sh",
+            "run_sched_get_priority_max_header_abi.sh",
+            "run_sched_get_priority_min_header_abi.sh",
+            "run_sched_getaffinity_header_abi.sh",
+            "run_sched_getcpu_header_abi.sh",
+            "run_sched_getparam_header_abi.sh",
+            "run_sched_getscheduler_header_abi.sh",
+            "run_sched_priority_bounds_header_abi.sh",
+            "run_sched_rr_interval_header_abi.sh",
+            "run_sched_setaffinity_header_abi.sh",
+            "run_sched_setparam_header_abi.sh",
+            "run_sched_setscheduler_header_abi.sh",
+            "run_sched_yield_header_abi.sh",
+        )
+
+        for runner_name in runner_names:
+            runner = (ROOT / "compat" / "x86_64" / runner_name).read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(
+                "for header in sched.h features.h bits/alltypes.h",
+                runner,
+                runner_name,
+            )
+            self.assertNotIn(
+                "for header in sched.h sys/types.h time.h",
+                runner,
+                runner_name,
+            )
+
     def test_fanotify_event_traversal_macros_stay_header_only(self) -> None:
         """Pin record traversal syntax without selecting a watcher runtime."""
         header = (ROOT / "include" / "sys" / "fanotify.h").read_text(
@@ -4147,6 +4181,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('-p crabc-libc', sys_reg)
         self.assertIn('types_header_abi_probe.c', types)
         self.assertIn('types_header_abi_probe.cpp', types)
+        self.assertIn('for profile in strict gnu bsd largefile64', types)
+        self.assertIn(
+            'for header in sys/types.h features.h bits/alltypes.h endian.h sys/select.h',
+            types,
+        )
+        self.assertIn('unexpected project <time.h>', types)
         self.assertIn('-fsyntax-only', types)
         self.assertNotIn('-p crabc-libc', types)
         self.assertIn('x86_syscall_header_probe.c', syscall)
@@ -4271,7 +4311,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('-p crabc-libc', poll_header)
         self.assertIn('select_header_abi_probe.c', select_header)
         self.assertIn('select_header_abi_probe.cpp', select_header)
-        self.assertIn('for header in sys/select.h time.h bits/alltypes.h', select_header)
+        self.assertIn('for header in sys/select.h features.h bits/alltypes.h', select_header)
         self.assertIn('-fsyntax-only', select_header)
         self.assertNotIn('-p crabc-libc', select_header)
         self.assertIn('fcntl_header_abi_probe.c', fcntl_header)
@@ -17161,7 +17201,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "cxx17-gnu",
             "-nostdinc",
             "-nostdinc++",
-            "project trace omitted $root/sys/types.h",
+            "project trace unexpectedly retained $root/sys/types.h",
             "retained a mangled posix_spawnattr_init reference",
         ):
             self.assertIn(required, header_runner)
@@ -17315,7 +17355,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "cxx17-gnu",
             "-nostdinc",
             "-nostdinc++",
-            "project trace omitted $root/sys/types.h",
+            "project trace unexpectedly retained $root/sys/types.h",
             "retained a mangled posix_spawnattr_getpgroup reference",
         ):
             self.assertIn(required, header_runner)
@@ -17643,7 +17683,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "cxx17-gnu",
             "-nostdinc",
             "-nostdinc++",
-            "project trace omitted $root/sys/types.h",
+            "project trace unexpectedly retained $root/sys/types.h",
             "retained a mangled posix_spawnattr_getschedpolicy reference",
         ):
             self.assertIn(required, header_runner)

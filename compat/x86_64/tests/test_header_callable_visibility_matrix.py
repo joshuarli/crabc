@@ -21,7 +21,62 @@ CHECKED_REPORT = (
     / "header_callable_visibility_matrix"
     / "report.json"
 )
+CHECKED_INVENTORY = ROOT / "compat" / "x86_64" / "header_callable_inventory.json"
 RUNNER = ROOT / "compat" / "x86_64" / "run_header_callable_visibility_matrix.sh"
+
+
+# Musl's GNU/BSD direct <sys/types.h> tail imports these public endian/select
+# callables.  A type-consuming root must request its own alltypes vocabulary,
+# not inherit this convenience tail by including <sys/types.h>.
+SYS_TYPES_GNU_BSD_TAIL_PROFILES = (
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-bsd",
+    "cxx17-strict",
+)
+SYS_TYPES_GNU_BSD_TAIL_CALLABLES = frozenset(
+    {
+        ("external", "pselect"),
+        ("external", "select"),
+        ("macro", "FD_CLR"),
+        ("macro", "FD_ISSET"),
+        ("macro", "FD_SET"),
+        ("macro", "FD_ZERO"),
+        ("macro", "be16toh"),
+        ("macro", "be32toh"),
+        ("macro", "be64toh"),
+        ("macro", "betoh16"),
+        ("macro", "betoh32"),
+        ("macro", "betoh64"),
+        ("macro", "htobe16"),
+        ("macro", "htobe32"),
+        ("macro", "htobe64"),
+        ("macro", "htole16"),
+        ("macro", "htole32"),
+        ("macro", "htole64"),
+        ("macro", "le16toh"),
+        ("macro", "le32toh"),
+        ("macro", "le64toh"),
+        ("macro", "letoh16"),
+        ("macro", "letoh32"),
+        ("macro", "letoh64"),
+    }
+)
+SYS_TYPES_GNU_BSD_NON_OWNER_ROOTS = frozenset(
+    {
+        "dirent.h",
+        "fcntl.h",
+        "mqueue.h",
+        "spawn.h",
+        "sys/ipc.h",
+        "sys/msg.h",
+        "sys/sem.h",
+        "sys/shm.h",
+        "sys/mman.h",
+        "sys/timeb.h",
+        "utime.h",
+    }
+)
 
 
 def load_module(name: str, path: Path):
@@ -60,8 +115,8 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 749,
-                "mismatch": 531,
+                "matched": 805,
+                "mismatch": 475,
                 "oracle-not-applicable": 1,
             },
         )
@@ -258,6 +313,37 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                         {"classification": "external", "name": "statx"},
                         row[field],
                         f"{header}:{profile} retains a statx visibility gap",
+                    )
+
+    def test_sys_types_gnu_bsd_tail_stays_with_its_direct_owner(self) -> None:
+        """The source-faithful types tail must not turn type consumers into umbrellas."""
+        inventory = json.loads(CHECKED_INVENTORY.read_text(encoding="utf-8"))
+        callables = inventory["callables"]
+        assert isinstance(callables, list)
+
+        for tree in ("candidate", "reference"):
+            for profile in SYS_TYPES_GNU_BSD_TAIL_PROFILES:
+                tail = {
+                    (row["classification"], row["name"]): row
+                    for row in callables
+                    if row.get("tree") == tree
+                    and row.get("profile") == profile
+                    and (row.get("classification"), row.get("name"))
+                    in SYS_TYPES_GNU_BSD_TAIL_CALLABLES
+                    and "sys/types.h" in row.get("visible_from_headers", ())
+                }
+                self.assertEqual(
+                    set(tail),
+                    SYS_TYPES_GNU_BSD_TAIL_CALLABLES,
+                    f"{tree}:{profile} no longer exposes the direct sys/types.h GNU/BSD tail",
+                )
+                for callable_id, row in tail.items():
+                    leaked_roots = set(row["visible_from_headers"]) & SYS_TYPES_GNU_BSD_NON_OWNER_ROOTS
+                    self.assertEqual(
+                        leaked_roots,
+                        set(),
+                        f"{tree}:{profile}:{callable_id} leaked the sys/types.h tail into "
+                        f"{sorted(leaked_roots)}",
                     )
 
 

@@ -6,7 +6,16 @@ extern "C" {
 #endif
 
 #include <features.h>
+
+#if defined(__x86_64__)
+#define __NEED_ino_t
+#define __NEED_off_t
+#define __NEED_size_t
+#define __NEED_ssize_t
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
+#endif
 
 typedef struct __dirstream DIR;
 

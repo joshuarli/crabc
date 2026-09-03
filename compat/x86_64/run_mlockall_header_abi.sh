@@ -70,10 +70,13 @@ if ! "$ORACLE_CC" -std=c11 -D__STRICT_ANSI__ -U_GNU_SOURCE \
     sed -n '1,160p' "$header_trace" >&2
     fail "project mlockall header contract drifted"
 fi
-for header in sys/mman.h sys/types.h bits/mman.h; do
+for header in sys/mman.h features.h bits/alltypes.h bits/mman.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "C probe did not use project <$header>"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "C probe unexpectedly retained the project <sys/types.h> type-owner shortcut"
+fi
 
 for variant in oracle project; do
     include_args=()

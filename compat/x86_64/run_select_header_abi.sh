@@ -40,13 +40,13 @@ readonly -a GNU_FLAGS=(-D_GNU_SOURCE)
 "$ORACLE_CC" -std=c++17 -x c++ "${GNU_FLAGS[@]}" -fsyntax-only "$cxx_probe"
 
 # Then prove the same C/C++ contract through project headers, retaining the
-# direct provenance of the select/time/type dependency boundary.
+# direct provenance of the select/type request boundary.
 if ! "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -H -fsyntax-only "$c_probe" \
     >/dev/null 2>"$header_trace"; then
     cat "$header_trace" >&2
     fail "project C select-header contract drifted"
 fi
-for header in sys/select.h time.h bits/alltypes.h; do
+for header in sys/select.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "C probe did not use the project $header"
 done

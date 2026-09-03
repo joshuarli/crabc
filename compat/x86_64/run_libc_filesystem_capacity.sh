@@ -60,7 +60,7 @@ candidate_symbols="$work_dir/candidate-symbols"; candidate_program_headers="$wor
 candidate_dynamic="$work_dir/candidate-dynamic"; candidate_relocations="$work_dir/candidate-relocations"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H compat/x86_64/libc_filesystem_capacity_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h fcntl.h stddef.h stdint.h sys/statfs.h sys/statvfs.h sys/syscall.h sys/types.h; do grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || fail "fixture did not use project $header"; done
+for header in errno.h fcntl.h stddef.h stdint.h sys/statfs.h sys/statvfs.h sys/syscall.h bits/alltypes.h; do grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || fail "fixture did not use project $header"; done
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" compat/x86_64/libc_filesystem_capacity_probe.c -o "$work_dir/oracle"
 "$work_dir/oracle"
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort

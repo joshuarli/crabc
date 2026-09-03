@@ -113,7 +113,7 @@ cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -U_GNU_SOURCE \
     -I"$ROOT_DIR/include" -E -H compat/x86_64/libc_sched_setscheduler_probe.c \
     >/dev/null 2>"$header_trace"
-for header in errno.h sched.h sys/syscall.h bits/syscall.h sys/types.h time.h; do
+for header in errno.h sched.h sys/syscall.h bits/syscall.h sys/types.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture omitted project $header"
 done

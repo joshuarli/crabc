@@ -61,10 +61,13 @@ if ! "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -H -fsyntax-only \
     sed -n '1,160p' "$header_trace" >&2
     fail "project ftime header contract drifted"
 fi
-for header in sys/timeb.h sys/types.h; do
+for header in sys/timeb.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "C probe did not use the project <$header>"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "C probe unexpectedly retained the project <sys/types.h> type-owner shortcut"
+fi
 
 "$ORACLE_CC" -std=c++17 -x c++ -U_GNU_SOURCE -c "$cxx_probe" \
     -o "$oracle_cxx_object"

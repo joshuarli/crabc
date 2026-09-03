@@ -1,7 +1,15 @@
 #ifndef _SYS_TIMEB_H
 #define _SYS_TIMEB_H
 
+#if defined(__x86_64__)
+#include <features.h>
+
+#define __NEED_time_t
+
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {

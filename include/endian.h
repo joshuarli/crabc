@@ -2,6 +2,13 @@
 #define _ENDIAN_H
 
 #include <features.h>
+#if defined(__x86_64__)
+#define __NEED_uint16_t
+#define __NEED_uint32_t
+#define __NEED_uint64_t
+
+#include <bits/alltypes.h>
+#else
 #include <stdint.h>
 
 #ifndef __BYTE_ORDER
@@ -13,6 +20,7 @@
 #ifndef __BIG_ENDIAN
 #define __BIG_ENDIAN 4321
 #endif
+#endif
 
 #define __PDP_ENDIAN 3412
 
@@ -23,18 +31,30 @@
 
 static __inline uint16_t __bswap16(uint16_t __x)
 {
+	#if defined(__x86_64__)
+	return __x<<8 | __x>>8;
+	#else
 	return (__x << 8) | (__x >> 8);
+	#endif
 }
 
 static __inline uint32_t __bswap32(uint32_t __x)
 {
+	#if defined(__x86_64__)
+	return __x>>24 | __x>>8&0xff00 | __x<<8&0xff0000 | __x<<24;
+	#else
 	return (__x >> 24) | ((__x >> 8) & 0xff00) |
 		((__x << 8) & 0xff0000) | (__x << 24);
+	#endif
 }
 
 static __inline uint64_t __bswap64(uint64_t __x)
 {
+	#if defined(__x86_64__)
+	return __bswap32(__x)+0ULL<<32 | __bswap32(__x>>32);
+	#else
 	return ((__bswap32(__x) + 0ULL) << 32) | __bswap32(__x >> 32);
+	#endif
 }
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN

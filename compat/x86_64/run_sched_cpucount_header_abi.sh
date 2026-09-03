@@ -71,7 +71,7 @@ done
     -H -fsyntax-only "$c_probe" >/dev/null 2>"$header_trace"
 "$ORACLE_CC" -std=c++17 -x c++ -D_GNU_SOURCE -fno-builtin \
     -I "$ROOT_DIR/include" -fsyntax-only "$cxx_probe"
-for header in sched.h sys/types.h time.h features.h bits/alltypes.h; do
+for header in sched.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "GNU C probe did not use the project <$header>"
 done

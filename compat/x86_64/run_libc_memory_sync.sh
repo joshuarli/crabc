@@ -121,7 +121,7 @@ errno_disassembly="$work_dir/errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_memory_sync_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h stdint.h features.h sys/mman.h sys/syscall.h sys/types.h \
+for header in errno.h stdint.h features.h sys/mman.h sys/syscall.h bits/alltypes.h \
     bits/mman.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"

@@ -1,7 +1,18 @@
 #ifndef _MQUEUE_H
 #define _MQUEUE_H
 
+#if defined(__x86_64__)
+#include <features.h>
+
+#define __NEED_size_t
+#define __NEED_ssize_t
+#define __NEED_pthread_attr_t
+#define __NEED_time_t
+#define __NEED_struct_timespec
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
+#endif
 
 struct sigevent;
 #ifndef __DEFINED_struct_timespec

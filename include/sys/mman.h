@@ -5,7 +5,20 @@
 extern "C" {
 #endif
 
+#if defined(__x86_64__)
+#include <features.h>
+
+#define __NEED_mode_t
+#define __NEED_size_t
+#define __NEED_off_t
+#if defined(_GNU_SOURCE)
+#define __NEED_ssize_t
+#endif
+
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
+#endif
 
 #define PROT_READ   0x1
 #define PROT_WRITE  0x2

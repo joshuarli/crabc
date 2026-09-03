@@ -6,8 +6,20 @@ extern "C" {
 #endif
 
 #include <features.h>
+#if defined(__x86_64__)
+#define __NEED_size_t
+#define __NEED_pid_t
+#define __NEED_time_t
+#ifdef _GNU_SOURCE
+#define __NEED_struct_timespec
+#endif
+#include <bits/alltypes.h>
+
+#include <sys/ipc.h>
+#else
 #include <sys/ipc.h>
 #include <sys/types.h>
+#endif
 
 #define SEM_UNDO	0x1000
 #define GETPID		11
