@@ -516,6 +516,18 @@ sources = [
 headers = ["include/netinet/in.h", "include/stddef.h", "include/sys/socket.h"]
 
 [[probe]]
+id = "tcp"
+command = "./scripts/dev-x86_64.sh tcp-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/tcp_header_abi_probe.c",
+  "compat/x86_64/tcp_header_abi_probe.cpp",
+  "compat/x86_64/run_tcp_header_abi.sh",
+]
+headers = ["include/netinet/tcp.h"]
+
+[[probe]]
 id = "nameser"
 command = "./scripts/dev-x86_64.sh nameser-header-abi"
 state = "required"

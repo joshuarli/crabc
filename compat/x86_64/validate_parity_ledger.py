@@ -386,13 +386,13 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 562,
-        "mismatch": 718,
+        "matched": 569,
+        "mismatch": 711,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "718 comparable header/profile rows have prototype or named declaration-form differences",
+        "711 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
@@ -400,9 +400,9 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "mismatch_fact_counts": {
         "candidate_only_count": 16295,
         "incompatible_count": 3113,
-        "reference_only_count": 12071,
+        "reference_only_count": 9278,
     },
-    "mismatch_row_count": 718,
+    "mismatch_row_count": 711,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -429,19 +429,19 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 661,
-        "mismatch": 619,
+        "matched": 668,
+        "mismatch": 612,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "619 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "612 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 283293,
-    "mismatch_row_count": 619,
+    "matched_identity_count": 286086,
+    "mismatch_row_count": 612,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -450,20 +450,19 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 12071,
+    "reference_only_identity_count": 9278,
     "reference_only_identity_kind_counts": {
-        "enum": 3,
-        "function": 317,
-        "macro": 11209,
-        "record": 141,
-        "typedef": 392,
+        "function": 215,
+        "macro": 8920,
+        "record": 78,
+        "typedef": 56,
         "variable": 9,
     },
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 562,
-        "mismatch": 718,
+        "matched": 569,
+        "mismatch": 711,
         "oracle-not-applicable": 1,
     },
     "source_form_difference_count": 3113,
@@ -938,6 +937,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "mman": "./scripts/dev-x86_64.sh mman-header-abi",
     "resource": "./scripts/dev-x86_64.sh resource-header-abi",
     "socket": "./scripts/dev-x86_64.sh socket-header-abi",
+    "tcp": "./scripts/dev-x86_64.sh tcp-header-abi",
     "nameser": "./scripts/dev-x86_64.sh nameser-header-abi",
     "quota": "./scripts/dev-x86_64.sh quota-header-abi",
     "sched-cpu-macros": "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi",
@@ -1151,6 +1151,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/socket_header_abi_probe.cpp",
         "compat/x86_64/socket_header_ipv6_macro_probe.c",
         "compat/x86_64/run_socket_header_abi.sh",
+    ),
+    "tcp": (
+        "compat/x86_64/tcp_header_abi_probe.c",
+        "compat/x86_64/tcp_header_abi_probe.cpp",
+        "compat/x86_64/run_tcp_header_abi.sh",
     ),
     "nameser": (
         "compat/x86_64/nameser_header_abi_probe.c",
@@ -2676,18 +2681,18 @@ def require_header_callable_visibility_matrix(
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1063,
-                "mismatch": 217,
+                "matched": 1070,
+                "mismatch": 210,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "217 comparable pinned header/profile rows have callable visibility differences",
+                "210 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
-            "matched_callable_count": 34103,
-            "mismatch_row_count": 217,
+            "matched_callable_count": 34376,
+            "mismatch_row_count": 210,
             "oracle_not_applicable_candidate_visible_callable_count": 21,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
@@ -2696,7 +2701,7 @@ def require_header_callable_visibility_matrix(
             "project_only_callable_count": 407,
             "project_only_header_count": 8,
             "project_only_row_count": 56,
-            "reference_only_callable_count": 589,
+            "reference_only_callable_count": 316,
             "row_count": 1337,
         },
         "callable visibility matrix finite baseline drifted",
@@ -6186,8 +6191,8 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "619 current comparable declaration-or-macro identity mismatch rows",
-        "661 matched identity rows",
+        "612 current comparable declaration-or-macro identity mismatch rows",
+        "668 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
@@ -6260,7 +6265,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "217 current comparable callable name/class mismatch rows",
+        "210 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6558,7 +6563,7 @@ def require_all_header_prototype_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "718 current comparable prototype or named source-form mismatch rows",
+        "711 current comparable prototype or named source-form mismatch rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",
@@ -7541,6 +7546,71 @@ def require_socket_header_evidence(family: Mapping[str, Any]) -> None:
         require(
             owner in owners,
             f"libc.headers-layouts socket-header-abi source owners omit {owner}",
+        )
+
+
+def require_tcp_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep TCP declaration/layout evidence below transport-runtime selection."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matches = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == "./scripts/dev-x86_64.sh tcp-header-abi"
+    ]
+    require(
+        len(matches) == 1,
+        "libc.headers-layouts must retain exactly one tcp-header-abi evidence command",
+    )
+    record = matches[0]
+    scope = record.get("scope")
+    require(
+        record.get("state") == "required"
+        and isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "project-first/pinned-musl seven-profile C/C++",
+                "`<netinet/tcp.h>`",
+                "unconditional TCP option/state and netlink vocabulary",
+                "GNU/BSD option-parser constants",
+                "`tcp_seq`",
+                "`struct tcphdr` 20-byte/align-4 legacy layout",
+                "GNU-only `tcp_info`",
+                "`tcp_md5sig`",
+                "`tcp_diag_md5sig`",
+                "`tcp_repair_window`",
+                "`tcp_zerocopy_receive`",
+                "anonymous GNU `tcphdr` aliases",
+                "archive linkage",
+                "TCP socket-option behavior",
+                "TCP transport behavior",
+                "socket runtime behavior",
+                "installed-header completion",
+                "family completion",
+                "public x86 support",
+            )
+        ),
+        "libc.headers-layouts tcp-header-abi evidence must retain its narrow header-only boundary",
+    )
+    owners = set(
+        nonempty_strings(
+            family["source_owners"], "family[libc.headers-layouts].source_owners"
+        )
+    )
+    for owner in (
+        "include/netinet/tcp.h",
+        "compat/x86_64/tcp_header_abi_probe.c",
+        "compat/x86_64/tcp_header_abi_probe.cpp",
+        "compat/x86_64/run_tcp_header_abi.sh",
+    ):
+        require(
+            owner in owners,
+            f"libc.headers-layouts tcp-header-abi source owners omit {owner}",
         )
 
 
@@ -76246,6 +76316,7 @@ def validate_ledger(
     require_memfd_create_header_evidence(by_id["libc.headers-layouts"])
     require_ctype_header_evidence(by_id["libc.headers-layouts"])
     require_socket_header_evidence(by_id["libc.headers-layouts"])
+    require_tcp_header_evidence(by_id["libc.headers-layouts"])
     require_socket_messages_header_evidence(by_id["libc.headers-layouts"])
     require_nameser_header_evidence(by_id["libc.headers-layouts"])
     require_quota_header_evidence(by_id["libc.headers-layouts"])

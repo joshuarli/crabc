@@ -70,7 +70,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
-        self.assertEqual(report["header_layout_probe_count"], 53)
+        self.assertEqual(report["header_layout_probe_count"], 54)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -2497,7 +2497,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 53)
+        self.assertEqual(report["header_layout_probe_count"], 54)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -2561,6 +2561,18 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/socket_header_abi_probe.cpp",
                 "compat/x86_64/socket_header_ipv6_macro_probe.c",
                 "compat/x86_64/run_socket_header_abi.sh",
+            ],
+        )
+        tcp = next(probe for probe in probes if probe["id"] == "tcp")
+        assert isinstance(tcp, dict)
+        self.assertEqual(tcp["kind"], "compile-only")
+        self.assertEqual(tcp["headers"], ["include/netinet/tcp.h"])
+        self.assertEqual(
+            tcp["sources"],
+            [
+                "compat/x86_64/tcp_header_abi_probe.c",
+                "compat/x86_64/tcp_header_abi_probe.cpp",
+                "compat/x86_64/run_tcp_header_abi.sh",
             ],
         )
         nameser = next(probe for probe in probes if probe["id"] == "nameser")
@@ -2933,6 +2945,55 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError, "socket-header-abi evidence must retain"
         ):
             ledger.require_socket_header_evidence(headers_layouts)
+
+    def test_tcp_header_gate_stays_compile_only_and_non_promoting(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"] == "./scripts/dev-x86_64.sh tcp-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "project-first/pinned-musl seven-profile C/C++",
+            "`<netinet/tcp.h>`",
+            "unconditional TCP option/state and netlink vocabulary",
+            "GNU/BSD option-parser constants",
+            "`tcp_seq`",
+            "`struct tcphdr` 20-byte/align-4 legacy layout",
+            "GNU-only `tcp_info`",
+            "`tcp_md5sig`",
+            "`tcp_diag_md5sig`",
+            "`tcp_repair_window`",
+            "`tcp_zerocopy_receive`",
+            "anonymous GNU `tcphdr` aliases",
+            "archive linkage",
+            "TCP socket-option behavior",
+            "TCP transport behavior",
+            "socket runtime behavior",
+            "installed-header completion",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        for owner in (
+            "include/netinet/tcp.h",
+            "compat/x86_64/tcp_header_abi_probe.c",
+            "compat/x86_64/tcp_header_abi_probe.cpp",
+            "compat/x86_64/run_tcp_header_abi.sh",
+            "compat/x86_64/tests/test_tcp_header_abi.py",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
+
+        ledger.require_tcp_header_evidence(headers_layouts)
+
+        evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "tcp-header-abi evidence must retain"
+        ):
+            ledger.require_tcp_header_evidence(headers_layouts)
 
     def test_socket_message_helper_macro_gate_stays_header_only(self) -> None:
         data = self.data()
@@ -3431,14 +3492,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 661,
-                "mismatch": 619,
+                "matched": 668,
+                "mismatch": 612,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 16295, "reference_only": 12071},
+            {"candidate_only": 16295, "reference_only": 9278},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3458,8 +3519,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 562,
-                "mismatch": 718,
+                "matched": 569,
+                "mismatch": 711,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4592,8 +4653,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "619 current comparable declaration-or-macro identity mismatch rows",
-            "661 matched identity rows",
+            "612 current comparable declaration-or-macro identity mismatch rows",
+            "668 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
@@ -4649,7 +4710,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "718 current comparable prototype or named source-form mismatch rows",
+            "711 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",

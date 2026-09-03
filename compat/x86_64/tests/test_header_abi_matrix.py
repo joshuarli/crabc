@@ -687,6 +687,7 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             "netdb.h",
             "resolv.h",
             "netinet/in.h",
+            "netinet/tcp.h",
             "netinet/ip.h",
             "netinet/ip6.h",
             "netinet/ip_icmp.h",
@@ -786,10 +787,10 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                     f"{sorted(difference_names)}",
                 )
 
-        self.assertEqual(len(headers) * len(profiles), 98)
+        self.assertEqual(len(headers) * len(profiles), 105)
         self.assertGreaterEqual(
             matched,
-            71,
+            78,
             "network-owned header rows must not regress behind the completed source closure",
         )
 

@@ -353,6 +353,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh memfd-create-header-abi
 ./scripts/dev-x86_64.sh resource-header-abi
 ./scripts/dev-x86_64.sh socket-header-abi
+./scripts/dev-x86_64.sh tcp-header-abi
 ./scripts/dev-x86_64.sh inet-address-header-abi
 ./scripts/dev-x86_64.sh socket-messages-header-abi
 ./scripts/dev-x86_64.sh sysv-semaphore-header-abi
@@ -784,7 +785,7 @@ report and not a substitute for the canonical dynamic x86 `os-test`,
 prerequisites, the remaining ABI contract, family completion, promotion, and
 public x86 support remain required.
 
-`headers-layouts.toml` is the checked-in contract for the fifty selected
+`headers-layouts.toml` is the checked-in contract for the fifty-four selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -1744,7 +1745,7 @@ behavior, family promotion, or public x86 support.
 `header-abi-matrix` adds a separate checked Clang-derived 1,337-row report for
 function source declaration forms and emitted linkage spellings plus named
 typedefs, record shapes, enum values, variables, and macro replacement forms.
-Its current 718 comparable red source-form rows, one
+Its current 711 comparable red source-form rows, one
 `aio.h:c11-strict` oracle-not-applicable row, and 56 project-only rows are
 evidence to review—not parity waivers or ABI classifications. It excludes byte
 layouts, anonymous declarations, inline behavior, archive linkage, runtime,
@@ -1753,8 +1754,8 @@ family promotion, and public x86 support.
 `header-declaration-macro-visibility-matrix` derives a checked identity report
 from that same refreshed compiler collection, rather than collecting another
 header cross-product. It compares only named `(kind, name)` declaration and
-macro visibility across all 1,337 rows: 619 current identity-mismatch rows,
-661 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
+macro visibility across all 1,337 rows: 612 current identity-mismatch rows,
+668 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
 and 56 project-only rows retain checked candidate fact summaries and digests.
 Its 3,113 same-identity source-form
 differences across 528 rows—including 99 form-only rows—remain separately
@@ -2307,6 +2308,15 @@ bind/listen/accept/`accept4`/connect, send/receive, name-query, and shutdown
 signatures, and the named IPv6 macro classifications. It is source-only header
 evidence: it does not select socket options, vector or ancillary-message APIs,
 address-conversion or socket behavior, `crabc-libc`, or public x86 support.
+
+`tcp-header-abi` compares source-faithful project and pinned-musl C/C++
+`<netinet/tcp.h>` in strict, POSIX, XOPEN, GNU, and BSD feature profiles. It
+checks unconditional TCP option/state and netlink vocabulary, GNU/BSD
+option-parser constants and the x86 `struct tcphdr` layout, plus GNU-only
+`tcp_info`, MD5, repair-window, and zero-copy-receive records. It is
+compile-only header evidence, not TCP socket-option or transport behavior,
+archive linkage, installed-header completion, family completion, or public x86
+support.
 
 `nameser-header-abi` compile-checks project-first and pinned-musl C and C++
 `<resolv.h>` consumers for exactly
