@@ -2534,7 +2534,17 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
 
     #[inline]
     fn permits_ordinary_page_operations(&self) -> bool {
-        matches!(self.attachment.state, DynamicAttachmentState::Attached)
+        // This gate adds only the new retained backing-release boundary.
+        // Existing terminal fixture paths can still consume their engine to
+        // quiesce already-owned pages before retaining the poisoned outer
+        // attachment; treating every non-Attached state as unavailable would
+        // strand that established cleanup path. `AwaitingBackingRelease` is
+        // the one state whose retained regular-key/root ownership makes every
+        // ordinary engine operation invalid until its exact drain retry.
+        !matches!(
+            self.attachment.state,
+            DynamicAttachmentState::AwaitingBackingRelease
+        )
     }
 
     #[inline]
