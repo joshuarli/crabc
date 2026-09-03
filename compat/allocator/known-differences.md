@@ -488,6 +488,60 @@ assertion-invalid input, not C/Rust invalid-input parity.
   treating this coordinator as a complete process initializer or public
   allocator startup API.
 
+### `CRABC-MI-NORMAL-TLD-DIRECT-HELPER` — recorded M2 direct-helper differential boundary
+
+- **Upstream/Rust:** pinned `src/init.c:155-157,236-250`, with its local
+  zero initializer in `include/mimalloc/internal.h:104-110`, `MI_MEM_NONE`
+  and TLD/subprocess-counter fields in `include/mimalloc/types.h:288-297,670-701`,
+  increment and lock operations in `include/mimalloc/atomic.h:90-97,446-471`,
+  identity in `include/mimalloc/prim-tls.h:185-190`, and false thread-pool
+  result in `src/prim/unix/prim.c:1059-1061`; represented by
+  `types::{ThreadLocalData::normal_tld_init_preimage,
+  ThreadLocalData::initialize_normal_tld_field_prefix_after_direct_preimage_with_numa_source,
+  NormalTldInitWriteTrace}` and the test-only direct ticket model in
+  `subproc::ThreadRegistrationTicket`.
+- **Category:** a private, direct file-static helper boundary. It is neither
+  `mi_tld_create` nor a static-main or metadata caller lifecycle.
+- **Difference:** the pinned-C fixture direct-includes `src/init.c` and starts
+  only a fresh all-zero local TLD plus an address-only zero subprocess in a
+  caller-owned post-ticket context: total `8`, sequence `7`, live `0`, and
+  full `MI_MEM_NONE` provenance. It injects the already-normalized,
+  source-valid NUMA result `3`; this is not OS discovery or NUMA policy. C
+  dynamically observes lock -> NUMA -> real thread-ID -> real false
+  threadpool -> live-count increment, while source anchoring and poststate
+  cover the plain assignments. Its return relation is `returned == &tld`.
+  The helper accepts only an already-validated `LiveThreadId`, so its modeled
+  body has no invalid-identity branch or ticket consumption. The static
+  production path validates current identity before ticket issue. After that
+  outer safety boundary, the production-backed field-prefix helper records all
+  eight modeled field/counter effects, with ticket/live registration as the
+  final modeled helper effect. Rust proves the corresponding input remains the
+  in-place TLD but returns a lease, not a TLD reference. It preserves
+  `MemoryId::none()` unchanged. A direct busy/preimage refusal is a Rust-only
+  safety strengthening before any modeled body or counter mutation; it returns
+  the exact unconsumed test ticket. Ordinary source ticketed allocation failure
+  remains sequence-consuming. The separate ticket-zero static caller now
+  records registration before its `MAIN_TLD_LIVE` Release publication, but the
+  sequence-seven direct fixture does not turn that caller into a general
+  `mi_tld_create` claim.
+- **Evidence:**
+  `subproc::tests::normal_tld_init_direct_preimage_refuses_busy_lock_then_registers_sequence_seven`
+  proves busy-lock refusal leaves the exact preimage and both counters intact,
+  then permits the same ticket's pre-body retry and proves total `8` / live
+  `1`. `subproc::tests::emit_m2_normal_tld_direct_c_rust_trace` and its
+  pinned-C `compat/allocator/run.py` fixture compare 31 address-independent
+  relations, including input identity, full none provenance, source-valid
+  thread identity, unchanged total count, live `0 -> 1`, and the observable
+  source order. `main_theap::tests::ticket_zero_static_tld_uses_fixed_numa_wrapper_after_static_memid`
+  separately proves that the production static path registers while CLAIMED
+  before Release publication.
+- **Decision/removal:** this record remains deliberately narrow until a caller
+  owns and proves C ticket issuance, `mi_tld_create` storage/allocation,
+  `_mi_subproc_main_init`, source option/NUMA execution, Theap/list/TLS/root
+  publication, teardown/free, pthread ABI, races, and allocator integration.
+  It does not compare literal Rust/C primitive invocation timing or any raw
+  pointer, layout, or thread-ID value.
+
 ### `CRABC-MI-PROCESS-PAGE-MAP-COLD-ROOT` — accepted bounded cold-root safety divergence
 
 - **Upstream/Rust:** `src/page-map.c:228-365`, especially static
@@ -754,9 +808,10 @@ assertion-invalid input, not C/Rust invalid-input parity.
 - **Decision/removal:** accepted for this one no-option topology wrapper. It
   does not close VM primitives or establish option override, diagnostics,
   topology-change handling, first-fill race policy, arena placement,
-  field-by-field normal `mi_tld_create`/`mi_tld_init` order, generic/later TLD
-  callers, allocator integration, or complete NUMA behavior. The separate
-  detached static-preimage trace does not broaden this ticket-zero caller.
+  field-by-field normal `mi_tld_create`/`mi_tld_init` order beyond the separate
+  direct-helper record, generic/later TLD callers, allocator integration, or
+  complete NUMA behavior. Neither the detached nor sequence-seven normal
+  direct-helper trace broadens this ticket-zero caller.
 
 ### `CRABC-MI-ORDINARY-BITMAP-HIGHEST-SET-STALE-CHUNKMAP` — accepted checked observer boundary
 

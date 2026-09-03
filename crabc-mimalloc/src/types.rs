@@ -1296,6 +1296,114 @@ pub(crate) struct ThreadLocalData {
     memid: MemoryId,
 }
 
+/// Test-only event witness for the exact modeled write order of the normal
+/// `mi_tld_init` arm. Its events are emitted by the production helper's
+/// shared implementation; this contains no substitute initialization logic.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct NormalTldInitWriteTrace {
+    next: usize,
+    subprocess: usize,
+    theap_head: usize,
+    lock: usize,
+    numa_node: usize,
+    thread_id: usize,
+    threadpool: usize,
+    thread_sequence: usize,
+    live_registration: usize,
+}
+
+#[cfg(test)]
+impl NormalTldInitWriteTrace {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    #[inline]
+    fn record_next(&mut self) -> usize {
+        self.next += 1;
+        self.next
+    }
+
+    #[inline]
+    fn record_subprocess(&mut self) {
+        self.subprocess = self.record_next();
+    }
+
+    #[inline]
+    fn record_theap_head(&mut self) {
+        self.theap_head = self.record_next();
+    }
+
+    #[inline]
+    fn record_lock(&mut self) {
+        self.lock = self.record_next();
+    }
+
+    #[inline]
+    fn record_numa_node(&mut self) {
+        self.numa_node = self.record_next();
+    }
+
+    #[inline]
+    fn record_thread_id(&mut self) {
+        self.thread_id = self.record_next();
+    }
+
+    #[inline]
+    fn record_threadpool(&mut self) {
+        self.threadpool = self.record_next();
+    }
+
+    #[inline]
+    fn record_thread_sequence(&mut self) {
+        self.thread_sequence = self.record_next();
+    }
+
+    /// Records the final modeled `mi_tld_init` `thread_count` increment. The
+    /// linear Rust ticket owns this effect immediately after the field prefix
+    /// and before a static owner Release-publishes its image.
+    #[inline]
+    pub(crate) fn record_live_registration(&mut self) {
+        self.live_registration = self.record_next();
+    }
+
+    #[inline]
+    pub(crate) fn has_exact_source_order(&self) -> bool {
+        self.subprocess == 1
+            && self.theap_head == 2
+            && self.lock == 3
+            && self.numa_node == 4
+            && self.thread_id == 5
+            && self.threadpool == 6
+            && self.thread_sequence == 7
+            && self.live_registration == 8
+            && self.next == 8
+    }
+
+    #[inline]
+    pub(crate) fn modeled_field_writes_are_ordered(&self) -> bool {
+        self.numa_node < self.thread_id
+            && self.thread_id < self.threadpool
+            && self.threadpool < self.thread_sequence
+    }
+
+    /// Checks the five effects C can hook in this body against the complete
+    /// eight-event Rust field trace. C observes five primitive/counter calls;
+    /// Rust observes their corresponding modeled field/counter positions, not
+    /// a claim that Rust acquires its already-validated identity at that spot.
+    #[inline]
+    pub(crate) fn has_modeled_observable_source_effect_order(&self) -> bool {
+        self.lock == 3
+            && self.numa_node == 4
+            && self.thread_id == 5
+            && self.threadpool == 6
+            && self.live_registration == 8
+            && self.next == 8
+    }
+}
+
 impl ThreadLocalData {
     #[inline]
     pub(crate) const fn detached() -> Self {
@@ -1309,6 +1417,30 @@ impl ThreadLocalData {
             recurse: false,
             is_in_threadpool: false,
             memid: MemoryId::static_empty(),
+        }
+    }
+
+    /// Forms the valid all-zero-shaped TLD image consumed by the selected
+    /// normal arm of pinned `src/init.c:236-250`.
+    ///
+    /// This represents only the direct helper's read/write preimage: an
+    /// abandoned zero thread identity, no subprocess or Theap head, an
+    /// unlocked private list lock, and zero scalar fields.  It deliberately
+    /// does not stand for `mi_tld_create`, static-main storage selection, or
+    /// a `MemoryId` predecessor; those outer source callers install their own
+    /// provenance before they invoke the normal helper.
+    #[inline]
+    pub(crate) const fn normal_tld_init_preimage() -> Self {
+        Self {
+            thread_id: THREAD_ID_ABANDONED,
+            thread_seq: 0,
+            numa_node: 0,
+            subprocess: null_mut(),
+            theaps: null_mut(),
+            theaps_lock: PrivateLock::new(),
+            recurse: false,
+            is_in_threadpool: false,
+            memid: MemoryId::none(),
         }
     }
 
@@ -1469,6 +1601,37 @@ impl ThreadLocalData {
         second.unlock().is_ok()
     }
 
+    /// Checks the direct C fixture's all-zero normal-helper preimage except
+    /// for the private lock state. The production predicate deliberately
+    /// leaves `memid` caller-owned so static and metadata callers can install
+    /// concrete provenance first; this witness instead proves the minimal
+    /// `MemoryId::none()` seam used only by the seq=7 direct differential.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_matches_normal_tld_init_minimal_preimage_except_lock(&self) -> bool {
+        self.matches_normal_tld_init_direct_preimage() && self.test_memory_id_is_none()
+    }
+
+    /// Tests the complete semantic `MemoryId::none()` tuple without exposing
+    /// its address-bearing union contents. This is only a local fixture
+    /// witness; normal `mi_tld_init` itself leaves caller provenance alone.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_memory_id_is_none(&self) -> bool {
+        if self.memid.kind() != MemoryKind::None {
+            return false;
+        }
+        // SAFETY: `MemoryKind::None` is constructed through `empty_with_kind`
+        // with this null/zero `os` view. The direct fixture rejects every
+        // other discriminant before inspecting that representation.
+        let memory = unsafe { self.memid.info.os };
+        memory.base.is_null()
+            && memory.size == 0
+            && !self.memid.is_pinned()
+            && !self.memid.initially_committed()
+            && !self.memid.initially_zero()
+    }
+
     /// Injects a private theap-list lock violation without retaining a guard
     /// or TLD reference across `ThreadLocalDataOwner::teardown`.
     ///
@@ -1478,6 +1641,12 @@ impl ThreadLocalData {
     #[inline]
     pub(crate) fn test_inject_busy_theaps_lock(&self) {
         self.theaps_lock.test_inject_busy();
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_subprocess_is_null(&self) -> bool {
+        self.subprocess.is_null()
     }
 
     #[cfg(test)]
@@ -1536,7 +1705,7 @@ impl ThreadLocalData {
     #[inline]
     pub(crate) fn prepare_detached_static_memid(&mut self) -> bool {
         if !self.matches_detached_static_preimage()
-            || !self.detached_static_preimage_lock_is_quiescent()
+            || !self.tld_init_preimage_lock_is_quiescent()
         {
             return false;
         }
@@ -1570,13 +1739,160 @@ impl ThreadLocalData {
         if !self.matches_detached_static_memid_preimage() {
             return false;
         }
-        if !self.detached_static_preimage_lock_is_quiescent() {
+        if !self.tld_init_preimage_lock_is_quiescent() {
             return false;
         }
         self.subprocess = subprocess.as_ptr();
         self.theaps = null_mut();
         self.theaps_lock = PrivateLock::new();
         self.numa_node = -1;
+        true
+    }
+
+    /// Applies only the non-detached arm of pinned `mi_tld_init`.
+    ///
+    /// The modeled body begins after Rust's outer owner has already validated
+    /// its live thread identity. It writes the source fields in their exact
+    /// body order: subprocess, null Theap head, fresh private lock, NUMA
+    /// node, live thread identity, thread-pool result, and source-issued
+    /// sequence. The matching [`crate::subproc::ThreadRegistrationTicket`]
+    /// owns the
+    /// final modeled `thread_count` increment; its full-operation wrapper
+    /// runs that effect immediately after this field prefix succeeds.
+    ///
+    /// `mi_tld_init` neither reads nor writes `memid`; its enclosing source
+    /// caller provides that provenance.  This helper therefore accepts the
+    /// deliberately minimal direct-helper preimage used by the differential
+    /// fixture as well as the concrete static or metadata provenance installed
+    /// by bounded Rust callers.  It is not `mi_tld_create`, storage selection,
+    /// TLS/list/root publication, or a general TLD lifecycle.
+    ///
+    /// Returns `false` without mutation unless the selected direct preimage
+    /// still exists and its private list lock is quiescent.  The latter is a
+    /// Rust safety strengthening: an invalid busy futex must not be replaced
+    /// by a fresh lock image.
+    #[must_use = "a refused normal mi_tld_init body leaves the source image unchanged"]
+    #[inline]
+    pub(crate) fn initialize_normal_tld_field_prefix_after_direct_preimage(
+        &mut self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        numa_node: i32,
+        subprocess: &'static MainSubprocess,
+    ) -> bool {
+        self.initialize_normal_tld_field_prefix_after_direct_preimage_with_numa_source(
+            thread_id,
+            thread_sequence,
+            move || numa_node,
+            subprocess,
+        )
+    }
+
+    /// Applies the normal helper body with its NUMA input obtained exactly at
+    /// the source `tld->numa_node` write.  The validated thread identity is
+    /// intentionally an already-acquired outer Rust safety input: delaying
+    /// that validation would change ticket/slot failure semantics.
+    #[inline]
+    pub(crate) fn initialize_normal_tld_field_prefix_after_direct_preimage_with_numa_source(
+        &mut self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        numa_node_source: impl FnOnce() -> i32,
+        subprocess: &'static MainSubprocess,
+    ) -> bool {
+        self.initialize_normal_tld_field_prefix_after_direct_preimage_impl(
+            thread_id,
+            thread_sequence,
+            numa_node_source,
+            subprocess,
+            #[cfg(test)]
+            None,
+        )
+    }
+
+    /// Executes the selected normal helper body while recording each modeled
+    /// source write.  This is test-only instrumentation around the same
+    /// production implementation used by
+    /// [`Self::initialize_normal_tld_field_prefix_after_direct_preimage`]; it neither supplies
+    /// a test implementation nor adds a lifecycle route.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_initialize_normal_tld_field_prefix_after_direct_preimage(
+        &mut self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        numa_node: i32,
+        subprocess: &'static MainSubprocess,
+        trace: &mut NormalTldInitWriteTrace,
+    ) -> bool {
+        self.initialize_normal_tld_field_prefix_after_direct_preimage_impl(
+            thread_id,
+            thread_sequence,
+            move || numa_node,
+            subprocess,
+            Some(trace),
+        )
+    }
+
+    #[inline]
+    fn initialize_normal_tld_field_prefix_after_direct_preimage_impl(
+        &mut self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        numa_node_source: impl FnOnce() -> i32,
+        subprocess: &'static MainSubprocess,
+        #[cfg(test)] mut trace: Option<&mut NormalTldInitWriteTrace>,
+    ) -> bool {
+        if !self.matches_normal_tld_init_direct_preimage()
+            || !self.tld_init_preimage_lock_is_quiescent()
+        {
+            return false;
+        }
+
+        self.subprocess = subprocess.as_ptr();
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.record_subprocess();
+        }
+
+        self.theaps = null_mut();
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.record_theap_head();
+        }
+
+        self.theaps_lock = PrivateLock::new();
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.record_lock();
+        }
+
+        self.numa_node = numa_node_source();
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.record_numa_node();
+        }
+
+        self.thread_id = thread_id.get();
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.record_thread_id();
+        }
+
+        // `src/prim/unix/prim.c` returns false exactly.  The source helper
+        // invokes that primitive here after its thread-ID write; Rust's
+        // validated outer boundary carries the resulting fixed value.
+        self.is_in_threadpool = false;
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.record_threadpool();
+        }
+
+        self.thread_seq = thread_sequence.get();
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.record_thread_sequence();
+        }
         true
     }
 
@@ -1592,8 +1908,19 @@ impl ThreadLocalData {
             && self.matches_zero_static_memid(false, false)
     }
 
+    #[inline]
+    fn matches_normal_tld_init_direct_preimage(&self) -> bool {
+        self.thread_id == THREAD_ID_ABANDONED
+            && self.thread_seq == 0
+            && self.numa_node == 0
+            && self.subprocess.is_null()
+            && self.theaps.is_null()
+            && !self.recurse
+            && !self.is_in_threadpool
+    }
+
     /// Probes the initializer-only private lock and restores its unlocked
-    /// state before either ordered detached helper writes a field.
+    /// state before either ordered detached or normal helper writes a field.
     ///
     /// This is intentionally a Rust safety strengthening outside C's valid
     /// static-preimage contract: a test-only or otherwise invalid Rust image
@@ -1601,7 +1928,7 @@ impl ThreadLocalData {
     /// reclaim. The exclusive `&mut self` boundary rules out safe aliases,
     /// guards, and waiters while the short probe is held.
     #[inline]
-    fn detached_static_preimage_lock_is_quiescent(&self) -> bool {
+    fn tld_init_preimage_lock_is_quiescent(&self) -> bool {
         let Some(quiescent_lock) = self.theaps_lock.try_lock() else {
             return false;
         };
@@ -1641,10 +1968,15 @@ impl ThreadLocalData {
     /// # Safety
     ///
     /// `self` must name the unique fresh-zeroed, properly aligned valid image
-    /// for one `ThreadLocalData` metadata request. No concurrent observer may
-    /// exist there. `memid` must describe that exact allocation. The caller
-    /// must keep the allocation live until the source-ordered invalidation and
-    /// metadata release transition completes.
+    /// for one `ThreadLocalData` metadata request: in particular it must have
+    /// the normal direct-helper preimage's abandoned identity, zero sequence
+    /// and NUMA node, null pointers, false flags, `MemoryId::none()`, and an
+    /// unlocked private list lock. No concurrent observer, lock guard, or
+    /// waiter may exist there. `memid` must describe that exact allocation.
+    /// The caller must keep the allocation live until the source-ordered
+    /// invalidation and metadata release transition completes. This method
+    /// installs `memid` before checking that preimage, so those conditions are
+    /// a release precondition rather than a debug-only convenience.
     pub(crate) unsafe fn initialize_subprocess_attached_no_theap(
         &mut self,
         thread_id: LiveThreadId,
@@ -1653,22 +1985,24 @@ impl ThreadLocalData {
         subprocess: &'static MainSubprocess,
         memid: MemoryId,
     ) {
-        // SAFETY: forwarded unchanged; `self` is the caller's exclusive
-        // valid image and receives a complete source-ordered replacement.
-        unsafe {
-            Self::write_subprocess_attached_no_theap_at(
-                core::ptr::from_mut(self),
-                thread_id,
-                thread_sequence,
-                numa_node,
-                subprocess,
-                memid,
-            );
-        }
+        // `mi_tld_create` writes this caller-owned provenance before entering
+        // the selected normal helper body.  The direct helper deliberately
+        // leaves it untouched.
+        self.memid = memid;
+        let initialized = self.initialize_normal_tld_field_prefix_after_direct_preimage(
+            thread_id,
+            thread_sequence,
+            numa_node,
+            subprocess,
+        );
+        debug_assert!(
+            initialized,
+            "the unsafe fresh-zeroed TLD contract must satisfy normal mi_tld_init's preimage"
+        );
     }
 
-    /// Writes one complete subprocess-attached/no-theap TLD image into raw
-    /// storage without first forming a reference to that storage.
+    /// Writes one source-ordered subprocess-attached/no-theap TLD image into
+    /// raw storage without first forming a reference to that storage.
     ///
     /// The process-static main-TLD branch begins as `MaybeUninit`, unlike the
     /// metadata branch's known valid all-zero representation. Keeping this
@@ -1677,35 +2011,47 @@ impl ThreadLocalData {
     ///
     /// # Safety
     ///
-    /// `destination` must be aligned writable storage for exactly one TLD and
-    /// exclusively available. If it already contains a TLD value, its owner
-    /// must permit replacement without running `Drop` (the represented TLD is
-    /// intentionally non-dropping). No observer may access the destination
-    /// until this complete image has been published by its owner.
+    /// `destination` must be fresh uninitialized storage for exactly one TLD,
+    /// aligned, writable, and exclusively available. It must not name a prior
+    /// TLD image, including an image with a busy private lock: this routine
+    /// first overwrites the storage with the direct preimage and therefore
+    /// cannot safely preserve or probe a prior lock. No observer may access
+    /// the destination until this complete image has been published by its
+    /// owner. It first materializes a valid source-zero-shaped static TLD,
+    /// installs the outer concrete static `MemoryId` predecessor, and then
+    /// invokes the normal `mi_tld_init` body in field order. Its caller
+    /// performs the final source live-count registration before that owner
+    /// publishes the image.
     #[inline]
     pub(crate) unsafe fn write_subprocess_attached_no_theap_at(
         destination: *mut Self,
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
-        numa_node: i32,
+        numa_node_source: impl FnOnce() -> i32,
         subprocess: &'static MainSubprocess,
         memid: MemoryId,
     ) {
         // SAFETY: the caller proves exclusive aligned storage and no observer
-        // can reach it before the complete image is installed.
+        // can reach it before the complete image is installed. The first
+        // write constructs a valid Rust object before its ordered field body
+        // forms `&mut` storage.
         unsafe {
-            destination.write(Self {
-                thread_id: thread_id.get(),
-                thread_seq: thread_sequence.get(),
-                numa_node,
-                subprocess: subprocess.as_ptr(),
-                theaps: null_mut(),
-                theaps_lock: PrivateLock::new(),
-                recurse: false,
-                // `src/prim/unix/prim.c` returns false exactly.
-                is_in_threadpool: false,
-                memid,
-            });
+            destination.write(Self::normal_tld_init_preimage());
+            let tld = &mut *destination;
+            // This is `mi_tld_create`'s outer provenance predecessor, not a
+            // field touched by `mi_tld_init` itself.
+            tld.memid = memid;
+            let initialized = tld
+                .initialize_normal_tld_field_prefix_after_direct_preimage_with_numa_source(
+                    thread_id,
+                    thread_sequence,
+                    numa_node_source,
+                    subprocess,
+                );
+            debug_assert!(
+                initialized,
+                "fresh raw TLD storage must satisfy the normal mi_tld_init preimage"
+            );
         }
     }
 

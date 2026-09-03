@@ -2213,13 +2213,28 @@ upstream = "src/init.c"
 name = "ticket-zero-static-tld-fixed-numa-wrapper-caller"
 source_region = "mimalloc v3.5.0 src/init.c:236-250 non-detached mi_tld_init `tld->numa_node = _mi_os_numa_node()`, reached through the static first-TLD branch of mi_tld_create at 253-272 after static memid formation; paired fixed wrapper at src/os.c:860-898"
 rust_module = "crabc_mimalloc::main_theap, crabc_mimalloc::subproc, and crabc_mimalloc::os"
-rust_item = "MainStaticTheapAttachment::begin_after_heap_foundation -> private begin_after_heap_foundation_with_numa_source -> ThreadRegistrationTicket::initialize_and_activate_first_main_tld_with_numa_source -> MainSubprocess::initialize_main_tld_with_numa_source -> os_numa_node"
-intentional_difference = "This maps one selected ticket-zero static-TLD caller only. After ticket issue, Rust forms the concrete static MemoryId, synchronously observes the fixed no-option wrapper, then writes and Release-publishes one complete TLD image before default/fast root publication. The test-only injected local-cache source proves 8 modulo 3, zero/oversized single-node normalization without a current-node probe, static provenance, ticket/live counts, and root ordering without changing production policy or global topology state. It does not claim C's literal individual-field normal mi_tld_create/mi_tld_init order, generic/later TLD callers, arena placement, options/diagnostics, topology/fill-race policy, normal-branch C/Rust differential parity, or allocator integration. The separate direct detached-static-preimage item below owns only the detached helper boundary."
+rust_item = "MainStaticTheapAttachment::begin_after_heap_foundation -> private begin_after_heap_foundation_with_numa_source -> ThreadRegistrationTicket::initialize_and_activate_first_main_tld_with_numa_source -> MainSubprocess::initialize_main_tld_unpublished_with_numa_source -> os_numa_node"
+intentional_difference = "This maps one selected ticket-zero static-TLD caller only. After ticket issue, Rust forms the concrete static MemoryId, synchronously observes the fixed no-option wrapper, writes the normal TLD body, records its live registration while the static slot remains CLAIMED, then Release-publishes before default/fast root publication. The test-only injected local-cache source proves 8 modulo 3, zero/oversized single-node normalization without a current-node probe, static provenance, ticket/live counts, and root ordering without changing production policy or global topology state. It does not claim C's literal individual-field normal mi_tld_create/mi_tld_init order beyond the separate direct normal-helper item below, generic/later TLD callers, arena placement, options/diagnostics, topology/fill-race policy, normal-branch caller C/Rust differential parity, or allocator integration. The separate direct detached-static-preimage item below owns only the detached helper boundary."
 tests = ["crabc-mimalloc/src/main_theap.rs", "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/os.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true
 differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/init.c"
+name = "normal-tld-direct-helper-post-ticket-sequence-seven"
+source_region = "mimalloc v3.5.0 src/init.c:155-157,236-272: a fresh zero-shaped local mi_tld_t/mi_subproc_t direct mi_tld_init preimage and the non-detached :236-250 body; paired include/mimalloc/internal.h:104-110 zero initializer, include/mimalloc/types.h:288-297 MI_MEM_NONE and :670-701 TLD/subprocess counters, include/mimalloc/atomic.h:90-97 increment and :446-471 lock, include/mimalloc/prim-tls.h:185-190 thread identity, src/prim/unix/prim.c:1059-1061 threadpool false, and src/os.c:860-898 only to justify injected already-normalized NUMA=3"
+rust_module = "crabc_mimalloc::types and crabc_mimalloc::subproc"
+rust_item = "ThreadLocalData::{normal_tld_init_preimage,initialize_normal_tld_field_prefix_after_direct_preimage_with_numa_source}; NormalTldInitWriteTrace; ThreadRegistrationTicket::test_initialize_normal_tld_after_direct_preimage; and subproc::tests::{normal_tld_init_direct_preimage_refuses_busy_lock_then_registers_sequence_seven,emit_m2_normal_tld_direct_c_rust_trace}"
+intentional_difference = "This is one direct file-static normal mi_tld_init helper record only. The pinned-C fixture includes init.c, starts a fresh all-zero local TLD and address-only zero subprocess in caller-owned post-ticket total=8/tseq=7/live=0 context, injects source-valid already-normalized NUMA=3, and observes lock -> NUMA -> real thread-ID -> real false threadpool -> live increment; source anchoring plus address-free poststate covers plain writes and C's returned-input relation. Rust begins after an outer prevalidated LiveThreadId safety boundary, records its production-backed field order through final ticket/live registration, retains full MI_MEM_NONE provenance, and proves the in-place input relation without claiming that its lease-returning API returns a TLD reference. A Rust-only pre-body direct-preimage/busy-lock refusal checks quiescence before mutation or count change and returns its unconsumed test ticket; ordinary source ticket-allocation failure still consumes sequence. This does not compare or establish C caller ticket issuance, mi_tld_create storage/allocation, _mi_subproc_main_init, literal Rust/C primitive invocation timing, static-main or metadata caller lifecycle, Theap/list/TLS/root publication, options/general NUMA policy, pthread ABI/layout, teardown/free, races, or allocator integration."
+tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/main_theap.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 

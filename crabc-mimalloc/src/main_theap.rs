@@ -3488,6 +3488,15 @@ mod tests {
                 }
                 .expect("the selected static attachment accepts the fixed NUMA result");
 
+                assert!(
+                    subprocess.test_main_tld_registered_while_claimed(),
+                    "the normal arm increments its live count while the static slot remains CLAIMED",
+                );
+                assert!(
+                    subprocess.test_main_tld_is_live(),
+                    "only the registered static TLD is Release-published before Theap/root attachment",
+                );
+
                 assert_eq!(
                     owner.tld().expect("the static TLD remains current").numa_node(),
                     expected_numa,

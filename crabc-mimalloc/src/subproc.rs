@@ -49,6 +49,8 @@ use crabc_core::Result as CoreResult;
 
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::types::{Heap, LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, ThreadSequence};
+#[cfg(test)]
+use crate::types::NormalTldInitWriteTrace;
 
 const MAIN_TLD_COLD: u8 = 0;
 const MAIN_TLD_CLAIMED: u8 = 1;
@@ -147,6 +149,16 @@ pub(crate) struct MainSubprocess {
     /// process coordinator has committed to the static main image.
     bootstrap_selection: AtomicU8,
     main_tld_state: AtomicU8,
+    /// Test-only snapshot taken inside the source-order interval after the
+    /// normal arm's live registration and before Rust Release-publishes the
+    /// static TLD image. It exposes no TLD projection or initialization
+    /// authority.
+    #[cfg(test)]
+    main_tld_post_registration_state: AtomicU8,
+    #[cfg(test)]
+    main_tld_post_registration_total: AtomicUsize,
+    #[cfg(test)]
+    main_tld_post_registration_live: AtomicUsize,
     main_tld: UnsafeCell<MainStaticTldSlot>,
 }
 
@@ -256,6 +268,12 @@ impl MainSubprocess {
             theap_meta_lock: PrivateLock::new(),
             bootstrap_selection: AtomicU8::new(BOOTSTRAP_OPEN),
             main_tld_state: AtomicU8::new(MAIN_TLD_COLD),
+            #[cfg(test)]
+            main_tld_post_registration_state: AtomicU8::new(MAIN_TLD_COLD),
+            #[cfg(test)]
+            main_tld_post_registration_total: AtomicUsize::new(0),
+            #[cfg(test)]
+            main_tld_post_registration_live: AtomicUsize::new(0),
             main_tld: UnsafeCell::new(MainStaticTldSlot::new()),
         }
     }
@@ -714,19 +732,45 @@ impl MainSubprocess {
         self.main_tld_state.load(Ordering::Acquire) == MAIN_TLD_CLAIMED
     }
 
+    /// Proves that the static normal-arm registration was recorded while its
+    /// source slot was still claimed, before its later Release publication.
+    /// It deliberately exposes only scalar ordering evidence, never the
+    /// unpublished TLD image.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_main_tld_registered_while_claimed(&self) -> bool {
+        self.main_tld_post_registration_state.load(Ordering::Acquire) == MAIN_TLD_CLAIMED
+            && self
+                .main_tld_post_registration_total
+                .load(Ordering::Relaxed)
+                == 1
+            && self
+                .main_tld_post_registration_live
+                .load(Ordering::Relaxed)
+                == 1
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_main_tld_is_live(&self) -> bool {
+        self.main_tld_state.load(Ordering::Acquire) == MAIN_TLD_LIVE
+    }
+
     /// Initializes the static TLD image after its concrete static provenance
-    /// exists, but before the complete image is written and published.
+    /// exists, but before its normal-arm registration and Release
+    /// publication.
     ///
     /// The source's `mi_tld_create` constructs `MI_MEM_STATIC` provenance
-    /// before `mi_tld_init` obtains the live NUMA node. Rust installs its TLD
-    /// as one unobservable complete image rather than replaying C's individual
-    /// field writes, so this preserves only that bounded observation point.
-    fn initialize_main_tld_with_numa_source(
+    /// before `mi_tld_init` obtains the live NUMA node. Rust first materializes
+    /// the selected zero-shaped source preimage, then runs the modeled normal
+    /// helper body in field order. The returned unpublished token keeps the
+    /// final source `thread_count` increment inseparable from publication.
+    fn initialize_main_tld_unpublished_with_numa_source(
         &'static self,
         sequence: ThreadSequence,
         thread: LiveThreadId,
         numa_node_source: impl FnOnce(MemoryId) -> i32,
-    ) -> Result<MainStaticThreadLocalData, MainStaticTldError> {
+    ) -> Result<PendingMainStaticThreadLocalData, MainStaticTldError> {
         if sequence.get() != 0 {
             return Err(MainStaticTldError::NotFirstTicket);
         }
@@ -745,32 +789,47 @@ impl MainSubprocess {
 
         let tld = self.main_tld_ptr();
         let memid = MemoryId::static_allocation(tld.cast(), size_of::<ThreadLocalData>());
-        let numa_node = numa_node_source(memid);
         // SAFETY: sequence zero is unique for this process-main identity and
         // the state transition above grants the only mutable initialization
-        // authority over this final static slot. This writes the complete
-        // image without first forming a reference to `MaybeUninit` storage.
+        // authority over this final static slot. The raw helper first writes
+        // a valid zero-shaped image, then forms a mutable reference only for
+        // the selected source-order normal arm.
         unsafe {
             ThreadLocalData::write_subprocess_attached_no_theap_at(
                 tld,
                 thread,
                 sequence,
-                numa_node,
+                move || numa_node_source(memid),
                 self,
                 memid,
-            );
-        }
-        // The static image is now fully initialized. Its Release publication
-        // is distinct from the earlier exclusive COLD -> CLAIMED transition:
-        // observers must never mistake a claimed raw slot for a live TLD.
-        self.main_tld_state.store(MAIN_TLD_LIVE, Ordering::Release);
+            )
+        };
 
-        Ok(MainStaticThreadLocalData {
+        Ok(PendingMainStaticThreadLocalData {
             subprocess: self,
             // SAFETY: `main_tld` is an aligned static `ThreadLocalData` image
-            // initialized immediately above and cannot be null.
+            // initialized immediately above and cannot be null. The pending
+            // token retains the only projection until count registration and
+            // Release publication complete.
             pointer: unsafe { NonNull::new_unchecked(tld) },
         })
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn record_main_tld_post_registration_snapshot(&self) {
+        self.main_tld_post_registration_total.store(
+            self.thread_total_count.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        self.main_tld_post_registration_live.store(
+            self.thread_count.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        self.main_tld_post_registration_state.store(
+            self.main_tld_state.load(Ordering::Acquire),
+            Ordering::Release,
+        );
     }
 
     fn retire_main_tld(&self, pointer: NonNull<ThreadLocalData>) {
@@ -970,7 +1029,7 @@ pub(crate) enum GenericThreadTicketError {
 /// source image or one metadata image, and only then can it be consumed into a
 /// live-count lease. Its drop is an explicit failed-creation outcome, not a
 /// rollback of the total-thread sequence.
-#[must_use = "a source thread-registration ticket must become one TLD lease or record a failed creation"]
+#[must_use = "a source thread-registration ticket must become one TLD lease, record a failed creation, or be returned from a pre-body direct-preimage refusal"]
 pub(crate) struct ThreadRegistrationTicket {
     subprocess: &'static MainSubprocess,
     sequence: ThreadSequence,
@@ -1027,22 +1086,133 @@ impl ThreadRegistrationTicket {
         thread: LiveThreadId,
         numa_node_source: impl FnOnce(MemoryId) -> i32,
     ) -> Result<(MainStaticThreadLocalData, ThreadRegistrationLease), MainStaticTldError> {
-        let mut storage = self
+        let storage = self
             .subprocess
-            .initialize_main_tld_with_numa_source(self.sequence, thread, numa_node_source)?;
+            .initialize_main_tld_unpublished_with_numa_source(
+                self.sequence,
+                thread,
+                numa_node_source,
+            )?;
         debug_assert!(storage
-            .current_mut()
+            .current()
             .matches_subprocess_attached_no_theap_lifecycle(
                 thread,
                 self.sequence,
                 self.subprocess,
             ));
+        let subprocess = self.subprocess;
+        let registration = self.consume_after_normal_tld_body(storage.current(), thread);
+        #[cfg(test)]
+        subprocess.record_main_tld_post_registration_snapshot();
+        #[cfg(not(test))]
+        let _ = subprocess;
+        // No fallible operation or callback may intervene between the source
+        // live-count increment above and this publication. The lease is an
+        // already-constructed linear record; the Release store makes the
+        // complete, registered static image observable only afterward.
+        let storage = storage.publish();
+        Ok((storage, registration))
+    }
+
+    /// Test-only direct model of the entire selected normal `mi_tld_init`
+    /// operation for one minimal helper preimage. The production static and
+    /// metadata routes use the source-ordered field prefix with their owned
+    /// lifecycle capabilities; this fixture must not become a standalone
+    /// live-TLD construction API. The ticket supplies the caller-owned source
+    /// sequence and is consumed only after every body field succeeds; its
+    /// single live-count increment is therefore the final modeled helper
+    /// event. A rejected preimage or busy-lock safety check returns the exact
+    /// ticket unchanged: this narrow Rust strengthening occurs before any
+    /// modeled source field or counter mutation, unlike ordinary source
+    /// ticketed allocation failure, which still consumes its sequence.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn initialize_normal_tld_after_direct_preimage(
+        self,
+        tld: &mut ThreadLocalData,
+        thread: LiveThreadId,
+        numa_node: i32,
+    ) -> Result<ThreadRegistrationLease, Self> {
+        self.initialize_normal_tld_after_direct_preimage_with_numa_source(
+            tld,
+            thread,
+            move || numa_node,
+        )
+    }
+
+    /// As above, but obtains the bounded NUMA value at the source body write.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn initialize_normal_tld_after_direct_preimage_with_numa_source(
+        self,
+        tld: &mut ThreadLocalData,
+        thread: LiveThreadId,
+        numa_node_source: impl FnOnce() -> i32,
+    ) -> Result<ThreadRegistrationLease, Self> {
+        if !tld.initialize_normal_tld_field_prefix_after_direct_preimage_with_numa_source(
+            thread,
+            self.sequence,
+            numa_node_source,
+            self.subprocess,
+        ) {
+            return Err(self);
+        }
+        Ok(self.consume_after_normal_tld_body(tld, thread))
+    }
+
+    /// Test-only recording wrapper around the same full normal-operation
+    /// implementation. It exists solely to prove the source write and live
+    /// registration order; it does not replace production initialization.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_initialize_normal_tld_after_direct_preimage(
+        self,
+        tld: &mut ThreadLocalData,
+        thread: LiveThreadId,
+        numa_node: i32,
+        trace: &mut NormalTldInitWriteTrace,
+    ) -> Result<ThreadRegistrationLease, Self> {
+        if !tld.test_initialize_normal_tld_field_prefix_after_direct_preimage(
+            thread,
+            self.sequence,
+            numa_node,
+            self.subprocess,
+            trace,
+        ) {
+            return Err(self);
+        }
+        Ok(self.consume_after_normal_tld_body_with_trace(tld, thread, trace))
+    }
+
+    #[inline]
+    fn consume_after_normal_tld_body(
+        self,
+        tld: &ThreadLocalData,
+        thread: LiveThreadId,
+    ) -> ThreadRegistrationLease {
+        debug_assert!(tld.matches_subprocess_attached_no_theap_lifecycle(
+            thread,
+            self.sequence,
+            self.subprocess,
+        ));
         self.subprocess.increment_live_thread_count();
-        let registration = ThreadRegistrationLease {
+        ThreadRegistrationLease {
             subprocess: self.subprocess,
             _not_send_or_sync: PhantomData,
-        };
-        Ok((storage, registration))
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn consume_after_normal_tld_body_with_trace(
+        self,
+        tld: &ThreadLocalData,
+        thread: LiveThreadId,
+        trace: &mut NormalTldInitWriteTrace,
+    ) -> ThreadRegistrationLease {
+        let registration = self.consume_after_normal_tld_body(tld, thread);
+        trace.record_live_registration();
+        registration
     }
 
     /// Consumes this ticket after its complete TLD image exists.
@@ -1100,6 +1270,40 @@ pub(crate) struct MainStaticThreadLocalData {
     pointer: NonNull<ThreadLocalData>,
 }
 
+/// The fully initialized but not yet registered/published static TLD image.
+///
+/// This private token is deliberately not a public TLD projection. It holds
+/// the exact source-order gap between normal-arm field writes and the final
+/// `thread_count` increment, so the latter must happen before the owner can
+/// Release-publish `MAIN_TLD_LIVE`.
+struct PendingMainStaticThreadLocalData {
+    subprocess: &'static MainSubprocess,
+    pointer: NonNull<ThreadLocalData>,
+}
+
+impl PendingMainStaticThreadLocalData {
+    #[inline]
+    fn current(&self) -> &ThreadLocalData {
+        // SAFETY: only the sequence-zero transition constructs this pending
+        // token. Its image was fully initialized before the token exists and
+        // remains unobservable until `publish` consumes this token.
+        unsafe { self.pointer.as_ref() }
+    }
+
+    #[inline]
+    fn publish(self) -> MainStaticThreadLocalData {
+        // This final Release store is deliberately after the caller has
+        // consumed its ticket into the one live-count lease.
+        self.subprocess
+            .main_tld_state
+            .store(MAIN_TLD_LIVE, Ordering::Release);
+        MainStaticThreadLocalData {
+            subprocess: self.subprocess,
+            pointer: self.pointer,
+        }
+    }
+}
+
 impl MainStaticThreadLocalData {
     #[inline]
     pub(crate) fn current_mut(&mut self) -> &mut ThreadLocalData {
@@ -1139,7 +1343,7 @@ mod tests {
         assert_eq!(main.live_thread_count(), 0);
 
         let ticket = main.issue_generic_thread_ticket().unwrap();
-        let mut image = ThreadLocalData::detached();
+        let mut image = ThreadLocalData::normal_tld_init_preimage();
         // SAFETY: this test owns a fresh local TLD image and names the exact
         // fixture subprocess/ticket before it becomes observable.
         unsafe {
@@ -1159,6 +1363,311 @@ mod tests {
         assert_eq!(main.live_thread_count(), 1);
         lease.release();
         assert_eq!(main.live_thread_count(), 0);
+    }
+
+    #[test]
+    fn normal_tld_init_direct_preimage_refuses_busy_lock_then_registers_sequence_seven() {
+        let direct = MainSubprocess::test_static_owner();
+        for expected_sequence in 0..7 {
+            let prior = direct
+                .issue_generic_thread_ticket()
+                .expect("the direct helper fixture seeds prior source tickets");
+            assert_eq!(prior.sequence().get(), expected_sequence);
+            drop(prior);
+        }
+        let ticket = direct
+            .issue_generic_thread_ticket()
+            .expect("the eighth source-style ticket has sequence seven");
+        assert_eq!(ticket.sequence().get(), 7);
+        assert_eq!(direct.total_thread_count(), 8);
+        assert_eq!(direct.live_thread_count(), 0);
+
+        let thread = LiveThreadId::new(0x40).expect("the fixture uses a live aligned identity");
+        let mut busy = ThreadLocalData::normal_tld_init_preimage();
+        assert!(busy.test_matches_normal_tld_init_minimal_preimage_except_lock());
+        busy.test_inject_busy_theaps_lock();
+        let ticket = match ticket.initialize_normal_tld_after_direct_preimage(
+            &mut busy,
+            thread,
+            3,
+        ) {
+            Ok(_) => panic!("a busy normal TLD lock must refuse before registration"),
+            Err(ticket) => ticket,
+        };
+        assert!(
+            busy.test_matches_normal_tld_init_minimal_preimage_except_lock(),
+            "the busy preflight leaves every non-lock direct-preimage field unchanged"
+        );
+        assert!(busy.test_theap_head_is(core::ptr::null_mut()));
+        assert!(
+            !busy.test_theaps_lock_starts_and_restores_unlocked(),
+            "refusal retains the injected busy lock rather than resetting it"
+        );
+        assert_eq!(direct.total_thread_count(), 8);
+        assert_eq!(direct.live_thread_count(), 0);
+
+        // `MemoryId::none()` is the deliberately minimal direct-helper seam:
+        // this seq=7 fixture proves `mi_tld_init` leaves caller-owned
+        // provenance unchanged, not a static/main caller predecessor.
+        let mut accepted = ThreadLocalData::normal_tld_init_preimage();
+        let mut trace = NormalTldInitWriteTrace::new();
+        let registration = match ticket.test_initialize_normal_tld_after_direct_preimage(
+            &mut accepted,
+            thread,
+            3,
+            &mut trace,
+        ) {
+            Ok(registration) => registration,
+            Err(_) => panic!("the fresh direct normal TLD preimage must initialize"),
+        };
+        assert!(trace.has_exact_source_order());
+        assert!(trace.modeled_field_writes_are_ordered());
+        assert_eq!(accepted.thread_id(), thread.get());
+        assert_eq!(accepted.thread_sequence().get(), 7);
+        assert_eq!(accepted.numa_node(), 3);
+        assert!(accepted.is_attached_to_main_subprocess(direct));
+        assert!(accepted.is_subprocess_attached_no_theap());
+        assert!(!accepted.is_in_threadpool());
+        assert!(accepted.test_theaps_lock_starts_and_restores_unlocked());
+        assert!(accepted.test_memory_id_is_none());
+        assert_eq!(direct.total_thread_count(), 8);
+        assert_eq!(direct.live_thread_count(), 1);
+        registration.release();
+        assert_eq!(direct.live_thread_count(), 0);
+    }
+
+    #[test]
+    fn emit_m2_normal_tld_direct_c_rust_trace() {
+        // This is one direct normal `mi_tld_init` helper fixture for pinned
+        // `src/init.c:236-250`: a fresh all-zero-shaped TLD/subprocess
+        // preimage plus a caller-owned post-ticket context (total=8, seq=7).
+        // It is not `mi_tld_create`, static-main construction, metadata
+        // allocation, `_mi_subproc_main_init`, Theap/list/TLS/root
+        // publication, or teardown. `MemoryId::none()` is deliberately left
+        // unchanged because this helper neither reads nor writes provenance.
+        // Rust receives an already-validated `LiveThreadId` at its outer
+        // safety boundary; its event trace proves modeled field/counter order,
+        // not literal timing parity for C's thread-ID primitive invocation.
+        macro_rules! record {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+
+        let subprocess = MainSubprocess::test_static_owner();
+        let mut tld = ThreadLocalData::normal_tld_init_preimage();
+        for expected_sequence in 0..7 {
+            let prior = subprocess
+                .issue_generic_thread_ticket()
+                .expect("the direct fixture seeds source tickets zero through six");
+            assert_eq!(prior.sequence().get(), expected_sequence);
+            drop(prior);
+        }
+        let ticket = subprocess
+            .issue_generic_thread_ticket()
+            .expect("the direct fixture retains source ticket sequence seven");
+        assert_eq!(ticket.sequence().get(), 7);
+
+        let thread = LiveThreadId::new(0x40).expect("the fixture uses one live identity");
+        let threadpool_source = false;
+        let pre_thread_id_abandoned = tld.thread_id() == crate::types::THREAD_ID_ABANDONED;
+        let pre_thread_sequence_zero = tld.thread_sequence().get() == 0;
+        let pre_numa_node_zero = tld.numa_node() == 0;
+        let pre_subprocess_null = tld.test_subprocess_is_null();
+        let pre_theap_head_null = tld.test_theap_head_is(core::ptr::null_mut());
+        let pre_recurse_false = !tld.recursing();
+        let pre_threadpool_false = !tld.is_in_threadpool();
+        let pre_memid_none = tld.test_memory_id_is_none();
+        let pre_total_thread_count_eight = subprocess.total_thread_count() == 8;
+        let pre_live_thread_count_zero = subprocess.live_thread_count() == 0;
+
+        assert!(pre_thread_id_abandoned);
+        assert!(pre_thread_sequence_zero);
+        assert!(pre_numa_node_zero);
+        assert!(pre_subprocess_null);
+        assert!(pre_theap_head_null);
+        assert!(pre_recurse_false);
+        assert!(pre_threadpool_false);
+        assert!(pre_memid_none);
+        assert!(pre_total_thread_count_eight);
+        assert!(pre_live_thread_count_zero);
+
+        let mut trace = NormalTldInitWriteTrace::new();
+        let input_tld = core::ptr::from_mut(&mut tld);
+        let registration = match ticket.test_initialize_normal_tld_after_direct_preimage(
+            &mut tld,
+            thread,
+            3,
+            &mut trace,
+        ) {
+            Ok(registration) => registration,
+            Err(_) => panic!("the fresh direct normal preimage accepts the retained ticket"),
+        };
+
+        // C checks `mi_tld_init` returned its input; the Rust operation returns
+        // a lease, so this neutral relation instead proves its same in-place
+        // input identity without claiming a Rust TLD-reference return value.
+        let post_input_identity_preserved = core::ptr::eq(input_tld, core::ptr::from_mut(&mut tld));
+        let post_subprocess_matches_input = tld.is_attached_to_main_subprocess(subprocess);
+        let post_theap_head_null = tld.test_theap_head_is(core::ptr::null_mut());
+        let post_lock_roundtrip = tld.test_theaps_lock_starts_and_restores_unlocked();
+        let post_numa_node_injected_three = tld.numa_node() == 3;
+        let post_thread_id_matches_input = tld.thread_id() == thread.get();
+        let post_thread_id_live = LiveThreadId::new(tld.thread_id()).is_some();
+        let post_threadpool_matches_input = tld.is_in_threadpool() == threadpool_source;
+        let post_threadpool_false = !tld.is_in_threadpool();
+        let post_thread_sequence_matches_input = tld.thread_sequence().get() == 7;
+        let post_recurse_false = !tld.recursing();
+        let post_memid_none = tld.test_memory_id_is_none();
+        let post_total_thread_count_eight = subprocess.total_thread_count() == 8;
+        let post_total_thread_count_unchanged = subprocess.total_thread_count() == 8;
+        let post_live_thread_count_one = subprocess.live_thread_count() == 1;
+        let post_live_thread_count_incremented = subprocess.live_thread_count() == 1;
+        let modeled_source_order = trace.has_exact_source_order();
+        let modeled_observable_effect_order = trace.has_modeled_observable_source_effect_order();
+
+        assert!(post_input_identity_preserved);
+        assert!(post_subprocess_matches_input);
+        assert!(post_theap_head_null);
+        assert!(post_lock_roundtrip);
+        assert!(post_numa_node_injected_three);
+        assert!(post_thread_id_matches_input);
+        assert!(post_thread_id_live);
+        assert!(post_threadpool_matches_input);
+        assert!(post_threadpool_false);
+        assert!(post_thread_sequence_matches_input);
+        assert!(post_recurse_false);
+        assert!(post_memid_none);
+        assert!(post_total_thread_count_eight);
+        assert!(post_total_thread_count_unchanged);
+        assert!(post_live_thread_count_one);
+        assert!(post_live_thread_count_incremented);
+        assert!(modeled_source_order);
+        assert!(modeled_observable_effect_order);
+
+        std::println!("CRABC_MI_M2_NORMAL_TLD_DIRECT_TRACE_BEGIN");
+        record!(
+            "m2.initialization.normal_tld.pre.thread_id_abandoned",
+            pre_thread_id_abandoned
+        );
+        record!(
+            "m2.initialization.normal_tld.pre.thread_sequence_zero",
+            pre_thread_sequence_zero
+        );
+        record!(
+            "m2.initialization.normal_tld.pre.numa_node_zero",
+            pre_numa_node_zero
+        );
+        record!(
+            "m2.initialization.normal_tld.pre.subprocess_null",
+            pre_subprocess_null
+        );
+        record!(
+            "m2.initialization.normal_tld.pre.theap_head_null",
+            pre_theap_head_null
+        );
+        record!(
+            "m2.initialization.normal_tld.pre.recurse_false",
+            pre_recurse_false
+        );
+        record!(
+            "m2.initialization.normal_tld.pre.threadpool_false",
+            pre_threadpool_false
+        );
+        record!("m2.initialization.normal_tld.pre.memid_none", pre_memid_none);
+        record!(
+            "m2.initialization.normal_tld.pre.total_thread_count_eight",
+            pre_total_thread_count_eight
+        );
+        record!(
+            "m2.initialization.normal_tld.pre.live_thread_count_zero",
+            pre_live_thread_count_zero
+        );
+        record!(
+            "m2.initialization.normal_tld.post.input_identity_preserved",
+            post_input_identity_preserved
+        );
+        record!(
+            "m2.initialization.normal_tld.post.subprocess_matches_input",
+            post_subprocess_matches_input
+        );
+        record!(
+            "m2.initialization.normal_tld.post.theap_head_null",
+            post_theap_head_null
+        );
+        record!(
+            "m2.initialization.normal_tld.post.lock_roundtrip",
+            post_lock_roundtrip
+        );
+        record!(
+            "m2.initialization.normal_tld.post.numa_node_injected_three",
+            post_numa_node_injected_three
+        );
+        record!(
+            "m2.initialization.normal_tld.post.thread_id_matches_input",
+            post_thread_id_matches_input
+        );
+        record!(
+            "m2.initialization.normal_tld.post.thread_id_live",
+            post_thread_id_live
+        );
+        record!(
+            "m2.initialization.normal_tld.post.threadpool_matches_input",
+            post_threadpool_matches_input
+        );
+        record!(
+            "m2.initialization.normal_tld.post.threadpool_false",
+            post_threadpool_false
+        );
+        record!(
+            "m2.initialization.normal_tld.post.thread_sequence_matches_input",
+            post_thread_sequence_matches_input
+        );
+        record!(
+            "m2.initialization.normal_tld.post.recurse_false",
+            post_recurse_false
+        );
+        record!("m2.initialization.normal_tld.post.memid_none", post_memid_none);
+        record!(
+            "m2.initialization.normal_tld.post.total_thread_count_eight",
+            post_total_thread_count_eight
+        );
+        record!(
+            "m2.initialization.normal_tld.post.total_thread_count_unchanged",
+            post_total_thread_count_unchanged
+        );
+        record!(
+            "m2.initialization.normal_tld.post.live_thread_count_one",
+            post_live_thread_count_one
+        );
+        record!(
+            "m2.initialization.normal_tld.post.live_thread_count_incremented",
+            post_live_thread_count_incremented
+        );
+        record!(
+            "m2.initialization.normal_tld.order.lock_before_numa",
+            modeled_observable_effect_order
+        );
+        record!(
+            "m2.initialization.normal_tld.order.numa_before_thread_id",
+            modeled_observable_effect_order
+        );
+        record!(
+            "m2.initialization.normal_tld.order.thread_id_before_threadpool",
+            modeled_observable_effect_order
+        );
+        record!(
+            "m2.initialization.normal_tld.order.threadpool_before_live_increment",
+            modeled_observable_effect_order
+        );
+        record!(
+            "m2.initialization.normal_tld.order.exactly_five_observable_effects",
+            modeled_observable_effect_order
+        );
+        std::println!("CRABC_MI_M2_NORMAL_TLD_DIRECT_TRACE_END");
+
+        registration.release();
+        assert_eq!(subprocess.live_thread_count(), 0);
     }
 
     #[test]

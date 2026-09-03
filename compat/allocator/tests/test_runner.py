@@ -2110,7 +2110,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            63,
+            65,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2608,16 +2608,41 @@ class ContractTests(unittest.TestCase):
                     "id": "c-rust-detached-tld-static-preimage-differential",
                     "kind": "c-rust-detached-tld-static-preimage-differential",
                     "target": "types::tests::emit_m2_detached_tld_static_preimage_c_rust_trace",
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "normal-tld-direct-preimage-busy-lock-and-sequence-seven",
+                    "kind": "rust-unit",
+                    "target": (
+                        "subproc::tests::"
+                        "normal_tld_init_direct_preimage_refuses_busy_lock_then_registers_"
+                        "sequence_seven"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "c-rust-normal-tld-direct-differential",
+                    "kind": "c-rust-normal-tld-direct-differential",
+                    "target": "subproc::tests::emit_m2_normal_tld_direct_c_rust_trace",
                 }
             ],
         )
         self.assertEqual(initialization["completion_status"], "partial")
+        self.assertEqual(len(initialization["checks"]), 9)
         self.assertTrue(initialization["remaining_conditions"])
         self.assertTrue(
             any(
                 "detached-TLD record" in nonclaim
                 and "main-subprocess initialization" in nonclaim
                 and "general `mi_tld_init` or `mi_tld_create`" in nonclaim
+                for nonclaim in summary["milestone"]["nonclaims"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "direct C/Rust normal-TLD record" in nonclaim
+                and "post-ticket total=8/tseq=7" in nonclaim
+                and "mi_tld_create" in nonclaim
                 for nonclaim in summary["milestone"]["nonclaims"]
             )
         )
@@ -2946,6 +2971,34 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.initialization.detached_tld.post.live_thread_count_zero"] = 0
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_detached_tld_static_preimage_trace(c_trace, rust_trace)
+
+    @staticmethod
+    def _m2_normal_tld_direct_trace() -> dict[str, int]:
+        return {key: 1 for key in RUNNER.M2_NORMAL_TLD_DIRECT_TRACE_KEYS}
+
+    def test_m2_normal_tld_direct_trace_requires_every_selected_relation(self) -> None:
+        c_trace = self._m2_normal_tld_direct_trace()
+        output = "CRABC_MI_M2_NORMAL_TLD_DIRECT_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_NORMAL_TLD_DIRECT_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_normal_tld_direct_trace(output, source="pinned C")
+        RUNNER.validate_m2_normal_tld_direct_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_normal_tld_direct_trace()
+        RUNNER.validate_m2_normal_tld_direct_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_normal_tld_direct_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_NORMAL_TLD_DIRECT_TRACE_KEYS),
+        )
+
+    def test_m2_normal_tld_direct_trace_rejects_a_missing_live_registration(self) -> None:
+        c_trace = self._m2_normal_tld_direct_trace()
+        rust_trace = self._m2_normal_tld_direct_trace()
+        rust_trace["m2.initialization.normal_tld.post.live_thread_count_incremented"] = 0
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_normal_tld_direct_trace(c_trace, rust_trace)
 
     @staticmethod
     def _m2_bitmap_abandoned_claim_trace() -> dict[str, int]:

@@ -190,6 +190,9 @@ M2_MEMORY_SUBSTRATE_CARGO_TARGET = ARTIFACT_ROOT / "m2-memory-substrate/cargo-ta
 M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/detached-tld-static-preimage-trace"
 )
+M2_NORMAL_TLD_DIRECT_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "m2-memory-substrate/normal-tld-direct-trace"
+)
 M2_PAGE_MAP_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m2-memory-substrate/page-map-trace"
 M2_BITMAP_ABANDONED_CLAIM_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/bitmap-abandoned-claim-trace"
@@ -317,6 +320,45 @@ M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS = (
     "m2.initialization.detached_tld.post.total_thread_count_unchanged",
     "m2.initialization.detached_tld.post.live_thread_count_zero",
     "m2.initialization.detached_tld.post.live_thread_count_unchanged",
+)
+# This is the direct non-detached `mi_tld_init` body only. The C producer
+# independently hooks its five observable calls (lock, NUMA, ID, pool, live
+# count), while Rust's production-backed test instrumentation records all
+# eight modeled field/counter effects after its outer `LiveThreadId` boundary.
+# The common record compares only address-independent relations, not layout,
+# raw IDs/pointers, or a claim that Rust invokes C primitives at the same time.
+M2_NORMAL_TLD_DIRECT_TRACE_KEYS = (
+    "m2.initialization.normal_tld.pre.thread_id_abandoned",
+    "m2.initialization.normal_tld.pre.thread_sequence_zero",
+    "m2.initialization.normal_tld.pre.numa_node_zero",
+    "m2.initialization.normal_tld.pre.subprocess_null",
+    "m2.initialization.normal_tld.pre.theap_head_null",
+    "m2.initialization.normal_tld.pre.recurse_false",
+    "m2.initialization.normal_tld.pre.threadpool_false",
+    "m2.initialization.normal_tld.pre.memid_none",
+    "m2.initialization.normal_tld.pre.total_thread_count_eight",
+    "m2.initialization.normal_tld.pre.live_thread_count_zero",
+    "m2.initialization.normal_tld.post.input_identity_preserved",
+    "m2.initialization.normal_tld.post.subprocess_matches_input",
+    "m2.initialization.normal_tld.post.theap_head_null",
+    "m2.initialization.normal_tld.post.lock_roundtrip",
+    "m2.initialization.normal_tld.post.numa_node_injected_three",
+    "m2.initialization.normal_tld.post.thread_id_matches_input",
+    "m2.initialization.normal_tld.post.thread_id_live",
+    "m2.initialization.normal_tld.post.threadpool_matches_input",
+    "m2.initialization.normal_tld.post.threadpool_false",
+    "m2.initialization.normal_tld.post.thread_sequence_matches_input",
+    "m2.initialization.normal_tld.post.recurse_false",
+    "m2.initialization.normal_tld.post.memid_none",
+    "m2.initialization.normal_tld.post.total_thread_count_eight",
+    "m2.initialization.normal_tld.post.total_thread_count_unchanged",
+    "m2.initialization.normal_tld.post.live_thread_count_one",
+    "m2.initialization.normal_tld.post.live_thread_count_incremented",
+    "m2.initialization.normal_tld.order.lock_before_numa",
+    "m2.initialization.normal_tld.order.numa_before_thread_id",
+    "m2.initialization.normal_tld.order.thread_id_before_threadpool",
+    "m2.initialization.normal_tld.order.threadpool_before_live_increment",
+    "m2.initialization.normal_tld.order.exactly_five_observable_effects",
 )
 M2_PAGE_MAP_TRACE_KEYS = (
     "m2.page_map.control.page_size",
@@ -1177,6 +1219,12 @@ M1_COMPILER_TLS_SAME_TLD_TRACE_ORACLE_SOURCES = tuple(
 # isolated preimage must not let prim.c's constructor mutate state before
 # main observes it.
 M2_DETACHED_TLD_STATIC_PREIMAGE_ORACLE_SOURCES = tuple(
+    item for item in ORACLE_SOURCES if item != "src/init.c"
+)
+
+# The normal direct-helper producer follows the same one-definition rule as
+# the detached producer, but has its own fixture and source/provenance record.
+M2_NORMAL_TLD_DIRECT_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/init.c"
 )
 
@@ -3267,6 +3315,225 @@ int main(void) {
   U("m2.initialization.detached_tld.post.live_thread_count_zero", post_live_thread_count == 0);
   U("m2.initialization.detached_tld.post.live_thread_count_unchanged", post_live_thread_count == pre_live_thread_count);
   puts("CRABC_MI_M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_END");
+  return 0;
+}
+"""
+
+
+# This fixture direct-includes pinned `src/init.c` to call only its file-static
+# non-detached `mi_tld_init` body. A local zero TLD and local zero subprocess
+# are the exact minimal helper read/write preimage, plus an outer post-ticket
+# count context (total=8, tseq=7); they are not `mi_tld_create`, static-main
+# storage, metadata allocation, or `_mi_subproc_main_init`. The normal source
+# list omits init.c so every C definition remains singular. `MI_PRIM_HAS_PROCESS_ATTACH=1`
+# is passed by the builder to prevent prim.c's normal constructor before main.
+#
+# C can dynamically observe lock/NUMA/ID/pool/live calls, but not all plain
+# assignments. Poststate plus the pinned direct include anchors those writes.
+# NUMA is fixture-injected as the already-normalized source-valid value three;
+# this records no OS discovery or NUMA policy. The Rust side independently
+# observes modeled field order after its prevalidated identity boundary.
+M2_NORMAL_TLD_DIRECT_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include <mimalloc.h>
+#include <mimalloc/atomic.h>
+#include <mimalloc/prim.h>
+#include <mimalloc/prim-tls.h>
+#include <mimalloc/internal.h>
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+static bool m2_normal_recording = false;
+static size_t m2_normal_event_count = 0;
+static size_t m2_normal_lock_event = 0;
+static size_t m2_normal_numa_event = 0;
+static size_t m2_normal_thread_id_event = 0;
+static size_t m2_normal_threadpool_event = 0;
+static size_t m2_normal_live_increment_event = 0;
+static mi_threadid_t m2_normal_thread_id_result = MI_THREADID_ABANDONED;
+static bool m2_normal_threadpool_result = true;
+static _Atomic(size_t)* m2_normal_live_increment_target = NULL;
+
+static void m2_normal_record(size_t* event) {
+  if (m2_normal_recording) {
+    *event = ++m2_normal_event_count;
+  }
+}
+
+// Define wrappers while the original header functions/macros remain visible.
+// Only aliases around the direct init.c include redirect the selected body.
+static void m2_normal_lock_init(mi_lock_t* lock) {
+  m2_normal_record(&m2_normal_lock_event);
+  mi_lock_init(lock);
+}
+
+static int m2_normal_numa_node(void) {
+  m2_normal_record(&m2_normal_numa_event);
+  return 3;
+}
+
+static mi_threadid_t m2_normal_thread_id(void) {
+  m2_normal_record(&m2_normal_thread_id_event);
+  const mi_threadid_t result = _mi_prim_thread_id();
+  m2_normal_thread_id_result = result;
+  return result;
+}
+
+static bool m2_normal_thread_is_in_threadpool(void) {
+  m2_normal_record(&m2_normal_threadpool_event);
+  const bool result = _mi_prim_thread_is_in_threadpool();
+  m2_normal_threadpool_result = result;
+  return result;
+}
+
+static size_t m2_normal_increment_relaxed(_Atomic(size_t)* target) {
+  m2_normal_record(&m2_normal_live_increment_event);
+  m2_normal_live_increment_target = target;
+  return mi_atomic_increment_relaxed(target);
+}
+
+#define mi_lock_init(lock) m2_normal_lock_init(lock)
+#define _mi_os_numa_node() m2_normal_numa_node()
+#define _mi_prim_thread_id() m2_normal_thread_id()
+#define _mi_prim_thread_is_in_threadpool() m2_normal_thread_is_in_threadpool()
+// The original is function-like, so undefine it only after the wrapper above
+// captured its real expansion; otherwise strict builds reject redefinition.
+#undef mi_atomic_increment_relaxed
+#define mi_atomic_increment_relaxed(target) m2_normal_increment_relaxed(target)
+#include "init.c"
+#undef mi_atomic_increment_relaxed
+#undef _mi_prim_thread_is_in_threadpool
+#undef _mi_prim_thread_id
+#undef _mi_os_numa_node
+#undef mi_lock_init
+
+static bool m2_normal_lock_roundtrip(mi_lock_t* lock) {
+  if (!mi_lock_try_acquire(lock)) return false;
+  mi_lock_release(lock);
+  if (!mi_lock_try_acquire(lock)) return false;
+  mi_lock_release(lock);
+  return true;
+}
+
+static bool m2_normal_memid_none(mi_memid_t memid) {
+  return memid.memkind == MI_MEM_NONE && memid.mem.os.base == NULL &&
+      memid.mem.os.size == 0 && !memid.is_pinned &&
+      !memid.initially_committed && !memid.initially_zero;
+}
+
+int main(void) {
+  mi_tld_t tld = mi_init_struct_zero;
+  mi_subproc_t subproc = mi_init_struct_zero;
+  mi_atomic_store_relaxed(&subproc.thread_total_count, 8);
+
+  const size_t pre_total_thread_count =
+      mi_atomic_load_relaxed(&subproc.thread_total_count);
+  const size_t pre_live_thread_count =
+      mi_atomic_load_relaxed(&subproc.thread_count);
+  const bool pre_thread_id_abandoned = (tld.thread_id == MI_THREADID_ABANDONED);
+  const bool pre_thread_sequence_zero = (tld.thread_seq == 0);
+  const bool pre_numa_node_zero = (tld.numa_node == 0);
+  const bool pre_subprocess_null = (tld.subproc == NULL);
+  const bool pre_theap_head_null = (tld.theaps == NULL);
+  const bool pre_recurse_false = !tld.recurse;
+  const bool pre_threadpool_false = !tld.is_in_threadpool;
+  const bool pre_memid_none = m2_normal_memid_none(tld.memid);
+
+  // Do not probe this lock before the normal arm: source initializes it.
+  m2_normal_recording = true;
+  mi_tld_t* returned = mi_tld_init(&tld, 7, &subproc);
+  m2_normal_recording = false;
+
+  const size_t post_total_thread_count =
+      mi_atomic_load_relaxed(&subproc.thread_total_count);
+  const size_t post_live_thread_count =
+      mi_atomic_load_relaxed(&subproc.thread_count);
+  const bool post_input_identity_preserved = (returned == &tld);
+  const bool post_subprocess_matches_input = (tld.subproc == &subproc);
+  const bool post_theap_head_null = (tld.theaps == NULL);
+  const bool post_lock_roundtrip = m2_normal_lock_roundtrip(&tld.theaps_lock);
+  const bool post_numa_node_injected_three = (tld.numa_node == 3);
+  const bool post_thread_id_matches_input =
+      (tld.thread_id == m2_normal_thread_id_result);
+  const bool post_thread_id_live =
+      (tld.thread_id > MI_THREADID_DETACHED &&
+       (tld.thread_id & MI_PAGE_FLAG_MASK) == 0);
+  const bool post_threadpool_matches_input =
+      (tld.is_in_threadpool == m2_normal_threadpool_result);
+  const bool post_threadpool_false = !tld.is_in_threadpool;
+  const bool post_thread_sequence_matches_input = (tld.thread_seq == 7);
+  const bool post_recurse_false = !tld.recurse;
+  const bool post_memid_none = m2_normal_memid_none(tld.memid);
+  const bool lock_before_numa =
+      (m2_normal_lock_event == 1 && m2_normal_numa_event == 2);
+  const bool numa_before_thread_id =
+      (m2_normal_numa_event == 2 && m2_normal_thread_id_event == 3);
+  const bool thread_id_before_threadpool =
+      (m2_normal_thread_id_event == 3 && m2_normal_threadpool_event == 4);
+  const bool threadpool_before_live_increment =
+      (m2_normal_threadpool_event == 4 && m2_normal_live_increment_event == 5);
+  const bool exactly_five_observable_effects = (m2_normal_event_count == 5);
+
+  const bool all_relations =
+      pre_total_thread_count == 8 && pre_live_thread_count == 0 &&
+      pre_thread_id_abandoned && pre_thread_sequence_zero && pre_numa_node_zero &&
+      pre_subprocess_null && pre_theap_head_null && pre_recurse_false &&
+      pre_threadpool_false && pre_memid_none &&
+      post_input_identity_preserved && post_subprocess_matches_input && post_theap_head_null && post_lock_roundtrip &&
+      post_numa_node_injected_three && post_thread_id_matches_input &&
+      post_thread_id_live && post_threadpool_matches_input &&
+      post_threadpool_false && post_thread_sequence_matches_input &&
+      post_recurse_false && post_memid_none && post_total_thread_count == 8 &&
+      post_total_thread_count == pre_total_thread_count && post_live_thread_count == 1 &&
+      post_live_thread_count == pre_live_thread_count + 1 &&
+      m2_normal_live_increment_target == &subproc.thread_count &&
+      lock_before_numa && numa_before_thread_id && thread_id_before_threadpool &&
+      threadpool_before_live_increment && exactly_five_observable_effects;
+  if (!all_relations) {
+    mi_lock_done(&tld.theaps_lock);
+    return 10;
+  }
+
+  puts("CRABC_MI_M2_NORMAL_TLD_DIRECT_TRACE_BEGIN");
+  U("m2.initialization.normal_tld.pre.thread_id_abandoned", pre_thread_id_abandoned);
+  U("m2.initialization.normal_tld.pre.thread_sequence_zero", pre_thread_sequence_zero);
+  U("m2.initialization.normal_tld.pre.numa_node_zero", pre_numa_node_zero);
+  U("m2.initialization.normal_tld.pre.subprocess_null", pre_subprocess_null);
+  U("m2.initialization.normal_tld.pre.theap_head_null", pre_theap_head_null);
+  U("m2.initialization.normal_tld.pre.recurse_false", pre_recurse_false);
+  U("m2.initialization.normal_tld.pre.threadpool_false", pre_threadpool_false);
+  U("m2.initialization.normal_tld.pre.memid_none", pre_memid_none);
+  U("m2.initialization.normal_tld.pre.total_thread_count_eight", pre_total_thread_count == 8);
+  U("m2.initialization.normal_tld.pre.live_thread_count_zero", pre_live_thread_count == 0);
+  U("m2.initialization.normal_tld.post.input_identity_preserved", post_input_identity_preserved);
+  U("m2.initialization.normal_tld.post.subprocess_matches_input", post_subprocess_matches_input);
+  U("m2.initialization.normal_tld.post.theap_head_null", post_theap_head_null);
+  U("m2.initialization.normal_tld.post.lock_roundtrip", post_lock_roundtrip);
+  U("m2.initialization.normal_tld.post.numa_node_injected_three", post_numa_node_injected_three);
+  U("m2.initialization.normal_tld.post.thread_id_matches_input", post_thread_id_matches_input);
+  U("m2.initialization.normal_tld.post.thread_id_live", post_thread_id_live);
+  U("m2.initialization.normal_tld.post.threadpool_matches_input", post_threadpool_matches_input);
+  U("m2.initialization.normal_tld.post.threadpool_false", post_threadpool_false);
+  U("m2.initialization.normal_tld.post.thread_sequence_matches_input", post_thread_sequence_matches_input);
+  U("m2.initialization.normal_tld.post.recurse_false", post_recurse_false);
+  U("m2.initialization.normal_tld.post.memid_none", post_memid_none);
+  U("m2.initialization.normal_tld.post.total_thread_count_eight", post_total_thread_count == 8);
+  U("m2.initialization.normal_tld.post.total_thread_count_unchanged", post_total_thread_count == pre_total_thread_count);
+  U("m2.initialization.normal_tld.post.live_thread_count_one", post_live_thread_count == 1);
+  U("m2.initialization.normal_tld.post.live_thread_count_incremented", post_live_thread_count == pre_live_thread_count + 1);
+  U("m2.initialization.normal_tld.order.lock_before_numa", lock_before_numa);
+  U("m2.initialization.normal_tld.order.numa_before_thread_id", numa_before_thread_id);
+  U("m2.initialization.normal_tld.order.thread_id_before_threadpool", thread_id_before_threadpool);
+  U("m2.initialization.normal_tld.order.threadpool_before_live_increment", threadpool_before_live_increment);
+  U("m2.initialization.normal_tld.order.exactly_five_observable_effects", exactly_five_observable_effects);
+  puts("CRABC_MI_M2_NORMAL_TLD_DIRECT_TRACE_END");
+
+  // Fixture hygiene only: this is not mi_tld_free or a lifecycle claim.
+  mi_lock_done(&tld.theaps_lock);
   return 0;
 }
 """
@@ -6758,6 +7025,7 @@ def validate_m2_memory_substrate_contract(
                     "rust-unit",
                     "rust-page-map-success-trace",
                     "c-rust-detached-tld-static-preimage-differential",
+                    "c-rust-normal-tld-direct-differential",
                     "c-rust-bitmap-abandoned-claim-differential",
                     "c-rust-bitmap-clear-range-differential",
                     "c-rust-bitmap-rangesn-differential",
@@ -6951,6 +7219,79 @@ def run_m2_detached_tld_static_preimage_differential(
             "initialization. It does not establish general mi_tld_init or mi_tld_create, the normal branch, "
             "generic/later TLDs, Heap/Theap/list/TLS/root publication, "
             "options or NUMA policy, pthread lock ABI/layout, shutdown/free, races, or allocator integration."
+        ),
+        "status": comparison["status"],
+    }
+
+
+def run_m2_normal_tld_direct_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the direct normal `mi_tld_init` helper boundary only."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-normal-tld-direct-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_normal_tld_direct_trace(
+            compiler,
+            source,
+            M2_NORMAL_TLD_DIRECT_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "subproc::tests::emit_m2_normal_tld_direct_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 normal-TLD direct-helper trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_normal_tld_direct_trace(rust_output, source="Rust")
+    validate_m2_normal_tld_direct_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 normal-TLD direct-helper trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_normal_tld_direct_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "one direct pinned-C/Rust non-detached mi_tld_init helper record for src/init.c:236-250: "
+            "a fresh all-zero TLD/subprocess minimal read/write preimage receives caller-owned "
+            "post-ticket total=8 and tseq=7 context, then proves input identity preservation, field "
+            "poststate, unchanged MI_MEM_NONE provenance, total unchanged, and live 0-to-1. Pinned C "
+            "independently hooks lock/NUMA/ID/pool/live call order with fixture-injected normalized NUMA=3; "
+            "Rust records its production-helper field/counter order after outer prevalidated LiveThreadId "
+            "and proves in-place input identity (its test API returns a lease, not a TLD reference). "
+            "This does not compare or establish C caller ticket issuance or mi_tld_create allocation, "
+            "static-main or metadata construction, _mi_subproc_main_init, Theap/list/TLS/root publication, "
+            "general NUMA/options policy, "
+            "pthread ABI/layout, teardown/free, races, or allocator integration."
         ),
         "status": comparison["status"],
     }
@@ -7521,6 +7862,26 @@ def run_m2_memory_substrate_checks(
         for check in component["checks"]:
             if check["kind"] == "c-rust-detached-tld-static-preimage-differential":
                 differential = run_m2_detached_tld_static_preimage_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
+            if check["kind"] == "c-rust-normal-tld-direct-differential":
+                differential = run_m2_normal_tld_direct_differential(
                     pin,
                     offline=offline,
                     timeout_seconds=summary["execution"]["timeout_seconds"],
@@ -12756,6 +13117,73 @@ def compare_m2_detached_tld_static_preimage_trace(
     }
 
 
+def parse_m2_normal_tld_direct_trace(output: str, *, source: str) -> dict[str, int]:
+    """Parse the bounded normal-arm direct-helper record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_NORMAL_TLD_DIRECT_TRACE_BEGIN",
+        end="CRABC_MI_M2_NORMAL_TLD_DIRECT_TRACE_END",
+        description=f"{source} M2 normal-TLD direct-helper trace",
+    )
+    if set(trace) != set(M2_NORMAL_TLD_DIRECT_TRACE_KEYS):
+        missing = sorted(set(M2_NORMAL_TLD_DIRECT_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_NORMAL_TLD_DIRECT_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 normal-TLD direct-helper trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_normal_tld_direct_trace(trace: Mapping[str, int], *, source: str) -> None:
+    """Require every selected normal direct-helper relation."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown M2 normal-TLD direct-helper trace source: {source}")
+    if set(trace) != set(M2_NORMAL_TLD_DIRECT_TRACE_KEYS):
+        raise HarnessError(
+            f"{source} M2 normal-TLD direct-helper trace keys differ from the fixed contract"
+        )
+    for key in M2_NORMAL_TLD_DIRECT_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} M2 normal-TLD direct-helper trace field is not an integer: {key}"
+            )
+        if trace[key] != 1:
+            raise HarnessError(
+                f"{source} M2 normal-TLD direct-helper trace contains an unmet relation: {key}"
+            )
+
+
+def compare_m2_normal_tld_direct_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require address-free parity for the selected normal-helper boundary."""
+
+    validate_m2_normal_tld_direct_trace(c_trace, source="pinned C")
+    validate_m2_normal_tld_direct_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_NORMAL_TLD_DIRECT_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 normal-TLD direct-helper trace differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(M2_NORMAL_TLD_DIRECT_TRACE_KEYS),
+        "status": "matched",
+    }
+
+
 def parse_m2_page_map_trace(output: str, *, source: str) -> dict[str, int]:
     """Parse the fixed address-free selected PageMap lifecycle record."""
 
@@ -14734,6 +15162,68 @@ def build_m2_detached_tld_static_preimage_trace(
                 "include/mimalloc/types.h",
                 "src/init.c",
                 "src/prim/prim.c",
+            ),
+        ),
+    }
+
+
+def build_m2_normal_tld_direct_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the direct normal-arm `mi_tld_init` C producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-normal-tld-direct-trace-probe.c"
+    trace_binary = profile_dir / "m2-normal-tld-direct-trace-probe"
+    trace_source.write_text(M2_NORMAL_TLD_DIRECT_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        # The direct source fixture must not run prim.c's automatic process
+        # constructor before main reaches its local helper preimage.
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M2_NORMAL_TLD_DIRECT_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 normal-TLD direct-helper trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 normal-TLD direct-helper trace execution")
+    record = parse_m2_normal_tld_direct_trace(str(run["stdout"]), source="pinned C")
+    validate_m2_normal_tld_direct_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc.h",
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "include/mimalloc/prim-tls.h",
+                "include/mimalloc/types.h",
+                "src/init.c",
+                "src/os.c",
+                "src/prim/prim-tls.c",
+                "src/prim/prim.c",
+                "src/prim/unix/prim.c",
             ),
         ),
     }
