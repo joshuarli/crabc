@@ -2379,7 +2379,7 @@ advance this AArch64 allocator ledger.
 | --- | --- | --- |
 | M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. At `685e9da10096feb44819dd5c470bb21fb52f70f3`, a clean detached native `./scripts/dev.sh allocator --quick` exited 0; the detached source remained clean through the complete `quick`/M1/M2 gate sequence. This is inventory/skeleton completion only, not engine parity. |
 | M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. At `685e9da10096feb44819dd5c470bb21fb52f70f3`, clean detached native `./scripts/dev.sh allocator-m1` exited 0; its report attests a clean source before and after execution, unchanged during it, with all six components complete and no unmet IDs. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current 57-check executable gate; revalidated) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. `a0f63f15fff16fcab894bb4a832008b1a1a0b755` adds one selected `src/init.c` ticket-zero static-TLD caller for the fixed NUMA wrapper after Rust static `MemoryId` formation and before complete-image/Release publication; its focused native witness passes. At `685e9da10096feb44819dd5c470bb21fb52f70f3`, a clean detached native sequence ran `allocator --quick` (exit 0), `allocator-m1` (exit 0), and `allocator-m2` (exit 3 as its partial contract requires). The M2 report attests source cleanliness before and after execution and no change during it; all 57 selected checks passed: fourteen VM-primitives, eleven metadata, eight bitmap, ten PageMap, five arena, five initialization, one fault-injection, and three allocator-recursion checks. Its exact unmet IDs remain `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and `allocator-recursion`; PageMap remains the sole complete M2 component. The selected caller does not close the other seven. |
+| M2 — memory substrate | partial (current 59-check executable gate; clean native revalidation pending) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. The selected `AwaitingBackingRelease` slice adds one metadata and one allocator-recursion check: after a regular heap-key entry clear, only a pre-claim Malloc rejection retains the compiler-TLS backing root/allocation and outer dynamic owner; the direct witness has no page, while the engine witness retains one retired PageMap-published page and suspends ordinary use until dedicated drain. At `685e9da10096feb44819dd5c470bb21fb52f70f3`, the preceding 57-check contract cleanly ran `allocator --quick` (exit 0), `allocator-m1` (exit 0), and `allocator-m2` (exit 3 as its partial contract requires). The current 59-check contract has fourteen VM-primitives, twelve metadata, eight bitmap, ten PageMap, five arena, five initialization, one fault-injection, and four allocator-recursion checks; its detached native revalidation remains pending. Its exact unmet IDs remain `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and `allocator-recursion`; PageMap remains the sole complete M2 component. The selected continuation does not close the other seven. |
 | M3 — single-thread allocation | not active (historical partial evidence only) | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri. A forced `cfg(miri)` smoke is currently unavailable because `os_host_model.rs` lacks the existing NUMA/identity/entropy and `Mapping::page_size` APIs its callers require; the same ten compile errors existed at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is not M2 evidence or a reason to advance past the still-partial M2 gate. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
@@ -2428,10 +2428,12 @@ seven unmet IDs named in the table. This is runtime evidence for the exact
 The subsequent `a0f63f15fff16fcab894bb4a832008b1a1a0b755` static-TLD NUMA
 caller supplies the fifth initialization record. At
 `685e9da10096feb44819dd5c470bb21fb52f70f3`, a clean detached native rerun
-attested the present 57-check source/contract revision: `allocator --quick`
+attested the then-current 57-check source/contract revision: `allocator --quick`
 and `allocator-m1` exited 0, while `allocator-m2` exited 3 as its partial
 contract requires. The M1/M2 reports attest source cleanliness before and
-after execution and no change during it; M1 remains six-of-six complete and
+after execution and no change during it; that evidence is historical now that
+the current 59-check M2 contract awaits its own clean native revalidation.
+M1 remains six-of-six complete and
 M2 records all 57 selected checks passing while retaining exactly the seven
 unmet IDs named in the table.
 
@@ -2550,11 +2552,11 @@ control and transition fields for initial partial commitment, lazy extension
 across two submaps, one two-slice unregister, final-boundary rollback, and an
 absent root after destruction.
 
-The checked-in working set contains 57 native checks: fourteen VM-primitives
-checks, eleven metadata checks, four bitmap C/Rust differentials plus four
+The checked-in working set contains 59 native checks: fourteen VM-primitives
+checks, twelve metadata checks, four bitmap C/Rust differentials plus four
 Rust-only bitmap-observer check records, ten PageMap checks, five arena
 checks, five initialization checks, one native protect/unprotect
-fault-injection check, and three allocator-recursion checks. The 37-, 38-,
+fault-injection check, and four allocator-recursion checks. The 37-, 38-,
 39-, 40-, 41-, and 42-check reports are historical evidence for prior
 contracts. At `7141570b6717dc590d962af139ffe08971cdc3bb`, a clean detached
 native run executed the prior 53-check shape; it remains historical support.
@@ -2568,8 +2570,8 @@ evidence for the 54-check revision only. At
 `f379f03e9f562fc85111d541c2a17ebe1def0115`, the then-current 56-check
 revision passed the same clean detached `allocator --quick`/`allocator-m1`
 outcomes and its partial `allocator-m2` exit-3 outcome, with source unchanged
-throughout; it is historical evidence for that exact revision. The present
-57-check revision adds the selected static-TLD NUMA caller. At
+throughout; it is historical evidence for that exact revision. The preceding
+57-check revision added the selected static-TLD NUMA caller. At
 `685e9da10096feb44819dd5c470bb21fb52f70f3`, its clean detached native rerun
 again returned 0 for `allocator --quick` and `allocator-m1` and 3 for the
 partial `allocator-m2` gate, with source clean before and after and unchanged
@@ -2588,9 +2590,17 @@ arbitrary memory-kind dispatch, and a source runtime caller. The new direct
 TLS slice restores the exact `MetaRelease::Malloc`
 capability, root/count/slots, and `Active` state only after a proven pre-claim
 same-thread rejection; a successful retry keeps C's free-before-root-clear
-order. Generic/free post-claim failures remain terminal, and the outer
-`DynamicTheapAttachment` remains terminal because it clears its binding before
-calling direct backing teardown.
+order. Generic/free post-claim failures remain terminal. One selected outer
+`DynamicTheapAttachment` continuation instead records
+`AwaitingBackingRelease` after it clears the regular heap-key entry keyed by
+its Heap's `theap_slot` and marks its binding unbound: only the exact Malloc
+pre-claim result retains the distinct compiler-TLS backing root/allocation,
+key lease, TLD, Theap, Heap binding, cached reference, and sealed engine image
+to retry backing release. It never republishes the key entry or repeats
+attached preflight, and ordinary page-engine operations remain suspended. The
+separate final pre-mutation regular-key lock continuation remains
+`AwaitingKeyRelease`; this is a Rust ownership boundary, not C retry/error or
+mutex parity.
 
 The selected fixed no-option NUMA wrapper maps pinned `src/os.c:860-898` and
 one selected `src/init.c:236-250,260-272` ticket-zero static-TLD caller. Its
@@ -2944,6 +2954,18 @@ Arena-prefix lifecycle described below. This nonexclusive check does
 not establish normal C `_mi_meta_zalloc` backing, a complete exclusive-arena
 Theap lifecycle, generic `_mi_meta_free`, general list/refcount policy, page
 ownership, concurrency, or process/thread shutdown parity.
+
+The selected backing-release retry is deliberately narrower than that no-page
+lifecycle record. `dynamic_theap_backing_release_recursive_entry_retains_outer_lifecycle_for_retry`
+holds the same-thread metadata entry with no pages and proves that the
+compiler-TLS backing allocation/root plus the exact outer owner survive only
+the pre-claim rejection. `dynamic_thread_exit_drain_resumes_a_retryable_backing_release`
+uses one already retired PageMap-published page: it proves the retained engine
+cannot allocate while its regular heap-key entry is clear, that the PageMap and
+page image survive, and that the successful retry carries that unchanged page
+into the dedicated drain. Neither witness establishes generic page-bearing
+teardown, C error/retry or mutex behavior, callbacks/signals, cross-thread
+continuation, pthread/process shutdown, ABI, or general allocator routing.
 
 The `threadlocal-live-rezalloc-malloc-capability-lifetime` metadata record
 narrows the live regular-TLS replacement branch in
@@ -3569,13 +3591,12 @@ M0 and M1 are closed predecessors under their bounded contracts. Their latest
 clean detached revalidation is
 `685e9da10096feb44819dd5c470bb21fb52f70f3`: `allocator --quick` and
 `allocator-m1` exited 0, and the M1 report attests all six bounded components
-complete with no unmet IDs. M2 is the current closure gate. Its 57 selected
-checks are fourteen VM-primitives, eleven metadata, four bitmap C/Rust
+complete with no unmet IDs. M2 is the current closure gate. Its 59 selected
+checks are fourteen VM-primitives, twelve metadata, four bitmap C/Rust
 differentials plus four Rust-only bitmap-observer check records, ten PageMap,
 five arena, five initialization, one native protection fault-injection, and
-three allocator-recursion checks. The same clean detached run exited 3 for the
-partial `allocator-m2` gate, with source unchanged before, during, and after
-execution; all selected checks passed. PageMap remains the sole complete
+four allocator-recursion checks. Its clean detached native revalidation remains
+pending; `685e9da` attests only the preceding 57-check contract. PageMap remains the sole complete
 component and exactly the other seven required components remain partial:
 `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`,
 `fault-injection`, and `allocator-recursion`. Do not advance M3, M4, or later

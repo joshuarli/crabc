@@ -36,12 +36,25 @@ boundary makes a narrower direct-owner exception explicit: its Malloc branch
 returns the exact live capability as `MallocRetryable` only when invalid thread
 identity, same-thread recursion, or backing-lock acquisition rejects before the
 LIVE-to-RELEASING claim. `ThreadLocalBackingOwner::teardown` restores that exact
-capability and retains its dynamic root, count, slots, and `Active` state only
+capability and retains its compiler-TLS backing root, count, slots, and `Active` state only
 on this pre-claim result; after the entry drops, its successful retry preserves
 the source free-before-root-clear order. Stale/provenance rejection and every
-post-claim error remain terminal diagnostic state. `DynamicTheapAttachment`
-still clears its regular slot and binding before calling that direct owner, so
-an outer attachment error remains terminal rather than offering a retry. Its
+post-claim error remain terminal diagnostic state. One selected
+same-current-thread `DynamicTheapAttachment` continuation enters
+`AwaitingBackingRelease` after it has cleared the regular heap-key entry keyed
+by its Heap's `theap_slot` and marked its binding unbound, but only when that
+exact Malloc release rejects before its claim. It retains the compiler-TLS
+backing root/allocation, key lease, TLD, Theap, Heap binding, cached reference,
+and the sealed engine image when present (the direct witness has none and the
+engine witness has one retired PageMap-published page); ordinary page-engine
+operations stay suspended, it never restores or republishes the key entry or
+repeats attached preflight, and it resumes only backing release after the entry
+guard drops. Terminal/post-claim/non-Malloc/impossible-owner failure and later
+page/list errors remain terminal or unmodeled; a wrong-current-thread call is
+rejected without a new continuation. The separately selected final
+pre-mutation regular-key lock failure retains `AwaitingKeyRelease`. This is Rust ownership
+safety around C's void teardown, not C retry, mutex, lifecycle, race, signal,
+callback, pthread/process, ABI, or general shutdown parity. Its
 normal anonymous `Mapping` owner remains live and is returned after a failed
 `munmap`. That regular-OS form is an intentionally unconnected retry witness,
 not a C metadata caller: pinned `_mi_meta_zalloc` forms Malloc IDs, while a
@@ -1905,7 +1918,8 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   concrete poisoned owner with every still-known TLD registration, allocation,
   backing, binding, and lease capability; it does not attempt a source-invented
   rollback. Teardown validates its cached pointer/refcount before mutation,
-  clears slot/backing, stores the canonical empty cached root, then transitions
+  clears the regular heap-key entry, then its distinct compiler-TLS backing
+  root, stores the canonical empty cached root, then transitions
   `2 -> 1` before list detach. Thus an invalid busy heap-list outcome after
   root reset retains the list/image/registration/key capabilities but has the
   empty cached root and refcount one. During teardown, the dynamic TLD follows
@@ -1913,10 +1927,23 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   private-lock quiescence. A metadata free ambiguity retains only the
   capabilities still known valid and never fabricates ownership of the
   consumed image. Teardown mismatch and nonzero-page checks are pre-mutation.
-  The one retryable outcome is a
-  final regular-key release lock error after all other valid teardown work:
-  `AwaitingKeyRelease` retains only the linear lease until that pre-mutation
-  release succeeds. Safe typed metadata projections also reject released
+  There are two selected retryable outer states. First,
+  `AwaitingBackingRelease` exists only after the regular heap-key entry keyed
+  by the Heap's `theap_slot` and its binding marker clear, and only for a
+  same-current-thread `MetaRelease::Malloc` pre-claim rejection: it retains the
+  exact compiler-TLS backing root/allocation, key lease, TLD, Theap, Heap
+  binding, cached reference, and the sealed engine image when present (the
+  direct witness has none and the engine witness has one retired
+  PageMap-published page) while the retained engine suspends ordinary
+  allocation, free, collection, and remote-producer entry. It neither
+  restores/re-publishes the key entry nor repeats attached preflight, and its
+  sole re-entry resumes backing release after the entry guard drops. Second, after all other valid
+  teardown work, `AwaitingKeyRelease` retains only the linear lease until its
+  pre-mutation final regular-key release succeeds. Every Malloc terminal,
+  non-Malloc/impossible-owner mismatch, and later dynamic teardown/page/list
+  error remains terminal or unmodeled; a wrong-current-thread call is rejected
+  without a new continuation.
+  Safe typed metadata projections also reject released
   capabilities before forming a reference. Ordinary dynamic begin stores the
   source abandoning `true`/`2` profile and rejects page-session construction.
   The crate-private unsafe non-abandoning begin stores the source-reachable
@@ -2277,8 +2304,13 @@ existing teardown. A sole, arena-backed, non-singleton,
   `cached_root_is_empty_and_reference_is_one_before_a_terminal_heap_detach_failure`
   prove the canonical-predecessor, refcount, pre-ticket rejection, and
   post-root-reset terminal ordering;
+  `dynamic_theap_backing_release_recursive_entry_retains_outer_lifecycle_for_retry`
+  and `dynamic_thread_exit_drain_resumes_a_retryable_backing_release` prove the
+  selected same-current-thread pre-claim backing-release continuation, its
+  retained root/list/refcount/capability image, suspension of ordinary use of
+  an existing page-bearing engine, and resume-only drain conversion;
   `key_release_lock_failure_keeps_only_the_linear_lease_for_retry` proves the
-  lone retryable release state; and
+  separate later key-release retry state; and
   `dynamic_theap::tests::non_abandoning_dynamic_page_session_allocates_on_its_exact_theap_and_pinned_heap`,
   `dynamic_non_abandoning_small_page_uses_the_stored_minus_one_full_profile`,
   `dynamic_non_abandoning_full_page_collects_joined_remote_block_and_unfulls`,

@@ -334,6 +334,13 @@ pub(crate) mod theap_page_session_sealed {
 pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     fn theap(&self) -> &Theap;
     fn thread_id(&self) -> Option<LiveThreadId>;
+    /// Reports whether this session still authorizes ordinary page-engine
+    /// operations. A typed teardown continuation can retain the backing page
+    /// image solely to resume its own source boundary; it must not thereby
+    /// re-enable allocation, free, collection, or remote-producer entry.
+    /// Static and completed drain sessions remain ordinary engine owners.
+    #[inline]
+    fn permits_ordinary_page_operations(&self) -> bool { true }
     fn queue(&self, bin: usize) -> Option<&PageQueue>;
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue>;
     fn direct_page(&self, index: usize) -> Option<*mut Page>;

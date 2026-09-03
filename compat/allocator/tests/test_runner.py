@@ -2110,7 +2110,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            57,
+            59,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2286,6 +2286,16 @@ class ContractTests(unittest.TestCase):
                     "target": (
                         "dynamic_theap::tests::nonexclusive_dynamic_theap_releases_its_"
                         "exact_malloc_metadata_lifecycle"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "dynamic-theap-backing-release-preclaim-retry",
+                    "kind": "rust-unit",
+                    "target": (
+                        "dynamic_theap::tests::"
+                        "dynamic_theap_backing_release_recursive_entry_retains_outer_lifecycle_"
+                        "for_retry"
                     ),
                 },
                 {
@@ -2634,6 +2644,15 @@ class ContractTests(unittest.TestCase):
                     "target": (
                         "thread_local::tests::current_thread_backing_teardown_retains_the_live_"
                         "malloc_capability_before_root_clear_on_recursive_entry"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "dynamic-thread-exit-backing-release-retry",
+                    "kind": "rust-unit",
+                    "target": (
+                        "dynamic_theap::tests::"
+                        "dynamic_thread_exit_drain_resumes_a_retryable_backing_release"
                     ),
                 },
             ],

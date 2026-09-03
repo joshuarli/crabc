@@ -96,7 +96,10 @@ use crate::owned_tls_key_registry::{
 use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
 use crate::subproc::MainSubprocess;
-use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner, ThreadLocalKey};
+use crate::thread_local::{
+    ThreadLocalBackingError, ThreadLocalBackingOwner, ThreadLocalBackingTeardownFailure,
+    ThreadLocalKey,
+};
 use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError, ThreadLocalDataOwner};
 use crate::types::{
     DynamicTheapPageMode, Heap, HeapOsAbandonedPageListError, MemoryId, Page, PageQueue,
@@ -108,6 +111,12 @@ use crate::types::{
 enum DynamicAttachmentState {
     Preparing,
     Attached,
+    /// The source regular TLS slot is cleared, but the selected backing
+    /// release rejected before it could claim its exact Malloc capability.
+    /// The backing root, key lease, TLD, Theap, Heap binding, and cached
+    /// reference remain live solely so this owner can resume that release.
+    /// It must not replay the attached-slot preflight or re-publish a slot.
+    AwaitingBackingRelease,
     /// The source regular TLS slot is cleared, so an abandoned-page free can
     /// no longer reclaim this Theap. The page-map/arena/Theap/TLD ownership
     /// stays live until the dedicated page-drain owner has released or
@@ -1167,10 +1176,24 @@ impl<'heap> DynamicTheapAttachment<'heap> {
 
     /// Clears the dynamic regular TLS backing before thread-exit page
     /// abandonment, matching `_mi_thread_locals_thread_done` before
-    /// `mi_thread_theaps_done`. The resulting [`DynamicAttachmentState::DrainingPages`]
-    /// retains the page map, arena image, Theap, Heap, and TLD until a narrow
-    /// page-drain owner has accounted for every page.
+    /// `mi_thread_theaps_done`. A selected pre-claim Malloc-release failure
+    /// leaves the attachment in [`DynamicAttachmentState::AwaitingBackingRelease`];
+    /// re-entry resumes only that retained backing release. On success the
+    /// resulting [`DynamicAttachmentState::DrainingPages`] retains the page
+    /// map, arena image, Theap, Heap, and TLD until a narrow page-drain owner
+    /// has accounted for every page.
     fn begin_page_drain(&mut self) -> Result<(), DynamicTheapError> {
+        match self.state {
+            DynamicAttachmentState::Attached => {}
+            DynamicAttachmentState::AwaitingBackingRelease => {
+                return self.finish_backing_release();
+            }
+            DynamicAttachmentState::TornDown => return Err(DynamicTheapError::TornDown),
+            DynamicAttachmentState::Preparing
+            | DynamicAttachmentState::DrainingPages
+            | DynamicAttachmentState::AwaitingKeyRelease
+            | DynamicAttachmentState::Poisoned => return Err(DynamicTheapError::Poisoned),
+        }
         self.prevalidate_attached_page_drain(false)?;
         let key = self.binding()?.key();
         let clear_slot = {
@@ -1187,16 +1210,46 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         if !slot_cleared {
             return Err(self.poison(DynamicTheapError::SlotOwnership));
         }
+        // C has no typed failure result here. Rust's selected Malloc boundary
+        // can nevertheless prove an entry rejection happened before it
+        // claimed the exact capability. Record the irreversible outer slot
+        // transition before that release so a retry cannot replay the
+        // attached-slot preflight or restore the slot.
+        self.state = DynamicAttachmentState::AwaitingBackingRelease;
+        self.finish_backing_release()
+    }
+
+    /// Completes only the retained current-thread backing release after a
+    /// dynamic attachment has already cleared its regular slot. A retryable
+    /// error retains every outer capability and stays in
+    /// `AwaitingBackingRelease`; any other failure is terminal because the
+    /// outer source state can no longer be reconstructed safely.
+    fn finish_backing_release(&mut self) -> Result<(), DynamicTheapError> {
+        self.ensure_awaiting_backing_release_current()?;
+        if !self
+            .binding
+            .as_ref()
+            .is_some_and(|binding| !binding.slot_bound)
+        {
+            return Err(self.poison(DynamicTheapError::SlotOwnership));
+        }
         let backing_teardown = match self.backing.as_mut() {
-            Some(backing) => backing.teardown(),
+            Some(backing) => backing.teardown_classified(),
             None => return Err(self.poison(DynamicTheapError::Poisoned)),
         };
-        if let Err(error) = backing_teardown {
-            return Err(self.poison(DynamicTheapError::Backing(error)));
+        match backing_teardown {
+            Ok(()) => {
+                self.backing = None;
+                self.state = DynamicAttachmentState::DrainingPages;
+                Ok(())
+            }
+            Err(ThreadLocalBackingTeardownFailure::Retryable(error)) => {
+                Err(DynamicTheapError::Backing(error))
+            }
+            Err(ThreadLocalBackingTeardownFailure::Terminal(error)) => {
+                Err(self.poison(DynamicTheapError::Backing(error)))
+            }
         }
-        self.backing = None;
-        self.state = DynamicAttachmentState::DrainingPages;
-        Ok(())
     }
 
     /// Performs the bounded no-page teardown sequence. A direct no-page
@@ -1211,6 +1264,10 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             DynamicAttachmentState::Attached => {
                 self.prevalidate_attached_page_drain(true)?;
                 self.begin_page_drain()?;
+            }
+            DynamicAttachmentState::AwaitingBackingRelease => {
+                self.begin_page_drain()?;
+                self.prevalidate_draining_page_teardown()?;
             }
             DynamicAttachmentState::DrainingPages => self.prevalidate_draining_page_teardown()?,
             DynamicAttachmentState::TornDown => return Err(DynamicTheapError::TornDown),
@@ -1904,11 +1961,28 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             },
             DynamicAttachmentState::TornDown => Err(DynamicTheapError::TornDown),
             DynamicAttachmentState::Preparing
+            | DynamicAttachmentState::AwaitingBackingRelease
             | DynamicAttachmentState::DrainingPages
             | DynamicAttachmentState::AwaitingKeyRelease
             | DynamicAttachmentState::Poisoned => {
                 Err(DynamicTheapError::Poisoned)
             }
+        }
+    }
+
+    #[inline]
+    fn ensure_awaiting_backing_release_current(&self) -> Result<(), DynamicTheapError> {
+        match self.state {
+            DynamicAttachmentState::AwaitingBackingRelease => match current_thread_identity() {
+                Some(thread) if thread == self.thread => Ok(()),
+                Some(_) | None => Err(DynamicTheapError::InvalidCurrentThread),
+            },
+            DynamicAttachmentState::TornDown => Err(DynamicTheapError::TornDown),
+            DynamicAttachmentState::Preparing
+            | DynamicAttachmentState::Attached
+            | DynamicAttachmentState::DrainingPages
+            | DynamicAttachmentState::AwaitingKeyRelease
+            | DynamicAttachmentState::Poisoned => Err(DynamicTheapError::Poisoned),
         }
     }
 
@@ -1922,6 +1996,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             DynamicAttachmentState::TornDown => Err(DynamicTheapError::TornDown),
             DynamicAttachmentState::Preparing
             | DynamicAttachmentState::Attached
+            | DynamicAttachmentState::AwaitingBackingRelease
             | DynamicAttachmentState::AwaitingKeyRelease
             | DynamicAttachmentState::Poisoned => Err(DynamicTheapError::Poisoned),
         }
@@ -2112,6 +2187,18 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
             .get()
     }
 
+    /// The only selected retained engine state that may re-enter
+    /// `begin_thread_exit_drain`: its regular heap-key slot is already clear
+    /// and it may resume only the pre-claim Malloc backing release. This is
+    /// intentionally separate from ordinary page-engine admission below.
+    #[inline]
+    pub(crate) fn is_awaiting_backing_release(&self) -> bool {
+        matches!(
+            self.attachment.state,
+            DynamicAttachmentState::AwaitingBackingRelease
+        )
+    }
+
     #[inline]
     fn dynamic_theap(&self) -> &Theap {
         self.attachment
@@ -2149,8 +2236,10 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
     /// Consumes this live page-session borrow into the source thread-exit
     /// page-drain state. The attachment clears its regular TLS backing first,
     /// so later abandoned frees cannot reclaim this Theap through its dynamic
-    /// heap key. On error the caller retains this exact session/engine; a
-    /// post-mutation error has already poisoned the attachment.
+    /// heap key. On error the caller retains this exact session/engine: a
+    /// selected pre-claim backing-release failure may resume its exact
+    /// release, while every other post-mutation error has poisoned the
+    /// attachment.
     pub(crate) fn begin_thread_exit_drain(
         self,
     ) -> Result<DynamicTheapPageDrainSession<'attach, 'heap>, (Self, DynamicTheapError)> {
@@ -2299,6 +2388,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
             }
             (DynamicAttachmentState::Preparing, _)
             | (DynamicAttachmentState::Attached, _)
+            | (DynamicAttachmentState::AwaitingBackingRelease, _)
             | (DynamicAttachmentState::AwaitingKeyRelease, _)
             | (DynamicAttachmentState::TornDown, _)
             | (DynamicAttachmentState::Poisoned, _) => {
@@ -2440,6 +2530,11 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
     #[inline]
     fn thread_id(&self) -> Option<crate::types::LiveThreadId> {
         Some(self.attachment.thread)
+    }
+
+    #[inline]
+    fn permits_ordinary_page_operations(&self) -> bool {
+        matches!(self.attachment.state, DynamicAttachmentState::Attached)
     }
 
     #[inline]
@@ -21721,6 +21816,237 @@ mod tests {
         })
         .join()
         .expect("the non-exclusive dynamic Theap metadata lifecycle completes");
+    }
+
+    /// A selected `MetaRelease::Malloc` entry failure occurs after the source
+    /// regular slot has been cleared but before the backing capability is
+    /// claimed. The outer attachment must retain that exact owner for retry;
+    /// treating it as terminal would strand a live backing root, TLD, Theap,
+    /// Heap binding, and linear regular-key lease.
+    #[test]
+    fn dynamic_theap_backing_release_recursive_entry_retains_outer_lifecycle_for_retry() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let roots_before = UnrelatedRoots::capture();
+            let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
+            let key = owner.key().expect("the attached owner retains its regular key");
+            let theap = owner
+                .theap_pointer()
+                .expect("the attached owner retains its typed dynamic Theap");
+            let backing_before = dynamic_backing_peek()
+                .expect("the attached owner publishes one regular dynamic backing root");
+            // SAFETY: `owner` retains the exact live backing capability until
+            // the successful retry below.
+            let backing_memory_before = unsafe { backing_before.as_ref() }.memory_id();
+            let attached_audit = metadata.test_allocation_audit();
+            assert_eq!(attached_audit.live_capability_count, 4);
+            assert_eq!(registry.test_live_lease_count(), 1);
+            assert_eq!(subprocess.live_thread_count(), 1);
+
+            assert_eq!(
+                metadata.test_with_held_backing_entry(|| owner.teardown()),
+                Ok(Err(DynamicTheapError::Backing(
+                    ThreadLocalBackingError::Metadata(MetaError::RecursiveEntry)
+                ))),
+                "the selected backing free rejects before it can claim the live Malloc capability"
+            );
+            assert_eq!(
+                owner.state,
+                DynamicAttachmentState::AwaitingBackingRelease,
+                "a pre-claim backing rejection retains only its outer backing-release continuation"
+            );
+            assert_eq!(
+                dynamic_backing_peek(),
+                Some(backing_before),
+                "the failed backing free cannot clear or replace its exact root"
+            );
+            // SAFETY: the failed release retained the same live backing
+            // capability and the owner remains the only current-thread
+            // lifecycle authority.
+            let backing_memory_after = unsafe { backing_before.as_ref() }.memory_id();
+            let backing_malloc_before = backing_memory_before
+                .malloc_memory()
+                .expect("the regular backing has selected Malloc provenance");
+            let backing_malloc_after = backing_memory_after
+                .malloc_memory()
+                .expect("the retained regular backing keeps Malloc provenance");
+            assert_eq!(backing_memory_after.kind(), backing_memory_before.kind());
+            assert_eq!(backing_malloc_after.base, backing_malloc_before.base);
+            assert_eq!(backing_malloc_after.size, backing_malloc_before.size);
+            assert_eq!(
+                backing_memory_after.is_pinned(),
+                backing_memory_before.is_pinned()
+            );
+            assert_eq!(
+                backing_memory_after.initially_committed(),
+                backing_memory_before.initially_committed()
+            );
+            assert_eq!(
+                backing_memory_after.initially_zero(),
+                backing_memory_before.initially_zero()
+            );
+            assert_eq!(
+                owner.backing.as_mut().unwrap().get(key),
+                Ok(null_mut()),
+                "the regular slot is cleared before the source backing release"
+            );
+            assert!(
+                owner.binding.as_ref().is_some_and(|binding| !binding.slot_bound),
+                "the exact regular-key lease remains live but cannot name a cleared slot"
+            );
+            assert_eq!(cached_theap().as_ptr(), theap);
+            assert!(owner.cached_root_bound);
+            assert!(owner.theap.is_some());
+            assert!(owner.tld.is_some());
+            let heap = owner.heap_ref();
+            // SAFETY: the retained attachment still owns the one-member
+            // private Heap list while its exact backing capability awaits
+            // the pre-claim retry.
+            assert!(unsafe { heap.has_exact_theap_member(theap) });
+            assert!(heap.test_theap_head_is(theap));
+            let tld = owner
+                .tld
+                .as_mut()
+                .expect("the retained attachment keeps its current TLD")
+                .current_mut()
+                .expect("the retained attachment keeps its initialized TLD image");
+            // SAFETY: this current-thread owner serializes the retained
+            // one-member TLD list through the selected retry boundary.
+            assert!(unsafe { tld.has_exact_theap_member(theap) });
+            assert!(tld.test_theap_head_is(theap));
+            let fields = owner
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .expect("the retained attachment keeps its typed dynamic Theap")
+                .test_main_static_fields();
+            assert_eq!(fields.refcount, 2);
+            assert_eq!(
+                owner
+                    .theap
+                    .as_ref()
+                    .and_then(MetaAllocation::dynamic_theap)
+                    .expect("the retained attachment keeps its dynamic Theap projection")
+                    .page_count(),
+                0
+            );
+            assert_eq!(metadata.test_allocation_audit(), attached_audit);
+            assert_eq!(registry.test_live_lease_count(), 1);
+            assert_eq!(subprocess.live_thread_count(), 1);
+
+            owner
+                .teardown()
+                .expect("the exact outer owner resumes after the entry guard drops");
+            assert_eq!(owner.state, DynamicAttachmentState::TornDown);
+            assert!(owner.backing.is_none());
+            assert!(owner.binding.is_none());
+            assert!(owner.tld.is_none());
+            assert!(owner.theap.is_none());
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 1);
+            assert_eq!(registry.test_live_lease_count(), 0);
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert!(roots_before.still_matches());
+
+            registry
+                .shutdown()
+                .expect("the quiescent registry releases its distinct bitmap capability");
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 0);
+        })
+        .join()
+        .expect("the retryable dynamic backing release remains on its native thread");
+    }
+
+    /// The page-engine entry retains its exact engine on a selected backing
+    /// entry rejection, so re-entering it must resume the backing release
+    /// rather than replaying the now-cleared attached-slot preflight.
+    #[test]
+    fn dynamic_thread_exit_drain_resumes_a_retryable_backing_release() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let metadata = owner
+                .tld
+                .as_ref()
+                .expect("the attached owner retains its later TLD")
+                .metadata();
+            let session = owner
+                .page_session()
+                .expect("the non-abandoning attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(WORD_SIZE, false)
+                .expect("the live dynamic page engine creates one regular page before thread exit");
+            let bin = crate::size_class::bin(WORD_SIZE)
+                .expect("the selected direct-small request has one regular bin");
+            let direct_index = crate::invariants::word_count(WORD_SIZE)
+                .expect("the selected direct-small request has one direct-cache index");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the pre-exit dynamic allocation remains PageMap-published");
+            // SAFETY: `block` is this test's sole current allocation. Its
+            // all-free retirement preserves the existing page image for the
+            // selected post-slot-clear allocation refusal below.
+            unsafe { allocator.free(block) }
+                .expect("the pre-exit dynamic allocation returns to its exact page");
+            let queue_count_before_retry = allocator.queue_count(bin);
+            let direct_before_retry = allocator.direct_page(direct_index);
+            assert_eq!(queue_count_before_retry, Some(1));
+            assert_eq!(direct_before_retry, Some(page.as_ptr()));
+            let mut allocator = match metadata
+                .test_with_held_backing_entry(|| allocator.begin_thread_exit_drain())
+            {
+                Ok(Err(DynamicThreadExitDrainFailure::Retained { engine, error })) => {
+                    assert_eq!(
+                        error,
+                        DynamicTheapError::Backing(ThreadLocalBackingError::Metadata(
+                            MetaError::RecursiveEntry
+                        )),
+                        "the page-engine transition retains only the selected pre-claim release"
+                    );
+                    engine
+                }
+                Ok(Ok(_)) => panic!("the held backing entry cannot complete thread exit"),
+                Err(error) => panic!("the isolated metadata entry acquires its guard: {error:?}"),
+            };
+
+            assert_eq!(
+                allocator.allocate(WORD_SIZE, false),
+                None,
+                "a retained AwaitingBackingRelease engine cannot resume ordinary allocation after its regular slot clears"
+            );
+            assert_eq!(allocator.queue_count(bin), queue_count_before_retry);
+            assert_eq!(allocator.direct_page(direct_index), direct_before_retry);
+            // SAFETY: `block` remains an address within this retained page;
+            // this focused lookup reads its still-published PageMap entry and
+            // does not revive the freed client allocation.
+            assert_eq!(
+                unsafe { allocator.page_for_block(block) },
+                page.as_ptr(),
+                "the retained engine preserves the exact PageMap publication until its dedicated drain"
+            );
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("the retained page engine resumes its exact backing release: {error:?}");
+                }
+            };
+            assert!(
+                drain.test_dynamic_regular_slot_is_clear(),
+                "the retry resumes after the source regular slot has already cleared"
+            );
+            assert_eq!(
+                drain.test_page_count(),
+                1,
+                "the retry carries the unchanged retired page into its dedicated drain rather than resuming allocation"
+            );
+            assert!(drain.finish());
+            DynamicPageFixtureOutcome::TearDown
+        });
     }
 
     /// Emits the finite address-independent compiler-TLS M1 record compared

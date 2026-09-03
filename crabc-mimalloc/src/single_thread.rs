@@ -7849,7 +7849,18 @@ impl<'attach, 'heap, 'arena, 'map>
         DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
         DynamicThreadExitDrainFailure<'attach, 'heap, 'arena, 'map>,
     > {
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        // `AwaitingBackingRelease` is the one selected retained state whose
+        // engine may re-enter this conversion. Its session has deliberately
+        // suspended every ordinary page operation after the regular heap-key
+        // slot cleared, but `begin_thread_exit_drain` itself resumes only the
+        // exact pre-claim backing release. Every physical collection/VM
+        // poison, pending release, or other suspended session remains
+        // terminally retained.
+        let resuming_backing_release = self.session.is_awaiting_backing_release();
+        if self.has_retained_collection_poison()
+            || self.pending_os_release.is_some()
+            || (!resuming_backing_release && !self.session.permits_ordinary_page_operations())
+        {
             return Err(DynamicThreadExitDrainFailure::Retained {
                 engine: self,
                 error: DynamicTheapError::Poisoned,
@@ -37189,12 +37200,24 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     }
 
     #[inline]
-    fn is_collection_poisoned(&self) -> bool {
+    fn has_retained_collection_poison(&self) -> bool {
         self.collection_poison.is_some()
             || self.page_commit_poison
             || self
                 .session
                 .is_owner_local_mapped_abandoned_claim_terminal()
+    }
+
+    #[inline]
+    fn is_collection_poisoned(&self) -> bool {
+        // An awaiting dynamic backing-release continuation has not suffered
+        // a page-collection failure, but it is equivalently unavailable to
+        // every ordinary engine operation until its typed thread-exit resume
+        // succeeds. Folding that state into the existing operation gate keeps
+        // allocation, free, collection, finish, and remote-producer entry
+        // from crossing the already-cleared regular heap-key boundary.
+        self.has_retained_collection_poison()
+            || !self.session.permits_ordinary_page_operations()
     }
 
     /// Records the first owner-side collection failure before its caller can

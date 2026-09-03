@@ -918,8 +918,37 @@ pub(crate) enum ThreadLocalBackingError {
     AllocationSizeOverflow,
     /// The one allowed typed projection no longer matched its allocation.
     BackingProjection,
+    /// A selected Malloc teardown reported a non-Malloc release owner.
+    ///
+    /// `MetaRelease::Malloc` cannot normally produce this outcome. Retaining
+    /// a distinct terminal error keeps that impossible owner mismatch from
+    /// becoming a false retry capability at the current-thread boundary.
+    ReleaseOwnerMismatch,
     /// The process metadata owner rejected or could not complete the request.
     Metadata(MetaError),
+}
+
+/// One classified dynamic-backing teardown failure.
+///
+/// A caller that has already cleared a source regular slot needs to know
+/// whether it may resume only the backing release. The retryable branch is
+/// deliberately limited to [`MetaReleaseFailure::MallocRetryable`], where the
+/// exact capability is still live and the compiler-TLS root remains intact.
+/// Every other error stays terminal for that outer lifecycle, even when an
+/// individual local precondition happened before a mutation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadLocalBackingTeardownFailure {
+    Retryable(ThreadLocalBackingError),
+    Terminal(ThreadLocalBackingError),
+}
+
+impl ThreadLocalBackingTeardownFailure {
+    #[inline]
+    pub(crate) const fn into_error(self) -> ThreadLocalBackingError {
+        match self {
+            Self::Retryable(error) | Self::Terminal(error) => error,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1072,15 +1101,34 @@ impl ThreadLocalBackingOwner {
     /// active state remain unchanged for a direct caller retry. A terminal
     /// failure remains conservative: the root is cleared and the owner is
     /// poisoned because local release may already have mutated the backing.
-    /// This does not make an enclosing attachment lifecycle retryable; that
-    /// owner has its own state transition before it calls this method.
+    /// This unclassified direct result does not by itself authorize an
+    /// enclosing attachment retry. The one dynamic attachment that clears its
+    /// regular slot first uses [`Self::teardown_classified`] to retain only a
+    /// proven pre-claim Malloc capability.
     pub(crate) fn teardown(&mut self) -> Result<(), ThreadLocalBackingError> {
-        self.ensure_active_current()?;
+        self.teardown_classified()
+            .map_err(ThreadLocalBackingTeardownFailure::into_error)
+    }
+
+    /// Releases one live backing while preserving the sole source-proven
+    /// pre-claim retry classification for an outer lifecycle owner.
+    ///
+    /// Direct callers normally use [`Self::teardown`], which deliberately
+    /// presents the established unclassified error surface. An enclosing
+    /// owner may use this internal form only after it has made its regular
+    /// slot unreachable and needs to distinguish an untouched exact Malloc
+    /// capability from a terminal release failure.
+    pub(crate) fn teardown_classified(
+        &mut self,
+    ) -> Result<(), ThreadLocalBackingTeardownFailure> {
+        self.ensure_active_current()
+            .map_err(ThreadLocalBackingTeardownFailure::Terminal)?;
         if self.count == 0 {
             // The source keeps the shared empty image installed because it
             // owns no allocation to release. Still verify no foreign root was
             // installed through an unsafe lifecycle violation.
-            self.ensure_current_root()?;
+            self.ensure_current_root()
+                .map_err(ThreadLocalBackingTeardownFailure::Terminal)?;
             self.state = ThreadLocalBackingState::TornDown;
             return Ok(());
         }
@@ -1088,12 +1136,17 @@ impl ThreadLocalBackingOwner {
         // Check identity before taking the capability. A foreign root must
         // not be cleared or freed through this owner.
         let _ = self
-            .current_backing_mut()?
-            .ok_or(ThreadLocalBackingError::BackingProjection)?;
+            .current_backing_mut()
+            .map_err(ThreadLocalBackingTeardownFailure::Terminal)?
+            .ok_or(ThreadLocalBackingTeardownFailure::Terminal(
+                ThreadLocalBackingError::BackingProjection,
+            ))?;
         let allocation = self
             .allocation
             .take()
-            .ok_or(ThreadLocalBackingError::BackingProjection)?;
+            .ok_or(ThreadLocalBackingTeardownFailure::Terminal(
+                ThreadLocalBackingError::BackingProjection,
+            ))?;
 
         match MetaRelease::Malloc(allocation).release() {
             Ok(()) => {
@@ -1108,7 +1161,9 @@ impl ThreadLocalBackingOwner {
                 // flexible-image count alongside that live value so this
                 // direct owner can retry the same release later.
                 self.allocation = Some(allocation);
-                Err(ThreadLocalBackingError::Metadata(error))
+                Err(ThreadLocalBackingTeardownFailure::Retryable(
+                    ThreadLocalBackingError::Metadata(error),
+                ))
             }
             Err(MetaReleaseFailure::MallocTerminal {
                 error,
@@ -1121,11 +1176,19 @@ impl ThreadLocalBackingOwner {
                 clear_dynamic_backing();
                 self.count = 0;
                 self.state = ThreadLocalBackingState::Poisoned;
-                Err(ThreadLocalBackingError::Metadata(error))
+                Err(ThreadLocalBackingTeardownFailure::Terminal(
+                    ThreadLocalBackingError::Metadata(error),
+                ))
             }
-            Err(MetaReleaseFailure::RegularOs { .. }) => unreachable!(
-                "a selected Malloc release cannot report a regular-OS failure"
-            ),
+            Err(MetaReleaseFailure::RegularOs { .. }) => {
+                // A `MetaRelease::Malloc` value cannot select this branch.
+                // Do not preserve the live root or manufacture a retry if a
+                // future internal representation violates that invariant.
+                self.poison_root();
+                Err(ThreadLocalBackingTeardownFailure::Terminal(
+                    ThreadLocalBackingError::ReleaseOwnerMismatch,
+                ))
+            }
         }
     }
 
