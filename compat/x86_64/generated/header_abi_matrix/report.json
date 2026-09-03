@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "777925ab3d9658a54dbf4d341c81467ad9d7677541b7f4b1a2779d7bac625ff8",
+    "callable_inventory_sha256": "e9e5fc18e5e9790fa95a040a1b5c5c97407f3fc9024274fff7992da570579c12",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -16489,29 +16489,16 @@
           "macro": 26,
           "typedef": 2
         },
-        "sha256": "3893c7f4c63c476931392cec02983abb5e24526ef3e0191342af5c77b20939f3"
+        "sha256": "ce5124bbdb0b8a1fc27e6d7444e97f5a8f68bbd6f6a944c7013f5cc52cdca249"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "int (const char *__restrict, int, int (*)(const char *, int), glob_t *__restrict)|mangled=_Z4globPKciPFiS0_iEP6glob_t",
-            "kind": "function",
-            "name": "glob",
-            "reference_signature": "int (const char *__restrict, int, int (*)(const char *, int), glob_t *__restrict)|mangled=glob"
-          },
-          {
-            "candidate_signature": "void (glob_t *)|mangled=_Z8globfreeP6glob_t",
-            "kind": "function",
-            "name": "globfree",
-            "reference_signature": "void (glob_t *)|mangled=globfree"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 28,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 30,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -16672,29 +16659,16 @@
           "macro": 26,
           "typedef": 2
         },
-        "sha256": "3893c7f4c63c476931392cec02983abb5e24526ef3e0191342af5c77b20939f3"
+        "sha256": "ce5124bbdb0b8a1fc27e6d7444e97f5a8f68bbd6f6a944c7013f5cc52cdca249"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "int (const char *__restrict, int, int (*)(const char *, int), glob_t *__restrict)|mangled=_Z4globPKciPFiS0_iEP6glob_t",
-            "kind": "function",
-            "name": "glob",
-            "reference_signature": "int (const char *__restrict, int, int (*)(const char *, int), glob_t *__restrict)|mangled=glob"
-          },
-          {
-            "candidate_signature": "void (glob_t *)|mangled=_Z8globfreeP6glob_t",
-            "kind": "function",
-            "name": "globfree",
-            "reference_signature": "void (glob_t *)|mangled=globfree"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 28,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 30,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -190196,23 +190170,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 624,
-      "mismatch": 656,
+      "matched": 626,
+      "mismatch": 654,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "656 comparable header/profile rows have prototype or named declaration-form differences",
+      "654 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
       "candidate_only_count": 16351,
-      "incompatible_count": 2881,
+      "incompatible_count": 2877,
       "reference_only_count": 8877
     },
-    "mismatch_row_count": 656,
+    "mismatch_row_count": 654,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337

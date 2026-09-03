@@ -883,6 +883,48 @@ class HeaderAbiMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(profiles), 7)
 
+    def test_glob_header_preserves_musl_x86_c_linkage(self) -> None:
+        """Keep glob and globfree unmangled in both C++ profiles.
+
+        The direct glob declarations are source-owned by this header. Their
+        pinned-musl C linkage is distinct from runtime provider selection:
+        this regression only prevents a local C++ declaration from silently
+        changing the compiler-visible callable forms.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+
+        for profile in profiles:
+            row = rows[("glob.h", profile)]
+            self.assertEqual(row["candidate_status"], "ok")
+            self.assertEqual(row["reference_status"], "ok")
+            self.assertEqual(
+                row["comparison"],
+                "matched",
+                f"glob.h:{profile} must preserve musl's C-linkage source form",
+            )
+            difference = row["difference"]
+            self.assertEqual(difference["candidate_only"], [])
+            self.assertEqual(difference["candidate_only_count"], 0)
+            self.assertEqual(difference["incompatible"], [])
+            self.assertEqual(difference["incompatible_count"], 0)
+            self.assertEqual(difference["reference_only"], [])
+            self.assertEqual(difference["reference_only_count"], 0)
+
+        self.assertEqual(len(profiles), 7)
+
     def test_signal_wait_aio_poll_headers_preserve_musl_x86_ownership(self) -> None:
         """Keep the signal/process-control declaration spine source-faithful.
 
