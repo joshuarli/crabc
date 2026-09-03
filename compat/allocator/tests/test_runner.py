@@ -2250,6 +2250,14 @@ class ContractTests(unittest.TestCase):
                 },
                 {
                     "expected_passed_test_count": 1,
+                    "id": "requested-parent-arena-theap-prefix-lifecycle",
+                    "kind": "rust-unit",
+                    "target": (
+                        "arena::tests::requested_parent_arena_theap_prefix_lifecycle"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
                     "id": "threadlocal-live-rezalloc-malloc-capability-lifetime",
                     "kind": "rust-unit",
                     "target": (

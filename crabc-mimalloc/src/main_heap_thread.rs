@@ -794,10 +794,12 @@ impl<'main> MainHeapThreadAttachment<'main> {
         {
             return Err(MainHeapThreadAttachmentError::RootOwnership);
         }
-        if !self
-            .current_tld_mut()?
-            .has_exact_theap_member(theap_pointer)
-        {
+        // SAFETY: this attachment retains the exact live typed image and its
+        // current TLD remains exclusively owned at this validation boundary.
+        if !unsafe {
+            self.current_tld_mut()?
+                .has_exact_theap_member(theap_pointer)
+        } {
             return Err(MainHeapThreadAttachmentError::ListOwnership);
         }
         let mut heap = self

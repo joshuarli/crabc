@@ -46,8 +46,8 @@ use crate::bitmap::{
     BitmapView, BCHUNK_SIZE,
 };
 use crate::config::{
-    ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MAX_SIZE, ARENA_MIN_OBJ_SLICES, ARENA_MIN_SIZE,
-    ARENA_SLICE_SIZE,
+    ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MAX_SIZE, ARENA_MIN_OBJ_SIZE, ARENA_MIN_OBJ_SLICES,
+    ARENA_MIN_SIZE, ARENA_SLICE_SIZE,
     BCHUNK_BITS, BITMAP_MAX_BIT_COUNT, MAX_ARENAS, PAGE_META_ALIGNED_COUNT,
 };
 use crate::invariants;
@@ -57,7 +57,7 @@ use crate::os::MemoryConfig;
 use crate::subproc::MainSubprocess;
 use crate::types::{
     Arena, ArenaPages, CommitFunction, Heap, HeapArenaPagesError, MemoryId,
-    Page, Subprocess, ThreadSequence,
+    Page, Subprocess, Theap, ThreadSequence,
 };
 
 // Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
@@ -74,6 +74,13 @@ const DEFAULT_ARENA_PURGE_DELAY_MILLISECONDS: i64 =
 // assertion verifies only the fixed source constant, never a Rust/C Theap
 // layout equality.
 const _: [(); 1] = [(); (ARENA_MIN_OBJ_SLICES == 1) as usize];
+// This is deliberately a Rust-prefix capacity proof, not an assertion about
+// the complete pinned C `mi_theap_t`. The independent C layout probe remains
+// the only proof about that full C type.
+const _: [(); 1] = [(); (size_of::<Theap>() <= ARENA_MIN_OBJ_SIZE) as usize];
+const _: [(); 1] = [(); (align_of::<Theap>() <= ARENA_MIN_OBJ_SIZE) as usize];
+const _: [(); 1] = [(); (ARENA_ALIGNMENT % align_of::<Theap>() == 0) as usize];
+const _: [(); 1] = [(); (ARENA_SLICE_SIZE % align_of::<Theap>() == 0) as usize];
 
 /// Opaque public-source arena identity. Only parent arenas can become IDs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1382,23 +1389,25 @@ impl ArenaSliceClaim<'_> {
 /// `MI_ARENA_MIN_OBJ_SIZE` slice, asks only the already selected parent arena
 /// for committed storage, and records the resulting `MI_MEM_ARENA` identity
 /// before `_mi_theap_init` performs any Theap initialization or publication.
-/// This owner captures that allocation/provenance boundary only. It
-/// deliberately does not construct a Rust [`crate::types::Theap`] prefix,
-/// claim a C `sizeof(mi_theap_t)` equivalence, expose a raw allocation address,
-/// attach a TLD, publish a heap/TLS/list root, or implement
-/// `_mi_theap_create`.
+/// Reservation by itself captures that allocation/provenance boundary only:
+/// it does not construct a Rust [`crate::types::Theap`] prefix, claim a C
+/// `sizeof(mi_theap_t)` equivalence, attach a TLD, publish a heap/TLS/list
+/// root, or implement `_mi_theap_create`. Its consuming
+/// [`Self::materialize_rust_theap_prefix`] transition is the separate bounded
+/// Rust-prefix owner.
 ///
 /// The stored subprocess identity makes a release through a foreign process
 /// structurally unavailable. Its explicit consuming [`Self::release`] follows
-/// the existing selected arena release gate; dropping this owner deliberately
-/// does not return the slice while later source Theap lifecycle is absent.
+/// the existing selected arena release gate; dropping either the reservation
+/// or a later prefix owner deliberately retains the slice rather than
+/// guessing cleanup for a partially completed source lifecycle.
 #[must_use = "an exclusive-arena Theap reservation must be explicitly released or retained"]
 pub(crate) struct ExclusiveArenaTheapReservation<'arena, 'subprocess> {
     claim: ArenaSliceClaim<'arena>,
     subprocess: &'subprocess MainSubprocess,
 }
 
-impl ExclusiveArenaTheapReservation<'_, '_> {
+impl<'arena, 'subprocess> ExclusiveArenaTheapReservation<'arena, 'subprocess> {
     /// Returns the selected source `mi_memid_t` result that a future complete
     /// Theap owner must store before `_mi_theap_init` copies its empty image.
     #[inline]
@@ -1431,6 +1440,112 @@ impl ExclusiveArenaTheapReservation<'_, '_> {
             Ok(released) => Ok(released),
             Err(claim) => Err(Self { claim, subprocess }),
         }
+    }
+
+    /// Materializes the bounded Rust [`Theap`] prefix in this exact source
+    /// arena slice.
+    ///
+    /// Pinned `_mi_theap_alloc` returns raw aligned storage and writes only
+    /// `theap->memid` before `_mi_theap_init` copies its empty image. Rust
+    /// must first establish a valid value in that raw storage so the later
+    /// source-order prefix initializer can safely preserve and replace it.
+    /// The returned linear owner retains both the raw storage and the
+    /// selected subprocess release capability; it deliberately does not
+    /// expose an untyped allocation address or auto-release on Drop.
+    ///
+    /// # Safety
+    ///
+    /// No live Rust object may already occupy this exact claimed slice. The
+    /// caller must retain the returned owner until it either finishes the
+    /// matching detach/clear/release sequence or is intentionally retained as
+    /// a terminal source-owner failure.
+    #[inline]
+    pub(crate) unsafe fn materialize_rust_theap_prefix(
+        self,
+    ) -> ExclusiveArenaTheapStorage<'arena, 'subprocess> {
+        let prefix = NonNull::new(self.claim.start().cast::<Theap>())
+            .expect("an arena slice claim always has a non-null start");
+        debug_assert_eq!(prefix.as_ptr().addr() % align_of::<Theap>(), 0);
+        // SAFETY: the caller proves this exact raw source slice has no live
+        // Rust object. The static prefix-fit assertions above prove its
+        // placement fits within the one selected source minimum-object slice.
+        unsafe { prefix.as_ptr().write(Theap::empty()) };
+        ExclusiveArenaTheapStorage {
+            reservation: self,
+            prefix,
+        }
+    }
+}
+
+/// One typed Rust Theap-prefix image occupying a selected requested-parent
+/// arena slice.
+///
+/// This is intentionally not a complete C `mi_theap_t` allocation: Rust's
+/// [`Theap`] stops before the unported statistics tail and any conditional C
+/// fields. It owns only the prefix object and its exact arena reservation, so
+/// an arena-specific lifecycle can preserve `_mi_theap_alloc` provenance and
+/// `_mi_theap_init` ordering without claiming C-layout equivalence.
+///
+/// The raw prefix has no destructor-backed owner. Its explicit
+/// [`Self::drop_prefix_then_release`] transition drops the initialized Rust
+/// prefix only after source detachment cleared its live links/refcount, then
+/// returns its now-untyped slice through the selected subprocess. Dropping
+/// this storage otherwise deliberately retains the source slice.
+#[must_use = "an arena-backed Theap prefix must be detached and released or retained terminally"]
+pub(crate) struct ExclusiveArenaTheapStorage<'arena, 'subprocess> {
+    reservation: ExclusiveArenaTheapReservation<'arena, 'subprocess>,
+    prefix: NonNull<Theap>,
+}
+
+impl<'arena, 'subprocess> ExclusiveArenaTheapStorage<'arena, 'subprocess> {
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        self.reservation.memory_id()
+    }
+
+    /// Projects the one initialized Rust prefix while this linear storage
+    /// owner remains live. No raw alias is returned.
+    #[inline]
+    pub(crate) fn prefix_mut(&mut self) -> &mut Theap {
+        // SAFETY: `materialize_rust_theap_prefix` initialized exactly this
+        // object, and the linear owner supplies the only safe mutable route.
+        unsafe { self.prefix.as_mut() }
+    }
+
+    /// Test-only address observation for the typed Rust prefix. It does not
+    /// lend dereference authority or claim any complete C-layout identity.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_prefix_address(&self) -> usize {
+        self.prefix.as_ptr().addr()
+    }
+
+    /// Drops the cleared Rust prefix and then releases its selected arena
+    /// slice.
+    ///
+    /// The Rust `TheapRandomImage` has a real destructor, unlike the C source
+    /// image. It must run before `slices_free` makes these bytes reusable. A
+    /// rejected selected-subprocess gate therefore returns only the exact
+    /// still-retained reservation: the prefix is already destroyed and cannot
+    /// safely be reconstructed or projected again.
+    ///
+    /// # Safety
+    ///
+    /// The caller must have detached both intrusive lists and completed the
+    /// arena Theap's final refcount transition. No raw pointer/reference to
+    /// the prefix may survive this consuming transition.
+    #[inline]
+    pub(crate) unsafe fn drop_prefix_then_release(
+        self,
+    ) -> Result<bool, ExclusiveArenaTheapReservation<'arena, 'subprocess>> {
+        let Self {
+            reservation,
+            prefix,
+        } = self;
+        // SAFETY: forwarded from this method's caller. This drop zeroizes the
+        // Rust random image while its raw slice is still exclusively claimed.
+        unsafe { core::ptr::drop_in_place(prefix.as_ptr()) };
+        reservation.release()
     }
 }
 
@@ -2379,7 +2494,13 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use crate::main_theap::{
+        MainStaticAttachmentStorage, MainStaticTheapAttachment, MainStaticTheapError,
+        RequestedParentArenaTheapBeginFailure, RequestedParentArenaTheapError,
+    };
+    use core::pin::Pin;
     use std::alloc::{alloc_zeroed, dealloc, Layout};
+    use std::boxed::Box;
 
     struct AlignedRegion {
         pointer: NonNull<u8>,
@@ -2742,6 +2863,262 @@ mod tests {
             matches!(blocker.release_for_subprocess(selected), Ok(true)),
             "the selected source identity returns the exhausted parent span"
         );
+    }
+
+    #[test]
+    fn requested_parent_arena_theap_prefix_lifecycle() {
+        std::thread::spawn(|| {
+            let selected = MainSubprocess::test_static_owner();
+            let foreign = MainSubprocess::test_static_owner();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, selected)
+            }
+            .expect("the live default Theap supplies the source caller TLD");
+            let thread_sequence = main
+                .tld()
+                .expect("the default TLD remains current")
+                .thread_sequence();
+            assert_eq!(thread_sequence.get(), 0);
+
+            let registry = ArenaRegistry::new(null_mut());
+            assert!(unsafe { registry.bind_subprocess_before_publication(selected.as_ptr()) });
+            let mut selected_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+            let selected_managed = unsafe {
+                manage_external_in_place(
+                    &registry,
+                    selected_region.as_ptr(),
+                    ARENA_MIN_SIZE,
+                    PageSize::new(4096).unwrap(),
+                    true,
+                    false,
+                    true,
+                    3,
+                    false,
+                    None,
+                )
+            }
+            .expect("the selected parent arena is initialized");
+            let mut other_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+            let other_managed = unsafe {
+                manage_external_in_place(
+                    &registry,
+                    other_region.as_ptr(),
+                    ARENA_MIN_SIZE,
+                    PageSize::new(4096).unwrap(),
+                    true,
+                    false,
+                    true,
+                    -1,
+                    false,
+                    None,
+                )
+            }
+            .expect("the unrelated parent arena is initialized");
+            let selected_view = unsafe { ArenaView::from_ptr(selected_managed.arena_id().as_ptr()) }
+                .expect("the selected parent remains published");
+            let other_view = unsafe { ArenaView::from_ptr(other_managed.arena_id().as_ptr()) }
+                .expect("the unrelated parent remains published");
+            let first_slice = selected_view.arena().info_slices;
+            let other_first_slice = other_view.arena().info_slices;
+            let selected_free = unsafe { selected_view.slices_free() }.unwrap();
+            let other_free = unsafe { other_view.slices_free() }.unwrap();
+            let expected_start = selected_view
+                .slice_start(first_slice)
+                .expect("the first usable selected slice has an address");
+
+            let mut heap = Box::pin(Heap::bootstrap_empty());
+            // SAFETY: this fixture owns the one fresh pinned Heap for the
+            // exact duration of the exclusive requested-parent attachment.
+            assert!(unsafe {
+                Pin::get_unchecked_mut(heap.as_mut())
+                    .initialize_dynamic_binding_for_requested_arena(
+                        selected,
+                        2,
+                        selected_managed.arena_id().as_ptr(),
+                    )
+            });
+            assert_eq!(selected_free.is_set_range(first_slice, 1), Some(true));
+            assert_eq!(
+                other_free.is_set_range(
+                    other_first_slice,
+                    BCHUNK_BITS - other_first_slice,
+                ),
+                Some(true),
+            );
+            assert!(
+                selected_view
+                    .try_reserve_exclusive_theap(foreign, thread_sequence)
+                    .is_none(),
+                "a foreign subprocess cannot consume the selected parent before prefix construction"
+            );
+            assert_eq!(
+                selected_free.is_set_range(first_slice, 1),
+                Some(true),
+                "foreign refusal leaves the selected parent bitmap untouched"
+            );
+
+            let reservation = selected_view
+                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .expect("only the requested parent supplies the Theap slice");
+            let mut owner = match main.attach_requested_parent_arena_theap(heap.as_mut(), reservation) {
+                Ok(owner) => owner,
+                Err(_) => panic!("the prepared source-shaped prefix attachment succeeds"),
+            };
+
+            assert!(owner.is_attached());
+            assert_eq!(
+                owner.test_theap_prefix_address(),
+                expected_start.addr(),
+                "the Rust prefix occupies the selected arena slice itself"
+            );
+            let memory = owner.memory_id().expect("the live prefix retains a memory ID");
+            assert_eq!(memory.kind(), crate::types::MemoryKind::Arena);
+            assert!(
+                memory.initially_zero(),
+                "the first selected slice preserves the external arena's fresh-zero observation"
+            );
+            let arena_memory = memory
+                .arena_memory()
+                .expect("the live prefix retains exact arena provenance");
+            assert_eq!(arena_memory.arena, selected_managed.arena_id().as_ptr());
+            assert_eq!(arena_memory.slice_index as usize, first_slice);
+            assert_eq!(arena_memory.slice_count as usize, ARENA_MIN_OBJ_SLICES);
+            assert_eq!(selected_free.is_clear_range(first_slice, 1), Some(true));
+            assert_eq!(
+                other_free.is_set_range(
+                    other_first_slice,
+                    BCHUNK_BITS - other_first_slice,
+                ),
+                Some(true),
+                "the attached requested-parent Theap never searches another arena"
+            );
+
+            owner
+                .teardown()
+                .expect("the page-free prefix detaches before returning its exact slice");
+            assert!(owner.is_torn_down());
+            assert_eq!(
+                selected.live_thread_count(),
+                1,
+                "the auxiliary prefix leaves the source default TLD live"
+            );
+            assert_eq!(selected_free.is_set_range(first_slice, 1), Some(true));
+            assert_eq!(
+                other_free.is_set_range(
+                    other_first_slice,
+                    BCHUNK_BITS - other_first_slice,
+                ),
+                Some(true),
+            );
+
+            drop(owner);
+            let mut rejected_heap = Box::pin(Heap::bootstrap_empty());
+            let rejected_reservation = selected_view
+                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .expect("the selected parent provides the unchanged pre-materialization claim");
+            let rejected_slice = rejected_reservation.slice_index();
+            assert_eq!(selected_free.is_clear_range(rejected_slice, 1), Some(true));
+            let rejected_reservation = match main.attach_requested_parent_arena_theap(
+                rejected_heap.as_mut(),
+                rejected_reservation,
+            ) {
+                Err(RequestedParentArenaTheapBeginFailure::Rejected { error, reservation }) => {
+                    assert_eq!(error, RequestedParentArenaTheapError::HeapBinding);
+                    reservation
+                }
+                Err(RequestedParentArenaTheapBeginFailure::Retained { .. }) => {
+                    panic!("an invalid caller Heap rejects before prefix materialization")
+                }
+                Ok(_) => panic!("an unbound caller Heap cannot attach the Arena prefix"),
+            };
+            assert_eq!(rejected_reservation.slice_index(), rejected_slice);
+            let rejected_memory = rejected_reservation.memory_id();
+            assert_eq!(rejected_memory.kind(), crate::types::MemoryKind::Arena);
+            assert_eq!(
+                rejected_memory
+                    .arena_memory()
+                    .expect("the unchanged rejection retains Arena provenance")
+                    .arena,
+                selected_managed.arena_id().as_ptr()
+            );
+            let rejected_released = match rejected_reservation.release() {
+                Ok(released) => released,
+                Err(_) => panic!("the unchanged rejection claim keeps its selected release capability"),
+            };
+            assert!(rejected_released);
+            assert_eq!(selected_free.is_set_range(first_slice, 1), Some(true));
+
+            // SAFETY: the first owner detached its only list member, returned
+            // the selected slice, and retired this caller-pinned Heap image.
+            // The fixture now establishes a fresh source `mi_heap_init`
+            // input against the same live selected parent.
+            assert!(unsafe {
+                Pin::get_unchecked_mut(heap.as_mut())
+                    .initialize_dynamic_binding_for_requested_arena(
+                        selected,
+                        2,
+                        selected_managed.arena_id().as_ptr(),
+                    )
+            });
+            let retry = selected_view
+                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .expect("the exact selected slice is reusable for a second Theap lifecycle");
+            assert_eq!(retry.slice_index(), first_slice);
+            assert!(
+                !retry.memory_id().initially_zero(),
+                "returning the prefix preserves the source dirty observation"
+            );
+            let mut retry_owner = match main.attach_requested_parent_arena_theap(heap.as_mut(), retry) {
+                Ok(owner) => owner,
+                Err(_) => panic!("the dirty selected slice remains valid Rust-prefix storage"),
+            };
+            assert!(retry_owner.is_attached());
+            assert_eq!(retry_owner.test_theap_prefix_address(), expected_start.addr());
+            assert_eq!(selected_free.is_clear_range(first_slice, 1), Some(true));
+            retry_owner
+                .teardown()
+                .expect("the dirty reused prefix also detaches before its exact slice returns");
+            assert!(retry_owner.is_torn_down());
+            assert_eq!(selected.live_thread_count(), 1);
+            assert_eq!(selected_free.is_set_range(first_slice, 1), Some(true));
+            drop(retry_owner);
+
+            // SAFETY: the second owner returned its exact slice and retired
+            // the caller Heap, so this final isolated branch starts a third
+            // source-shaped caller Heap solely to prove that dropping a live
+            // owner preserves its terminal claim and poisons the main owner.
+            assert!(unsafe {
+                Pin::get_unchecked_mut(heap.as_mut())
+                    .initialize_dynamic_binding_for_requested_arena(
+                        selected,
+                        2,
+                        selected_managed.arena_id().as_ptr(),
+                    )
+            });
+            let terminal_reservation = selected_view
+                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .expect("the selected returned slice remains claimable before the terminal-owner check");
+            let terminal_slice = terminal_reservation.slice_index();
+            let mut terminal_owner = match main.attach_requested_parent_arena_theap(
+                heap.as_mut(),
+                terminal_reservation,
+            ) {
+                Ok(owner) => owner,
+                Err(_) => panic!("the terminal-owner check begins from a valid live prefix"),
+            };
+            assert!(terminal_owner.is_attached());
+            drop(terminal_owner);
+            assert_eq!(
+                selected_free.is_clear_range(terminal_slice, 1),
+                Some(true),
+                "dropping a live owner never releases a partially linked source claim"
+            );
+            assert_eq!(main.teardown(), Err(MainStaticTheapError::Poisoned));
+            assert_eq!(selected.live_thread_count(), 1);
+        })
+        .join()
+        .expect("the isolated requested-parent lifecycle assertion thread succeeds");
     }
 
     #[test]

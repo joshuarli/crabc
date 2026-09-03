@@ -1551,17 +1551,24 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             return Err(DynamicTheapError::CachedReference);
         }
         let tld_member = match self.tld.as_mut() {
-            Some(tld) => tld
-                .current_mut()
-                .map_err(DynamicTheapError::ThreadLocalData)?
-                .has_exact_theap_member(theap_pointer),
+            Some(tld) => {
+                // SAFETY: this attachment retains the exact live typed image
+                // and exclusively owns its current TLD list at this boundary.
+                unsafe {
+                    tld.current_mut()
+                        .map_err(DynamicTheapError::ThreadLocalData)?
+                        .has_exact_theap_member(theap_pointer)
+                }
+            }
             None => return Err(DynamicTheapError::Poisoned),
         };
         let heap = self.heap_ref();
         if !matches_thread
             || !bound_to_subprocess
             || !tld_member
-            || !heap.has_exact_theap_member(theap_pointer)
+            // SAFETY: this attachment retains the exact live typed image and
+            // its private Heap list has no competing owner at this boundary.
+            || !unsafe { heap.has_exact_theap_member(theap_pointer) }
             || !heap.matches_dynamic_binding(
                 subprocess,
                 key.raw() as usize,
@@ -1632,17 +1639,24 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             return Err(DynamicTheapError::CachedReference);
         }
         let tld_member = match self.tld.as_mut() {
-            Some(tld) => tld
-                .current_mut()
-                .map_err(DynamicTheapError::ThreadLocalData)?
-                .has_exact_theap_member(theap_pointer),
+            Some(tld) => {
+                // SAFETY: this attachment retains the exact live typed image
+                // and exclusively owns its current TLD list at this boundary.
+                unsafe {
+                    tld.current_mut()
+                        .map_err(DynamicTheapError::ThreadLocalData)?
+                        .has_exact_theap_member(theap_pointer)
+                }
+            }
             None => return Err(DynamicTheapError::Poisoned),
         };
         let heap = self.heap_ref();
         if !matches_thread
             || !bound_to_subprocess
             || !tld_member
-            || !heap.has_exact_theap_member(theap_pointer)
+            // SAFETY: this attachment retains the exact live typed image and
+            // its private Heap list has no competing owner at this boundary.
+            || !unsafe { heap.has_exact_theap_member(theap_pointer) }
             || !heap.matches_dynamic_binding(
                 subprocess,
                 key.raw() as usize,
@@ -1722,17 +1736,24 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             return Err(DynamicTheapError::CachedReference);
         }
         let tld_member = match self.tld.as_mut() {
-            Some(tld) => tld
-                .current_mut()
-                .map_err(DynamicTheapError::ThreadLocalData)?
-                .has_exact_theap_member(theap_pointer),
+            Some(tld) => {
+                // SAFETY: this attachment retains the exact live typed image
+                // and exclusively owns its current TLD list at this boundary.
+                unsafe {
+                    tld.current_mut()
+                        .map_err(DynamicTheapError::ThreadLocalData)?
+                        .has_exact_theap_member(theap_pointer)
+                }
+            }
             None => return Err(DynamicTheapError::Poisoned),
         };
         let heap = self.heap_ref();
         if !matches_thread
             || !bound_to_subprocess
             || !tld_member
-            || !heap.has_exact_theap_member(theap_pointer)
+            // SAFETY: this attachment retains the exact live typed image and
+            // its private Heap list has no competing owner at this boundary.
+            || !unsafe { heap.has_exact_theap_member(theap_pointer) }
             || !heap.matches_dynamic_binding(subprocess, key.raw() as usize)
         {
             return Err(DynamicTheapError::ListOwnership);
@@ -21570,14 +21591,18 @@ mod tests {
                 "a rejected key release cannot clear or stale the live slot"
             );
             let heap = owner.heap_ref();
-            assert!(heap.has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe { heap.has_exact_theap_member(theap_pointer) });
             assert!(heap.matches_dynamic_binding(subprocess, key.raw() as usize));
             let heap_fields = heap.test_main_static_fields();
             assert_eq!(heap_fields.memid.kind(), MemoryKind::None);
             assert_eq!(heap_fields.theap_slot, key.raw() as usize);
             assert_eq!(heap_fields.numa_node, -1);
             let tld = owner.tld.as_mut().unwrap().current_mut().unwrap();
-            assert!(tld.has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe { tld.has_exact_theap_member(theap_pointer) });
             assert!(tld.test_theap_head_is(theap_pointer));
             let fields = owner
                 .theap
@@ -21645,7 +21670,9 @@ mod tests {
             assert_eq!(tld.thread_sequence().get(), 1);
             assert_eq!(tld.memory_id().kind(), MemoryKind::Malloc);
             assert!(tld.is_attached_to_main_subprocess(subprocess));
-            assert!(tld.has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe { tld.has_exact_theap_member(theap_pointer) });
             assert!(
                 !owner.heap_ref().test_main_static_fields().has_exclusive_arena,
                 "the selected source branch is the non-exclusive _mi_meta_zalloc path"
@@ -21660,7 +21687,11 @@ mod tests {
                 MemoryKind::Malloc,
                 "the non-exclusive source branch obtains Theap metadata through _mi_meta_zalloc"
             );
-            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe {
+                owner.heap_ref().has_exact_theap_member(theap_pointer)
+            });
             assert_eq!(subprocess.total_thread_count(), 2);
             assert_eq!(subprocess.live_thread_count(), 1);
             let attached_audit = metadata.test_allocation_audit();
@@ -21879,14 +21910,22 @@ mod tests {
                 theap_pointer.cast(),
                 "the regular slot is untouched before the page-count rejection"
             );
-            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
-            assert!(owner
-                .tld
-                .as_mut()
-                .unwrap()
-                .current_mut()
-                .unwrap()
-                .has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe {
+                owner.heap_ref().has_exact_theap_member(theap_pointer)
+            });
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe {
+                owner
+                    .tld
+                    .as_mut()
+                    .unwrap()
+                    .current_mut()
+                    .unwrap()
+                    .has_exact_theap_member(theap_pointer)
+            });
             assert_eq!(subprocess.live_thread_count(), 1);
             assert!(owner
                 .theap
@@ -21981,14 +22020,22 @@ mod tests {
                 1,
                 "the paired cached reference was released before detach"
             );
-            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
-            assert!(owner
-                .tld
-                .as_mut()
-                .unwrap()
-                .current_mut()
-                .unwrap()
-                .has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe {
+                owner.heap_ref().has_exact_theap_member(theap_pointer)
+            });
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe {
+                owner
+                    .tld
+                    .as_mut()
+                    .unwrap()
+                    .current_mut()
+                    .unwrap()
+                    .has_exact_theap_member(theap_pointer)
+            });
             assert!(owner
                 .theap
                 .as_mut()
@@ -22285,14 +22332,22 @@ mod tests {
             assert_eq!(subprocess.live_thread_count(), 1);
             assert!(roots.still_matches());
             assert!(is_empty_dynamic_backing(dynamic_backing_peek().unwrap()));
-            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
-            assert!(owner
-                .tld
-                .as_mut()
-                .unwrap()
-                .current_mut()
-                .unwrap()
-                .has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe {
+                owner.heap_ref().has_exact_theap_member(theap_pointer)
+            });
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe {
+                owner
+                    .tld
+                    .as_mut()
+                    .unwrap()
+                    .current_mut()
+                    .unwrap()
+                    .has_exact_theap_member(theap_pointer)
+            });
             assert!(owner
                 .theap
                 .as_mut()

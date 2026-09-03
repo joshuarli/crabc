@@ -261,6 +261,53 @@ impl Heap {
         subprocess: &'static MainSubprocess,
         regular_theap_key: usize,
     ) -> bool {
+        self.initialize_dynamic_binding_with_selected_arena(
+            subprocess,
+            regular_theap_key,
+            null_mut(),
+        )
+    }
+
+    /// Initializes a caller-pinned first-class Heap image whose source
+    /// `exclusive_arena` field selects one already-live direct parent arena.
+    ///
+    /// This is the `mi_heap_init` input used by `heap.c:mi_heap_init_theap`
+    /// before its `_mi_theap_create(heap, mi_theap_get_default()->tld)` call.
+    /// It records only the selected parent identity in the bounded caller
+    /// image: it does not publish a regular TLS slot, create a heap list
+    /// entry, or claim the full source Heap allocation/lifetime.
+    ///
+    /// # Safety
+    ///
+    /// The caller must uphold [`Self::initialize_dynamic_binding`]'s fresh,
+    /// address-stable caller-storage obligation and additionally prove that
+    /// `requested_parent` is the live direct parent selected for this Heap,
+    /// belongs to `subprocess`, and remains live until the matching arena
+    /// Theap has detached and this Heap is retired.
+    #[inline]
+    pub(crate) unsafe fn initialize_dynamic_binding_for_requested_arena(
+        &mut self,
+        subprocess: &'static MainSubprocess,
+        regular_theap_key: usize,
+        requested_parent: *mut Arena,
+    ) -> bool {
+        if requested_parent.is_null() {
+            return false;
+        }
+        self.initialize_dynamic_binding_with_selected_arena(
+            subprocess,
+            regular_theap_key,
+            requested_parent,
+        )
+    }
+
+    #[inline]
+    fn initialize_dynamic_binding_with_selected_arena(
+        &mut self,
+        subprocess: &'static MainSubprocess,
+        regular_theap_key: usize,
+        selected_arena: *mut Arena,
+    ) -> bool {
         if regular_theap_key == 0
             || regular_theap_key == 1
             || !self.subprocess.is_null()
@@ -283,7 +330,7 @@ impl Heap {
         self.next = null_mut();
         self.prev = null_mut();
         self.theap_slot = regular_theap_key;
-        self.exclusive_arena = null_mut();
+        self.exclusive_arena = selected_arena;
         self.numa_node = -1;
         self.theaps = null_mut();
         self.theaps_lock = PrivateLock::new();
@@ -306,6 +353,25 @@ impl Heap {
             && regular_theap_key != 1
             && core::ptr::eq(self.subprocess, subprocess.as_ptr())
             && self.theap_slot == regular_theap_key
+            && self.exclusive_arena.is_null()
+            && self.memid.kind() == MemoryKind::None
+    }
+
+    /// Verifies the bounded caller Heap image remains bound to this exact
+    /// selected requested parent. It deliberately validates no generic heap
+    /// list or TLS state: those are separate source owners and must not be
+    /// inferred from the stored raw arena identity.
+    #[inline]
+    pub(crate) fn matches_dynamic_binding_for_requested_arena(
+        &self,
+        subprocess: &MainSubprocess,
+        requested_parent: *mut Arena,
+    ) -> bool {
+        !requested_parent.is_null()
+            && self.theap_slot != 0
+            && self.theap_slot != 1
+            && core::ptr::eq(self.subprocess, subprocess.as_ptr())
+            && self.exclusive_arena == requested_parent
             && self.memid.kind() == MemoryKind::None
     }
 
@@ -574,11 +640,17 @@ impl Heap {
         guard.unlock().map_err(HeapTheapListError::Lock)
     }
 
+    /// Checks the one-member Heap-list shape used by bounded owners.
+    ///
+    /// # Safety
+    ///
+    /// `theap` must be a live, address-stable typed image owned by the caller.
+    /// The caller must serialize the observed Heap-list links for this
+    /// complete observation.
     #[inline]
-    pub(crate) fn has_exact_theap_member(&self, theap: *mut Theap) -> bool {
-        // SAFETY: the caller retains the typed Theap capability and uses this
-        // only as a pre-mutation ownership witness; the pointer is not an
-        // externally supplied raw alias.
+    pub(crate) unsafe fn has_exact_theap_member(&self, theap: *mut Theap) -> bool {
+        // SAFETY: forwarded from the caller; the raw image is live and its
+        // list links are serialized for this exact observation.
         unsafe {
             self.theaps == theap
                 && !theap.is_null()
@@ -1179,9 +1251,38 @@ impl ThreadLocalData {
         !self.subprocess.is_null() && self.theaps.is_null()
     }
 
-    /// Checks the exact page-free two-member shape used by the M1
-    /// compiler-TLS same-TLD terminal fixture: dynamic cached head followed
-    /// by the static default tail.
+    /// Checks the exact page-free two-member default-TLD shape used by the
+    /// bounded auxiliary-Theap owners: an auxiliary head followed by the
+    /// live static default tail. It is not a general list traversal or a
+    /// multi-Theap admission API.
+    ///
+    /// # Safety
+    ///
+    /// Both raw Theap images must be live and address-stable, and the caller
+    /// must exclusively own this TLD's list for the complete observation.
+    #[inline]
+    pub(crate) unsafe fn has_exact_auxiliary_and_default_pair(
+        &self,
+        auxiliary: *mut Theap,
+        main_default: *mut Theap,
+    ) -> bool {
+        let self_pointer = core::ptr::from_ref(self).cast_mut();
+        // SAFETY: the caller proves both raw images are live, address-stable,
+        // and exclusively protected by this TLD's list owner.
+        unsafe {
+            !auxiliary.is_null()
+                && !main_default.is_null()
+                && self.theaps == auxiliary
+                && (*auxiliary).tprev.is_null()
+                && (*auxiliary).tnext == main_default
+                && (*main_default).tprev == auxiliary
+                && (*main_default).tnext.is_null()
+                && core::ptr::eq((*auxiliary).tld, self_pointer)
+                && core::ptr::eq((*main_default).tld, self_pointer)
+        }
+    }
+
+    /// Backward-compatible test spelling for the M1 differential fixture.
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_m1_cached_aux_and_main_pair(
@@ -1189,20 +1290,9 @@ impl ThreadLocalData {
         cached_aux: *mut Theap,
         main_default: *mut Theap,
     ) -> bool {
-        let self_pointer = core::ptr::from_ref(self).cast_mut();
-        // SAFETY: test callers retain both typed Theap images and invoke this
-        // only while the fixture owns the TLD list exclusively.
-        unsafe {
-            !cached_aux.is_null()
-                && !main_default.is_null()
-                && self.theaps == cached_aux
-                && (*cached_aux).tprev.is_null()
-                && (*cached_aux).tnext == main_default
-                && (*main_default).tprev == cached_aux
-                && (*main_default).tnext.is_null()
-                && core::ptr::eq((*cached_aux).tld, self_pointer)
-                && core::ptr::eq((*main_default).tld, self_pointer)
-        }
+        // SAFETY: the finite M1 fixture owns both typed images and invokes
+        // this observation while it exclusively owns the TLD list.
+        unsafe { self.has_exact_auxiliary_and_default_pair(cached_aux, main_default) }
     }
 
     /// Counts at most the two list entries admitted by the M1 terminal
@@ -1304,10 +1394,17 @@ impl ThreadLocalData {
         self.theaps == theap
     }
 
+    /// Checks the one-member TLD-list shape used by bounded owners.
+    ///
+    /// # Safety
+    ///
+    /// `theap` must be a live, address-stable typed image owned by the caller.
+    /// The caller must serialize the observed TLD-list links for this complete
+    /// observation.
     #[inline]
-    pub(crate) fn has_exact_theap_member(&self, theap: *mut Theap) -> bool {
-        // SAFETY: this is the same private typed pointer check used by the
-        // list-detach path before it mutates either intrusive list.
+    pub(crate) unsafe fn has_exact_theap_member(&self, theap: *mut Theap) -> bool {
+        // SAFETY: forwarded from the caller; the raw image is live and its
+        // list links are serialized for this exact observation.
         unsafe {
             self.theaps == theap
                 && !theap.is_null()
@@ -1636,6 +1733,97 @@ impl ThreadLocalData {
             (*theap).tld = null_mut();
         }
         guard.unlock().map_err(ThreadLocalTheapListError::Lock)
+    }
+
+    /// Detaches one exact auxiliary Theap while deleting its owning
+    /// first-class Heap, leaving the current default Theap on this TLD.
+    ///
+    /// This is the selected single-member form of
+    /// `theap.c:_mi_heap_detach_theaps` followed by
+    /// `heap.c:mi_heap_free_theaps`: the Heap lock is outermost, the TLD link
+    /// is removed first, and the now-TLD-detached member is then removed from
+    /// its sole Heap list. Rust Release-clears `theap->heap` after that final
+    /// list removal so its typed prefix has no live initialized predicate
+    /// before its arena storage is returned; pinned C immediately frees the
+    /// raw image at that point and therefore does not need that extra safe-Rust
+    /// observation.
+    ///
+    /// # Safety
+    ///
+    /// `theap` and `main_default` must be live, address-stable typed Theaps.
+    /// `theap` must be owned exclusively by `heap`, be the head of this
+    /// TLD's exact auxiliary/default pair, and be the sole member of `heap`'s
+    /// Theap list. No concurrent list mutation, guard, or raw alias may exist
+    /// for the complete transition.
+    #[inline]
+    pub(crate) unsafe fn detach_one_auxiliary_theap_for_heap_delete(
+        &mut self,
+        heap: &mut Heap,
+        theap: *mut Theap,
+        main_default: *mut Theap,
+    ) -> Result<(), ThreadLocalTheapListError> {
+        let self_pointer = core::ptr::from_mut(self);
+        let heap_pointer = core::ptr::from_mut(heap);
+        let heap_guard = heap
+            .theaps_lock
+            .lock()
+            .map_err(|error| ThreadLocalTheapListError::Heap(HeapTheapListError::Lock(error)))?;
+        let tld_guard = match self.theaps_lock.try_lock() {
+            Some(guard) => guard,
+            None => {
+                let _ = heap_guard.unlock();
+                return Err(ThreadLocalTheapListError::Busy);
+            }
+        };
+        // SAFETY: forwarded from this method's caller. The exact bounded
+        // shape is validated before either intrusive list is mutated.
+        let valid_member = unsafe {
+            !theap.is_null()
+                && !main_default.is_null()
+                && self.theaps == theap
+                && (*theap).tprev.is_null()
+                && (*theap).tnext == main_default
+                && core::ptr::eq((*theap).tld, self_pointer)
+                && (*main_default).tprev == theap
+                && (*main_default).tnext.is_null()
+                && core::ptr::eq((*main_default).tld, self_pointer)
+                && heap.theaps == theap
+                && (*theap).hprev.is_null()
+                && (*theap).hnext.is_null()
+                && core::ptr::eq((*theap).heap.load(Ordering::Acquire), heap_pointer)
+        };
+        if !valid_member {
+            let _ = tld_guard.unlock();
+            let _ = heap_guard.unlock();
+            return Err(ThreadLocalTheapListError::Membership);
+        }
+
+        // SAFETY: the validated member is the current TLD head. This is the
+        // source heap-delete ordering: erase the TLD relation before the
+        // enclosing Heap's final list removal.
+        unsafe {
+            self.theaps = (*theap).tnext;
+            if !(*theap).tnext.is_null() {
+                (*(*theap).tnext).tprev = null_mut();
+            }
+            (*theap).tnext = null_mut();
+            (*theap).tprev = null_mut();
+            (*theap).tld = null_mut();
+        }
+        tld_guard.unlock().map_err(ThreadLocalTheapListError::Lock)?;
+
+        // SAFETY: the held Heap lock and preceding exact-member check prove
+        // this is the only Heap-list member. The Release clear is the
+        // explicit Rust typed-prefix retirement noted above.
+        unsafe {
+            heap.theaps = null_mut();
+            (*theap).hnext = null_mut();
+            (*theap).hprev = null_mut();
+            (*theap).heap.store(null_mut(), Ordering::Release);
+        }
+        heap_guard
+            .unlock()
+            .map_err(|error| ThreadLocalTheapListError::Heap(HeapTheapListError::Lock(error)))
     }
 
     /// Performs the finite two-member heap-list pass used only by the M1
@@ -3946,6 +4134,31 @@ impl Theap {
         true
     }
 
+    /// Records the exact requested-parent `MI_MEM_ARENA` provenance returned
+    /// by `_mi_theap_alloc` before `_mi_theap_init` copies the empty image.
+    ///
+    /// This deliberately accepts either source pin observation and either
+    /// zero observation: an external parent arena may be pinned, and a
+    /// previously returned slice is expected to be dirty. The exact live
+    /// arena/slice identity remains in `memid`; only committed arena storage
+    /// can hold this typed Rust prefix.
+    #[inline]
+    pub(crate) fn set_requested_arena_metadata_memid(&mut self, memid: MemoryId) -> bool {
+        let Some(arena) = memid.arena_memory() else {
+            return false;
+        };
+        if self.is_initialized()
+            || memid.kind() != MemoryKind::Arena
+            || !memid.initially_committed()
+            || arena.arena.is_null()
+            || arena.slice_count as usize != crate::config::ARENA_MIN_OBJ_SLICES
+        {
+            return false;
+        }
+        self.memid = memid;
+        true
+    }
+
     /// Initializes the process-static first live theap with the exact
     /// `_mi_theap_init` publication ordering relevant to this bounded slice.
     ///
@@ -4046,6 +4259,7 @@ impl Theap {
             || !tld.matches_owner(TheapOwner::Live(
                 LiveThreadId::new(tld.thread_id()).ok_or(TheapDynamicInitError::InvalidInput)?,
             ))
+            || tld.is_in_threadpool()
             || heap.subprocess.is_null()
             || !core::ptr::eq(heap.subprocess, tld.subprocess)
         {
@@ -4112,6 +4326,70 @@ impl Theap {
         tld: &mut ThreadLocalData,
         main_default: *mut Theap,
     ) -> Result<(), TheapDynamicInitError> {
+        // SAFETY: forwarded unchanged to the shared selected-default-TLD
+        // initializer. This test-only caller retains the Malloc capability.
+        unsafe {
+            self.initialize_auxiliary_on_main_tld(
+                heap,
+                tld,
+                main_default,
+                MemoryKind::Malloc,
+            )
+        }
+    }
+
+    /// Initializes the selected requested-parent Arena Theap prefix on the
+    /// already-live default TLD used by `heap.c:mi_heap_init_theap`.
+    ///
+    /// This is the `_mi_theap_create(heap, mi_theap_get_default()->tld)`
+    /// prefix through TLD-list insertion, random split, Release heap
+    /// publication, and Heap-list insertion. The outer caller's regular TLS
+    /// slot and cached-root update happen later in `heap.c` and intentionally
+    /// remain outside this owner. The Rust type is only the source prefix;
+    /// this method makes no claim about the C statistics tail.
+    ///
+    /// # Safety
+    ///
+    /// `heap`, `tld`, and `main_default` must be the exact address-stable,
+    /// current-thread source images. `self` must occupy the selected Arena
+    /// slice named by its `MemoryId`, and its linear owner must detach both
+    /// lists, clear the prefix, and return that exact slice through the
+    /// selected subprocess before any image is retired.
+    #[inline]
+    pub(crate) unsafe fn initialize_requested_arena_on_main_tld(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+        main_default: *mut Theap,
+    ) -> Result<(), TheapDynamicInitError> {
+        let Some(arena) = self.memid.arena_memory() else {
+            return Err(TheapDynamicInitError::InvalidInput);
+        };
+        if self.memid.kind() != MemoryKind::Arena
+            || !self.memid.initially_committed()
+            || arena.arena.is_null()
+            || heap.exclusive_arena != arena.arena
+        {
+            return Err(TheapDynamicInitError::InvalidInput);
+        }
+        // SAFETY: forwarded unchanged; the arena-specific precondition above
+        // keeps the Malloc-only dynamic route separate from this source arm.
+        unsafe {
+            self.initialize_auxiliary_on_main_tld(heap, tld, main_default, MemoryKind::Arena)
+        }
+    }
+
+    /// Shared `_mi_theap_init` prefix for the two deliberately bounded
+    /// existing-default-TLD auxiliary owners. Callers select a concrete
+    /// provenance kind before entry; this helper never broadens the normal
+    /// Malloc dynamic API into generic metadata ownership.
+    unsafe fn initialize_auxiliary_on_main_tld(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+        main_default: *mut Theap,
+        memory_kind: MemoryKind,
+    ) -> Result<(), TheapDynamicInitError> {
         let tld_pointer = core::ptr::from_mut(tld);
         // SAFETY: this is only an entry witness; no field is mutated until
         // every relation of the existing static one-member list is checked.
@@ -4130,11 +4408,12 @@ impl Theap {
                 )
         };
         if self.is_initialized()
-            || self.memid.kind() != MemoryKind::Malloc
+            || self.memid.kind() != memory_kind
             || !valid_main_tail
             || !tld.matches_owner(TheapOwner::Live(
                 LiveThreadId::new(tld.thread_id()).ok_or(TheapDynamicInitError::InvalidInput)?,
             ))
+            || tld.is_in_threadpool()
             || heap.subprocess.is_null()
             || !core::ptr::eq(heap.subprocess, tld.subprocess)
         {
@@ -4271,14 +4550,43 @@ impl Theap {
     /// detached before the refcount reaches its final zero.
     #[inline]
     pub(crate) fn clear_dynamic_metadata_after_detach(&mut self) -> bool {
-        if !self.heap.load(Ordering::Acquire).is_null()
-            || !self.tld.is_null()
-            || !self.tnext.is_null()
-            || !self.tprev.is_null()
-            || !self.hnext.is_null()
-            || !self.hprev.is_null()
-            || self.refcount.load(Ordering::Acquire) != 1
-        {
+        self.clear_metadata_after_detach(MemoryKind::Malloc)
+    }
+
+    /// Clears the final requested-parent Arena Theap prefix after both
+    /// intrusive lists detached. Its linear arena owner then drops this Rust
+    /// prefix and returns the exact selected slice; there is no generic
+    /// `MetaAllocator` or `_mi_meta_free` dispatcher claim here.
+    #[inline]
+    pub(crate) fn clear_requested_arena_after_detach(&mut self) -> bool {
+        if !self.metadata_prefix_is_detached(MemoryKind::Arena) {
+            return false;
+        }
+        // `_mi_theap_decref` first performs the final 1 -> 0 transition and
+        // only then enters `_mi_theap_free_mem`, which still reads `subproc`
+        // to account for/free the raw image. `mi_heap_free_theaps` also merges
+        // the complete C statistics tail before that call. Rust has neither
+        // those statistics transitions nor a generic metadata dispatcher in
+        // this narrow prefix owner, but retains `subproc` through its
+        // equivalent final transition rather than clearing it early as the
+        // Malloc-specific typed-release route does.
+        if self.refcount.fetch_sub(1, Ordering::AcqRel) != 1 {
+            return false;
+        }
+        // Manual raw-slice release does not invoke Rust Drop until after this
+        // method, so zeroize the prefix-local random state now. The subsequent
+        // `TheapRandomImage::Drop` is deliberately idempotent.
+        self.random.clear();
+        self.cookie = 0;
+        true
+    }
+
+    /// Common final prefix clear for ownership-specific metadata routes.
+    /// Keeping the expected kind explicit ensures a Malloc caller cannot
+    /// accidentally release an Arena slice, or vice versa.
+    #[inline]
+    fn clear_metadata_after_detach(&mut self, memory_kind: MemoryKind) -> bool {
+        if !self.metadata_prefix_is_detached(memory_kind) {
             return false;
         }
         self.random.clear();
@@ -4287,6 +4595,18 @@ impl Theap {
         self.refcount
             .fetch_sub(1, Ordering::AcqRel)
             == 1
+    }
+
+    #[inline]
+    fn metadata_prefix_is_detached(&self, memory_kind: MemoryKind) -> bool {
+        self.heap.load(Ordering::Acquire).is_null()
+            && self.tld.is_null()
+            && self.tnext.is_null()
+            && self.tprev.is_null()
+            && self.hnext.is_null()
+            && self.hprev.is_null()
+            && self.memid.kind() == memory_kind
+            && self.refcount.load(Ordering::Acquire) == 1
     }
 
     /// Acquires the one cached-root reference for a live dynamic attachment.
@@ -4438,6 +4758,14 @@ impl Theap {
     #[inline]
     pub(crate) fn is_initialized(&self) -> bool {
         !self.heap.load(core::sync::atomic::Ordering::Relaxed).is_null()
+    }
+
+    /// Returns the concrete source allocation provenance retained across
+    /// `_mi_theap_init`'s empty-image copy. This is an observation only; it
+    /// does not transfer the matching Malloc/Arena release capability.
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        self.memid
     }
 
     #[inline]

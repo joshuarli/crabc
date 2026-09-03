@@ -25,10 +25,11 @@ extern crate std;
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::size_of;
+use core::pin::Pin;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-use crate::arena::ArenaView;
+use crate::arena::{ArenaView, ExclusiveArenaTheapReservation, ExclusiveArenaTheapStorage};
 use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
 use crate::compiler_tls::{
     cached_theap, clear_main_static_attachment_roots, current_thread_identity,
@@ -55,19 +56,15 @@ use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
 use crate::types::{
     Heap, MemoryId, Page, PageQueue, Theap, TheapMainStaticInitError, TheapOwner,
-    ThreadLocalData,
+    TheapDynamicInitError, ThreadLocalData,
     ThreadLocalDataQuiesceError, ThreadLocalTheapListError,
 };
-#[cfg(test)]
-use crate::types::{TheapDynamicInitError};
 #[cfg(test)]
 use crate::types::page_queue::{
     M1PageFreeCollectError, test_m1_collect_abandon_page_free,
 };
 #[cfg(test)]
 use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner};
-#[cfg(test)]
-use core::pin::Pin;
 
 const COLD: u8 = 0;
 const HEAP_INITIALIZING: u8 = 1;
@@ -767,6 +764,98 @@ impl MainStaticTheapAttachment {
         Ok(tld)
     }
 
+    /// Creates one bounded requested-parent Arena Theap on this exact live
+    /// default TLD.
+    ///
+    /// This is a synthetic adaptation of the source
+    /// `heap.c:mi_heap_init_theap` inner creation call:
+    /// `_mi_theap_create(heap, mi_theap_get_default()->tld)`. It starts only
+    /// after the source thread-init and regular-slot get/null decision have
+    /// been supplied by its bounded caller, and deliberately stops before the
+    /// later regular TLS-slot store and cached-root update in `heap.c`. The
+    /// returned owner borrows this main attachment mutably, making main
+    /// teardown or a page session structurally unavailable while the
+    /// auxiliary Theap is linked.
+    pub(crate) fn attach_requested_parent_arena_theap<'main, 'heap, 'arena>(
+        &'main mut self,
+        heap: Pin<&'heap mut Heap>,
+        reservation: ExclusiveArenaTheapReservation<'arena, 'static>,
+    ) -> Result<
+        RequestedParentArenaTheap<'main, 'heap, 'arena>,
+        RequestedParentArenaTheapBeginFailure<'main, 'heap, 'arena>,
+    > {
+        let memory = reservation.memory_id();
+        let Some(arena_memory) = memory.arena_memory() else {
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::ArenaMemory,
+                reservation,
+            });
+        };
+        if memory.kind() != crate::types::MemoryKind::Arena
+            || !memory.initially_committed()
+            || arena_memory.arena.is_null()
+            || !heap
+                .as_ref()
+                .get_ref()
+                .matches_dynamic_binding_for_requested_arena(self.subprocess, arena_memory.arena)
+        {
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::HeapBinding,
+                reservation,
+            });
+        }
+        if let Err(error) = self.ensure_current() {
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::Main(error),
+                reservation,
+            });
+        }
+        if !self.tld_matches_subprocess() {
+            self.poison();
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::RootOwnership,
+                reservation,
+            });
+        }
+
+        let main_default = self.storage.theap.image.get();
+        let roots_match = core::ptr::eq(default_theap().as_ptr(), main_default)
+            && fast_slot_peek().is_some_and(|fast| fast.as_ptr().cast::<Theap>() == main_default)
+            && core::ptr::eq(cached_theap().as_ptr(), crate::bootstrap::empty_default_theap_ptr())
+            && matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing));
+        if !roots_match {
+            self.poison();
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::RootOwnership,
+                reservation,
+            });
+        }
+
+        // SAFETY: the reservation has exclusive source ownership of this
+        // exact raw arena slice. The returned owner retains both it and the
+        // address-stable main/default and caller-heap lifetimes.
+        let storage = unsafe { reservation.materialize_rust_theap_prefix() };
+        let mut owner = RequestedParentArenaTheap {
+            main: self,
+            heap,
+            storage: Some(storage),
+            release_retained: None,
+            main_default,
+            state: RequestedParentArenaTheapState::Preparing,
+            _not_send_or_sync: PhantomData,
+        };
+        match owner.initialize() {
+            Ok(()) => {
+                owner.state = RequestedParentArenaTheapState::Attached;
+                Ok(owner)
+            }
+            Err(error) => {
+                owner.poison();
+                Err(RequestedParentArenaTheapBeginFailure::Retained { error, owner })
+            }
+        }
+    }
+
     /// Returns the selected process-main identity while the ticket-zero
     /// attachment remains current and live. Page-bearing callers use this
     /// only to reject a mismatched process map/arena pair before borrowing
@@ -1099,6 +1188,358 @@ impl MainStaticTheapAttachment {
     }
 }
 
+/// Terminal state for one requested-parent Arena Theap prefix attached to the
+/// process-main default TLD.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RequestedParentArenaTheapState {
+    Preparing,
+    Attached,
+    TornDown,
+    /// A post-publication source boundary failed. The retained owner must
+    /// remain live; it never reconstructs a list, prefix, or arena claim.
+    Poisoned,
+}
+
+/// One failure at the bounded requested-parent Arena Theap boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RequestedParentArenaTheapError {
+    Main(MainStaticTheapError),
+    RootOwnership,
+    HeapBinding,
+    ArenaMemory,
+    PrefixMemoryId,
+    TheapInit(TheapDynamicInitError),
+    PageCountNonZero,
+    TheapList(ThreadLocalTheapListError),
+    PrefixClear,
+    ArenaRelease,
+    HeapRetire,
+    TornDown,
+    Poisoned,
+}
+
+/// A requested-parent begin either refuses before it writes the claimed raw
+/// slice, or retains the complete source owner after prefix materialization.
+///
+/// In the rejection form the caller receives the unchanged one-slice claim
+/// and may explicitly return it through its selected subprocess. In the
+/// retained form no automatic cleanup is safe: TLD/Heap list mutation may
+/// already have occurred, so the owner keeps the main attachment borrow,
+/// caller Heap, prefix storage, and any post-drop release reservation.
+#[must_use = "a requested-parent Arena Theap failure retains its exact source ownership"]
+pub(crate) enum RequestedParentArenaTheapBeginFailure<'main, 'heap, 'arena> {
+    Rejected {
+        error: RequestedParentArenaTheapError,
+        reservation: ExclusiveArenaTheapReservation<'arena, 'static>,
+    },
+    Retained {
+        error: RequestedParentArenaTheapError,
+        owner: RequestedParentArenaTheap<'main, 'heap, 'arena>,
+    },
+}
+
+/// One page-free Arena-backed Rust Theap prefix owned by a caller-pinned Heap
+/// and attached to the already-live source default TLD.
+///
+/// This maps a selected `_mi_theap_create` prefix inside
+/// `heap.c:mi_heap_init_theap`: source-selected Arena storage, preserved
+/// `MI_MEM_ARENA` provenance, `_mi_theap_init` prefix publication, and a
+/// bounded heap-delete composition. It does **not** model the enclosing
+/// caller's thread initialization, regular TLS get/null decision or slot,
+/// cached root/refcount, heap/subprocess list insertion, page routing, C
+/// subproc Theap statistics increment/decrement/merge, stats tail, or general
+/// multi-Theap lifecycle. Rust's [`Theap`] remains a prefix through `memid`,
+/// never a complete C-layout claim.
+#[must_use = "a requested-parent Arena Theap must detach/release or remain terminally retained"]
+pub(crate) struct RequestedParentArenaTheap<'main, 'heap, 'arena> {
+    // This mutable borrow is the lifetime proof for the live default TLD and
+    // makes main teardown/page-session entry unavailable while the auxiliary
+    // source list member exists.
+    main: &'main mut MainStaticTheapAttachment,
+    // The source auxiliary Heap outlives both intrusive list memberships.
+    heap: Pin<&'heap mut Heap>,
+    storage: Option<ExclusiveArenaTheapStorage<'arena, 'static>>,
+    // Rust drops the prefix (and zeroizes its random image) before returning
+    // the slice. A theoretically rejected selected-subprocess gate therefore
+    // retains only this post-drop source reservation.
+    release_retained: Option<ExclusiveArenaTheapReservation<'arena, 'static>>,
+    main_default: *mut Theap,
+    state: RequestedParentArenaTheapState,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl RequestedParentArenaTheap<'_, '_, '_> {
+    fn initialize(&mut self) -> Result<(), RequestedParentArenaTheapError> {
+        if !self.roots_still_match() || !self.main.tld_matches_subprocess() {
+            return Err(RequestedParentArenaTheapError::RootOwnership);
+        }
+        let (memory, theap_pointer) = {
+            let storage = self
+                .storage
+                .as_mut()
+                .ok_or(RequestedParentArenaTheapError::Poisoned)?;
+            let memory = storage.memory_id();
+            let theap = storage.prefix_mut();
+            if !theap.set_requested_arena_metadata_memid(memory) {
+                return Err(RequestedParentArenaTheapError::PrefixMemoryId);
+            }
+            (memory, core::ptr::from_mut(theap))
+        };
+        let arena_memory = memory
+            .arena_memory()
+            .ok_or(RequestedParentArenaTheapError::ArenaMemory)?;
+        if !self
+            .heap
+            .as_ref()
+            .get_ref()
+            .matches_dynamic_binding_for_requested_arena(self.main.subprocess, arena_memory.arena)
+        {
+            return Err(RequestedParentArenaTheapError::HeapBinding);
+        }
+
+        // SAFETY: this owner holds the only pinned mutable Heap projection
+        // for the complete pair of intrusive-list memberships.
+        let heap = unsafe { Pin::get_unchecked_mut(self.heap.as_mut()) };
+        let tld = self
+            .main
+            .tld
+            .as_mut()
+            .ok_or(RequestedParentArenaTheapError::Poisoned)?
+            .current_mut();
+        let initialized = {
+            let theap = self
+                .storage
+                .as_mut()
+                .ok_or(RequestedParentArenaTheapError::Poisoned)?
+                .prefix_mut();
+            // SAFETY: the owning main attachment proves the current live
+            // default TLD; the selected storage/Heap remain address-stable
+            // until this owner's explicit detach/release sequence.
+            unsafe { theap.initialize_requested_arena_on_main_tld(heap, tld, self.main_default) }
+        };
+        initialized.map_err(RequestedParentArenaTheapError::TheapInit)?;
+        // SAFETY: this owner retains the exact live prefix and its pinned
+        // caller Heap is exclusive for the complete bounded attachment.
+        debug_assert!(unsafe {
+            self.heap
+                .as_ref()
+                .get_ref()
+                .has_exact_theap_member(theap_pointer)
+        });
+        Ok(())
+    }
+
+    /// Validates the exact live source shape before local observation or
+    /// teardown. This consumes no TLS slot/cached root because those belong
+    /// to the enclosing `heap.c` caller, not `_mi_theap_create`.
+    pub(crate) fn is_attached(&mut self) -> bool {
+        if self.state != RequestedParentArenaTheapState::Attached
+            || self.release_retained.is_some()
+            || !self.roots_still_match()
+        {
+            return false;
+        }
+        let (theap_pointer, memory, theap_is_live, refcount, subproc_matches) = {
+            let Some(storage) = self.storage.as_mut() else {
+                return false;
+            };
+            let theap = storage.prefix_mut();
+            (
+                core::ptr::from_mut(theap),
+                theap.memory_id(),
+                theap.is_initialized(),
+                theap.refcount(),
+                theap.is_bound_to_main_subprocess(self.main.subprocess),
+            )
+        };
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if memory.kind() != crate::types::MemoryKind::Arena
+            || !memory.initially_committed()
+            || !theap_is_live
+            || refcount != 1
+            || !subproc_matches
+            || !self
+                .heap
+                .as_ref()
+                .get_ref()
+                .matches_dynamic_binding_for_requested_arena(
+                    self.main.subprocess,
+                    arena_memory.arena,
+                )
+            // SAFETY: this owner retains the exact live prefix and excludes
+            // a competing mutation of its caller Heap list.
+            || !unsafe {
+                self.heap
+                    .as_ref()
+                    .get_ref()
+                    .has_exact_theap_member(theap_pointer)
+            }
+        {
+            return false;
+        }
+        let tld = match self.main.tld.as_mut() {
+            Some(tld) => tld.current_mut(),
+            None => return false,
+        };
+        let tld_pointer = core::ptr::from_mut(tld);
+        // SAFETY: the main default's process-static slot remains live while
+        // this owner holds its mutable main attachment borrow.
+        let default_matches = unsafe {
+            !self.main_default.is_null()
+                && (*self.main_default).matches_tld_pointer(tld_pointer)
+                && (*self.main_default).is_initialized()
+        };
+        default_matches
+            // SAFETY: this owner retains both address-stable typed images and
+            // its mutable main-attachment borrow excludes concurrent TLD-list
+            // mutation for their entire linked lifetime.
+            && unsafe { tld.has_exact_auxiliary_and_default_pair(theap_pointer, self.main_default) }
+    }
+
+    /// Returns the selected source allocation provenance while the prefix is
+    /// still materialized. This is an observation only, not a release token.
+    #[inline]
+    pub(crate) fn memory_id(&self) -> Option<MemoryId> {
+        self.storage.as_ref().map(ExclusiveArenaTheapStorage::memory_id)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_theap_prefix_address(&self) -> usize {
+        self.storage
+            .as_ref()
+            .map_or(0, ExclusiveArenaTheapStorage::test_prefix_address)
+    }
+
+    #[inline]
+    pub(crate) fn is_torn_down(&self) -> bool {
+        self.state == RequestedParentArenaTheapState::TornDown
+    }
+
+    /// Detaches this one page-free auxiliary Theap and returns its exact
+    /// requested-parent Arena slice. The default Theap and all enclosing
+    /// TLS/cached-root state remain live for their separate owner.
+    pub(crate) fn teardown(&mut self) -> Result<(), RequestedParentArenaTheapError> {
+        match self.state {
+            RequestedParentArenaTheapState::Attached => {}
+            RequestedParentArenaTheapState::TornDown => {
+                return Err(RequestedParentArenaTheapError::TornDown);
+            }
+            RequestedParentArenaTheapState::Preparing | RequestedParentArenaTheapState::Poisoned => {
+                return Err(RequestedParentArenaTheapError::Poisoned);
+            }
+        }
+        if !self.is_attached() {
+            return Err(self.poison_with(RequestedParentArenaTheapError::RootOwnership));
+        }
+        let theap_pointer = {
+            let theap = self
+                .storage
+                .as_mut()
+                .ok_or(RequestedParentArenaTheapError::Poisoned)?
+                .prefix_mut();
+            if theap.page_count() != 0 {
+                return Err(self.poison_with(RequestedParentArenaTheapError::PageCountNonZero));
+            }
+            core::ptr::from_mut(theap)
+        };
+
+        let list_detach = {
+            // SAFETY: the owner retains the only pinned mutable caller Heap
+            // projection, the exact A -> D TLD shape, and no page/session
+            // owner can overlap it. This selects the source heap-delete
+            // order: detach A from the TLD before its sole Heap-list member.
+            let heap = unsafe { Pin::get_unchecked_mut(self.heap.as_mut()) };
+            let tld = self
+                .main
+                .tld
+                .as_mut()
+                .ok_or(RequestedParentArenaTheapError::Poisoned)?
+                .current_mut();
+            unsafe {
+                tld.detach_one_auxiliary_theap_for_heap_delete(
+                    heap,
+                    theap_pointer,
+                    self.main_default,
+                )
+            }
+        };
+        if let Err(error) = list_detach {
+            return Err(self.poison_with(RequestedParentArenaTheapError::TheapList(error)));
+        }
+        let cleared = self
+            .storage
+            .as_mut()
+            .is_some_and(|storage| storage.prefix_mut().clear_requested_arena_after_detach());
+        if !cleared {
+            return Err(self.poison_with(RequestedParentArenaTheapError::PrefixClear));
+        }
+
+        let storage = self
+            .storage
+            .take()
+            .ok_or(RequestedParentArenaTheapError::Poisoned)?;
+        // SAFETY: the preceding exact list detachment and clear proved the
+        // source final-refcount state, and this owner exposes no raw alias.
+        match unsafe { storage.drop_prefix_then_release() } {
+            Ok(true) => {}
+            Ok(false) => return Err(self.poison_with(RequestedParentArenaTheapError::ArenaRelease)),
+            Err(reservation) => {
+                self.release_retained = Some(reservation);
+                return Err(self.poison_with(RequestedParentArenaTheapError::ArenaRelease));
+            }
+        }
+        // SAFETY: the auxiliary list member is gone and the Arena prefix was
+        // dropped/released. This caller-owned Heap has no remaining pages or
+        // arena-page images in this bounded no-page lifecycle.
+        if !unsafe { Pin::get_unchecked_mut(self.heap.as_mut()).retire_dynamic_binding_after_detach() }
+        {
+            return Err(self.poison_with(RequestedParentArenaTheapError::HeapRetire));
+        }
+        self.state = RequestedParentArenaTheapState::TornDown;
+        Ok(())
+    }
+
+    #[inline]
+    fn roots_still_match(&self) -> bool {
+        core::ptr::eq(default_theap().as_ptr(), self.main_default)
+            && fast_slot_peek().is_some_and(|fast| {
+                fast.as_ptr().cast::<Theap>() == self.main_default
+            })
+            && core::ptr::eq(cached_theap().as_ptr(), crate::bootstrap::empty_default_theap_ptr())
+            && matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing))
+    }
+
+    #[inline]
+    fn poison_with(&mut self, error: RequestedParentArenaTheapError) -> RequestedParentArenaTheapError {
+        self.poison();
+        error
+    }
+
+    #[inline]
+    fn poison(&mut self) {
+        if self.state != RequestedParentArenaTheapState::TornDown {
+            self.state = RequestedParentArenaTheapState::Poisoned;
+            self.main.poison();
+        }
+    }
+}
+
+impl Drop for RequestedParentArenaTheap<'_, '_, '_> {
+    fn drop(&mut self) {
+        if self.state != RequestedParentArenaTheapState::TornDown {
+            // This owner deliberately has no automatic cleanup: a live
+            // intrusive member or a partially consumed arena release cannot
+            // be reconstructed safely during Drop. Poison the borrowed main
+            // owner so neither a page session nor static teardown can mistake
+            // the retained source state for a clean singleton default TLD.
+            self.poison();
+        }
+    }
+}
+
 /// One test-only failure while constructing or completing the finite M1
 /// same-TLD terminal fixture.  This is deliberately separate from the normal
 /// main/static and later/dynamic lifecycle errors: a failure after publication
@@ -1419,8 +1860,10 @@ impl<'main, 'heap> M1SameTldTerminalFixture<'main, 'heap> {
             let list = tld.test_m1_cached_aux_and_main_pair(auxiliary, main_default)
                 && main.matches_tld_pointer(tld_pointer)
                 && auxiliary_ref.matches_tld_pointer(tld_pointer);
+            // SAFETY: the fixture retains the auxiliary typed allocation and
+            // owns its one-member private Heap list for this observation.
             let heap_lists = main_heap_contains_default
-                && auxiliary_heap.has_exact_theap_member(auxiliary);
+                && unsafe { auxiliary_heap.has_exact_theap_member(auxiliary) };
             let slot = self
                 .backing
                 .as_mut()
@@ -1448,7 +1891,9 @@ impl<'main, 'heap> M1SameTldTerminalFixture<'main, 'heap> {
                 list,
                 tld.test_m1_theap_count(),
                 main_heap_contains_default,
-                auxiliary_heap.has_exact_theap_member(auxiliary),
+                // SAFETY: the fixture retains the auxiliary typed allocation
+                // and owns its one-member private Heap list here.
+                unsafe { auxiliary_heap.has_exact_theap_member(auxiliary) },
                 auxiliary_ref.refcount(),
             )
         };
