@@ -298,7 +298,10 @@ assertion-invalid input, not C/Rust invalid-input parity.
 
 ### `CRABC-MI-BOUNDED-PROCESS-MAIN-INITIALIZATION` — accepted incomplete process lifecycle
 
-- **Upstream/Rust:** `src/init.c:151-214,236-250,305-360,536-592`
+- **Upstream/Rust:** `src/init.c:151-214,236-250,305-360,536-592`, including
+  `src/init.c:196-198`'s static-main-Heap kind-only `memid` -> Release
+  `heap_main` -> `_mi_heap_init` order, and `src/heap.c:102-126`'s remaining
+  Heap initialization,
   (`mi_heap_main_init_once`, detached `mi_tld_init`, `_mi_thread_init_with_heap`,
   and `mi_process_init_once`), `src/theap.c:228-296,343`, `src/random.c`,
   and `src/options.c:161-162` (the bounded detached metadata-Theap image,
@@ -314,7 +317,7 @@ assertion-invalid input, not C/Rust invalid-input parity.
   `types::Theap::{set_detached_main_metadata_static_memid,bind_exclusive_detached}`,
   `random::TheapRandomImage::{initialize,next}`,
   `process_page_map::ProcessPageMapStorage`, and
-  `subproc::{MainStaticBootstrapSelection,MainSubprocess::publish_detached_metadata_theap,MainSubprocess::matches_published_detached_metadata_theap,MainSubprocess::is_metadata_page,MainSubprocess::lock_metadata_theap}`.
+  `subproc::{MainStaticBootstrapSelection,MainSubprocess::begin_main_heap_publication,MainSubprocess::publish_main_heap_identity,MainSubprocess::finish_main_heap_publication,MainSubprocess::ready_main_heap_identity,MainSubprocess::publish_detached_metadata_theap,MainSubprocess::matches_published_detached_metadata_theap,MainSubprocess::is_metadata_page,MainSubprocess::lock_metadata_theap}`.
 - **Category:** crate-private source-order startup boundary. It has no C ABI
   surface or valid allocation-trace differential entry.
 - **Difference:** the Rust coordinator proves the central source order—static
@@ -325,7 +328,17 @@ assertion-invalid input, not C/Rust invalid-input parity.
   `mi_process_theap_meta` during main-heap initialization, gives it
   `_mi_memid_create(MI_MEM_STATIC)`, preserves that kind-only zero-union/flag
   image through `_mi_theap_init`, and takes metadata backing only on demand.
-  Rust likewise binds its pinned detached image before the global PageMap.
+  Rust likewise binds its pinned detached image before the global PageMap. For
+  the selected canonical static main Heap, after its private static-foundation
+  claim it reserves a pointer-free `MainSubprocess` state before mutating the
+  candidate Heap image, then writes the kind-only `MemoryId`, Release-publishes
+  its final-slot identity, completes the selected remaining Heap fields, and
+  only then exposes an opaque comparison-ready identity. A failed reservation
+  releases the private claim so its candidate remains COLD with
+  `MemoryKind::None`; an unfinished publication remains
+  non-ready. This is intentionally narrower than C's dereference-capable
+  `_mi_subproc_heap_main`: `ready_main_heap_identity` never produces a Heap
+  reference or general linkage capability.
   For only its bounded same-subprocess, empty-head, non-threadpool input, it
   preserves those kind-only provenance fields plus the frozen normal
   `page_reclaim_on_free = 0` result (`allow_page_reclaim = true`), initializes
@@ -359,7 +372,8 @@ assertion-invalid input, not C/Rust invalid-input parity.
   role, selected raw equality predicate, and one selected direct-lock role;
   it is not actual `mi_subproc_t` byte layout or pthread-lock semantics from
   `include/mimalloc/atomic.h:446-472`, a dereference-capable subprocess API,
-  Page lifetime or abandonment, actual main-Heap linkage, or general Theap
+  Page lifetime or abandonment, general/dereference-capable main-Heap linkage
+  beyond that selected identity sequence, or general Theap
   API. It excludes the other
   `theap_meta_lock` uses at `src/free.c:744-778` and `src/init.c:524-530`,
   plus its source init/done lifecycle at `src/subproc.c:141-148,249-251`. It
@@ -429,6 +443,10 @@ assertion-invalid input, not C/Rust invalid-input parity.
   `main_theap::tests::static_heap_foundation_precedes_ticket_zero_tld_theap_and_tls_roots`
   and `subproc::tests::selected_static_bootstrap_cannot_issue_ticket_zero_before_heap_foundation`
   prove the two prerequisite boundaries.
+  `main_theap::tests::static_heap_foundation_makes_the_canonical_main_heap_identity_ready_last`
+  proves the selected `memid` -> Release identity -> remaining-init sequence,
+  its opaque non-ready Publishing interval, final exact Ready identity, and
+  stale-slot non-mutation boundary.
 - **Decision/removal:** accepted until complete source `_mi_theap_init`,
   source options/OS and TLS-key/local stages, the C empty-root policy,
   concurrent/general thread and map startup, automatic arena policy, routing,
@@ -657,6 +675,27 @@ assertion-invalid input, not C/Rust invalid-input parity.
   not establish C bsr differential parity, binned bitmaps, visitor/popcount
   behavior, flexible-image allocation ownership, Heap/Page/Arena integration,
   statistics, races, or allocator routing.
+
+### `CRABC-MI-ORDINARY-BITMAP-POPCOUNT-CONSERVATIVE-CHUNKMAP` — accepted checked observer boundary
+
+- **Upstream/Rust:** pinned `src/bitmap.c:1406-1420` `mi_bitmap_popcount`,
+  represented by `bitmap::BitmapView::popcount_relaxed`.
+- **Category:** private ordinary-bitmap M2 observer. It has no public C ABI
+  effect and is not a C/Rust differential.
+- **Difference:** Rust retains low-to-high Relaxed chunk-map and selected-data
+  observations. An in-layout stale map bit selects an empty chunk, contributes
+  zero, and remains set. C requires its valid dynamic trailing-storage layout;
+  Rust instead retains an out-of-layout stale map bit while
+  skipping its invalid data access. The observer does not mutate either image.
+- **Evidence:**
+  `bitmap::tests::bitmap_popcount_relaxed_scans_conservative_map_fields_without_repair`
+  proves low-to-high traversal across two map fields, in-layout stale-map
+  zero contribution without repair, and the checked out-of-layout skip with
+  map preservation.
+- **Decision/removal:** accepted for this checked read-only slice. It does not
+  establish C popcount differential parity, a concurrent snapshot, visitor
+  behavior, binned bitmap behavior, flexible-image allocation ownership,
+  Heap/Page/Arena integration, statistics, races, or allocator routing.
 
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 

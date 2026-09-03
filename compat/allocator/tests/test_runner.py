@@ -2108,6 +2108,10 @@ class ContractTests(unittest.TestCase):
                 "allocator-recursion",
             ],
         )
+        self.assertEqual(
+            sum(len(component["checks"]) for component in summary["components"]),
+            53,
+        )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
         )
@@ -2367,6 +2371,33 @@ class ContractTests(unittest.TestCase):
                         "and_preserves_the_map"
                     ),
                 },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "bitmap-popcount-relaxed-conservative-chunkmap",
+                    "kind": "rust-unit",
+                    "target": (
+                        "bitmap::tests::bitmap_popcount_relaxed_scans_conservative_map_fields_"
+                        "without_repair"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "binned-bitmap-highest-clear-rounded-top-padding",
+                    "kind": "rust-unit",
+                    "target": (
+                        "bitmap::tests::"
+                        "binned_highest_clear_scans_the_source_rounded_top_padding"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "binned-bitmap-highest-clear-descending-chunk-field-scan",
+                    "kind": "rust-unit",
+                    "target": (
+                        "bitmap::tests::"
+                        "binned_highest_clear_scans_chunks_and_fields_from_high_to_low"
+                    ),
+                },
             ],
         )
         self.assertEqual(bitmaps["completion_status"], "partial")
@@ -2518,6 +2549,15 @@ class ContractTests(unittest.TestCase):
                     "target": (
                         "process_init::tests::process_main_binds_metadata_before_global_"
                         "page_map_failure"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "static-main-heap-canonical-identity-publication",
+                    "kind": "rust-unit",
+                    "target": (
+                        "main_theap::tests::"
+                        "static_heap_foundation_makes_the_canonical_main_heap_identity_ready_last"
                     ),
                 }
             ],
