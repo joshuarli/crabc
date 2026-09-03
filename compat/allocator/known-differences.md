@@ -774,8 +774,9 @@ assertion-invalid input, not C/Rust invalid-input parity.
 
 ### `CRABC-MI-NORMAL-OFFSET-OS-ALLOCATION-OWNER` — accepted private VM-substrate safety boundary
 
-- **Upstream/Rust:** pinned `src/os.c:240-294,344-430,438-467,502-527`,
-  represented by `os::NormalOsAllocation`,
+- **Upstream/Rust:** pinned `src/os.c:240-294,344-430,438-467,502-527` plus
+  the selected `src/arena.c:1885-1912` regular one-arena caller, represented
+  by `os::NormalOsAllocation`, `NormalOsBaseAllocation`,
   `NormalOsAllocationFailure`, `NormalOsAllocationReleaseFailure`, and
   `Mapping`.
 - **Category:** Linux/AArch64 private M2 normal non-huge OS-allocation
@@ -788,16 +789,24 @@ assertion-invalid input, not C/Rust invalid-input parity.
   normalization; a committed nonzero route best-effort decommits the prefix,
   while the reserved route does not. C reports allocation failure as `NULL` and
   frees through a void/best-effort primitive; Rust returns diagnostics and the
-  exact unmap-failure owner for a retry. This is deliberate ownership-safety
-  strengthening, not C failure parity.
+  exact unmap-failure owner for a retry. One selected regular one-arena caller
+  may consume only `NormalOsBaseAllocation`, emitted by the ordinary aligned
+  zero-offset path; it moves the original `Mapping` and `MemoryId` together
+  into arena management, and an offset allocation has no such conversion. This
+  is deliberate ownership-safety strengthening, not C failure parity.
 - **Evidence:**
   `os::tests::{normal_offset_os_allocation_retains_full_provenance_and_retries_release,normal_os_allocation_uses_good_size_and_base_provenance,normal_offset_os_allocation_delegates_zero_and_rejects_invalid_geometry,normal_os_allocation_preserves_a_failed_aligned_map_owner}`
   cover full-map ownership, good-size/base provenance, zero-offset delegation,
   invalid geometry, committed/reserved prefix behavior, and retained cleanup
-  ownership.
+  ownership. `os::tests::normal_os_base_handoff_preserves_full_mapping_and_memid`
+  proves the sealed base handoff retains the exact full map and source ID;
+  `process_arena::tests::normal_os_base_handoff_preserves_full_provenance_until_one_arena_publication`
+  proves it reaches one published arena unchanged. The existing
+  `explicit_os_reservation_*` regressions prove the public selected caller's
+  success and unpublished-release/retry paths.
 - **Decision/removal:** accepted for one fixed private route. It does not close
   VM primitives or cover hints, huge pages, NUMA, options, statistics,
-  arbitrary memory-kind dispatch, or a source runtime caller.
+  arbitrary memory-kind dispatch, or any other source runtime caller.
 
 ### `CRABC-MI-LINUX-REUSE-NOOP` — accepted private VM-substrate safety boundary
 
@@ -951,10 +960,13 @@ assertion-invalid input, not C/Rust invalid-input parity.
   lifecycle through activation. `ProcessMainThread` is the only
   production-shaped factory and transfers its retained attachment plus ready
   immutable map witness without a startup reservation. It does not search an
-  existing arena or reserve a later one. The regular path accepts
-  only reserved or committed normal mappings, records `MemoryKind::Os`, and
-  unmaps an unpublished metadata failure before returning COLD; a failed unmap
-  instead retains the exact mapping terminally. The external path still returns
+  existing arena or reserve a later one. The regular path consumes only a
+  `NormalOsBaseAllocation` from the ordinary aligned zero-offset/base-equals-
+  client route, carries its original `MemoryId` with the exact `Mapping` into
+  management, records `MemoryKind::Os`, and unmaps an unpublished metadata
+  failure before returning COLD; a failed unmap instead retains the exact
+  mapping terminally. An offset allocation has no conversion into this arena
+  backing. The external path still returns
   a pre-publication rejected `Mapping` to its caller because it remains the
   lower `mi_manage_os_memory_ex2` boundary. Once published, either map and its
   in-place arena are process-lived. A reserved mapping enters its final sidecar
@@ -992,6 +1004,7 @@ assertion-invalid input, not C/Rust invalid-input parity.
   `foreign_map_or_subprocess_rejects_before_mapping_or_registry_mutation`
   proves a ready owner cannot accept a foreign process map.
   `explicit_os_reservation_publishes_one_os_arena_for_reserved_and_committed_requests`,
+  `normal_os_base_handoff_preserves_full_provenance_until_one_arena_publication`,
   `explicit_os_reservation_rejects_invalid_or_second_requests_before_mapping`,
   `explicit_os_reservation_unmaps_a_failed_metadata_setup_and_allows_the_selected_retry`,
   and `explicit_os_reservation_retains_the_mapping_when_failed_setup_cannot_unmap`

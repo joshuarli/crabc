@@ -656,11 +656,17 @@ the ordinary aligned path; a nonzero committed prefix has source-best-effort
 decommit, while a reserved prefix does not. `NormalOsAllocationReleaseFailure`
 returns the exact owner when Rust `munmap` fails.
 
+One selected `src/arena.c:1885-1912` `mi_reserve_os_memory_ex2` Rust caller
+uses `NormalOsAllocation::allocate_aligned_base`. Only that sealed
+zero-offset/base-equals-client form moves its exact `Mapping` and `MemoryId`
+into `ProcessSharedArenaStorage` and `manage_os_in_place`; an offset allocation
+has no conversion into arena backing.
+
 C reports an allocation failure as `NULL` and its primitive free is void, so
 the Rust diagnostics and retry owner are ownership-safety strengthening rather
 than failure equivalence. This checkpoint does not add hints, huge pages, NUMA,
-options, statistics, arbitrary memory-kind dispatch, or a source runtime
-caller.
+options, statistics, arbitrary memory-kind dispatch, or any other source
+runtime caller.
 
 ### Linux OS reuse no-op
 

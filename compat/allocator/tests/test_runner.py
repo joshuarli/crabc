@@ -2110,7 +2110,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            66,
+            67,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2219,6 +2219,15 @@ class ContractTests(unittest.TestCase):
                     "id": "normal-os-aligned-failure-owner",
                     "kind": "rust-unit",
                     "target": "os::tests::normal_os_allocation_preserves_a_failed_aligned_map_owner",
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "normal-os-source-reservation-caller",
+                    "kind": "rust-unit",
+                    "target": (
+                        "process_arena::tests::explicit_os_reservation_publishes_one_os_"
+                        "arena_for_reserved_and_committed_requests"
+                    ),
                 },
                 {
                     "expected_passed_test_count": 1,

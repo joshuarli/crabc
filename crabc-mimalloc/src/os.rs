@@ -42,7 +42,7 @@ use crabc_core::{Errno, Result};
 
 use crate::config::ARENA_SLICE_SIZE;
 use crate::invariants;
-use crate::types::MemoryId;
+use crate::types::{MemoryId, MemoryKind};
 
 // Linux values shared by the exact AArch64 and x86-64 Unix primitive paths.
 // These are intentionally private: allocator policy does not receive an open
@@ -1225,6 +1225,50 @@ pub(crate) struct NormalOsAllocation {
     memory: MemoryId,
 }
 
+/// A zero-offset normal aligned allocation that may become one arena backing.
+///
+/// This is deliberately distinct from [`NormalOsAllocation`]: the latter can
+/// represent `_mi_os_alloc_aligned_at_offset` and therefore carry an interior
+/// client pointer. Only [`NormalOsAllocation::allocate_aligned_base`] builds
+/// this type, by consuming the ordinary `_mi_os_alloc_aligned` result whose
+/// client pointer is the complete mapping base. The process arena may transfer
+/// its exact [`MemoryId`] and [`Mapping`] together, but no offset allocation
+/// can enter that handoff.
+#[must_use = "a normal OS base allocation must move into an arena owner or an explicit release owner"]
+pub(crate) struct NormalOsBaseAllocation {
+    mapping: Mapping,
+    memory: MemoryId,
+}
+
+impl NormalOsBaseAllocation {
+    /// Borrows the exact regular mapping while the base-only handoff remains
+    /// unconsumed.
+    #[inline]
+    pub(crate) const fn mapping(&self) -> &Mapping { &self.mapping }
+
+    /// Returns the original normal OS provenance after verifying the mapping
+    /// remains live.
+    #[inline]
+    pub(crate) fn memory_id(&self) -> Result<MemoryId> {
+        let base = self.mapping.base()?;
+        let length = self.mapping.length()?;
+        debug_assert_eq!(self.memory.kind(), MemoryKind::Os);
+        debug_assert!(!self.memory.is_pinned());
+        debug_assert_eq!(self.memory.os_memory().map(|memory| memory.base), Some(base));
+        debug_assert_eq!(self.memory.os_memory().map(|memory| memory.size), Some(length));
+        debug_assert_eq!(self.memory.initially_committed(), self.mapping.initially_committed());
+        debug_assert_eq!(self.memory.initially_zero(), self.mapping.initially_zero());
+        Ok(self.memory)
+    }
+
+    /// Moves the one normal base mapping and its source memory ID into the
+    /// caller that owns the matching arena-management/release transition.
+    #[inline]
+    pub(crate) fn into_mapping_and_memory(self) -> (Mapping, MemoryId) {
+        (self.mapping, self.memory)
+    }
+}
+
 /// A normal OS allocation attempt which may retain an untrimmed live map.
 ///
 /// The regular direct map branch has no owner on failure. The aligned branch
@@ -1316,7 +1360,6 @@ impl fmt::Debug for NormalOsAllocationReleaseFailure {
     }
 }
 
-#[allow(dead_code)]
 impl NormalOsAllocation {
     /// Allocates the fixed normal committed `_mi_os_alloc` route.
     ///
@@ -1346,6 +1389,49 @@ impl NormalOsAllocation {
     ) -> core::result::Result<Self, NormalOsAllocationFailure> {
         let mapping = Self::allocate_aligned_mapping(config, size, alignment, access)?;
         Self::from_mapping(mapping, 0)
+    }
+
+    /// Allocates the ordinary aligned normal-OS route for a complete arena
+    /// backing, retaining only its zero-offset/base-equals-client form.
+    ///
+    /// This is the typed handoff from pinned `_mi_os_alloc_aligned` into the
+    /// selected `mi_reserve_os_memory_ex2` caller. It intentionally has no
+    /// offset argument and cannot be constructed from
+    /// `_mi_os_alloc_aligned_at_offset`'s interior-client result.
+    pub(crate) fn allocate_aligned_base(
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        access: MapAccess,
+    ) -> core::result::Result<NormalOsBaseAllocation, NormalOsAllocationFailure> {
+        let allocation = Self::allocate_aligned(config, size, alignment, access)?;
+        let Self {
+            mapping,
+            pointer,
+            memory,
+        } = allocation;
+        let base = match mapping.base() {
+            Ok(base) => base,
+            Err(error) => return Err(NormalOsAllocationFailure::with_mapping(error, mapping)),
+        };
+        let length = match mapping.length() {
+            Ok(length) => length,
+            Err(error) => return Err(NormalOsAllocationFailure::with_mapping(error, mapping)),
+        };
+        let Some(os_memory) = memory.os_memory() else {
+            return Err(NormalOsAllocationFailure::with_mapping(Errno::INVAL, mapping));
+        };
+        if pointer.as_ptr() != base
+            || memory.kind() != MemoryKind::Os
+            || memory.is_pinned()
+            || os_memory.base != base
+            || os_memory.size != length
+            || memory.initially_committed() != mapping.initially_committed()
+            || memory.initially_zero() != mapping.initially_zero()
+        {
+            return Err(NormalOsAllocationFailure::with_mapping(Errno::INVAL, mapping));
+        }
+        Ok(NormalOsBaseAllocation { mapping, memory })
     }
 
     /// Allocates `_mi_os_alloc_aligned_at_offset` without source policy extras.
@@ -2575,6 +2661,56 @@ mod tests {
         allocation
             .release()
             .expect("the normal owner releases its exact mapping");
+    }
+
+    #[test]
+    fn normal_os_base_handoff_preserves_full_mapping_and_memid() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let size = page
+            .checked_mul(2)
+            .expect("the selected base-only allocation size fits");
+        let alignment = page
+            .checked_mul(4)
+            .expect("the selected base-only allocation alignment fits");
+
+        let allocation = NormalOsAllocation::allocate_aligned_base(
+            config,
+            size,
+            alignment,
+            MapAccess::Reserved,
+        )
+        .expect("the aligned base-only route maps one normal OS owner");
+        let base = allocation
+            .mapping()
+            .base()
+            .expect("the base-only handoff retains its mapping base");
+        let length = allocation
+            .mapping()
+            .length()
+            .expect("the base-only handoff retains its full mapped extent");
+        let memory = allocation
+            .memory_id()
+            .expect("the base-only handoff retains its OS provenance");
+        assert_eq!(base.addr() % alignment, 0);
+        assert_eq!(length, config.good_alloc_size(size));
+        assert_eq!(memory.kind(), MemoryKind::Os);
+        assert!(!memory.is_pinned());
+        assert!(!memory.initially_committed());
+        assert!(memory.initially_zero());
+        assert_eq!(memory.os_memory().unwrap().base, base);
+        assert_eq!(memory.os_memory().unwrap().size, length);
+
+        let (mut mapping, handed_memory) = allocation.into_mapping_and_memory();
+        assert_eq!(mapping.base(), Ok(base));
+        assert_eq!(mapping.length(), Ok(length));
+        assert_eq!(handed_memory.kind(), MemoryKind::Os);
+        assert_eq!(handed_memory.os_memory().unwrap().base, base);
+        assert_eq!(handed_memory.os_memory().unwrap().size, length);
+        mapping
+            .unmap()
+            .expect("the consumed base-only mapping releases its exact full extent");
     }
 
     #[test]

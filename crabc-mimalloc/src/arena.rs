@@ -58,7 +58,7 @@ use crate::os::MemoryConfig;
 use crate::subproc::MainSubprocess;
 use crate::types::{
     Arena, ArenaPages, CommitFunction, Heap, HeapArenaPagesError, MemoryId,
-    Page, Subprocess, Theap, ThreadSequence,
+    MemoryKind, Page, Subprocess, Theap, ThreadSequence,
 };
 
 // Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
@@ -1103,8 +1103,9 @@ pub(crate) unsafe fn manage_external_in_place(
 /// # Safety
 ///
 /// `start..start + size` must remain the exact live regular OS mapping for the
-/// registry lifetime. The commitment and zero observations must describe that
-/// map accurately. When it starts reserved, `commit_hook` must make every
+/// registry lifetime. `memory` must be the exact unpinned `MemoryKind::Os`
+/// provenance for that complete range, including its commitment and zero
+/// observations. When it starts reserved, `commit_hook` must make every
 /// requested metadata prefix writable before returning true. No other thread
 /// may access the region until this function returns.
 pub(crate) unsafe fn manage_os_in_place(
@@ -1112,13 +1113,22 @@ pub(crate) unsafe fn manage_os_in_place(
     start: *mut u8,
     size: usize,
     page_size: PageSize,
-    initially_committed: bool,
-    initially_zero: bool,
+    memory: MemoryId,
     numa_node: i32,
     exclusive: bool,
     commit_hook: Option<CommitHook>,
 ) -> Result<ManagedExternalRegion, ManageArenaError> {
-    let memory = MemoryId::os(start, size, initially_committed, initially_zero, false);
+    let Some(os_memory) = memory.os_memory() else {
+        return Err(ManageArenaError::InvalidRegion);
+    };
+    if memory.kind() != MemoryKind::Os
+        || memory.is_pinned()
+        || os_memory.base != start
+        || os_memory.size != size
+    {
+        return Err(ManageArenaError::InvalidRegion);
+    }
+    let initially_committed = memory.initially_committed();
     unsafe {
         manage_in_place(
             registry,

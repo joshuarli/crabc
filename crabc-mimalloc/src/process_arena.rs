@@ -76,7 +76,7 @@ use crate::config::{
 };
 use crate::invariants;
 use crate::lock::PrivateLock;
-use crate::os::{MapAccess, Mapping, MemoryConfig};
+use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation};
 use crate::page_map::PageMapHeader;
 use crate::process_page_map::{
     MappedAbandonedClaimAccess, MappedAbandonedClaimCompletion,
@@ -436,7 +436,7 @@ impl ProcessSharedArenaStorage {
         // map call. No retry can observe COLD until either unpublished setup
         // released its map or a terminal retained owner records it.
         self.state.store(INITIALIZING, Ordering::Release);
-        let mapping = match Mapping::map_aligned_for_allocator(
+        let base_owner = match NormalOsAllocation::allocate_aligned_base(
             pair.config,
             length,
             ARENA_ALIGNMENT,
@@ -469,15 +469,20 @@ impl ProcessSharedArenaStorage {
                 };
             }
         };
-        let candidate = match ProcessArenaCandidate::from_pair_and_mapping(pair, &mapping) {
+        let candidate = match ProcessArenaCandidate::from_pair_and_mapping(
+            pair,
+            base_owner.mapping(),
+        ) {
             Ok(candidate) => candidate,
             Err(error) => {
+                let (mapping, _) = base_owner.into_mapping_and_memory();
                 self.state.store(COLD, Ordering::Release);
                 return self.release_unpublished_os_reservation(mapping, error);
             }
         };
+        let (mapping, memory) = base_owner.into_mapping_and_memory();
 
-        match self.install_cold(candidate, mapping, ManagedArenaBacking::RegularOs) {
+        match self.install_cold(candidate, mapping, ManagedArenaBacking::RegularOs(memory)) {
             ProcessSharedArenaInstallAttempt::Ready(lease) => {
                 ProcessSharedArenaReservationAttempt::Ready(lease)
             }
@@ -610,13 +615,12 @@ impl ProcessSharedArenaStorage {
                     false,
                     Some(commit_hook),
                 ),
-                ManagedArenaBacking::RegularOs => manage_os_in_place(
+                ManagedArenaBacking::RegularOs(memory) => manage_os_in_place(
                     &self.registry,
                     candidate.base,
                     candidate.length,
                     candidate.pair.config.page_size(),
-                    initially_committed,
-                    initially_zero,
+                    memory,
                     -1,
                     false,
                     Some(commit_hook),
@@ -1318,7 +1322,7 @@ struct DefaultOsArenaReservation {
 #[derive(Clone, Copy)]
 enum ManagedArenaBacking {
     External,
-    RegularOs,
+    RegularOs(crate::types::MemoryId),
 }
 
 /// Immutable process-image identity selected before mapping a new arena.
@@ -1472,15 +1476,17 @@ static PROCESS_SHARED_ARENA: ProcessSharedArenaStorage = ProcessSharedArenaStora
 mod tests {
     use super::*;
     use core::{cell::Cell, ptr::NonNull};
-    use crate::arena::ArenaId;
+    use crate::arena::{
+        manage_os_in_place, ArenaId, ArenaRegistry, ManageArenaError,
+    };
     use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE, ARENA_SLICE_SIZE};
-    use crate::os::{fault, MapAccess, PageSize};
+    use crate::os::{fault, MapAccess, NormalOsAllocation, PageSize};
     use crate::process_page_map::{
         MappedAbandonedClaimCompletion, MappedAbandonedClaimOutcome,
         MappedAbandonedClaimRetainedReason, ProcessPageMapError,
         ProcessPageMapStorage,
     };
-    use crate::types::Page;
+    use crate::types::{MemoryId, Page};
     use crabc_core::Errno;
 
     fn memory_config() -> MemoryConfig {
@@ -1538,9 +1544,17 @@ mod tests {
                 Err(_) => panic!("one caller-selected regular OS arena reserves and publishes"),
             };
             let arena = lease.arena().expect("the reserved OS arena remains published");
-            assert_eq!(arena.arena().memid.kind(), crate::types::MemoryKind::Os);
-            assert_eq!(arena.arena().memid.initially_committed(), access == MapAccess::Committed);
-            assert!(arena.arena().memid.initially_zero());
+            let mapping = unsafe { storage.mapping_for_commit() };
+            let mapping_base = mapping.base().expect("the published sidecar retains the base");
+            let mapping_length = mapping
+                .length()
+                .expect("the published sidecar retains the full extent");
+            let memory = arena.arena().memid;
+            assert_eq!(memory.kind(), crate::types::MemoryKind::Os);
+            assert_eq!(memory.os_memory().unwrap().base, mapping_base);
+            assert_eq!(memory.os_memory().unwrap().size, mapping_length);
+            assert_eq!(memory.initially_committed(), access == MapAccess::Committed);
+            assert!(memory.initially_zero());
             assert_eq!(lease.test_registry_count().unwrap(), 1);
             assert_eq!(
                 unsafe { page_map.page_map().unwrap().checked_lookup(arena.slice_start(0).unwrap()) },
@@ -1548,6 +1562,125 @@ mod tests {
                 "reservation publishes no page before a typed page owner begins"
             );
         }
+    }
+
+    #[test]
+    fn normal_os_base_handoff_preserves_full_provenance_until_one_arena_publication() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let pair = ProcessArenaPair::from_page_map(page_map)
+            .expect("the initialized process map supplies one selected pair");
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+
+        let normal = NormalOsAllocation::allocate_aligned_base(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Reserved,
+        )
+        .expect("the selected normal aligned OS allocation succeeds");
+        let base = normal
+            .mapping()
+            .base()
+            .expect("the base-only handoff retains its mapping base");
+        let length = normal
+            .mapping()
+            .length()
+            .expect("the base-only handoff retains its complete mapped extent");
+        let source_memory = normal
+            .memory_id()
+            .expect("the base-only handoff retains its normal OS provenance");
+        assert_eq!(base.addr() % ARENA_ALIGNMENT, 0);
+        assert_eq!(source_memory.kind(), crate::types::MemoryKind::Os);
+        assert!(!source_memory.is_pinned());
+        assert!(!source_memory.initially_committed());
+        assert!(source_memory.initially_zero());
+        let candidate = ProcessArenaCandidate::from_pair_and_mapping(pair, normal.mapping())
+            .expect("only the aligned normal base owner forms one arena candidate");
+        let (mapping, handed_memory) = normal.into_mapping_and_memory();
+
+        let lease = match storage.install_cold(
+            candidate,
+            mapping,
+            ManagedArenaBacking::RegularOs(handed_memory),
+        ) {
+            ProcessSharedArenaInstallAttempt::Ready(lease) => lease,
+            ProcessSharedArenaInstallAttempt::Returned { .. }
+            | ProcessSharedArenaInstallAttempt::Retained(_) => {
+                panic!("the selected normal base owner publishes one arena")
+            }
+        };
+
+        let retained = unsafe { storage.mapping_for_commit() };
+        assert_eq!(retained.base().unwrap(), base);
+        assert_eq!(retained.length().unwrap(), length);
+        assert_eq!(source_memory.os_memory().unwrap().base, base);
+        assert_eq!(source_memory.os_memory().unwrap().size, length);
+        assert_eq!(handed_memory.os_memory().unwrap().base, base);
+        assert_eq!(handed_memory.os_memory().unwrap().size, length);
+
+        let arena_memory = lease.arena().unwrap().arena().memid;
+        assert_eq!(arena_memory.kind(), crate::types::MemoryKind::Os);
+        assert_eq!(arena_memory.os_memory().unwrap().base, base);
+        assert_eq!(arena_memory.os_memory().unwrap().size, length);
+        assert_eq!(arena_memory.initially_committed(), false);
+        assert!(arena_memory.initially_zero());
+    }
+
+    #[test]
+    fn regular_os_management_rejects_nonexact_provenance_without_consuming_the_mapping() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let normal = NormalOsAllocation::allocate_aligned_base(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Reserved,
+        )
+        .expect("the selected normal aligned OS allocation succeeds");
+        let base = normal
+            .mapping()
+            .base()
+            .expect("the base-only handoff retains its mapping base");
+        let length = normal
+            .mapping()
+            .length()
+            .expect("the base-only handoff retains its complete mapped extent");
+        let (mut mapping, _) = normal.into_mapping_and_memory();
+        let registry = ArenaRegistry::new(core::ptr::null_mut());
+        let page = config.page_size().bytes();
+        let invalid_memory = [
+            MemoryId::external(base, length, false, false, true),
+            MemoryId::os(base, length, false, true, true),
+            MemoryId::os(base, length - page, false, true, false),
+        ];
+
+        for memory in invalid_memory {
+            assert_eq!(
+                unsafe {
+                    manage_os_in_place(
+                        &registry,
+                        base,
+                        length,
+                        config.page_size(),
+                        memory,
+                        -1,
+                        false,
+                        None,
+                    )
+                },
+                Err(ManageArenaError::InvalidRegion),
+            );
+            assert_eq!(registry.count(), 0);
+            assert_eq!(mapping.base(), Ok(base));
+            assert_eq!(mapping.length(), Ok(length));
+        }
+
+        mapping
+            .unmap()
+            .expect("rejected provenance leaves the exact normal mapping with its caller");
     }
 
     #[test]
