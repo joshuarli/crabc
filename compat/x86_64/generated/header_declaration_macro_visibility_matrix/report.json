@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "cb7daae48e515df3570a6eaf8910913cf674f1efe8c4780cce6ee97c1a4ba75e"
+    "source_abi_report_sha256": "b1119ec99dc62df332b44b9f8968c04d9b7a158bc3d545fec5fa48c9a287f1f8"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -38602,28 +38602,15 @@
     },
     {
       "candidate": {
-        "count": 5,
+        "count": 2,
         "kind_counts": {
-          "macro": 5
+          "macro": 2
         },
-        "sha256": "cb0ea8256b2863d95176eb8d5f6266afea8e95dbd98515de462bf081fd19f3ac"
+        "sha256": "7e2d2f356c075502ec0be8b51ed8bb3f38f7e071110e4d1d41a9d037f52ff509"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "bool"
-        },
-        {
-          "kind": "macro",
-          "name": "false"
-        },
-        {
-          "kind": "macro",
-          "name": "true"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdbool.h",
       "matched_identity_count": 2,
       "profile": "cxx17-gnu",
@@ -38637,7 +38624,7 @@
       "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -38745,28 +38732,15 @@
     },
     {
       "candidate": {
-        "count": 5,
+        "count": 2,
         "kind_counts": {
-          "macro": 5
+          "macro": 2
         },
-        "sha256": "cb0ea8256b2863d95176eb8d5f6266afea8e95dbd98515de462bf081fd19f3ac"
+        "sha256": "7e2d2f356c075502ec0be8b51ed8bb3f38f7e071110e4d1d41a9d037f52ff509"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "bool"
-        },
-        {
-          "kind": "macro",
-          "name": "false"
-        },
-        {
-          "kind": "macro",
-          "name": "true"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stdbool.h",
       "matched_identity_count": 2,
       "profile": "cxx17-strict",
@@ -38780,7 +38754,7 @@
       "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -141593,10 +141567,10 @@
     "runtime": false
   },
   "summary": {
-    "candidate_only_identity_count": 16323,
+    "candidate_only_identity_count": 16317,
     "candidate_only_identity_kind_counts": {
       "function": 910,
-      "macro": 11283,
+      "macro": 11277,
       "record": 284,
       "typedef": 3804,
       "variable": 42
@@ -141605,19 +141579,19 @@
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 718,
-      "mismatch": 562,
+      "matched": 720,
+      "mismatch": 560,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "562 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+      "560 comparable pinned header/profile rows have declaration or macro identity visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "matched_identity_count": 286599,
-    "mismatch_row_count": 562,
+    "mismatch_row_count": 560,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -141637,8 +141611,8 @@
     "row_count": 1337,
     "source_form_comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 640,
-      "mismatch": 640,
+      "matched": 642,
+      "mismatch": 638,
       "oracle-not-applicable": 1
     },
     "source_form_difference_count": 2821,

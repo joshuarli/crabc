@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "c41a4c7391a9fd772892e723e20343852544854325610fb1f6258a70ce0a68c4",
+    "callable_inventory_sha256": "d2dd4d2758774fab9a011064211702ae8e041887a1e7a28ac5907cbc576cc4a5",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -49844,33 +49844,17 @@
     },
     {
       "candidate": {
-        "count": 5,
+        "count": 2,
         "kind_counts": {
-          "macro": 5
+          "macro": 2
         },
-        "sha256": "cb0ea8256b2863d95176eb8d5f6266afea8e95dbd98515de462bf081fd19f3ac"
+        "sha256": "7e2d2f356c075502ec0be8b51ed8bb3f38f7e071110e4d1d41a9d037f52ff509"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "macro",
-            "name": "bool",
-            "signature": "object-like: _Bool"
-          },
-          {
-            "kind": "macro",
-            "name": "false",
-            "signature": "object-like: 0"
-          },
-          {
-            "kind": "macro",
-            "name": "true",
-            "signature": "object-like: 1"
-          }
-        ],
-        "candidate_only_count": 3,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
         "matched_count": 2,
@@ -50010,33 +49994,17 @@
     },
     {
       "candidate": {
-        "count": 5,
+        "count": 2,
         "kind_counts": {
-          "macro": 5
+          "macro": 2
         },
-        "sha256": "cb0ea8256b2863d95176eb8d5f6266afea8e95dbd98515de462bf081fd19f3ac"
+        "sha256": "7e2d2f356c075502ec0be8b51ed8bb3f38f7e071110e4d1d41a9d037f52ff509"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "macro",
-            "name": "bool",
-            "signature": "object-like: _Bool"
-          },
-          {
-            "kind": "macro",
-            "name": "false",
-            "signature": "object-like: 0"
-          },
-          {
-            "kind": "macro",
-            "name": "true",
-            "signature": "object-like: 1"
-          }
-        ],
-        "candidate_only_count": 3,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
         "matched_count": 2,
@@ -189092,23 +189060,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 640,
-      "mismatch": 640,
+      "matched": 642,
+      "mismatch": 638,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "640 comparable header/profile rows have prototype or named declaration-form differences",
+      "638 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
-      "candidate_only_count": 16323,
+      "candidate_only_count": 16317,
       "incompatible_count": 2821,
       "reference_only_count": 8765
     },
-    "mismatch_row_count": 640,
+    "mismatch_row_count": 638,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337

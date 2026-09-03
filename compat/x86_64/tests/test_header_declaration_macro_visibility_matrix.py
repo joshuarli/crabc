@@ -104,8 +104,8 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 718,
-                "mismatch": 562,
+                "matched": 720,
+                "mismatch": 560,
                 "oracle-not-applicable": 1,
             },
         )

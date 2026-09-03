@@ -925,6 +925,49 @@ class HeaderAbiMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(profiles), 7)
 
+    def test_stdbool_header_preserves_musl_x86_cxx_visibility(self) -> None:
+        """Keep C's Boolean macros out of C++ consumers.
+
+        Pinned musl deliberately limits bool, true, and false macro
+        definitions to C. The include guard and
+        __bool_true_false_are_defined remain visible to C++, but redefining
+        its language keywords is a distinct direct-header source-form error.
+        This checks declaration visibility only, not runtime behavior.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+
+        for profile in profiles:
+            row = rows[("stdbool.h", profile)]
+            self.assertEqual(row["candidate_status"], "ok")
+            self.assertEqual(row["reference_status"], "ok")
+            self.assertEqual(
+                row["comparison"],
+                "matched",
+                f"stdbool.h:{profile} must retain musl's C/C++ macro boundary",
+            )
+            difference = row["difference"]
+            self.assertEqual(difference["candidate_only"], [])
+            self.assertEqual(difference["candidate_only_count"], 0)
+            self.assertEqual(difference["incompatible"], [])
+            self.assertEqual(difference["incompatible_count"], 0)
+            self.assertEqual(difference["reference_only"], [])
+            self.assertEqual(difference["reference_only_count"], 0)
+
+        self.assertEqual(len(profiles), 7)
+
     def test_stdarg_header_preserves_musl_x86_variadic_forms(self) -> None:
         """Keep va_list ownership and its direct err.h consumer source-faithful.
 
