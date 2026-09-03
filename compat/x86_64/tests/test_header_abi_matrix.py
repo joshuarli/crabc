@@ -1055,6 +1055,49 @@ class HeaderAbiMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(profiles), 7)
 
+    def test_sys_times_header_preserves_musl_x86_type_ownership(self) -> None:
+        """Keep the direct times header's clock_t request source-faithful.
+
+        Pinned musl requests clock_t from bits/alltypes.h and supplies the
+        C++ linkage boundary around its one external declaration. Pulling
+        broad sys/types.h leaks unrelated declarations into every direct
+        consumer, while losing that linkage boundary changes the C++ source
+        form. All feature profiles must retain the narrow direct source form.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+
+        for profile in profiles:
+            row = rows[("sys/times.h", profile)]
+            self.assertEqual(row["candidate_status"], "ok")
+            self.assertEqual(row["reference_status"], "ok")
+            self.assertEqual(
+                row["comparison"],
+                "matched",
+                f"sys/times.h:{profile} must retain musl's narrow type closure",
+            )
+            difference = row["difference"]
+            self.assertEqual(difference["candidate_only"], [])
+            self.assertEqual(difference["candidate_only_count"], 0)
+            self.assertEqual(difference["incompatible"], [])
+            self.assertEqual(difference["incompatible_count"], 0)
+            self.assertEqual(difference["reference_only"], [])
+            self.assertEqual(difference["reference_only_count"], 0)
+
+        self.assertEqual(len(profiles), 7)
+
     def test_stdarg_header_preserves_musl_x86_variadic_forms(self) -> None:
         """Keep va_list ownership and its direct err.h consumer source-faithful.
 
