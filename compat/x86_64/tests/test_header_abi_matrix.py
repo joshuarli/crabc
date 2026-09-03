@@ -839,6 +839,50 @@ class HeaderAbiMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(profiles), 7)
 
+    def test_sys_un_header_preserves_musl_x86_linkage_and_macro_forms(self) -> None:
+        """Keep the Unix-socket header's C++ linkage and selected macro exact.
+
+        Musl places its selected strlen declaration in C linkage and exposes
+        SUN_LEN as one precise expression form. A local C++ declaration or
+        whitespace-altered macro replacement changes compiler-observable
+        source forms even though the underlying socket layout is unchanged.
+        This is declaration evidence only, not a socket provider or runtime
+        claim.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+
+        for profile in profiles:
+            row = rows[("sys/un.h", profile)]
+            self.assertEqual(row["candidate_status"], "ok")
+            self.assertEqual(row["reference_status"], "ok")
+            self.assertEqual(
+                row["comparison"],
+                "matched",
+                f"sys/un.h:{profile} must retain musl's selected source form",
+            )
+            difference = row["difference"]
+            self.assertEqual(difference["candidate_only"], [])
+            self.assertEqual(difference["candidate_only_count"], 0)
+            self.assertEqual(difference["incompatible"], [])
+            self.assertEqual(difference["incompatible_count"], 0)
+            self.assertEqual(difference["reference_only"], [])
+            self.assertEqual(difference["reference_only_count"], 0)
+
+        self.assertEqual(len(profiles), 7)
+
     def test_signal_wait_aio_poll_headers_preserve_musl_x86_ownership(self) -> None:
         """Keep the signal/process-control declaration spine source-faithful.
 

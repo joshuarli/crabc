@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "c3a889fec6797ab1a5272fb2d7162d1ba8a8e4a3b84832584de473a18bd1eb08",
+    "callable_inventory_sha256": "777925ab3d9658a54dbf4d341c81467ad9d7677541b7f4b1a2779d7bac625ff8",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -160483,23 +160483,16 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "28a909780da142cca95930dfdc7249c73a18dc4e7f9eadc2a1968943912f1d3b"
+        "sha256": "0e5365379b86305a6ad3336b16200d0076fce60373ea4a19942c2f5e90578f1a"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(s) (2 + strlen((s)->sun_path))",
-            "kind": "macro",
-            "name": "SUN_LEN",
-            "reference_signature": "function-like:(s) (2+strlen((s)->sun_path))"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 18,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 19,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -160526,29 +160519,16 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "dac41d0cbae5832c1f6d21e31c32d4d68d16661a6dc88dc6383e62cc8b908296"
+        "sha256": "161946ec555ebfed8e8b9015585a36f1847babc079bacc4db6b52250b1f0e232"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (const char *)|mangled=_Z6strlenPKc",
-            "kind": "function",
-            "name": "strlen",
-            "reference_signature": "size_t (const char *)|mangled=strlen"
-          },
-          {
-            "candidate_signature": "function-like:(s) (2 + strlen((s)->sun_path))",
-            "kind": "macro",
-            "name": "SUN_LEN",
-            "reference_signature": "function-like:(s) (2+strlen((s)->sun_path))"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 17,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 19,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -160677,23 +160657,16 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "28a909780da142cca95930dfdc7249c73a18dc4e7f9eadc2a1968943912f1d3b"
+        "sha256": "0e5365379b86305a6ad3336b16200d0076fce60373ea4a19942c2f5e90578f1a"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(s) (2 + strlen((s)->sun_path))",
-            "kind": "macro",
-            "name": "SUN_LEN",
-            "reference_signature": "function-like:(s) (2+strlen((s)->sun_path))"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 18,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 19,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -160720,29 +160693,16 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "dac41d0cbae5832c1f6d21e31c32d4d68d16661a6dc88dc6383e62cc8b908296"
+        "sha256": "161946ec555ebfed8e8b9015585a36f1847babc079bacc4db6b52250b1f0e232"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (const char *)|mangled=_Z6strlenPKc",
-            "kind": "function",
-            "name": "strlen",
-            "reference_signature": "size_t (const char *)|mangled=strlen"
-          },
-          {
-            "candidate_signature": "function-like:(s) (2 + strlen((s)->sun_path))",
-            "kind": "macro",
-            "name": "SUN_LEN",
-            "reference_signature": "function-like:(s) (2+strlen((s)->sun_path))"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 17,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 19,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -190236,23 +190196,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 620,
-      "mismatch": 660,
+      "matched": 624,
+      "mismatch": 656,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "660 comparable header/profile rows have prototype or named declaration-form differences",
+      "656 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
       "candidate_only_count": 16351,
-      "incompatible_count": 2887,
+      "incompatible_count": 2881,
       "reference_only_count": 8877
     },
-    "mismatch_row_count": 660,
+    "mismatch_row_count": 656,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337

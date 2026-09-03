@@ -28787,11 +28787,11 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "sys/un.h",
-      "line": 18,
+      "line": 25,
       "macro_form": "function-like",
       "name": "SUN_LEN",
       "profile": "c11-bsd",
-      "replacement_sha256": "faa9d1251227410f1035ad3e903f4227121e706585c5c320337f4c32a7bf3b2d",
+      "replacement_sha256": "9877385d7b54f189b9711329f564f5a86fb53998fbeb9980c0d6194bd0b724d0",
       "tree": "candidate",
       "visible_from_headers": [
         "sys/un.h"
@@ -62246,11 +62246,11 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "sys/un.h",
-      "line": 18,
+      "line": 25,
       "macro_form": "function-like",
       "name": "SUN_LEN",
       "profile": "c11-gnu",
-      "replacement_sha256": "faa9d1251227410f1035ad3e903f4227121e706585c5c320337f4c32a7bf3b2d",
+      "replacement_sha256": "9877385d7b54f189b9711329f564f5a86fb53998fbeb9980c0d6194bd0b724d0",
       "tree": "candidate",
       "visible_from_headers": [
         "sys/un.h"
@@ -177247,11 +177247,11 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "sys/un.h",
-      "line": 18,
+      "line": 25,
       "macro_form": "function-like",
       "name": "SUN_LEN",
       "profile": "cxx17-gnu",
-      "replacement_sha256": "faa9d1251227410f1035ad3e903f4227121e706585c5c320337f4c32a7bf3b2d",
+      "replacement_sha256": "9877385d7b54f189b9711329f564f5a86fb53998fbeb9980c0d6194bd0b724d0",
       "tree": "candidate",
       "visible_from_headers": [
         "sys/un.h"
@@ -209953,11 +209953,11 @@
       "classification": "macro",
       "declaration_kind": "macro",
       "declaring_header": "sys/un.h",
-      "line": 18,
+      "line": 25,
       "macro_form": "function-like",
       "name": "SUN_LEN",
       "profile": "cxx17-strict",
-      "replacement_sha256": "faa9d1251227410f1035ad3e903f4227121e706585c5c320337f4c32a7bf3b2d",
+      "replacement_sha256": "9877385d7b54f189b9711329f564f5a86fb53998fbeb9980c0d6194bd0b724d0",
       "tree": "candidate",
       "visible_from_headers": [
         "sys/un.h"
@@ -419450,7 +419450,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "ca9524c400ba4dcf0d1870942cef2cce1b1163a00e3c8d80a4e614076b46a26a",
+    "parity_ledger_sha256": "d64fcf44a5eeb510d1179477ffe93bf81f303059b045c8ded216c0156d760af1",
     "static_c_abi_exports_sha256": "ba6d5107f5db1176812a9eae768519b086b7b41c7942aa81afd2cd63366bc312"
   },
   "oracle": "Pinned musl 1.2.6",
