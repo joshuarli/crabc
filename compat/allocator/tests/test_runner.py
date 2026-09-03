@@ -2110,7 +2110,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            54,
+            56,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2225,6 +2225,15 @@ class ContractTests(unittest.TestCase):
                     "id": "linux-os-reuse-contained-range-noop",
                     "kind": "rust-unit",
                     "target": "os::tests::reuse_is_a_contained_range_noop_on_linux",
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "fixed-no-option-numa-cache-and-current-node-normalization",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os::tests::os_numa_wrapper_caches_and_normalizes_the_raw_"
+                        "primitives"
+                    ),
                 },
             ],
         )
@@ -2660,6 +2669,15 @@ class ContractTests(unittest.TestCase):
                     "target": (
                         "arena::tests::fully_committed_arena_claim_invokes_linux_reuse_"
                         "for_its_exact_span"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "arena-purge-custom-callback-needs-recommit",
+                    "kind": "rust-unit",
+                    "target": (
+                        "arena::tests::external_purge_callback_recommit_clears_"
+                        "committed_bits_for_a_later_uncommitted_claim"
                     ),
                 },
             ],

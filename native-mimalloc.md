@@ -2377,9 +2377,9 @@ advance this AArch64 allocator ledger.
 
 | Milestone | Status | Evidence and remaining closure condition |
 | --- | --- | --- |
-| M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. Its latest recorded clean detached native `./scripts/dev.sh allocator --quick` exit 0 is at `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`. This is inventory/skeleton completion only, not engine parity. |
-| M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. Its latest recorded clean detached native revalidation, at `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`, exited 0 with all six components complete, no unmet IDs, and 45 executed records. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`, its current 54-check contract had a clean detached native revalidation: `./scripts/dev.sh allocator --quick` and `allocator-m1` exited 0, and `allocator-m2` executed all 54 checks and exited 3 as this partial gate requires. The M1/M2 reports attest clean source before and after execution, unchanged during execution; M1 records all six components complete with no unmet IDs, while M2 records the seven unmet IDs `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and `allocator-recursion`. PageMap remains the sole complete M2 component; the selected boundaries do not close the other seven. |
+| M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; current revalidation pending) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. Its latest recorded clean detached native `./scripts/dev.sh allocator --quick` exit 0 is at `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`; the current 56-check source/contract revision still needs its own clean detached rerun. This is inventory/skeleton completion only, not engine parity. |
+| M1 — pure foundations | complete (6/6 bounded components; current revalidation pending) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. Its latest recorded clean detached native revalidation, at `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`, exited 0 with all six components complete, no unmet IDs, and 45 executed records; the current 56-check source/contract revision still needs its own clean detached rerun. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
+| M2 — memory substrate | partial (current 56-check executable gate; revalidation pending) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. Its current 56-check contract adds a fixed no-option NUMA cache/current-node-normalization record and a custom external-arena purge `needs_recommit` record to the historical 54-check shape at `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`. The focused native tests pass, but a clean detached `allocator --quick`, `allocator-m1`, and `allocator-m2` rerun is still required for this code/contract revision. The historical 54-check reports record all six M1 components complete with no unmet IDs and M2's seven unmet IDs `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and `allocator-recursion`. PageMap remains the sole complete M2 component; the two selected boundaries do not close the other seven. |
 | M3 — single-thread allocation | not active (historical partial evidence only) | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri. A forced `cfg(miri)` smoke is currently unavailable because `os_host_model.rs` lacks the existing NUMA/identity/entropy and `Mapping::page_size` APIs its callers require; the same ten compile errors existed at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is not M2 evidence or a reason to advance past the still-partial M2 gate. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
@@ -2404,18 +2404,18 @@ VM-primitives, eleven metadata, four bitmap, ten PageMap, three arena, three
 initialization, one fault-injection, and three allocator-recursion checks, and
 exactly the seven unmet IDs named in the table. That is current runtime
 evidence for `bdbcfc71` only, not for later code. The checked-in contract now
-contains 54 selected checks: thirteen VM-primitives, eleven metadata, eight
-bitmap checks, ten PageMap, four arenas, four initialization, one
-fault-injection, and three allocator-recursion checks. The seven additions are
-the selected Linux reuse no-op, ordinary bitmap highest-set and popcount
-observers, two binned highest-clear witnesses, canonical static main-Heap
-identity publication, and the all-committed external-arena Linux reuse caller.
-At `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`, a clean detached native
-revalidation executed this 54-check shape: `allocator --quick` and
-`allocator-m1` exited 0, and `allocator-m2` exited 3 as its partial gate
-requires. Its M1/M2 reports attest clean source before and after execution and
-no change during it. This is current runtime evidence for that exact
-code/contract revision; a later code or contract change requires its own run.
+contains 56 selected checks: fourteen VM-primitives, eleven metadata, eight
+bitmap checks, ten PageMap, five arenas, four initialization, one
+fault-injection, and three allocator-recursion checks. Relative to the
+historical 54-check contract, the two additions are the fixed no-option NUMA
+cache/current-node-normalization record and the custom external-arena purge
+`needs_recommit` record. At `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`, a
+clean detached native revalidation executed the prior 54-check shape:
+`allocator --quick` and `allocator-m1` exited 0, and `allocator-m2` exited 3
+as its partial gate requires. Its M1/M2 reports attest clean source before and
+after execution and no change during it. That is runtime evidence for that
+exact prior code/contract revision; the current 56-check revision requires its
+own clean detached run.
 
 ## M1 closure evidence
 
@@ -2532,22 +2532,22 @@ control and transition fields for initial partial commitment, lazy extension
 across two submaps, one two-slice unregister, final-boundary rollback, and an
 absent root after destruction.
 
-The checked-in working set contains 54 native checks: thirteen VM-primitives
+The checked-in working set contains 56 native checks: fourteen VM-primitives
 checks, eleven metadata checks, four bitmap C/Rust differentials plus four
-Rust-only bitmap-observer check records, ten PageMap checks, four arena
+Rust-only bitmap-observer check records, ten PageMap checks, five arena
 checks, four initialization checks, one native protect/unprotect
 fault-injection check, and three allocator-recursion checks. The 37-, 38-,
 39-, 40-, 41-, and 42-check reports are historical evidence for prior
 contracts. At `7141570b6717dc590d962af139ffe08971cdc3bb`, a clean detached
 native run executed the prior 53-check shape; it remains historical support.
 At `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`, a clean detached native run
-executed the current 54-check shape: `allocator --quick` and `allocator-m1`
+executed the prior 54-check shape: `allocator --quick` and `allocator-m1`
 exited 0, while `allocator-m2` exited 3 as its partial-gate contract requires.
 The M1/M2 reports attest clean source before and after execution and no source
 change during it; M1 records all six components complete and no unmet IDs,
-while M2 records exactly the seven unmet IDs below. This is native runtime
-evidence for that exact revision; the older `bdbcfc71` 47-check report remains
-historical support only. `page-map` is complete within this M2 contract; the
+while M2 records exactly the seven unmet IDs below. That is native runtime
+evidence for the 54-check revision only; the current 56-check contract needs a
+fresh clean detached rerun. `page-map` is complete within this M2 contract; the
 other seven required components remain partial under their explicit remaining
 conditions.
 
@@ -2556,14 +2556,29 @@ The new VM slice maps only fixed normal/offset non-huge allocation:
 while keeping a distinct client pointer, zero offset delegates to ordinary
 aligned allocation normalization, committed-prefix decommit remains
 best-effort, reserved prefixes do not decommit, and a failed cleanup/unmap
-retains the exact owner for retry. It excludes huge pages, hints, NUMA,
-options, statistics, arbitrary memory-kind dispatch, and a source runtime
-caller. The new direct TLS slice restores the exact `MetaRelease::Malloc`
+retains the exact owner for retry. It excludes huge pages, hints, NUMA policy
+beyond the separately selected fixed no-option wrapper, options, statistics,
+arbitrary memory-kind dispatch, and a source runtime caller. The new direct
+TLS slice restores the exact `MetaRelease::Malloc`
 capability, root/count/slots, and `Active` state only after a proven pre-claim
 same-thread rejection; a successful retry keeps C's free-before-root-clear
 order. Generic/free post-claim failures remain terminal, and the outer
 `DynamicTheapAttachment` remains terminal because it clears its binding before
 calling direct backing teardown.
+
+The selected fixed no-option NUMA wrapper maps only pinned
+`src/os.c:860-898`. Its private zero-initialized count cache has the source
+Acquire read and Release fill: raw zero or a count above `INT_MAX` becomes one,
+while `INT_MAX` itself remains valid. `os_numa_node` first takes the source
+Relaxed cached-one shortcut; otherwise it obtains the cached count, maps a raw
+current node at or above `INT_MAX` to zero, and modulo-normalizes a lower
+out-of-range node. The focused local-atomic regression proves cache reuse,
+`8 % 3 == 2`, both cached and slow-fill single-node no-current-probe paths,
+and count/current boundaries without polluting the process cache. It retains
+the raw M1 `numa_node_count`/`numa_node` trace unchanged and has no allocator
+caller. `mi_option_use_numa_nodes`, diagnostics, first-fill race policy beyond
+the source load/fill/store, topology changes, arena placement, C/Rust
+differential parity, and integration remain unclaimed.
 
 The selected reuse primitive is narrower still. Pinned `src/os.c:643-653`
 conservatively normalizes `_mi_os_reuse`; Linux
@@ -2809,6 +2824,18 @@ fault-injection edge, reuse-state mutation, `Mapping` ownership transfer, or
 late failure. This is not evidence for partial/fresh commit, another caller,
 arena search/policy, general purge, statistics, Apple reuse, C/Rust
 differential parity, or allocator integration.
+
+The fifth selected arena test covers the other source purge outcome for one
+external callback. Pinned `src/arena.c:2254-2282` first marks the owned exact
+range committed, then `src/os.c:655-680` returns a custom callback's
+`commit = false` boolean as `needs_recommit`. The callback fixture returns
+true and records the exact two-slice span. Rust proves the committed bits clear
+before free availability returns, the scheduled purge bits and expiry are
+consumed, and a later `commit = false` claim reports
+`initially_committed == false`. This is a source-shaped existing transition,
+not a new allocator policy or a C/Rust differential; it does not cover general
+callback behavior, purge policy, retry/error handling, concurrency, lifecycle,
+or integration.
 
 The manifest additionally selects
 `os::tests::reset_retries_the_initial_advice_after_a_concurrent_global_fallback`.
@@ -3507,20 +3534,22 @@ mapped M5/Phase-E regression: it is neither a general scan nor a milestone,
 shadow, or promotion claim. Keep its source map, regression, and exact test
 result, but do not use it to advance M5.
 
-M0 and M1 are closed predecessors under their bounded contracts and were
-revalidated cleanly at `4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`. M2 is now
-the current closure gate. Its 54 selected checks are thirteen VM-primitives,
-eleven metadata, four bitmap C/Rust differentials plus four Rust-only
-bitmap-observer check records, ten PageMap, four arena, four initialization,
-one native protection fault-injection, and three allocator-recursion checks.
-At that exact revision, the clean detached 54-check run exited 0 for
-`allocator --quick` and `allocator-m1`, and `allocator-m2` exited 3 with
-unchanged source before, during, and after execution. PageMap remains the sole
-complete component and exactly the other seven required components remain
-partial: `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`,
-`fault-injection`, and `allocator-recursion`. This is evidence for that exact
-revision only; a later code or contract change requires its own revalidation.
-Do not advance M3, M4, or later milestones until
+M0 and M1 are closed predecessors under their bounded contracts. Their latest
+clean detached revalidation is still
+`4c2a8bfe2f9b2d1a2125b822a888c74b58971bde`; the current 56-check source and
+contract revision requires its own revalidation before that evidence can be
+carried forward. M2 is the current closure gate. Its 56 selected checks are
+fourteen VM-primitives, eleven metadata, four bitmap C/Rust differentials plus
+four Rust-only bitmap-observer check records, ten PageMap, five arena, four
+initialization, one native protection fault-injection, and three
+allocator-recursion checks. The historical clean detached 54-check run exited
+0 for `allocator --quick` and `allocator-m1`, and `allocator-m2` exited 3 with
+unchanged source before, during, and after execution. The two new focused
+native checks pass, but the 56-check clean detached rerun remains pending.
+PageMap remains the sole complete component and exactly the other seven
+required components remain partial: `vm-primitives`, `metadata`, `bitmaps`,
+`arenas`, `initialization`, `fault-injection`, and `allocator-recursion`. Do
+not advance M3, M4, or later milestones until
 M2 has its own complete current-commit contract and evidence. The narrowly
 scoped M5 work around the bounded process-once envelope does not advance M5.
 Existing M3/M4 bounded evidence remains regression evidence, not permission to

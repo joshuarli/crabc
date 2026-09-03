@@ -666,6 +666,35 @@ assertion-invalid input, not C/Rust invalid-input parity.
   fault-injection edge, reuse-state mutation, Mapping transfer, late failure,
   C/Rust error parity, or allocator integration.
 
+### `CRABC-MI-FIXED-NUMA-CACHE-WRAPPER` — accepted private VM-substrate boundary
+
+- **Upstream/Rust:** pinned `src/os.c:860-898`
+  (`_mi_os_numa_node_count`, `mi_os_numa_node_get`, and `_mi_os_numa_node`),
+  represented by `os::os_numa_node_count` and `os::os_numa_node` over the
+  private `OS_NUMA_NODE_COUNT` cache.
+- **Category:** Linux/AArch64 private M2 NUMA observation/cache boundary. It
+  has no public C ABI effect, source allocator caller, arena-placement effect,
+  or C/Rust differential.
+- **Difference:** the fixed profile selects only the raw-primitive branch:
+  `mi_option_use_numa_nodes` and verbose diagnostics are absent. Rust retains
+  the source Acquire cache read, zero-or-above-`INT_MAX` normalization to one,
+  Release cache write, Relaxed cached-single-node fast path, strict current
+  `INT_MAX` rejection, and modulo normalization. The existing raw
+  `numa_node_count`/`numa_node` M1 functions and their C/Rust trace remain
+  unchanged. A local-atomic test seam avoids polluting the process cache; it
+  intentionally retains the source's simple load/fill/store shape rather than
+  inventing a CAS or once protocol.
+- **Evidence:**
+  `os::tests::os_numa_wrapper_caches_and_normalizes_the_raw_primitives`
+  proves cache reuse, `8 % 3 == 2`, both cached and slow-fill single-node
+  no-current-probe paths, the accepted count `INT_MAX`, count normalization
+  above `INT_MAX`, and current-node `INT_MAX`/above rejection. The separate
+  `os::tests::emit_m1_raw_c_rust_trace` remains the raw primitive evidence.
+- **Decision/removal:** accepted for this one no-option topology wrapper. It
+  does not close VM primitives or establish option override, diagnostics,
+  topology-change handling, first-fill race policy, arena placement, a caller,
+  allocator integration, or complete NUMA behavior.
+
 ### `CRABC-MI-ORDINARY-BITMAP-HIGHEST-SET-STALE-CHUNKMAP` — accepted checked observer boundary
 
 - **Upstream/Rust:** pinned `src/bitmap.c:1383-1403` `mi_bitmap_bsr`, with
