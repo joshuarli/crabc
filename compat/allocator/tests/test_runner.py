@@ -2271,6 +2271,12 @@ class ContractTests(unittest.TestCase):
                     "id": "c-rust-bitmap-rangesn-differential",
                     "kind": "c-rust-bitmap-rangesn-differential",
                     "target": "bitmap::tests::emit_m2_bitmap_rangesn_c_rust_trace",
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "c-rust-bitmap-set-differential",
+                    "kind": "c-rust-bitmap-set-differential",
+                    "target": "bitmap::tests::emit_m2_bitmap_forall_set_c_rust_trace",
                 }
             ],
         )
@@ -2505,6 +2511,13 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(
             any(
                 "intentionally accepted bounded safety divergence" in nonclaim
+                for nonclaim in summary["milestone"]["nonclaims"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "fresh valid 65-chunk images" in nonclaim
+                and "_mi_bitmap_forall_set" in nonclaim
                 for nonclaim in summary["milestone"]["nonclaims"]
             )
         )
@@ -2785,6 +2798,65 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.bitmap_rangesn.r3_reject.field_0_after"] = 0xB000000000000EC4
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_bitmap_rangesn_trace(c_trace, rust_trace)
+
+    @staticmethod
+    def _m2_bitmap_set_trace() -> dict[str, int]:
+        return {
+            "m2.bitmap_set.control.bfield_bits": 64,
+            "m2.bitmap_set.control.bchunk_bits": 512,
+            "m2.bitmap_set.control.chunk_count": 65,
+            "m2.bitmap_set.layout.byte_size": 4288,
+            "m2.bitmap_set.complete.seeded": 1,
+            "m2.bitmap_set.complete.returned_completed": 1,
+            "m2.bitmap_set.complete.callback_count": 3,
+            "m2.bitmap_set.complete.visit_0_index": 1,
+            "m2.bitmap_set.complete.visit_0_count": 1,
+            "m2.bitmap_set.complete.visit_1_index": 65,
+            "m2.bitmap_set.complete.visit_1_count": 1,
+            "m2.bitmap_set.complete.visit_2_index": 32770,
+            "m2.bitmap_set.complete.visit_2_count": 1,
+            "m2.bitmap_set.complete.chunk_0_field_0_after": 2,
+            "m2.bitmap_set.complete.chunk_0_field_1_after": 2,
+            "m2.bitmap_set.complete.chunk_64_field_0_after": 4,
+            "m2.bitmap_set.complete.chunkmap_field_0_after": 1,
+            "m2.bitmap_set.complete.chunkmap_field_1_after": 1,
+            "m2.bitmap_set.reject.seeded": 1,
+            "m2.bitmap_set.reject.returned_completed": 0,
+            "m2.bitmap_set.reject.callback_count": 2,
+            "m2.bitmap_set.reject.visit_0_index": 1,
+            "m2.bitmap_set.reject.visit_0_count": 1,
+            "m2.bitmap_set.reject.visit_1_index": 65,
+            "m2.bitmap_set.reject.visit_1_count": 1,
+            "m2.bitmap_set.reject.chunk_0_field_0_after": 2,
+            "m2.bitmap_set.reject.chunk_0_field_1_after": 2,
+            "m2.bitmap_set.reject.chunk_64_field_0_after": 4,
+            "m2.bitmap_set.reject.chunkmap_field_0_after": 1,
+            "m2.bitmap_set.reject.chunkmap_field_1_after": 1,
+        }
+
+    def test_m2_bitmap_set_trace_requires_the_selected_transitions(self) -> None:
+        c_trace = self._m2_bitmap_set_trace()
+        output = "CRABC_MI_M2_BITMAP_SET_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_BITMAP_SET_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_bitmap_set_trace(output, source="pinned C")
+        RUNNER.validate_m2_bitmap_set_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_bitmap_set_trace()
+        RUNNER.validate_m2_bitmap_set_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_bitmap_set_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_BITMAP_SET_TRACE_KEYS),
+        )
+
+    def test_m2_bitmap_set_trace_rejects_callback_mutation(self) -> None:
+        c_trace = self._m2_bitmap_set_trace()
+        rust_trace = self._m2_bitmap_set_trace()
+        rust_trace["m2.bitmap_set.reject.chunk_0_field_0_after"] = 0
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_bitmap_set_trace(c_trace, rust_trace)
 
     def test_m2_parser_is_native_only_and_mutually_exclusive(self) -> None:
         with mock.patch.object(sys, "argv", ["run.py", "--m2"]):
