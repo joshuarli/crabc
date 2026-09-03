@@ -1235,6 +1235,24 @@ impl MetaAllocator {
         self.get_ref().test_entry_attempt_count.load(Ordering::Acquire)
     }
 
+    /// Runs one test operation while this allocator's backing entry is held.
+    ///
+    /// This keeps the private entry guard unobservable while letting a
+    /// caller-level regression exercise the same-thread rejection that occurs
+    /// before an exact-owner Malloc release can claim its capability. It is
+    /// deliberately test-only: production callers must never receive or
+    /// manufacture a metadata-entry capability.
+    #[cfg(test)]
+    pub(crate) fn test_with_held_backing_entry<R>(
+        self: Pin<&'static Self>,
+        operation: impl FnOnce() -> R,
+    ) -> Result<R, MetaError> {
+        let entry = self.enter()?;
+        let result = operation();
+        drop(entry);
+        Ok(result)
+    }
+
     /// Binds the detached metadata Theap/image for one selected source main
     /// subprocess without allocating a caller-visible metadata block or its
     /// private backing. This is the source `mi_process_theap_meta` ordering

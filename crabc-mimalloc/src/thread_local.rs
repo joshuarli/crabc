@@ -31,7 +31,9 @@ use crate::compiler_tls::{
     PersistentCompilerTlsOwnerState,
 };
 use crate::lock::PrivateLock;
-use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
+use crate::meta::{
+    MetaAllocation, MetaAllocator, MetaError, MetaRelease, MetaReleaseFailure,
+};
 use crate::os::MemoryConfig;
 use crate::subproc::MainSubprocess;
 use crate::types::LiveThreadId;
@@ -1064,13 +1066,14 @@ impl ThreadLocalBackingOwner {
     /// Releases a live dynamic backing, then makes only its compiler-TLS root
     /// null. This is the source order in `_mi_thread_locals_thread_done`.
     ///
-    /// `SingleThreadAllocator::free` can report `Lifecycle` after it already
-    /// linked the block locally or attempted terminal cleanup. The current
-    /// metadata capability cannot distinguish that post-consumption error from
-    /// a pre-consumption error, so this bounded port does not offer a false
-    /// retry path. It always clears the root after the free attempt and marks
-    /// the owner poisoned on failure; a later full metadata-free result type
-    /// can refine this only when it proves retained ownership.
+    /// This direct [`ThreadLocalBackingOwner`] boundary retains its exact
+    /// Malloc capability when `MetaRelease` proves the failure occurred before
+    /// the metadata entry claimed it. In that one case the root, count, and
+    /// active state remain unchanged for a direct caller retry. A terminal
+    /// failure remains conservative: the root is cleared and the owner is
+    /// poisoned because local release may already have mutated the backing.
+    /// This does not make an enclosing attachment lifecycle retryable; that
+    /// owner has its own state transition before it calls this method.
     pub(crate) fn teardown(&mut self) -> Result<(), ThreadLocalBackingError> {
         self.ensure_active_current()?;
         if self.count == 0 {
@@ -1087,28 +1090,42 @@ impl ThreadLocalBackingOwner {
         let _ = self
             .current_backing_mut()?
             .ok_or(ThreadLocalBackingError::BackingProjection)?;
-        let mut allocation = self
+        let allocation = self
             .allocation
             .take()
             .ok_or(ThreadLocalBackingError::BackingProjection)?;
-        let result = self.metadata.free(&mut allocation);
 
-        // The source clears the root only after `_mi_meta_free`. On an engine
-        // error, conservatively clear it anyway: keeping a pointer whose free
-        // may already have linked or released its block is less safe than the
-        // source's normal null-after-free state. Dropping this non-Drop
-        // capability intentionally retains no retryable raw projection.
-        clear_dynamic_backing();
-        self.count = 0;
-        match result {
+        match MetaRelease::Malloc(allocation).release() {
             Ok(()) => {
+                clear_dynamic_backing();
+                self.count = 0;
                 self.state = ThreadLocalBackingState::TornDown;
                 Ok(())
             }
-            Err(error) => {
+            Err(MetaReleaseFailure::MallocRetryable { error, allocation }) => {
+                // This error occurred before `release_selected_malloc` claimed
+                // the exact Malloc capability. Preserve the source root and
+                // flexible-image count alongside that live value so this
+                // direct owner can retry the same release later.
+                self.allocation = Some(allocation);
+                Err(ThreadLocalBackingError::Metadata(error))
+            }
+            Err(MetaReleaseFailure::MallocTerminal {
+                error,
+                allocation: _,
+            }) => {
+                // Once the exact Malloc capability has been claimed, local
+                // free may already have changed its queues or page state.
+                // Keep the old conservative terminal transition rather than
+                // exposing a false retry path.
+                clear_dynamic_backing();
+                self.count = 0;
                 self.state = ThreadLocalBackingState::Poisoned;
                 Err(ThreadLocalBackingError::Metadata(error))
             }
+            Err(MetaReleaseFailure::RegularOs { .. }) => unreachable!(
+                "a selected Malloc release cannot report a regular-OS failure"
+            ),
         }
     }
 
@@ -1692,6 +1709,84 @@ mod tests {
         })
         .join()
         .expect("the isolated native TLS lifecycle completes");
+    }
+
+    #[test]
+    fn current_thread_backing_teardown_retains_the_live_malloc_capability_before_root_clear_on_recursive_entry() {
+        let metadata = MetaAllocator::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source pair publishes metadata before TLS teardown");
+
+        thread::spawn(move || {
+            let mut owner = unsafe {
+                ThreadLocalBackingOwner::begin_with_metadata(
+                    metadata,
+                    subprocess,
+                    memory_config(),
+                )
+            }
+            .expect("the isolated child begins at the immutable empty root");
+            let live_key = key(15, 1);
+            let mut payload = 0x5ausize;
+            let value = (&mut payload as *mut usize).cast();
+            owner
+                .set(live_key, value)
+                .expect("the source first expansion publishes one 16-slot Malloc image");
+
+            let root_before = dynamic_backing_peek().expect("the live image is installed");
+            // SAFETY: `owner` retains the exact live metadata capability and
+            // the test has not begun a successful teardown.
+            let memory_before = unsafe { root_before.as_ref() }.memory_id();
+            let audit_before = metadata.test_allocation_audit();
+            assert_eq!(audit_before.live_capability_count, 1);
+            assert_eq!(audit_before.high_water_capability_count, 1);
+
+            // This intentionally witnesses the direct owner boundary only.
+            // An enclosing dynamic-Theap attachment has already changed its
+            // own binding state before it delegates teardown and is outside
+            // this retry contract.
+            assert_eq!(
+                metadata.test_with_held_backing_entry(|| owner.teardown()),
+                Ok(Err(ThreadLocalBackingError::Metadata(MetaError::RecursiveEntry))),
+                "the direct owner sees a selected Malloc rejection before it can consume the TLS capability"
+            );
+            assert_eq!(
+                dynamic_backing_peek(),
+                Some(root_before),
+                "the direct owner cannot clear the regular TLS root before a retryable free succeeds"
+            );
+            assert_eq!(owner.count, 16, "the failed pre-claim free retains the image count");
+            assert_eq!(owner.state, ThreadLocalBackingState::Active);
+            assert!(
+                owner
+                    .allocation
+                    .as_ref()
+                    .is_some_and(|allocation| allocation.matches_memory_id(memory_before)),
+                "the owner retains the exact Malloc capability returned by the pre-claim boundary"
+            );
+            assert_eq!(owner.get(live_key), Ok(value));
+            assert_eq!(
+                metadata.test_allocation_audit(),
+                audit_before,
+                "same-thread rejection leaves the live capability audit unchanged"
+            );
+
+            owner
+                .teardown()
+                .expect("the exact retained TLS capability releases after the backing entry drops");
+            assert!(dynamic_backing_peek().is_none());
+            assert_eq!(owner.count, 0);
+            assert_eq!(owner.state, ThreadLocalBackingState::TornDown);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "the successful retry consumes the retained Malloc capability exactly once"
+            );
+        })
+        .join()
+        .expect("the selected recursive teardown/retry lifecycle completes");
     }
 
     #[test]
