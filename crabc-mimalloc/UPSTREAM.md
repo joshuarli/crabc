@@ -580,6 +580,16 @@ inconsistent provenance and every post-claim free failure remain
 terminal-on-error for admitted owners. This is a Rust ownership boundary, not
 source free or mutex equivalence.
 
+`ThreadLocalBackingOwner::teardown` is one direct caller of that selected
+boundary. On `MallocRetryable` it restores the exact capability before it
+returns and retains the live dynamic root, count, slots, and `Active` state; a
+later retry after the same-thread entry drops can therefore perform the source
+`src/threadlocal.c:205-210` free-before-root-clear order. `MallocTerminal`
+keeps the existing clear/count-zero/poison path. This does not make
+`DynamicTheapAttachment::begin_page_drain` retryable: it has already cleared
+its regular slot and binding before calling direct backing teardown, so it
+retains its terminal outer error boundary.
+
 This does not add the actual `mi_subproc_t` byte layout or pthread-lock
 semantics from `include/mimalloc/atomic.h:446-472`, pointer dereference through
 `MainSubprocess`, a general Theap API,
@@ -590,6 +600,25 @@ the other upstream `theap_meta_lock` users in `src/free.c:744-778` and
 `src/subproc.c:141-148,249-251`. The source map therefore remains a bounded
 identity/precondition/direct-allocation-lock checkpoint, not a `mi_subproc_t`
 or metadata-lifecycle port.
+
+### Normal offset OS-allocation owner
+
+Pinned `src/os.c:240-294` frees an OS allocation by its original base and
+extent; `344-430` builds aligned maps; `438-467` records the normal allocation
+memory ID; and `502-527` implements offset alignment. The selected
+`NormalOsAllocation` port fixes the route to non-huge, non-hinted,
+`allow_large = false` Linux/AArch64 mappings. It owns the complete `Mapping`
+and records that mapping's base/length in `MemoryId::os`, while its client
+pointer may be an interior offset-aligned address. Zero offset delegates to
+the ordinary aligned path; a nonzero committed prefix has source-best-effort
+decommit, while a reserved prefix does not. `NormalOsAllocationReleaseFailure`
+returns the exact owner when Rust `munmap` fails.
+
+C reports an allocation failure as `NULL` and its primitive free is void, so
+the Rust diagnostics and retry owner are ownership-safety strengthening rather
+than failure equivalence. This checkpoint does not add hints, huge pages, NUMA,
+options, statistics, arbitrary memory-kind dispatch, or a source runtime
+caller.
 
 ### Native protection failure boundary
 

@@ -287,8 +287,8 @@ performance_qualified = false
 upstream = "src/os.c"
 source_region = "allocator OS memory policy"
 rust_module = "crabc_mimalloc::os"
-rust_item = "partial: immutable MemoryConfig, allocation-size policy, MAP_NORESERVE selection, guaranteed-aligned regular mappings, and typed aligned-overmap cleanup ownership"
-intentional_difference = "Linux/AArch64 raw primitives are supplied by crabc-core. AlignedMappingFailure transfers the exact live direct candidate, untrimmed overmap, or prefix-trimmed suffix when an internal cleanup edge fails; this private Rust safety boundary is covered by focused fault tests and is separate from the M1 success-only trace. Randomized hints, option-driven THP/huge-page policy, statistics, and complete OS allocation ownership remain absent."
+rust_item = "partial: immutable MemoryConfig, allocation-size policy, MAP_NORESERVE selection, guaranteed-aligned regular mappings, typed aligned-overmap cleanup ownership, and one fixed normal/offset non-huge OS allocation owner"
+intentional_difference = "Linux/AArch64 raw primitives are supplied by crabc-core. AlignedMappingFailure transfers the exact live direct candidate, untrimmed overmap, or prefix-trimmed suffix when an internal cleanup edge fails; this private Rust safety boundary is covered by focused fault tests and is separate from the M1 success-only trace. NormalOsAllocation retains the full regular mapping base/extent in MemoryId::os while exposing a potentially interior offset-aligned client pointer, ignores the source-best-effort committed-prefix decommit result, and returns retained Rust ownership after a failed cleanup or unmap; C returns NULL or records a void/best-effort release instead. Randomized hints, option-driven THP/huge-page policy, statistics, complete OS allocation ownership, and source-backed runtime callers remain absent."
 tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/os_host_model.rs"]
 exported = false
 implemented = false
@@ -2602,6 +2602,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/threadlocal.c"
+name = "threadlocal-teardown-malloc-preclaim-retry-checkpoint"
+source_region = "mimalloc v3.5.0 src/threadlocal.c:205-210 _mi_thread_locals_thread_done, plus src/subproc.c:73-81 selected MI_MEM_MALLOC _mi_meta_free dispatch"
+rust_module = "crabc_mimalloc::thread_local and crabc_mimalloc::meta"
+rust_item = "ThreadLocalBackingOwner::teardown, MetaRelease::Malloc, and MetaReleaseFailure::{MallocRetryable,MallocTerminal}"
+intentional_difference = "The selected direct ThreadLocalBackingOwner retries only when MetaRelease proves same-thread entry rejection occurred before LIVE-to-RELEASING: it restores the exact Malloc capability while retaining the dynamic root, count, slots, and Active state, then succeeds after the entry drops. Success preserves C's free-before-root-clear order; terminal errors retain the prior root-clear/count-zero/poison transition. C free is void, so this retry classification is Rust ownership safety rather than C failure parity. DynamicTheapAttachment::begin_page_drain clears its regular slot and binding before it calls this owner and remains terminal on an error; this item does not claim an outer attachment retry, generic metadata dispatch, full TLS/TLD/Theap lifecycle, concurrency, or ABI integration."
+tests = ["crabc-mimalloc/src/thread_local.rs", "crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/dynamic_theap.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/page.c"
 name = "scalar-local-page-free-list-allocation-and-collection"
 source_region = "mi_block_next/set_next, mi_page_extend_free, mi_page_free_quick_collect, both force forms of the local half of _mi_page_free_collect, mi_page_malloc_zero scalar pop/zero, and mi_free_block_local"
@@ -2704,6 +2719,21 @@ rust_module = "crabc_mimalloc::os_page, crabc_mimalloc::types, crabc_mimalloc::s
 rust_item = "OsAlignedPageLayout/OsAlignedPageClaim/PublishedOsAlignedPage, SingleThreadAllocator OS HugeSingleton lifecycle, and the bounded later-main singleton terminal-release tail"
 intentional_difference = "The private one-thread lifecycle supports the source zero-offset OS route above 64 KiB and below the 256 MiB metadata limit. One separate later-main owner-exit handoff consumes only its sole OS singleton through the source private Heap list and terminal release; it does not add general OS-list routing. Option/statistics accounting, large-alignment arena search, concurrent readers, and public API policy remain absent."
 tests = ["crabc-mimalloc/src/os_page.rs", "crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/main_heap_page.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/os.c"
+name = "normal-offset-os-allocation-full-provenance-owner"
+source_region = "mimalloc v3.5.0 src/os.c:240-294 _mi_os_free_ex, 344-430 mi_os_prim_alloc_aligned, 438-467 _mi_os_alloc/_mi_os_alloc_aligned, and 502-527 _mi_os_alloc_aligned_at_offset"
+rust_module = "crabc_mimalloc::os"
+rust_item = "NormalOsAllocation, NormalOsAllocationFailure, NormalOsAllocationReleaseFailure, and Mapping"
+intentional_difference = "One private normal Linux/AArch64 owner only: non-huge, non-hinted mappings with allow_large fixed false. It records the full Mapping base/extent in MemoryId::os while preserving a distinct interior client pointer for nonzero offsets; zero offset delegates to the ordinary aligned route, committed prefix decommit is source-best-effort, and a failed Rust unmap returns the exact owner for retry. C allocation reports NULL and its primitive free is void/best-effort, so Errno diagnostics and retained failure owners are Rust safety strengthening rather than failure parity. Hints, huge pages, NUMA, option policy, statistics/accounting, arbitrary memory-kind dispatch, and integration into a source runtime caller remain absent."
+tests = ["crabc-mimalloc/src/os.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true

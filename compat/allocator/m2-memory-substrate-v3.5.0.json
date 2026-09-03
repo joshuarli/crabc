@@ -49,12 +49,36 @@
           "id": "aligned-map-process-arena-owner",
           "kind": "rust-unit",
           "target": "process_arena::tests::explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-os-offset-full-provenance-and-release-retry",
+          "kind": "rust-unit",
+          "target": "os::tests::normal_offset_os_allocation_retains_full_provenance_and_retries_release"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-os-good-size-and-base-provenance",
+          "kind": "rust-unit",
+          "target": "os::tests::normal_os_allocation_uses_good_size_and_base_provenance"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-os-offset-zero-delegation-and-geometry",
+          "kind": "rust-unit",
+          "target": "os::tests::normal_offset_os_allocation_delegates_zero_and_rejects_invalid_geometry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-os-aligned-failure-owner",
+          "kind": "rust-unit",
+          "target": "os::tests::normal_os_allocation_preserves_a_failed_aligned_map_owner"
         }
       ],
       "completion_status": "partial",
       "id": "vm-primitives",
       "remaining_conditions": [
-        "complete the remaining Linux/AArch64 reserve, commit, decommit, purge, protect, unmap, reuse, huge-page, hint, NUMA, and aligned-overmap substrate with fault-injection evidence beyond the selected direct/prefix/suffix cleanup-owner, reset-advice retry-snapshot, and native one-page protection-owner/retry slices"
+        "complete the remaining Linux/AArch64 reserve, commit, decommit, purge, protect, unmap, reuse, huge-page, hint, NUMA, and aligned-overmap substrate with fault-injection evidence beyond the selected direct/prefix/suffix cleanup-owner, fixed normal/offset non-huge allocation owner, reset-advice retry-snapshot, and native one-page protection-owner/retry slices"
       ],
       "source_units": [
         "include/mimalloc/prim.h",
@@ -134,7 +158,7 @@
       "completion_status": "partial",
       "id": "metadata",
       "remaining_conditions": [
-        "complete pinned C's normal _mi_meta_zalloc and generic _mi_meta_free behavior across remaining direct callers and lifecycles in src/subproc.c, src/init.c, src/theap.c, src/threadlocal.c, and src/heap.c, including the actual mi_subproc_t byte layout/pthread-lock contract (including include/mimalloc/atomic.h:446-472), every remaining theap_meta_lock use and lifecycle (notably src/free.c:744-778, src/init.c:524-530, and src/subproc.c:141-148,249-251), and complete _mi_theap_alloc/_mi_theap_create construction beyond the selected lock-free metadata-page identity query, selected direct zalloc/aligned-zalloc/rezalloc allocation lock phase, selected `MetaRelease::Malloc` exact-owner pre-claim recursion boundary, reservation, and synthetic no-page requested-parent Arena-prefix lifecycle; extend the selected non-metadata one-slice MI_MEM_ARENA release identity gate to actual metadata callers and the full registry/subprocess/lifetime contract, or retire the selected synthetic regular-OS unmap witness; complete no-free, huge/remap, and every remaining source memory-ID ownership branch with retry-preserving failure behavior where source ownership remains live"
+        "complete pinned C's normal _mi_meta_zalloc and generic _mi_meta_free behavior across remaining direct callers and lifecycles in src/subproc.c, src/init.c, src/theap.c, src/threadlocal.c, and src/heap.c, including the actual mi_subproc_t byte layout/pthread-lock contract (including include/mimalloc/atomic.h:446-472), every remaining theap_meta_lock use and lifecycle (notably src/free.c:744-778, src/init.c:524-530, and src/subproc.c:141-148,249-251), and complete _mi_theap_alloc/_mi_theap_create construction beyond the selected lock-free metadata-page identity query, selected direct zalloc/aligned-zalloc/rezalloc allocation lock phase, selected `MetaRelease::Malloc` exact-owner pre-claim recursion boundary and its one direct ThreadLocalBackingOwner recovery, reservation, and synthetic no-page requested-parent Arena-prefix lifecycle; extend the selected non-metadata one-slice MI_MEM_ARENA release identity gate to actual metadata callers and the full registry/subprocess/lifetime contract, or retire the selected synthetic regular-OS unmap witness; complete no-free, huge/remap, and every remaining source memory-ID ownership branch with retry-preserving failure behavior where source ownership remains live"
       ],
       "source_units": [
         "include/mimalloc/types.h",
@@ -360,12 +384,18 @@
           "id": "metadata-same-thread-free-reentry-before-capability-mutation",
           "kind": "rust-unit",
           "target": "meta::tests::typed_malloc_release_retains_a_live_capability_after_recursive_entry_rejection"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "threadlocal-malloc-preclaim-reentry-retains-root-and-capability",
+          "kind": "rust-unit",
+          "target": "thread_local::tests::current_thread_backing_teardown_retains_the_live_malloc_capability_before_root_clear_on_recursive_entry"
         }
       ],
       "completion_status": "partial",
       "id": "allocator-recursion",
       "remaining_conditions": [
-        "prove every remaining M2 metadata and substrate path remains allocation-free or uses the reviewed recursion boundary under same-thread reentry beyond the selected prepared direct zalloc, aligned-zalloc, rezalloc, and MetaRelease exact-owner Malloc free pre-claim routes; cover C lock equivalence, reentrant callbacks or signals, cross-thread contention, and the remaining PageMap, arena, OS, release, and copy paths"
+        "prove every remaining M2 metadata and substrate path remains allocation-free or uses the reviewed recursion boundary under same-thread reentry beyond the selected prepared direct zalloc, aligned-zalloc, rezalloc, MetaRelease exact-owner Malloc free pre-claim routes, and one direct ThreadLocalBackingOwner teardown recovery; cover C lock equivalence, reentrant callbacks or signals, cross-thread contention, and the remaining PageMap, arena, OS, release, and copy paths"
       ],
       "source_units": [
         "src/subproc.c",
@@ -441,7 +471,9 @@
       "the selected thread-local live-rezalloc check proves only one isolated child-thread direct-Malloc regular-backing replacement after a first 16-slot image: an injected pre-allocation failure restores the old root, count, slots, and capability, then one 16-to-32 retry copies slot 15 and publishes slot 16. It observes one live capability with high-water two before teardown and zero live afterward. It does not establish normal C _mi_meta_zalloc backing, arbitrary growth, generic _mi_meta_free dispatch, full TLS/TLD/Theap/registry lifecycle, concurrency, pthread/process lifecycle, or ABI integration",
       "the selected arena-release subprocess-identity witness proves only one typed, unpinned, one-slice ArenaSliceClaim release through the bounded MainSubprocess identity: a foreign caller receives the unchanged claim before purge or free-bitmap mutation, while the matching caller returns a successful terminal free-bit transition and can reclaim it. Rust makes C's internal arena->subproc assertion a fail-closed safe refusal. This is source-level safety evidence, not a C differential, a MetaRelease::Arena branch, generic _mi_meta_free dispatch, normal C metadata backing, general purge behavior, full arena-registry/subprocess lifetime, no-free/OS/huge/remap behavior, retry parity after a false source free-bit result, races, statistics, or allocator integration",
       "the selected bitmap differentials compare only four direct source-snapshot paths: an abandoned-page claim at sequence five, where a keep-set rejection restores bit 17 and its conservative map, a later accepted claim clears the bit while retaining that map, and a drained probe repairs it without a callback; the generic scalar clear-range visitor, where a completed walk emits source-64-bit-field-bounded runs while retaining its conservative map and a stopped callback restores only its unvisited same-field residual; direct rangesn wrapper calls; and direct read-only _mi_bitmap_forall_set calls on fresh valid 65-chunk images, where callbacks cross the first chunk-map field boundary and a second-callback stop retains all selected data and conservative-map fields. The rangesn trace uses fresh rngslices-three images for aligned completed windows, partial-window/top-suffix retention, and a stopped callback that restores an earlier skipped window plus later snapshot bits; it separately executes the <=1 generic delegation and caps 65 at 64. These do not establish the C keep_set=false rejection route, callback mutation, Heap/Page/Arena pointers or _mi_heap_visit_blocks, general multi-chunk or sequence distribution, actual minimal-purge/transparent-huge-page policy, actual arena/subprocess ownership, races, clear-once-set, other visitor families, statistics, binned bitmap behavior, flexible-array allocation ownership, or allocator integration",
-      "this gate does not claim a production allocator backend or any later allocator milestone",
+  "the selected fixed normal/offset OS-allocation owner proves only non-huge, non-hinted allow_large=false Linux/AArch64 mappings: it retains the complete map base/extent in MemoryId::os, exposes a separate offset client pointer, delegates zero offset to ordinary aligned normalization, best-effort decommits a committed prefix, preserves a reserved prefix, and retains a failed cleanup/unmap owner for retry. It does not establish hints, huge pages, NUMA, options, statistics, arbitrary memory-kind dispatch, a source runtime caller, or C NULL/void failure parity",
+  "the selected direct ThreadLocalBackingOwner teardown recovery proves only the pre-claim MetaRelease::Malloc MallocRetryable case: it restores the exact capability and retains its root, count, slots, and Active state before one post-drop retry preserves free-before-root-clear order. Post-claim and provenance failures remain terminal, and DynamicTheapAttachment is still outer-terminal because it clears its regular slot and binding before calling backing teardown; this does not establish a generic metadata-free, TLS/TLD/Theap lifecycle, concurrency, or C failure-parity claim",
+  "this gate does not claim a production allocator backend or any later allocator milestone",
       "this gate does not claim non-AArch64 support"
     ],
     "status": "partial"

@@ -27,23 +27,27 @@ exported and does not imply parity for the absent process/TLS, general remote-fr
 teardown, purge, or public-API regions. The bounded ticket-zero and later-main
 page owners now delegate ordinary reallocations to that same live engine; only
 the ticket-zero null case may activate its completed first-arena policy. This
-does not create a public allocator route. The private regular-TLS and generic
-subprocess-attached/no-theap TLD owners record one internal recovery limitation
-in the source map:
-`MetaAllocator::free` may report an admitted exact-owner error after consuming
-a capability. The regular owner clears its dynamic root, while the TLD owner
-has already invalidated `thread_id`; each terminally poisons rather than
-retaining a capability that could name freed storage. The selected
-`MetaRelease` boundary makes the narrower distinction explicit: its Malloc
-branch returns the exact live capability as `MallocRetryable` only when invalid
-thread identity, same-thread recursion, or backing-lock acquisition rejects
-before the LIVE-to-RELEASING claim. Stale/provenance rejection and every
-post-claim error remain terminal diagnostic state. Its normal anonymous
-`Mapping` owner remains live and is returned after a failed `munmap`. That
-regular-OS form is an intentionally unconnected retry witness, not a C metadata caller:
-pinned `_mi_meta_zalloc` forms Malloc IDs, while a real `_mi_arenas_free` OS
-owner needs a wider memory-ID/subprocess contract. It intentionally does not
-represent no-free, huge, or remap source branches. Separately,
+does not create a public allocator route. The generic
+`MetaAllocator::free` and subprocess-attached/no-theap TLD lifecycle owners
+still record one terminal recovery limitation: an admitted exact-owner error
+may follow capability consumption, so their state poisons rather than retaining
+a capability that could name freed storage. The selected `MetaRelease`
+boundary makes a narrower direct-owner exception explicit: its Malloc branch
+returns the exact live capability as `MallocRetryable` only when invalid thread
+identity, same-thread recursion, or backing-lock acquisition rejects before the
+LIVE-to-RELEASING claim. `ThreadLocalBackingOwner::teardown` restores that exact
+capability and retains its dynamic root, count, slots, and `Active` state only
+on this pre-claim result; after the entry drops, its successful retry preserves
+the source free-before-root-clear order. Stale/provenance rejection and every
+post-claim error remain terminal diagnostic state. `DynamicTheapAttachment`
+still clears its regular slot and binding before calling that direct owner, so
+an outer attachment error remains terminal rather than offering a retry. Its
+normal anonymous `Mapping` owner remains live and is returned after a failed
+`munmap`. That regular-OS form is an intentionally unconnected retry witness,
+not a C metadata caller: pinned `_mi_meta_zalloc` forms Malloc IDs, while a
+real `_mi_arenas_free` OS owner needs a wider memory-ID/subprocess contract. It
+intentionally does not represent no-free, huge, or remap source branches.
+Separately,
 `ArenaSliceClaim::release_for_subprocess` carries one live typed arena claim:
 a foreign `MainSubprocess` identity returns that unchanged claim before purge
 or free-bitmap mutation, while the matching identity consumes it through the
@@ -580,6 +584,33 @@ assertion-invalid input, not C/Rust invalid-input parity.
   allocation lifecycle, or the M2 fault matrix. Revisit only with a source
   mapping, a typed owner for every new cleanup branch, and native failure
   evidence.
+
+### `CRABC-MI-NORMAL-OFFSET-OS-ALLOCATION-OWNER` — accepted private VM-substrate safety boundary
+
+- **Upstream/Rust:** pinned `src/os.c:240-294,344-430,438-467,502-527`,
+  represented by `os::NormalOsAllocation`,
+  `NormalOsAllocationFailure`, `NormalOsAllocationReleaseFailure`, and
+  `Mapping`.
+- **Category:** Linux/AArch64 private M2 normal non-huge OS-allocation
+  ownership. It has no public C ABI effect and is not a C/Rust allocation
+  differential.
+- **Difference:** the selected Rust owner fixes the source route to
+  non-huge, non-hinted `allow_large = false`, retains the full mapping base and
+  extent in `MemoryId::os`, and exposes a separate potentially interior client
+  pointer for offset alignment. Zero offset delegates to ordinary aligned-map
+  normalization; a committed nonzero route best-effort decommits the prefix,
+  while the reserved route does not. C reports allocation failure as `NULL` and
+  frees through a void/best-effort primitive; Rust returns diagnostics and the
+  exact unmap-failure owner for a retry. This is deliberate ownership-safety
+  strengthening, not C failure parity.
+- **Evidence:**
+  `os::tests::{normal_offset_os_allocation_retains_full_provenance_and_retries_release,normal_os_allocation_uses_good_size_and_base_provenance,normal_offset_os_allocation_delegates_zero_and_rejects_invalid_geometry,normal_os_allocation_preserves_a_failed_aligned_map_owner}`
+  cover full-map ownership, good-size/base provenance, zero-offset delegation,
+  invalid geometry, committed/reserved prefix behavior, and retained cleanup
+  ownership.
+- **Decision/removal:** accepted for one fixed private route. It does not close
+  VM primitives or cover hints, huge pages, NUMA, options, statistics,
+  arbitrary memory-kind dispatch, or a source runtime caller.
 
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 

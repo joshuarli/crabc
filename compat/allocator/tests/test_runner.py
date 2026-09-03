@@ -2186,6 +2186,36 @@ class ContractTests(unittest.TestCase):
                         "cleanup_failure_before_setup"
                     ),
                 },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "normal-os-offset-full-provenance-and-release-retry",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os::tests::normal_offset_os_allocation_retains_full_provenance_and_"
+                        "retries_release"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "normal-os-good-size-and-base-provenance",
+                    "kind": "rust-unit",
+                    "target": "os::tests::normal_os_allocation_uses_good_size_and_base_provenance",
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "normal-os-offset-zero-delegation-and-geometry",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os::tests::normal_offset_os_allocation_delegates_zero_and_rejects_"
+                        "invalid_geometry"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "normal-os-aligned-failure-owner",
+                    "kind": "rust-unit",
+                    "target": "os::tests::normal_os_allocation_preserves_a_failed_aligned_map_owner",
+                },
             ],
         )
         self.assertEqual(vm_primitives["completion_status"], "partial")
@@ -2523,7 +2553,16 @@ class ContractTests(unittest.TestCase):
                         "meta::tests::typed_malloc_release_retains_a_live_capability_after_"
                         "recursive_entry_rejection"
                     ),
-                }
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "threadlocal-malloc-preclaim-reentry-retains-root-and-capability",
+                    "kind": "rust-unit",
+                    "target": (
+                        "thread_local::tests::current_thread_backing_teardown_retains_the_live_"
+                        "malloc_capability_before_root_clear_on_recursive_entry"
+                    ),
+                },
             ],
         )
         self.assertEqual(allocator_recursion["completion_status"], "partial")
