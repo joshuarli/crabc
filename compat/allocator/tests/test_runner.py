@@ -2110,7 +2110,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            60,
+            61,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2380,6 +2380,12 @@ class ContractTests(unittest.TestCase):
                     "id": "c-rust-bitmap-set-differential",
                     "kind": "c-rust-bitmap-set-differential",
                     "target": "bitmap::tests::emit_m2_bitmap_forall_set_c_rust_trace",
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "c-rust-binned-bitmap-bsr-inv-differential",
+                    "kind": "c-rust-binned-bitmap-bsr-inv-differential",
+                    "target": "bitmap::tests::emit_m2_binned_bitmap_bsr_inv_c_rust_trace",
                 },
                 {
                     "expected_passed_test_count": 1,
@@ -2745,6 +2751,13 @@ class ContractTests(unittest.TestCase):
             any(
                 "fresh valid 65-chunk images" in nonclaim
                 and "_mi_bitmap_forall_set" in nonclaim
+                for nonclaim in summary["milestone"]["nonclaims"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "direct `mi_bbitmap_bsr_inv` calls" in nonclaim
+                and "padded bit 1023" in nonclaim
                 for nonclaim in summary["milestone"]["nonclaims"]
             )
         )
@@ -3125,6 +3138,55 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.bitmap_set.reject.chunk_0_field_0_after"] = 0
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_bitmap_set_trace(c_trace, rust_trace)
+
+    @staticmethod
+    def _m2_binned_bitmap_bsr_inv_trace() -> dict[str, int]:
+        return {
+            "m2.bbitmap_bsr_inv.control.bfield_bits": 64,
+            "m2.bbitmap_bsr_inv.control.bchunk_bits": 512,
+            "m2.bbitmap_bsr_inv.padding.logical_bit_count": 513,
+            "m2.bbitmap_bsr_inv.padding.chunk_count": 2,
+            "m2.bbitmap_bsr_inv.padding.max_bits": 1024,
+            "m2.bbitmap_bsr_inv.padding.byte_size": 576,
+            "m2.bbitmap_bsr_inv.padding.chunkmap_empty": 1,
+            "m2.bbitmap_bsr_inv.padding.returned_found": 1,
+            "m2.bbitmap_bsr_inv.padding.index": 1023,
+            "m2.bbitmap_bsr_inv.scan.chunk_count": 2,
+            "m2.bbitmap_bsr_inv.scan.byte_size": 576,
+            "m2.bbitmap_bsr_inv.scan.chunkmap_empty_before": 1,
+            "m2.bbitmap_bsr_inv.scan.first_returned_found": 1,
+            "m2.bbitmap_bsr_inv.scan.first_index": 963,
+            "m2.bbitmap_bsr_inv.scan.second_returned_found": 1,
+            "m2.bbitmap_bsr_inv.scan.second_index": 585,
+            "m2.bbitmap_bsr_inv.scan.third_returned_found": 1,
+            "m2.bbitmap_bsr_inv.scan.third_index": 511,
+            "m2.bbitmap_bsr_inv.scan.drained_returned_found": 0,
+            "m2.bbitmap_bsr_inv.scan.chunkmap_empty_after": 1,
+        }
+
+    def test_m2_binned_bitmap_bsr_inv_trace_requires_selected_relations(self) -> None:
+        c_trace = self._m2_binned_bitmap_bsr_inv_trace()
+        output = "CRABC_MI_M2_BINNED_BITMAP_BSR_INV_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_BINNED_BITMAP_BSR_INV_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_binned_bitmap_bsr_inv_trace(output, source="pinned C")
+        RUNNER.validate_m2_binned_bitmap_bsr_inv_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_binned_bitmap_bsr_inv_trace()
+        RUNNER.validate_m2_binned_bitmap_bsr_inv_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_binned_bitmap_bsr_inv_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS),
+        )
+
+    def test_m2_binned_bitmap_bsr_inv_trace_rejects_wrong_descending_result(self) -> None:
+        c_trace = self._m2_binned_bitmap_bsr_inv_trace()
+        rust_trace = self._m2_binned_bitmap_bsr_inv_trace()
+        rust_trace["m2.bbitmap_bsr_inv.scan.first_index"] = 962
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_binned_bitmap_bsr_inv_trace(c_trace, rust_trace)
 
     def test_m2_parser_is_native_only_and_mutually_exclusive(self) -> None:
         with mock.patch.object(sys, "argv", ["run.py", "--m2"]):

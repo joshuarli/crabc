@@ -200,6 +200,9 @@ M2_BITMAP_RANGESN_TRACE_ARTIFACT_ROOT = (
 M2_BITMAP_SET_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/bitmap-set-trace"
 )
+M2_BINNED_BITMAP_BSR_INV_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "m2-memory-substrate/binned-bitmap-bsr-inv-trace"
+)
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -523,6 +526,32 @@ M2_BITMAP_SET_TRACE_KEYS = (
     "m2.bitmap_set.reject.chunk_64_field_0_after",
     "m2.bitmap_set.reject.chunkmap_field_0_after",
     "m2.bitmap_set.reject.chunkmap_field_1_after",
+)
+# This direct binned observer record fixes only the source's rounded-capacity
+# and high-to-low inverse-BSR scan. It intentionally observes valid images
+# whose conservative set-bit map remains empty; it is not a binned search,
+# chunk-map-maintenance, or allocator-integration contract.
+M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS = (
+    "m2.bbitmap_bsr_inv.control.bfield_bits",
+    "m2.bbitmap_bsr_inv.control.bchunk_bits",
+    "m2.bbitmap_bsr_inv.padding.logical_bit_count",
+    "m2.bbitmap_bsr_inv.padding.chunk_count",
+    "m2.bbitmap_bsr_inv.padding.max_bits",
+    "m2.bbitmap_bsr_inv.padding.byte_size",
+    "m2.bbitmap_bsr_inv.padding.chunkmap_empty",
+    "m2.bbitmap_bsr_inv.padding.returned_found",
+    "m2.bbitmap_bsr_inv.padding.index",
+    "m2.bbitmap_bsr_inv.scan.chunk_count",
+    "m2.bbitmap_bsr_inv.scan.byte_size",
+    "m2.bbitmap_bsr_inv.scan.chunkmap_empty_before",
+    "m2.bbitmap_bsr_inv.scan.first_returned_found",
+    "m2.bbitmap_bsr_inv.scan.first_index",
+    "m2.bbitmap_bsr_inv.scan.second_returned_found",
+    "m2.bbitmap_bsr_inv.scan.second_index",
+    "m2.bbitmap_bsr_inv.scan.third_returned_found",
+    "m2.bbitmap_bsr_inv.scan.third_index",
+    "m2.bbitmap_bsr_inv.scan.drained_returned_found",
+    "m2.bbitmap_bsr_inv.scan.chunkmap_empty_after",
 )
 M1_FOUNDATIONS_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
@@ -3682,6 +3711,127 @@ int main(void) {
 """
 
 
+# This producer directly includes the pinned binned inverse-BSR observer. It
+# uses only two valid, caller-owned two-chunk images: one exposes rounded top
+# padding and the other exposes descending chunk/field selection. Its empty
+# conservative chunk map is deliberate: `mi_bbitmap_bsr_inv` does not consult
+# or repair that map.
+M2_BINNED_BITMAP_BSR_INV_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "bitmap.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+typedef struct m2_binned_bitmap_bsr_inv_image_s {
+  mi_bbitmap_t bitmap;
+  mi_bchunk_t tail[1];
+} m2_binned_bitmap_bsr_inv_image_t;
+
+static m2_binned_bitmap_bsr_inv_image_t m2_binned_bitmap_bsr_inv_padding;
+static m2_binned_bitmap_bsr_inv_image_t m2_binned_bitmap_bsr_inv_scan;
+
+int main(void) {
+  const size_t padding_logical_bit_count = MI_BCHUNK_BITS + 1;
+  const size_t scan_bit_count = MI_BCHUNK_BITS * 2;
+  const size_t lower_index = MI_BCHUNK_BITS - 1;
+  const size_t upper_lower_field_index = MI_BCHUNK_BITS + MI_BFIELD_BITS + 9;
+  const size_t upper_higher_field_index = MI_BCHUNK_BITS + MI_BCHUNK_BITS - MI_BFIELD_BITS + 3;
+
+  const size_t padding_size = mi_bbitmap_init(
+      NULL, &m2_binned_bitmap_bsr_inv_padding.bitmap, padding_logical_bit_count, false);
+  const bool padding_chunkmap_empty = mi_bchunk_all_are_clear_relaxed(
+      &m2_binned_bitmap_bsr_inv_padding.bitmap.chunkmap);
+  size_t padding_index = 0;
+  const bool padding_returned_found = mi_bbitmap_bsr_inv(
+      &m2_binned_bitmap_bsr_inv_padding.bitmap, &padding_index);
+
+  const size_t scan_size = mi_bbitmap_init(
+      NULL, &m2_binned_bitmap_bsr_inv_scan.bitmap, scan_bit_count, false);
+  const bool scan_seeded =
+      mi_bchunk_setN(&m2_binned_bitmap_bsr_inv_scan.bitmap.chunks[0], 0, MI_BCHUNK_BITS, NULL) &&
+      mi_bchunk_setN(&m2_binned_bitmap_bsr_inv_scan.bitmap.chunks[1], 0, MI_BCHUNK_BITS, NULL);
+  const bool scan_chunkmap_empty_before = mi_bchunk_all_are_clear_relaxed(
+      &m2_binned_bitmap_bsr_inv_scan.bitmap.chunkmap);
+  const bool scan_cleared =
+      mi_bchunk_clear(&m2_binned_bitmap_bsr_inv_scan.bitmap.chunks[0], lower_index, NULL) &&
+      mi_bchunk_clear(&m2_binned_bitmap_bsr_inv_scan.bitmap.chunks[1],
+          upper_lower_field_index - MI_BCHUNK_BITS, NULL) &&
+      mi_bchunk_clear(&m2_binned_bitmap_bsr_inv_scan.bitmap.chunks[1],
+          upper_higher_field_index - MI_BCHUNK_BITS, NULL);
+
+  size_t first_index = 0;
+  const bool first_returned_found = mi_bbitmap_bsr_inv(
+      &m2_binned_bitmap_bsr_inv_scan.bitmap, &first_index);
+  const bool first_restored = first_returned_found && mi_bchunk_set(
+      &m2_binned_bitmap_bsr_inv_scan.bitmap.chunks[first_index / MI_BCHUNK_BITS],
+      first_index % MI_BCHUNK_BITS, NULL);
+
+  size_t second_index = 0;
+  const bool second_returned_found = mi_bbitmap_bsr_inv(
+      &m2_binned_bitmap_bsr_inv_scan.bitmap, &second_index);
+  const bool second_restored = second_returned_found && mi_bchunk_set(
+      &m2_binned_bitmap_bsr_inv_scan.bitmap.chunks[second_index / MI_BCHUNK_BITS],
+      second_index % MI_BCHUNK_BITS, NULL);
+
+  size_t third_index = 0;
+  const bool third_returned_found = mi_bbitmap_bsr_inv(
+      &m2_binned_bitmap_bsr_inv_scan.bitmap, &third_index);
+  const bool third_restored = third_returned_found && mi_bchunk_set(
+      &m2_binned_bitmap_bsr_inv_scan.bitmap.chunks[third_index / MI_BCHUNK_BITS],
+      third_index % MI_BCHUNK_BITS, NULL);
+
+  size_t drained_index = 0;
+  const bool drained_returned_found = mi_bbitmap_bsr_inv(
+      &m2_binned_bitmap_bsr_inv_scan.bitmap, &drained_index);
+  const bool scan_chunkmap_empty_after = mi_bchunk_all_are_clear_relaxed(
+      &m2_binned_bitmap_bsr_inv_scan.bitmap.chunkmap);
+
+  const bool all_relations =
+      padding_size == sizeof(m2_binned_bitmap_bsr_inv_padding) &&
+      scan_size == sizeof(m2_binned_bitmap_bsr_inv_scan) &&
+      padding_chunkmap_empty && padding_returned_found &&
+      padding_index == MI_BCHUNK_BITS * 2 - 1 &&
+      scan_seeded && scan_chunkmap_empty_before && scan_cleared &&
+      first_returned_found && first_index == upper_higher_field_index && first_restored &&
+      second_returned_found && second_index == upper_lower_field_index && second_restored &&
+      third_returned_found && third_index == lower_index && third_restored &&
+      !drained_returned_found && scan_chunkmap_empty_after;
+  if (!all_relations) return 10;
+
+  puts("CRABC_MI_M2_BINNED_BITMAP_BSR_INV_TRACE_BEGIN");
+  U("m2.bbitmap_bsr_inv.control.bfield_bits", MI_BFIELD_BITS);
+  U("m2.bbitmap_bsr_inv.control.bchunk_bits", MI_BCHUNK_BITS);
+  U("m2.bbitmap_bsr_inv.padding.logical_bit_count", padding_logical_bit_count);
+  U("m2.bbitmap_bsr_inv.padding.chunk_count",
+      mi_bbitmap_chunk_count(&m2_binned_bitmap_bsr_inv_padding.bitmap));
+  U("m2.bbitmap_bsr_inv.padding.max_bits",
+      mi_bbitmap_max_bits(&m2_binned_bitmap_bsr_inv_padding.bitmap));
+  U("m2.bbitmap_bsr_inv.padding.byte_size", padding_size);
+  U("m2.bbitmap_bsr_inv.padding.chunkmap_empty", padding_chunkmap_empty);
+  U("m2.bbitmap_bsr_inv.padding.returned_found", padding_returned_found);
+  U("m2.bbitmap_bsr_inv.padding.index", padding_index);
+  U("m2.bbitmap_bsr_inv.scan.chunk_count",
+      mi_bbitmap_chunk_count(&m2_binned_bitmap_bsr_inv_scan.bitmap));
+  U("m2.bbitmap_bsr_inv.scan.byte_size", scan_size);
+  U("m2.bbitmap_bsr_inv.scan.chunkmap_empty_before", scan_chunkmap_empty_before);
+  U("m2.bbitmap_bsr_inv.scan.first_returned_found", first_returned_found);
+  U("m2.bbitmap_bsr_inv.scan.first_index", first_index);
+  U("m2.bbitmap_bsr_inv.scan.second_returned_found", second_returned_found);
+  U("m2.bbitmap_bsr_inv.scan.second_index", second_index);
+  U("m2.bbitmap_bsr_inv.scan.third_returned_found", third_returned_found);
+  U("m2.bbitmap_bsr_inv.scan.third_index", third_index);
+  U("m2.bbitmap_bsr_inv.scan.drained_returned_found", drained_returned_found);
+  U("m2.bbitmap_bsr_inv.scan.chunkmap_empty_after", scan_chunkmap_empty_after);
+  puts("CRABC_MI_M2_BINNED_BITMAP_BSR_INV_TRACE_END");
+  return 0;
+}
+"""
+
+
 # The image reader directly includes `src/threadlocal.c` solely to observe
 # its private static root and direct-TLS declarations. It is compiled with
 # the same isolated constructor-suppression define as the M1 bootstrap reader;
@@ -6379,6 +6529,7 @@ def validate_m2_memory_substrate_contract(
                     "c-rust-bitmap-clear-range-differential",
                     "c-rust-bitmap-rangesn-differential",
                     "c-rust-bitmap-set-differential",
+                    "c-rust-binned-bitmap-bsr-inv-differential",
                     "c-rust-page-map-success-differential",
                     "c-rust-page-map-lazy-commit-failure-differential",
                     "c-rust-page-map-cold-init-differential",
@@ -6779,6 +6930,77 @@ def run_m2_bitmap_set_differential(
     }
 
 
+def run_m2_binned_bitmap_bsr_inv_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the selected pinned-C/Rust binned inverse-BSR observer."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-binned-bitmap-bsr-inv-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_binned_bitmap_bsr_inv_trace(
+            compiler,
+            source,
+            M2_BINNED_BITMAP_BSR_INV_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "bitmap::tests::emit_m2_binned_bitmap_bsr_inv_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 binned bitmap inverse-BSR trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_binned_bitmap_bsr_inv_trace(rust_output, source="Rust")
+    validate_m2_binned_bitmap_bsr_inv_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 binned bitmap inverse-BSR trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_binned_bitmap_bsr_inv_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "one pinned-C/Rust binned `mi_bbitmap_bsr_inv` observer trace: a fresh "
+            "logical 513-bit image rounds to two chunks and exposes padded bit 1023 "
+            "while its conservative chunk map remains empty; a separate fresh two-chunk "
+            "image with three cleared bits returns 963, 585, 511, then no result as each "
+            "bit is restored without changing that map. This does not cover binned "
+            "allocation search, try-find-and-clear/claim paths, chunk-map maintenance or "
+            "rollback, stats/subprocess, flexible-array ownership beyond these valid "
+            "images, callbacks, races, Heap/Page/Arena integration, allocator routing, "
+            "or general bitmap completion."
+        ),
+        "status": comparison["status"],
+    }
+
+
 def run_m2_page_map_differential(
     pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
 ) -> dict[str, Any]:
@@ -7054,6 +7276,26 @@ def run_m2_memory_substrate_checks(
                 continue
             if check["kind"] == "c-rust-bitmap-set-differential":
                 differential = run_m2_bitmap_set_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
+            if check["kind"] == "c-rust-binned-bitmap-bsr-inv-differential":
+                differential = run_m2_binned_bitmap_bsr_inv_differential(
                     pin,
                     offline=offline,
                     timeout_seconds=summary["execution"]["timeout_seconds"],
@@ -12893,6 +13135,99 @@ def compare_m2_bitmap_set_trace(
     }
 
 
+def parse_m2_binned_bitmap_bsr_inv_trace(output: str, *, source: str) -> dict[str, int]:
+    """Parse the fixed binned inverse-BSR observer record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_BINNED_BITMAP_BSR_INV_TRACE_BEGIN",
+        end="CRABC_MI_M2_BINNED_BITMAP_BSR_INV_TRACE_END",
+        description=f"{source} M2 binned bitmap inverse-BSR trace",
+    )
+    if set(trace) != set(M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS):
+        missing = sorted(set(M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 binned bitmap inverse-BSR trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_binned_bitmap_bsr_inv_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Require the selected rounded-padding and descending-scan relations."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown M2 binned bitmap inverse-BSR trace source: {source}")
+    if set(trace) != set(M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS):
+        raise HarnessError(
+            f"{source} M2 binned bitmap inverse-BSR trace keys differ from the fixed contract"
+        )
+    for key in M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} M2 binned bitmap inverse-BSR trace field is not an integer: {key}"
+            )
+
+    expected = {
+        "m2.bbitmap_bsr_inv.control.bfield_bits": 64,
+        "m2.bbitmap_bsr_inv.control.bchunk_bits": 512,
+        "m2.bbitmap_bsr_inv.padding.logical_bit_count": 513,
+        "m2.bbitmap_bsr_inv.padding.chunk_count": 2,
+        "m2.bbitmap_bsr_inv.padding.max_bits": 1024,
+        "m2.bbitmap_bsr_inv.padding.byte_size": 576,
+        "m2.bbitmap_bsr_inv.padding.chunkmap_empty": 1,
+        "m2.bbitmap_bsr_inv.padding.returned_found": 1,
+        "m2.bbitmap_bsr_inv.padding.index": 1023,
+        "m2.bbitmap_bsr_inv.scan.chunk_count": 2,
+        "m2.bbitmap_bsr_inv.scan.byte_size": 576,
+        "m2.bbitmap_bsr_inv.scan.chunkmap_empty_before": 1,
+        "m2.bbitmap_bsr_inv.scan.first_returned_found": 1,
+        "m2.bbitmap_bsr_inv.scan.first_index": 963,
+        "m2.bbitmap_bsr_inv.scan.second_returned_found": 1,
+        "m2.bbitmap_bsr_inv.scan.second_index": 585,
+        "m2.bbitmap_bsr_inv.scan.third_returned_found": 1,
+        "m2.bbitmap_bsr_inv.scan.third_index": 511,
+        "m2.bbitmap_bsr_inv.scan.drained_returned_found": 0,
+        "m2.bbitmap_bsr_inv.scan.chunkmap_empty_after": 1,
+    }
+    for key, value in expected.items():
+        if trace[key] != value:
+            raise HarnessError(
+                f"{source} M2 binned bitmap inverse-BSR trace contains an unmet relation: {key}"
+            )
+
+
+def compare_m2_binned_bitmap_bsr_inv_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require exact equality for the selected binned inverse-BSR observer."""
+
+    validate_m2_binned_bitmap_bsr_inv_trace(c_trace, source="pinned C")
+    validate_m2_binned_bitmap_bsr_inv_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 binned bitmap inverse-BSR trace differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS),
+        "status": "matched",
+    }
+
+
 def parse_rust_test_count(output: str) -> int:
     matches = re.findall(
         r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
@@ -14169,6 +14504,66 @@ def build_m2_bitmap_set_trace(
     require_success(run, "pinned C M2 bitmap set-bit trace execution")
     record = parse_m2_bitmap_set_trace(str(run["stdout"]), source="pinned C")
     validate_m2_bitmap_set_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc.h",
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/bits.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "include/mimalloc/types.h",
+                "src/bitmap.h",
+                "src/bitmap.c",
+            ),
+        ),
+    }
+
+
+def build_m2_binned_bitmap_bsr_inv_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the selected source-private binned inverse-BSR producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-binned-bitmap-bsr-inv-trace-probe.c"
+    trace_binary = profile_dir / "m2-binned-bitmap-bsr-inv-trace-probe"
+    trace_source.write_text(M2_BINNED_BITMAP_BSR_INV_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-DMI_OPT_SIMD=0",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        "-ffunction-sections",
+        "-fdata-sections",
+        str(trace_source),
+        "-Wl,--gc-sections",
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 binned bitmap inverse-BSR trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 binned bitmap inverse-BSR trace execution")
+    record = parse_m2_binned_bitmap_bsr_inv_trace(str(run["stdout"]), source="pinned C")
+    validate_m2_binned_bitmap_bsr_inv_trace(record, source="pinned C")
     return {
         "command": command,
         "record": record,

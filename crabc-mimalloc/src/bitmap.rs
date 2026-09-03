@@ -28,11 +28,12 @@
 // abandoned visitor's reject/restore, accepted-claim, and stale-map repair;
 // the scalar clear-range visitor's completed and stopped field-bounded walks;
 // the `rangesn` wrapper's selected aligned/delegated paths; and a direct
-// 65-chunk read-only set-bit walk across the first chunk-map field boundary.
-// None is general callback parity or allocator integration. The allocator-owned
-// dynamic TLS registry projects its typed metadata capability only transiently
-// through the ordinary lowest-bit claim path below; it does not add a general
-// bitmap metadata ownership API.
+// 65-chunk read-only set-bit walk across the first chunk-map field boundary;
+// and the binned inverse-BSR observer's rounded padding and descending
+// chunk/field walk. None is general callback parity or allocator integration.
+// The allocator-owned dynamic TLS registry projects its typed metadata
+// capability only transiently through the ordinary lowest-bit claim path below;
+// it does not add a general bitmap metadata ownership API.
 
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of};
@@ -2481,6 +2482,171 @@ mod tests {
         );
         assert_eq!(bitmap.set_range(upper_chunk_lower_field, 1), Some(true));
         assert_eq!(bitmap.highest_clear_relaxed(), Some(lower_chunk));
+    }
+
+    /// Emits the address-free Rust half of the selected pinned-C
+    /// `mi_bbitmap_bsr_inv` differential. One fresh logical 513-bit image
+    /// proves that this observer sees source-rounded top padding even while its
+    /// conservative chunk map is empty. A separate two-chunk image proves the
+    /// high-to-low chunk and field order without exercising binned search or
+    /// chunk-map maintenance.
+    #[test]
+    fn emit_m2_binned_bitmap_bsr_inv_c_rust_trace() {
+        extern crate std;
+
+        const PADDING_LOGICAL_BIT_COUNT: usize = BCHUNK_BITS + 1;
+        const SCAN_BIT_COUNT: usize = BCHUNK_BITS * 2;
+        const LOWER_INDEX: usize = BCHUNK_BITS - 1;
+        const UPPER_LOWER_FIELD_INDEX: usize = BCHUNK_BITS + BFIELD_BITS + 9;
+        const UPPER_HIGHER_FIELD_INDEX: usize = BCHUNK_BITS + BCHUNK_BITS - BFIELD_BITS + 3;
+
+        let padding_layout = BinnedBitmapLayout::for_bit_count(PADDING_LOGICAL_BIT_COUNT).unwrap();
+        let mut padding_storage = BinnedBitmapTestStorage::uninit();
+        let padding = unsafe {
+            BinnedBitmapView::initialize(
+                core::ptr::null_mut(),
+                padding_storage.bytes.as_mut_ptr().cast(),
+                padding_storage.bytes.len(),
+                padding_layout,
+                false,
+            )
+            .unwrap()
+        };
+        let padding_chunkmap_empty = padding.chunkmap().all_are_clear_relaxed();
+        let padding_result = padding.highest_clear_relaxed();
+        let padding_returned_found = padding_result.is_some();
+        let padding_index = padding_result.unwrap_or(0);
+
+        let scan_layout = BinnedBitmapLayout::for_bit_count(SCAN_BIT_COUNT).unwrap();
+        let mut scan_storage = BinnedBitmapTestStorage::uninit();
+        let scan = unsafe {
+            BinnedBitmapView::initialize(
+                core::ptr::null_mut(),
+                scan_storage.bytes.as_mut_ptr().cast(),
+                scan_storage.bytes.len(),
+                scan_layout,
+                false,
+            )
+            .unwrap()
+        };
+        let scan_seeded = (0..scan.chunk_count()).all(|chunk_index| {
+            matches!(
+                scan.chunk(chunk_index).set_run(0, BCHUNK_BITS),
+                Some(transition) if transition.all_transitioned()
+            )
+        });
+        let scan_chunkmap_empty_before = scan.chunkmap().all_are_clear_relaxed();
+        let scan_cleared = [LOWER_INDEX, UPPER_LOWER_FIELD_INDEX, UPPER_HIGHER_FIELD_INDEX]
+            .into_iter()
+            .all(|index| {
+                matches!(
+                    scan.chunk(index / BCHUNK_BITS)
+                        .clear_run(index % BCHUNK_BITS, 1),
+                    Some(transition) if transition.all_transitioned()
+                )
+            });
+
+        let first_result = scan.highest_clear_relaxed();
+        let first_returned_found = first_result.is_some();
+        let first_index = first_result.unwrap_or(0);
+        let first_restored = first_result
+            .and_then(|index| scan.chunk(index / BCHUNK_BITS).set_run(index % BCHUNK_BITS, 1))
+            .is_some_and(RunTransition::all_transitioned);
+
+        let second_result = scan.highest_clear_relaxed();
+        let second_returned_found = second_result.is_some();
+        let second_index = second_result.unwrap_or(0);
+        let second_restored = second_result
+            .and_then(|index| scan.chunk(index / BCHUNK_BITS).set_run(index % BCHUNK_BITS, 1))
+            .is_some_and(RunTransition::all_transitioned);
+
+        let third_result = scan.highest_clear_relaxed();
+        let third_returned_found = third_result.is_some();
+        let third_index = third_result.unwrap_or(0);
+        let third_restored = third_result
+            .and_then(|index| scan.chunk(index / BCHUNK_BITS).set_run(index % BCHUNK_BITS, 1))
+            .is_some_and(RunTransition::all_transitioned);
+
+        let drained_returned_found = scan.highest_clear_relaxed().is_some();
+        let scan_chunkmap_empty_after = scan.chunkmap().all_are_clear_relaxed();
+
+        assert_eq!(padding_layout.chunk_count(), 2);
+        assert_eq!(padding_layout.max_bits(), SCAN_BIT_COUNT);
+        assert_eq!(padding_layout.byte_size(), 9 * BCHUNK_SIZE);
+        assert!(padding_chunkmap_empty);
+        assert!(padding_returned_found);
+        assert_eq!(padding_index, SCAN_BIT_COUNT - 1);
+        assert_eq!(scan_layout.chunk_count(), 2);
+        assert_eq!(scan_layout.byte_size(), 9 * BCHUNK_SIZE);
+        assert!(scan_seeded);
+        assert!(scan_chunkmap_empty_before);
+        assert!(scan_cleared);
+        assert!(first_returned_found);
+        assert_eq!(first_index, UPPER_HIGHER_FIELD_INDEX);
+        assert!(first_restored);
+        assert!(second_returned_found);
+        assert_eq!(second_index, UPPER_LOWER_FIELD_INDEX);
+        assert!(second_restored);
+        assert!(third_returned_found);
+        assert_eq!(third_index, LOWER_INDEX);
+        assert!(third_restored);
+        assert!(!drained_returned_found);
+        assert!(scan_chunkmap_empty_after);
+
+        macro_rules! emit {
+            ($name:expr, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+        std::println!("CRABC_MI_M2_BINNED_BITMAP_BSR_INV_TRACE_BEGIN");
+        emit!("m2.bbitmap_bsr_inv.control.bfield_bits", BFIELD_BITS);
+        emit!("m2.bbitmap_bsr_inv.control.bchunk_bits", BCHUNK_BITS);
+        emit!(
+            "m2.bbitmap_bsr_inv.padding.logical_bit_count",
+            PADDING_LOGICAL_BIT_COUNT
+        );
+        emit!("m2.bbitmap_bsr_inv.padding.chunk_count", padding.chunk_count());
+        emit!("m2.bbitmap_bsr_inv.padding.max_bits", padding.max_bits());
+        emit!("m2.bbitmap_bsr_inv.padding.byte_size", padding.byte_size());
+        emit!(
+            "m2.bbitmap_bsr_inv.padding.chunkmap_empty",
+            padding_chunkmap_empty
+        );
+        emit!(
+            "m2.bbitmap_bsr_inv.padding.returned_found",
+            padding_returned_found
+        );
+        emit!("m2.bbitmap_bsr_inv.padding.index", padding_index);
+        emit!("m2.bbitmap_bsr_inv.scan.chunk_count", scan.chunk_count());
+        emit!("m2.bbitmap_bsr_inv.scan.byte_size", scan.byte_size());
+        emit!(
+            "m2.bbitmap_bsr_inv.scan.chunkmap_empty_before",
+            scan_chunkmap_empty_before
+        );
+        emit!(
+            "m2.bbitmap_bsr_inv.scan.first_returned_found",
+            first_returned_found
+        );
+        emit!("m2.bbitmap_bsr_inv.scan.first_index", first_index);
+        emit!(
+            "m2.bbitmap_bsr_inv.scan.second_returned_found",
+            second_returned_found
+        );
+        emit!("m2.bbitmap_bsr_inv.scan.second_index", second_index);
+        emit!(
+            "m2.bbitmap_bsr_inv.scan.third_returned_found",
+            third_returned_found
+        );
+        emit!("m2.bbitmap_bsr_inv.scan.third_index", third_index);
+        emit!(
+            "m2.bbitmap_bsr_inv.scan.drained_returned_found",
+            drained_returned_found
+        );
+        emit!(
+            "m2.bbitmap_bsr_inv.scan.chunkmap_empty_after",
+            scan_chunkmap_empty_after
+        );
+        std::println!("CRABC_MI_M2_BINNED_BITMAP_BSR_INV_TRACE_END");
     }
 
     #[test]
