@@ -30,14 +30,17 @@ the ticket-zero null case may activate its completed first-arena policy. This
 does not create a public allocator route. The private regular-TLS and generic
 subprocess-attached/no-theap TLD owners record one internal recovery limitation
 in the source map:
-`MetaAllocator::free` may report an error after consuming a capability. The
-regular owner clears its dynamic root, while the TLD owner has already
-invalidated `thread_id`; each terminally poisons rather than retaining a
-capability that could name freed storage. The selected `MetaRelease` boundary
-makes that distinction explicit: its exact Malloc owner is terminal diagnostic
-state rather than a false retry token, while its normal anonymous `Mapping`
-owner remains live and is returned after a failed `munmap`. That regular-OS
-form is an intentionally unconnected retry witness, not a C metadata caller:
+`MetaAllocator::free` may report an admitted exact-owner error after consuming
+a capability. The regular owner clears its dynamic root, while the TLD owner
+has already invalidated `thread_id`; each terminally poisons rather than
+retaining a capability that could name freed storage. The selected
+`MetaRelease` boundary makes the narrower distinction explicit: its Malloc
+branch returns the exact live capability as `MallocRetryable` only when invalid
+thread identity, same-thread recursion, or backing-lock acquisition rejects
+before the LIVE-to-RELEASING claim. Stale/provenance rejection and every
+post-claim error remain terminal diagnostic state. Its normal anonymous
+`Mapping` owner remains live and is returned after a failed `munmap`. That
+regular-OS form is an intentionally unconnected retry witness, not a C metadata caller:
 pinned `_mi_meta_zalloc` forms Malloc IDs, while a real `_mi_arenas_free` OS
 owner needs a wider memory-ID/subprocess contract. It intentionally does not
 represent no-free, huge, or remap source branches. Separately,
@@ -297,7 +300,7 @@ assertion-invalid input, not C/Rust invalid-input parity.
   and `src/options.c:161-162` (the bounded detached metadata-Theap image,
   first-head random/cookie transition, and normal option image),
   `src/libc.c:115-140` (`_mi_atomic_once_enter` and
-  `_mi_atomic_once_release`), `src/subproc.c:29-70,84-101,141-148,249-251`,
+  `_mi_atomic_once_release`), `src/subproc.c:29-81,84-101,141-148,249-251`,
   and `include/mimalloc/atomic.h:446-472`; represented by
   `process_init::ProcessMainInitializationStorage`, `once::AllocatorOnce`,
   `main_theap::MainStaticHeapFoundation`,
@@ -346,8 +349,9 @@ assertion-invalid input, not C/Rust invalid-input parity.
   phase (with `None` delegating to selected `zalloc`) hold
   `MainSubprocess::lock_metadata_theap` inside the
   Rust backing lock and same-thread marker. `MetaEntry::drop` releases that
-  source-shaped guard before rezalloc copy/free, while exact-owner Malloc free
-  retains the backing lock only. This maps the source identity/publication
+  source-shaped guard before rezalloc copy/free. The selected Malloc branch of
+  `_mi_meta_free` does not take `theap_meta_lock`; Rust serializes exact-owner
+  free with the separate backing lock only. This maps the source identity/publication
   role, selected raw equality predicate, and one selected direct-lock role;
   it is not actual `mi_subproc_t` byte layout or pthread-lock semantics from
   `include/mimalloc/atomic.h:446-472`, a dereference-capable subprocess API,
@@ -404,6 +408,12 @@ assertion-invalid input, not C/Rust invalid-input parity.
   BOUND/no-backing/no-capability preservation until release; it separately
   covers aligned allocation, rezalloc copy preservation, and exact-owner
   Malloc free outside that source lock.
+  `meta::tests::typed_malloc_release_retains_a_live_capability_after_recursive_entry_rejection`
+  holds the Rust backing entry and proves the selected `MetaRelease::Malloc`
+  branch preserves its exact pointer, `MemoryId`, and audit before returning a
+  retryable capability, then frees it after the entry drops. It does not widen
+  the terminal-on-error contract of general `MetaAllocator::free` lifecycle
+  owners.
   `process_main_once_blocks_a_distinct_racer_until_release_and_refuses_reentry`,
   `process_main_once_blocks_a_terminal_ready_observer_until_once_release`, and
   `process_main_once_wakes_a_distinct_racer_with_retained_after_failure` prove

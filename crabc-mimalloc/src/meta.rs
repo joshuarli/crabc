@@ -836,13 +836,24 @@ pub(crate) enum MetaRelease {
 
 /// One failed selected metadata release.
 ///
-/// An exact-owner Malloc failure is terminal in the current detached
-/// allocator: local free may already have changed page or queue state before
-/// it reports [`MetaError::Free`].  The rejected capability is retained for
-/// diagnosis, but it is intentionally not retryable.  A regular OS mapping,
-/// in contrast, remains live when [`Mapping::unmap`] reports a kernel error,
-/// so its exact owner is returned for an explicit retry.
+/// An eligible exact-owner Malloc entry-acquisition failure before its live
+/// capability is claimed leaves that capability retryable. This is limited to
+/// [`MetaError::InvalidEntryThread`], [`MetaError::RecursiveEntry`], and
+/// [`MetaError::Lock`]: no local allocator mutation has begun. Once the
+/// capability is claimed, local free may already have changed page or queue
+/// state before it reports [`MetaError::Free`]; that rejected capability is
+/// terminal and remains only for diagnosis. A regular OS mapping, in contrast,
+/// remains live when [`Mapping::unmap`] reports a kernel error, so its exact
+/// owner is returned for an explicit retry.
 pub(crate) enum MetaReleaseFailure {
+    /// Entering the exact owner's backing lock failed before this Malloc
+    /// capability changed state, so the caller may retry this exact value.
+    MallocRetryable {
+        error: MetaError,
+        allocation: MetaAllocation<'static>,
+    },
+    /// The Malloc capability was claimed before its failure and cannot be
+    /// retried, even though it is retained for diagnosis.
     MallocTerminal {
         error: MetaError,
         allocation: MetaAllocation<'static>,
@@ -858,10 +869,12 @@ impl MetaRelease {
     ///
     /// The Malloc branch recovers only the private, process-lived owner
     /// recorded when the capability was created; it never lets a caller
-    /// nominate a different metadata allocator.  Its failure is terminal as
-    /// documented on [`MetaReleaseFailure`].  The regular OS branch retains
-    /// the mapping on a failed kernel unmap, so its failure returns that exact
-    /// mapping for explicit retry.
+    /// nominate a different metadata allocator. An entry failure before it
+    /// claims the Malloc capability returns that live exact value for retry;
+    /// a failure after the claim is terminal as documented on
+    /// [`MetaReleaseFailure`]. The regular OS branch retains the mapping on a
+    /// failed kernel unmap, so its failure returns that exact mapping for
+    /// explicit retry.
     pub(crate) fn release(self) -> Result<(), MetaReleaseFailure> {
         match self {
             Self::Malloc(mut allocation) => {
@@ -870,13 +883,31 @@ impl MetaRelease {
                 // `static` for this release boundary.  The capability keeps
                 // that owner identity exact and does not form a mutable alias.
                 let owner = unsafe { Pin::new_unchecked(allocation.owner.as_ref()) };
-                match owner.free(&mut allocation) {
+                match owner.release_selected_malloc(&mut allocation) {
                     Ok(()) => Ok(()),
+                    Err(
+                        error @ (MetaError::InvalidEntryThread
+                        | MetaError::RecursiveEntry
+                        | MetaError::Lock(_)),
+                    ) => {
+                        debug_assert!(
+                            allocation.is_live(),
+                            "an entry failure must preserve its exact Malloc capability"
+                        );
+                        Err(MetaReleaseFailure::MallocRetryable { error, allocation })
+                    }
                     Err(error) => {
                         debug_assert!(
                             !allocation.is_live(),
-                            "an exact-owner metadata free failure must retain a terminal capability"
+                            "only an entry failure may retain a live exact-owner Malloc capability"
                         );
+                        // `MetaRelease` reconstructs the owner only from this
+                        // capability, so a live non-entry error is unreachable
+                        // without an internal invariant violation. Fail closed
+                        // rather than exposing an unclassified retry token.
+                        if allocation.is_live() {
+                            allocation.reject();
+                        }
                         Err(MetaReleaseFailure::MallocTerminal { error, allocation })
                     }
                 }
@@ -1468,6 +1499,13 @@ impl MetaAllocator {
     }
 
     /// Releases one metadata allocation under the detached owner lock.
+    ///
+    /// Existing direct lifecycle owners treat an admitted exact-owner failure
+    /// as terminal, so this general route retains its terminal-on-error
+    /// capability contract. A foreign-owner rejection remains non-consuming.
+    /// The selected [`MetaRelease::Malloc`] boundary uses
+    /// [`Self::release_selected_malloc`] when it must explicitly retain a
+    /// pre-entry failure for retry.
     pub(crate) fn free(
         self: Pin<&'static Self>,
         allocation: &mut MetaAllocation<'static>,
@@ -1482,6 +1520,49 @@ impl MetaAllocator {
             return Err(MetaError::ReleasedOrStale);
         }
         match self.release_claimed(allocation) {
+            Ok(()) => {
+                allocation.release();
+                #[cfg(any(test, feature = "native-runtime-test-audit"))]
+                self.get_ref().test_note_allocation_released();
+                Ok(())
+            }
+            Err(error) => {
+                allocation.reject();
+                Err(error)
+            }
+        }
+    }
+
+    /// Releases one selected exact-owner Malloc capability for
+    /// [`MetaRelease`].
+    ///
+    /// Unlike [`Self::free`], this narrow boundary can return the owned
+    /// capability to its caller. It therefore establishes the Rust backing
+    /// entry before changing LIVE to RELEASING, so an eligible entry failure
+    /// leaves the exact value retryable. Pinned `_mi_meta_free`'s
+    /// `MI_MEM_MALLOC` branch does not take `theap_meta_lock`; Rust serializes
+    /// this selected local free with its separate backing lock only.
+    fn release_selected_malloc(
+        self: Pin<&'static Self>,
+        allocation: &mut MetaAllocation<'static>,
+    ) -> Result<(), MetaError> {
+        if !allocation.belongs_to(self) {
+            return Err(MetaError::ForeignOwner);
+        }
+        if !allocation.is_live() || !allocation.has_consistent_malloc_provenance() {
+            allocation.reject();
+            return Err(MetaError::ReleasedOrStale);
+        }
+        let mut entry = self.enter()?;
+        if !allocation.claim(ALLOCATION_LIVE, ALLOCATION_RELEASING) {
+            allocation.reject();
+            return Err(MetaError::ReleasedOrStale);
+        }
+        let result = Self::release_claimed_under_entry(&mut entry, allocation);
+        // Match the general free boundary: release the backing lock and
+        // recursion marker before publishing the capability's final state.
+        drop(entry);
+        match result {
             Ok(()) => {
                 allocation.release();
                 #[cfg(any(test, feature = "native-runtime-test-audit"))]
@@ -1586,6 +1667,17 @@ impl MetaAllocator {
         allocation: &mut MetaAllocation<'static>,
     ) -> Result<(), MetaError> {
         let mut entry = self.enter()?;
+        Self::release_claimed_under_entry(&mut entry, allocation)
+    }
+
+    /// Runs the selected local free while the caller already owns the backing
+    /// metadata entry. The capability has been claimed by that caller; this
+    /// helper deliberately neither acquires the source `theap_meta` lock nor
+    /// changes the capability state.
+    fn release_claimed_under_entry(
+        entry: &mut MetaEntry,
+        allocation: &mut MetaAllocation<'static>,
+    ) -> Result<(), MetaError> {
         if entry.status() != READY || !allocation.has_consistent_malloc_provenance() {
             return Err(MetaError::ReleasedOrStale);
         }
@@ -2099,6 +2191,45 @@ mod tests {
         assert!(
             !allocation.is_live(),
             "a failed exact-owner free is terminal rather than retryable"
+        );
+    }
+
+    #[test]
+    fn typed_malloc_release_retains_a_live_capability_after_recursive_entry_rejection() {
+        let allocator = static_allocator();
+        let block = allocator.zalloc(config(), 91).unwrap();
+        let pointer = block.pointer();
+        let memory_id = block.memory_id();
+        let live_audit = MetaAllocationAudit {
+            live_capability_count: 1,
+            high_water_capability_count: 1,
+        };
+        assert_eq!(allocator.test_allocation_audit(), live_audit);
+
+        let entry = allocator.enter().unwrap();
+        let failure = MetaRelease::Malloc(block)
+            .release()
+            .expect_err("same-thread Malloc release must reject before claiming its capability");
+        let MetaReleaseFailure::MallocRetryable { error, allocation } = failure else {
+            panic!("same-thread Malloc release returned the wrong failure branch");
+        };
+        assert_eq!(error, MetaError::RecursiveEntry);
+        assert!(
+            allocation.is_live(),
+            "the pre-claim failure retains the exact Malloc capability for retry"
+        );
+        assert_eq!(allocation.pointer(), pointer);
+        assert!(allocation.matches_memory_id(memory_id));
+        assert_eq!(allocator.test_allocation_audit(), live_audit);
+
+        drop(entry);
+        assert!(MetaRelease::Malloc(allocation).release().is_ok());
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 1,
+            }
         );
     }
 
@@ -3240,6 +3371,28 @@ mod tests {
                 live_capability_count: 0,
                 high_water_capability_count: 2,
             }
+        );
+    }
+
+    #[test]
+    fn recursive_metadata_free_keeps_the_general_lifecycle_contract_terminal() {
+        let allocator = static_allocator();
+        let mut block = allocator
+            .zalloc(config(), 32)
+            .expect("the general lifecycle capability is live before recursive free");
+
+        let entry = allocator.enter().unwrap();
+        assert_eq!(allocator.free(&mut block), Err(MetaError::RecursiveEntry));
+        assert!(
+            !block.is_live(),
+            "the general lifecycle route keeps its existing terminal-on-error contract"
+        );
+
+        drop(entry);
+        assert_eq!(
+            allocator.free(&mut block),
+            Err(MetaError::ReleasedOrStale),
+            "a generic lifecycle caller must not accidentally gain the selected retry path"
         );
     }
 

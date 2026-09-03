@@ -2514,6 +2514,15 @@ class ContractTests(unittest.TestCase):
                         "meta::tests::recursive_metadata_entry_rejects_real_routes_before_"
                         "backing_or_capability_mutation"
                     ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "metadata-same-thread-free-reentry-before-capability-mutation",
+                    "kind": "rust-unit",
+                    "target": (
+                        "meta::tests::typed_malloc_release_retains_a_live_capability_after_"
+                        "recursive_entry_rejection"
+                    ),
                 }
             ],
         )
