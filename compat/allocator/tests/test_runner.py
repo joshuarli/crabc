@@ -2110,7 +2110,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            56,
+            57,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2567,6 +2567,15 @@ class ContractTests(unittest.TestCase):
                     "target": (
                         "main_theap::tests::"
                         "static_heap_foundation_makes_the_canonical_main_heap_identity_ready_last"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "ticket-zero-static-tld-fixed-numa-wrapper-caller",
+                    "kind": "rust-unit",
+                    "target": (
+                        "main_theap::tests::"
+                        "ticket_zero_static_tld_uses_fixed_numa_wrapper_after_static_memid"
                     ),
                 }
             ],

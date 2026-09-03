@@ -287,8 +287,8 @@ performance_qualified = false
 upstream = "src/os.c"
 source_region = "allocator OS memory policy"
 rust_module = "crabc_mimalloc::os"
-rust_item = "partial: immutable MemoryConfig, allocation-size policy, MAP_NORESERVE selection, guaranteed-aligned regular mappings, typed aligned-overmap cleanup ownership, one fixed normal/offset non-huge OS allocation owner, the selected Linux contained-range reuse no-op and its separately mapped all-committed external-arena caller, and one fixed no-option NUMA count-cache/current-node-normalization wrapper without a caller"
-intentional_difference = "Linux/AArch64 raw primitives are supplied by crabc-core. AlignedMappingFailure transfers the exact live direct candidate, untrimmed overmap, or prefix-trimmed suffix when an internal cleanup edge fails; this private Rust safety boundary is covered by focused fault tests and is separate from the M1 success-only trace. NormalOsAllocation retains the full regular mapping base/extent in MemoryId::os while exposing a potentially interior offset-aligned client pointer, ignores the source-best-effort committed-prefix decommit result, and returns retained Rust ownership after a failed cleanup or unmap; C returns NULL or records a void/best-effort release instead. Mapping::reuse admits only the selected source-conservative complete page range and returns an explicit Linux no-op without a syscall, fault seam, or ownership mutation; empty conservative ranges return None and invalid/closed Mapping inputs are Rust errors. The separately mapped all-committed external-arena caller supplies one non-owning exact-span use of the same no-op. The separately mapped NUMA wrapper retains only the source raw branch: it omits `mi_option_use_numa_nodes` and verbose diagnostics, has no allocator caller or arena placement policy, and leaves the raw M1 primitive trace unchanged. Randomized hints, option-driven THP/huge-page policy, statistics, complete OS allocation ownership, and source-backed runtime callers beyond that selected caller remain absent."
+rust_item = "partial: immutable MemoryConfig, allocation-size policy, MAP_NORESERVE selection, guaranteed-aligned regular mappings, typed aligned-overmap cleanup ownership, one fixed normal/offset non-huge OS allocation owner, the selected Linux contained-range reuse no-op and its separately mapped all-committed external-arena caller, and one fixed no-option NUMA count-cache/current-node-normalization wrapper with one selected static ticket-zero live-TLD caller"
+intentional_difference = "Linux/AArch64 raw primitives are supplied by crabc-core. AlignedMappingFailure transfers the exact live direct candidate, untrimmed overmap, or prefix-trimmed suffix when an internal cleanup edge fails; this private Rust safety boundary is covered by focused fault tests and is separate from the M1 success-only trace. NormalOsAllocation retains the full regular mapping base/extent in MemoryId::os while exposing a potentially interior offset-aligned client pointer, ignores the source-best-effort committed-prefix decommit result, and returns retained Rust ownership after a failed cleanup or unmap; C returns NULL or records a void/best-effort release instead. Mapping::reuse admits only the selected source-conservative complete page range and returns an explicit Linux no-op without a syscall, fault seam, or ownership mutation; empty conservative ranges return None and invalid/closed Mapping inputs are Rust errors. The separately mapped all-committed external-arena caller supplies one non-owning exact-span use of the same no-op. The separately mapped NUMA wrapper retains only the source raw branch: it omits `mi_option_use_numa_nodes` and verbose diagnostics, calls one selected ticket-zero static-TLD path after Rust static-MemoryId formation, has no arena-placement policy, and leaves the raw M1 primitive trace unchanged. Randomized hints, option-driven THP/huge-page policy, statistics, complete OS allocation ownership, and source-backed runtime callers beyond the selected reuse and ticket-zero NUMA callers remain absent."
 tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/os_host_model.rs"]
 exported = false
 implemented = false
@@ -2034,7 +2034,7 @@ name = "fixed-no-option-numa-cache-and-current-node-normalization"
 source_region = "mimalloc v3.5.0 src/os.c:860-898 _mi_os_numa_node_count, mi_os_numa_node_get, and _mi_os_numa_node, restricted to the raw-primitive branch with mi_option_use_numa_nodes absent"
 rust_module = "crabc_mimalloc::os"
 rust_item = "os_numa_node_count/os_numa_node through os_numa_node_count_with_raw/os_numa_node_with_raw and the private zero-initialized OS_NUMA_NODE_COUNT"
-intentional_difference = "The fixed profile preserves the source Acquire cache load, raw zero-or-greater-than-INT_MAX normalization to one, Release cache store, Relaxed cached-one fast path, strict current-node INT_MAX boundary, and modulo normalization. It deliberately omits mi_option_use_numa_nodes and verbose diagnostics, leaves the raw M1 numa_node_count/numa_node trace unchanged, and has no caller, topology-change policy, arena placement, or C/Rust differential. A local-atomic test seam prevents global cache pollution while recording that racing first fills remain source-simple rather than CAS/once initialization."
+intentional_difference = "The fixed profile preserves the source Acquire cache load, raw zero-or-greater-than-INT_MAX normalization to one, Release cache store, Relaxed cached-one fast path, strict current-node INT_MAX boundary, and modulo normalization. It deliberately omits mi_option_use_numa_nodes and verbose diagnostics, leaves the raw M1 numa_node_count/numa_node trace unchanged, and has one separately mapped selected ticket-zero static-TLD caller after Rust static-MemoryId formation. Topology-change policy, arena placement, generic/later TLD callers, and C/Rust differential parity remain absent. A local-atomic test seam prevents global cache pollution while recording that racing first fills remain source-simple rather than CAS/once initialization."
 tests = ["crabc-mimalloc/src/os.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
@@ -2205,6 +2205,21 @@ exported = false
 implemented = true
 unit_verified = true
 differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/init.c"
+name = "ticket-zero-static-tld-fixed-numa-wrapper-caller"
+source_region = "mimalloc v3.5.0 src/init.c:236-250 non-detached mi_tld_init `tld->numa_node = _mi_os_numa_node()`, reached through the static first-TLD branch of mi_tld_create at 253-272 after static memid formation; paired fixed wrapper at src/os.c:860-898"
+rust_module = "crabc_mimalloc::main_theap, crabc_mimalloc::subproc, and crabc_mimalloc::os"
+rust_item = "MainStaticTheapAttachment::begin_after_heap_foundation -> private begin_after_heap_foundation_with_numa_source -> ThreadRegistrationTicket::initialize_and_activate_first_main_tld_with_numa_source -> MainSubprocess::initialize_main_tld_with_numa_source -> os_numa_node"
+intentional_difference = "This maps one selected ticket-zero static-TLD caller only. After ticket issue, Rust forms the concrete static MemoryId, synchronously observes the fixed no-option wrapper, then writes and Release-publishes one complete TLD image before default/fast root publication. The test-only injected local-cache source proves 8 modulo 3, zero/oversized single-node normalization without a current-node probe, static provenance, ticket/live counts, and root ordering without changing production policy or global topology state. It does not claim C's literal individual-field mi_tld_create/mi_tld_init order, detached `numa_node = -1`, generic/later TLD callers, arena placement, options/diagnostics, topology/fill-race policy, a C/Rust differential, or allocator integration."
+tests = ["crabc-mimalloc/src/main_theap.rs", "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/os.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
 stress_verified = false
 performance_qualified = false
 

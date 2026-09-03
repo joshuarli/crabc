@@ -673,27 +673,35 @@ assertion-invalid input, not C/Rust invalid-input parity.
   represented by `os::os_numa_node_count` and `os::os_numa_node` over the
   private `OS_NUMA_NODE_COUNT` cache.
 - **Category:** Linux/AArch64 private M2 NUMA observation/cache boundary. It
-  has no public C ABI effect, source allocator caller, arena-placement effect,
-  or C/Rust differential.
+  has no public C ABI effect, one selected ticket-zero static-TLD source caller,
+  no arena-placement effect, and no C/Rust differential.
 - **Difference:** the fixed profile selects only the raw-primitive branch:
   `mi_option_use_numa_nodes` and verbose diagnostics are absent. Rust retains
   the source Acquire cache read, zero-or-above-`INT_MAX` normalization to one,
   Release cache write, Relaxed cached-single-node fast path, strict current
   `INT_MAX` rejection, and modulo normalization. The existing raw
   `numa_node_count`/`numa_node` M1 functions and their C/Rust trace remain
-  unchanged. A local-atomic test seam avoids polluting the process cache; it
-  intentionally retains the source's simple load/fill/store shape rather than
-  inventing a CAS or once protocol.
+  unchanged. The selected `src/init.c:236-250,260-272` static-TLD caller forms
+  its Rust static `MemoryId`, then synchronously obtains this wrapper result
+  before it writes and Release-publishes one complete live TLD image. A
+  local-atomic test seam avoids polluting the process cache; it intentionally
+  retains the source's simple load/fill/store shape rather than inventing a
+  CAS or once protocol.
 - **Evidence:**
   `os::tests::os_numa_wrapper_caches_and_normalizes_the_raw_primitives`
   proves cache reuse, `8 % 3 == 2`, both cached and slow-fill single-node
   no-current-probe paths, the accepted count `INT_MAX`, count normalization
   above `INT_MAX`, and current-node `INT_MAX`/above rejection. The separate
   `os::tests::emit_m1_raw_c_rust_trace` remains the raw primitive evidence.
+  `main_theap::tests::ticket_zero_static_tld_uses_fixed_numa_wrapper_after_static_memid`
+  proves the selected caller's static-provenance, ticket, unpublished/live,
+  root, and deterministic normalization boundaries without a global-cache or
+  raw-CPU observation.
 - **Decision/removal:** accepted for this one no-option topology wrapper. It
   does not close VM primitives or establish option override, diagnostics,
-  topology-change handling, first-fill race policy, arena placement, a caller,
-  allocator integration, or complete NUMA behavior.
+  topology-change handling, first-fill race policy, arena placement,
+  field-by-field `mi_tld_create`/`mi_tld_init` order, detached or generic/later
+  TLD callers, allocator integration, or complete NUMA behavior.
 
 ### `CRABC-MI-ORDINARY-BITMAP-HIGHEST-SET-STALE-CHUNKMAP` — accepted checked observer boundary
 
