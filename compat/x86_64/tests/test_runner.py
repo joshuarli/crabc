@@ -16490,6 +16490,46 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "unistd.h",
         ):
             self.assertIn(required, artifact_runner)
+        archive_prng_exclusion = re.search(
+            r"for unselected in(?P<symbols>.*?); do\n"
+            r'    if grep -Eq [^\n]*"\$archive_symbols"; then',
+            artifact_runner,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(archive_prng_exclusion)
+        assert archive_prng_exclusion is not None
+        archive_excluded_symbols = set(
+            archive_prng_exclusion.group("symbols").replace("\\", " ").split()
+        )
+        self.assertSetEqual(
+            set(static_export_names) & archive_excluded_symbols,
+            set(),
+            "the aggregate archive's PRNG exclusion rejects a selected leaf",
+        )
+        candidate_prng_exclusion = re.search(
+            r"for unselected in(?P<symbols>.*?); do\n"
+            r'    if grep -Eq [^\n]*"\$candidate_symbols"; then',
+            artifact_runner,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(candidate_prng_exclusion)
+        assert candidate_prng_exclusion is not None
+        candidate_excluded_symbols = set(
+            candidate_prng_exclusion.group("symbols").replace("\\", " ").split()
+        )
+        for symbol in (
+            "rand_r",
+            "drand48",
+            "erand48",
+            "jrand48",
+            "lcong48",
+            "lrand48",
+            "mrand48",
+            "nrand48",
+            "seed48",
+            "srand48",
+        ):
+            self.assertIn(symbol, candidate_excluded_symbols)
         self.assertNotIn("--whole-archive", artifact_runner)
         for symbol in ("getrandom", "getentropy"):
             self.assertIn(symbol, static_export_names)

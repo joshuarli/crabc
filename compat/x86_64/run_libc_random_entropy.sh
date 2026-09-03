@@ -124,9 +124,10 @@ for symbol in __errno_location getrandom getentropy; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in random srandom rand srand rand_r random_r srandom_r initstate \
-    setstate drand48 erand48 lrand48 mrand48 nrand48 arc4random arc4random_buf \
-    getentropy_open malloc free calloc realloc; do
+# The selected archive is aggregate: its exact C ABI surface is ratcheted above.
+# Independently selected PRNG leaves belong to the final-candidate boundary below.
+for unselected in random srandom rand srand random_r srandom_r initstate setstate \
+    arc4random arc4random_buf getentropy_open malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -153,6 +154,15 @@ objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location getrandom getentropy; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
+done
+# `rand_r` and the rand48 family are independently selected archive leaves.
+# This entropy candidate must nevertheless retain no C PRNG state or allocator.
+for unselected in random srandom rand srand rand_r random_r srandom_r initstate \
+    setstate drand48 erand48 jrand48 lcong48 lrand48 mrand48 nrand48 seed48 \
+    srand48 arc4random arc4random_buf getentropy_open malloc free calloc realloc; do
+    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
+        fail "candidate unexpectedly pulls unselected ${unselected}"
+    fi
 done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
