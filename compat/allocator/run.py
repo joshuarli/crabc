@@ -13,8 +13,9 @@ bounded evidence from acceptance work that remains blocked. It does not claim
 that a Rust allocator operation, adapter symbol, differential trace, or
 performance comparison exists before its owning implementation milestone.
 Its `--m2` mode records the deliberately partial native memory-substrate gate;
-the selected PageMap check is success-lifecycle evidence only and is not C/Rust
-fault or cold-root parity.
+the selected PageMap records cover a success lifecycle, an explicit cold-root
+safety divergence, and one initialized lazy-commit failure/retry differential.
+They do not establish complete C/Rust PageMap fault or lifecycle parity.
 """
 
 from __future__ import annotations
@@ -318,6 +319,30 @@ M2_PAGE_MAP_HEADER_DEPENDENT_KEYS = (
 # that lifecycle distinction visible while both traces prove an absent root
 # after destruction.
 M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY = "m2.page_map.destroy.root_unpublished_before"
+# The selected lazy-extension failure occurs after successful PageMap
+# initialization. A lexical C `_mi_os_commit` wrapper and Rust's test-only
+# pre-`mprotect` seam each fail exactly one attempt, before the source/Rust
+# committed-prefix publication and before either side enters submap allocation.
+# The record intentionally contains only address-free semantic relations; raw
+# PageMap header counts and C's global-versus-Rust-local root representation do
+# not describe this failure edge and are deliberately excluded.
+M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS = (
+    "m2.page_map.lazy_commit.control.page_size",
+    "m2.page_map.lazy_commit.control.has_overcommit_false",
+    "m2.page_map.lazy_commit.control.max_vabits",
+    "m2.page_map.lazy_commit.failure.target_above_committed",
+    "m2.page_map.lazy_commit.failure.commit_attempts",
+    "m2.page_map.lazy_commit.failure.returned",
+    "m2.page_map.lazy_commit.failure.committed_unchanged",
+    "m2.page_map.lazy_commit.failure.no_submap_result",
+    "m2.page_map.lazy_commit.failure.submap_allocation_attempts",
+    "m2.page_map.lazy_commit.failure.top_owner_retained",
+    "m2.page_map.lazy_commit.retry.succeeded",
+    "m2.page_map.lazy_commit.retry.committed_advanced",
+    "m2.page_map.lazy_commit.retry.submap_present",
+    "m2.page_map.lazy_commit.retry.submap_allocation_attempts",
+    "m2.page_map.lazy_commit.cleanup.top_owner_released",
+)
 # The first failed C `_mi_page_map_init` body keeps its static empty root and
 # consumes the source once gate. Rust deliberately avoids exposing a fake live
 # root: its typed process owner retains no map and becomes terminally poisoned.
@@ -2744,6 +2769,158 @@ int main(void) {
   U("m2.page_map.destroy.root_unpublished_before", root_unpublished_before);
   U("m2.page_map.destroy.root_absent_after", root_absent_after);
   puts("CRABC_MI_M2_PAGE_MAP_TRACE_END");
+  return 0;
+}
+"""
+
+
+# This dedicated initialized-PageMap fixture injects one lexical
+# `_mi_os_commit` failure only into the pinned `src/page-map.c` body. It avoids
+# the cold-init once gate and the range writer's rollback replay: the direct
+# private `mi_page_map_ensure_submap_at` call reaches exactly
+# `mi_page_map_commit_entries` and must return before submap allocation or the
+# Release committed-count store. The C wrapper is test-only and preserves the
+# ordinary `src/os.c` definition for setup, retry, and all other source units.
+M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+
+#include "os.c"
+
+static bool m2_fail_next_page_map_commit;
+static size_t m2_page_map_commit_attempts;
+static size_t m2_page_map_submap_allocation_attempts;
+
+static bool m2_page_map_commit(
+    mi_subproc_t* subproc,
+    void* address,
+    size_t size,
+    bool* is_zero)
+{
+  m2_page_map_commit_attempts++;
+  if (m2_fail_next_page_map_commit) {
+    m2_fail_next_page_map_commit = false;
+    if (is_zero != NULL) *is_zero = false;
+    return false;
+  }
+  return _mi_os_commit(subproc, address, size, is_zero);
+}
+
+static void* m2_page_map_zalloc(
+    mi_subproc_t* subproc,
+    size_t size,
+    mi_memid_t* memid)
+{
+  m2_page_map_submap_allocation_attempts++;
+  return _mi_os_zalloc(subproc, size, memid);
+}
+
+// Preserve the ordinary `os.c` definitions and redirect only calls emitted
+// lexically from this selected `page-map.c` body.
+#define _mi_os_commit m2_page_map_commit
+#define _mi_os_zalloc m2_page_map_zalloc
+#include "page-map.c"
+#undef _mi_os_zalloc
+#undef _mi_os_commit
+
+#include "init.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+int main(void) {
+  _mi_detect_cpu_features();
+  _mi_options_init();
+  mi_option_set_enabled(mi_option_pagemap_commit, false);
+  if (mi_option_is_enabled(mi_option_pagemap_commit)) return 10;
+  mi_option_set(mi_option_max_vabits, MI_MAX_VABITS);
+  if (mi_option_get(mi_option_max_vabits) != MI_MAX_VABITS) return 11;
+  _mi_stats_init();
+  _mi_os_init();
+  // Force the selected reserve-then-commit path independently of host
+  // overcommit policy; this is a fixture precondition, not a production mode.
+  mi_os_mem_config.has_overcommit = false;
+  mi_heap_main_init();
+  if (!_mi_page_map_init()) return 12;
+
+  mi_page_map_t* const page_map = _mi_page_map();
+  if (page_map == NULL || page_map == &mi_page_map_empty) return 13;
+  const size_t committed_before =
+      mi_atomic_load_acquire(&page_map->committed_count);
+  const size_t reserved_count =
+      (page_map->reserved_size < sizeof(mi_page_map_t)
+          ? 0
+          : 1 + (page_map->reserved_size - sizeof(mi_page_map_t)) / sizeof(mi_submap_t));
+  const size_t target = committed_before + 1;
+  if (target >= reserved_count) return 14;
+
+  m2_page_map_commit_attempts = 0;
+  m2_page_map_submap_allocation_attempts = 0;
+  m2_fail_next_page_map_commit = true;
+  mi_submap_t failed_submap = NULL;
+  const bool failure_returned = !mi_page_map_ensure_submap_at(
+      page_map, target, &failed_submap);
+  const size_t committed_after_failure =
+      mi_atomic_load_acquire(&page_map->committed_count);
+  const size_t failure_commit_attempts = m2_page_map_commit_attempts;
+  const size_t failure_submap_allocation_attempts =
+      m2_page_map_submap_allocation_attempts;
+  const bool failure_committed_unchanged =
+      (committed_after_failure == committed_before);
+  const bool failure_no_submap_result = (failed_submap == NULL);
+  const bool failure_top_owner_retained = (_mi_page_map() == page_map);
+
+  mi_submap_t retry_submap = NULL;
+  const bool retry_succeeded = mi_page_map_ensure_submap_at(
+      page_map, target, &retry_submap);
+  const size_t committed_after_retry =
+      mi_atomic_load_acquire(&page_map->committed_count);
+  const size_t retry_commit_attempts = m2_page_map_commit_attempts;
+  const size_t retry_submap_allocation_attempts =
+      m2_page_map_submap_allocation_attempts;
+  const bool retry_committed_advanced =
+      (committed_after_retry > committed_before);
+  const bool retry_submap_present =
+      retry_succeeded && retry_submap != NULL &&
+      mi_atomic_load_ptr_acquire(mi_page_t*, &page_map->submaps[target]) == retry_submap;
+  const bool all_relations =
+      _mi_os_page_size() == 4*MI_KiB && !mi_os_mem_config.has_overcommit &&
+      mi_option_get(mi_option_max_vabits) == MI_MAX_VABITS &&
+      target > committed_before && failure_returned &&
+      failure_commit_attempts == 1 &&
+      failure_committed_unchanged && failure_no_submap_result &&
+      failure_top_owner_retained &&
+      // The failed commit cannot enter source lazy allocation. The retry
+      // enters it exactly once after publishing commitment.
+      failure_submap_allocation_attempts == 0 &&
+      retry_commit_attempts == 2 && retry_submap_allocation_attempts == 1 &&
+      retry_succeeded && retry_committed_advanced && retry_submap_present;
+  if (!all_relations) return 15;
+
+  _mi_page_map_unsafe_destroy();
+  const bool cleanup_top_owner_released = (_mi_page_map() == &mi_page_map_empty);
+  if (!cleanup_top_owner_released) return 16;
+
+  puts("CRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_BEGIN");
+  U("m2.page_map.lazy_commit.control.page_size", _mi_os_page_size());
+  U("m2.page_map.lazy_commit.control.has_overcommit_false", !mi_os_mem_config.has_overcommit);
+  U("m2.page_map.lazy_commit.control.max_vabits", mi_option_get(mi_option_max_vabits));
+  U("m2.page_map.lazy_commit.failure.target_above_committed", target > committed_before);
+  U("m2.page_map.lazy_commit.failure.commit_attempts", failure_commit_attempts);
+  U("m2.page_map.lazy_commit.failure.returned", failure_returned);
+  U("m2.page_map.lazy_commit.failure.committed_unchanged", failure_committed_unchanged);
+  U("m2.page_map.lazy_commit.failure.no_submap_result", failure_no_submap_result);
+  U("m2.page_map.lazy_commit.failure.submap_allocation_attempts", failure_submap_allocation_attempts);
+  U("m2.page_map.lazy_commit.failure.top_owner_retained", failure_top_owner_retained);
+  U("m2.page_map.lazy_commit.retry.succeeded", retry_succeeded);
+  U("m2.page_map.lazy_commit.retry.committed_advanced", retry_committed_advanced);
+  U("m2.page_map.lazy_commit.retry.submap_present", retry_submap_present);
+  U("m2.page_map.lazy_commit.retry.submap_allocation_attempts", retry_submap_allocation_attempts);
+  U("m2.page_map.lazy_commit.cleanup.top_owner_released", cleanup_top_owner_released);
+  puts("CRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_END");
   return 0;
 }
 """
@@ -6203,6 +6380,7 @@ def validate_m2_memory_substrate_contract(
                     "c-rust-bitmap-rangesn-differential",
                     "c-rust-bitmap-set-differential",
                     "c-rust-page-map-success-differential",
+                    "c-rust-page-map-lazy-commit-failure-differential",
                     "c-rust-page-map-cold-init-differential",
                 }
                 or not isinstance(target_name, str)
@@ -6669,6 +6847,74 @@ def run_m2_page_map_differential(
     }
 
 
+def run_m2_page_map_lazy_commit_failure_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the selected initialized PageMap commit failure with Rust."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-page-map-lazy-commit-failure-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_page_map_lazy_commit_failure_trace(
+            compiler,
+            source,
+            M2_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "page_map::tests::emit_m2_page_map_lazy_commit_failure_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 PageMap lazy-commit failure trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_page_map_lazy_commit_failure_trace(rust_output, source="Rust")
+    validate_m2_page_map_lazy_commit_failure_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 PageMap lazy-commit failure trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_page_map_lazy_commit_failure_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "one initialized two-level PageMap lazy-extension commit failure: a test-only "
+            "pinned-C lexical `_mi_os_commit` wrapper and Rust's pre-`mprotect` seam each "
+            "fail one attempt before committed-prefix publication or submap allocation, retain "
+            "the same top-level owner, then retry and publish exactly one submap. It excludes "
+            "cold initialization, range rollback, lazy submap-map failure, CAS losers, release "
+            "failure, locking/races, allocator routing, and live-kernel or diagnostic parity."
+        ),
+        "status": comparison["status"],
+    }
+
+
 def run_m2_page_map_cold_init_differential(
     pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
 ) -> dict[str, Any]:
@@ -6828,6 +7074,26 @@ def run_m2_memory_substrate_checks(
                 continue
             if check["kind"] == "c-rust-page-map-success-differential":
                 differential = run_m2_page_map_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
+            if check["kind"] == "c-rust-page-map-lazy-commit-failure-differential":
+                differential = run_m2_page_map_lazy_commit_failure_differential(
                     pin,
                     offline=offline,
                     timeout_seconds=summary["execution"]["timeout_seconds"],
@@ -11997,6 +12263,115 @@ def compare_m2_page_map_trace(
     }
 
 
+def parse_m2_page_map_lazy_commit_failure_trace(
+    output: str, *, source: str
+) -> dict[str, int]:
+    """Parse one address-free initialized-PageMap commit-failure record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_BEGIN",
+        end="CRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_END",
+        description=f"{source} M2 PageMap lazy-commit failure trace",
+    )
+    if set(trace) != set(M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS):
+        missing = sorted(set(M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 PageMap lazy-commit failure trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_page_map_lazy_commit_failure_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Validate the selected failure-before-publication and retry relations."""
+
+    if set(trace) != set(M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS):
+        raise HarnessError(f"{source} M2 PageMap lazy-commit failure keys differ from the contract")
+    for key in M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} M2 PageMap lazy-commit failure field is not an integer: {key}"
+            )
+    expected_one = (
+        "m2.page_map.lazy_commit.control.has_overcommit_false",
+        "m2.page_map.lazy_commit.failure.target_above_committed",
+        "m2.page_map.lazy_commit.failure.returned",
+        "m2.page_map.lazy_commit.failure.committed_unchanged",
+        "m2.page_map.lazy_commit.failure.no_submap_result",
+        "m2.page_map.lazy_commit.failure.top_owner_retained",
+        "m2.page_map.lazy_commit.retry.succeeded",
+        "m2.page_map.lazy_commit.retry.committed_advanced",
+        "m2.page_map.lazy_commit.retry.submap_present",
+        "m2.page_map.lazy_commit.cleanup.top_owner_released",
+    )
+    if any(trace[key] != 1 for key in expected_one):
+        raise HarnessError(
+            f"{source} M2 PageMap lazy-commit failure trace contains an unmet relation"
+        )
+    if trace["m2.page_map.lazy_commit.control.page_size"] != 4 * 1024:
+        raise HarnessError(
+            f"{source} M2 PageMap lazy-commit failure trace is not controlled to 4KiB pages"
+        )
+    if trace["m2.page_map.lazy_commit.control.max_vabits"] != 48:
+        raise HarnessError(
+            f"{source} M2 PageMap lazy-commit failure trace is not controlled to 48 virtual-address bits"
+        )
+    if trace["m2.page_map.lazy_commit.failure.commit_attempts"] != 1:
+        raise HarnessError(
+            f"{source} M2 PageMap lazy-commit failure did not inject exactly one commit attempt"
+        )
+    if trace["m2.page_map.lazy_commit.failure.submap_allocation_attempts"] != 0:
+        raise HarnessError(
+            f"{source} M2 PageMap lazy-commit failure entered submap allocation"
+        )
+    if trace["m2.page_map.lazy_commit.retry.submap_allocation_attempts"] != 1:
+        raise HarnessError(
+            f"{source} M2 PageMap lazy-commit retry did not allocate exactly one submap"
+        )
+
+
+def compare_m2_page_map_lazy_commit_failure_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Compare all selected semantic relations without normalizing representation."""
+
+    validate_m2_page_map_lazy_commit_failure_trace(c_trace, source="pinned C")
+    validate_m2_page_map_lazy_commit_failure_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 PageMap lazy-commit failure trace differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS),
+        "excluded_differences": {
+            "classification": (
+                "the trace compares only failure-before-publication and one retry relations. "
+                "It deliberately excludes header-size-dependent raw counts, C's global root "
+                "versus Rust's typed local Mapping owner, C boolean/diagnostic versus Rust "
+                "Errno representation, and the test-only lexical-wrapper versus pre-mprotect "
+                "injection mechanisms."
+            ),
+            "fields": [],
+        },
+        "status": "matched",
+    }
+
+
 def parse_m2_page_map_cold_init_trace(output: str, *, source: str) -> dict[str, int]:
     """Parse the fixed failed-first-initialization PageMap record."""
 
@@ -13851,6 +14226,62 @@ def build_m2_page_map_trace(
     require_success(run, "pinned C M2 PageMap trace execution")
     record = parse_m2_page_map_trace(str(run["stdout"]), source="pinned C")
     validate_m2_page_map_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "src/init.c",
+                "src/os.c",
+                "src/page-map.c",
+            ),
+        ),
+    }
+
+
+def build_m2_page_map_lazy_commit_failure_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build and execute the selected pinned-C PageMap commit-failure producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-page-map-lazy-commit-failure-trace-probe.c"
+    trace_binary = profile_dir / "m2-page-map-lazy-commit-failure-trace-probe"
+    trace_source.write_text(M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M2_PAGE_MAP_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 PageMap lazy-commit failure trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 PageMap lazy-commit failure trace execution")
+    record = parse_m2_page_map_lazy_commit_failure_trace(
+        str(run["stdout"]), source="pinned C"
+    )
+    validate_m2_page_map_lazy_commit_failure_trace(record, source="pinned C")
     return {
         "command": command,
         "record": record,

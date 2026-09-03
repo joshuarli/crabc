@@ -423,12 +423,18 @@
           "id": "native-protection-failure-owner-and-retry",
           "kind": "rust-unit",
           "target": "os::tests::native_protection_failures_preserve_mapping_owner_and_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-page-map-lazy-commit-failure-differential",
+          "kind": "c-rust-page-map-lazy-commit-failure-differential",
+          "target": "page_map::tests::emit_m2_page_map_lazy_commit_failure_c_rust_trace"
         }
       ],
       "completion_status": "partial",
       "id": "fault-injection",
       "remaining_conditions": [
-        "exercise all remaining allocation, commit, map, metadata, bitmap, PageMap, arena, and release failures without leaking or changing ownership beyond the selected native one-page protect/unprotect owner-and-retry boundary"
+        "exercise all remaining allocation, map, metadata, bitmap, PageMap, arena, and release failures without leaking or changing ownership beyond the selected native one-page protect/unprotect owner-and-retry and initialized two-level PageMap lazy-commit failure/retry boundaries"
       ],
       "source_units": [
         "src/prim/unix/prim.c",
@@ -529,7 +535,7 @@
     "completion_rule": "M2 is complete only when all eight categories are complete, every named condition is cleared, and current-commit native Linux/AArch64 evidence covers the full selected substrate and failure matrix.",
     "id": "m2",
     "nonclaims": [
-      "the selected PageMap success differential compares source-relative transitions only, records header-layout and root-owner differences, and does not cover PageMap extension or release fault injection",
+      "the selected PageMap success differential compares source-relative transitions only and records header-layout and root-owner differences. A separate initialized two-level `mi_page_map_ensure_submap_at` lazy-commit fault differential proves only one test-injected commit failure before committed-prefix publication or submap allocation, followed by one retry; neither record covers cold initialization, range rollback, lazy submap-map failure, CAS losers, release failure, races, allocator routing, or full PageMap fault parity",
       "the separate PageMap cold-init differential records the C static-empty-root/later-success behavior and the Rust absent-root/typed-poison result as an intentionally accepted bounded safety divergence; it does not claim a common cold lookup, public C ABI behavior, or full process-initialization parity",
       "the selected aligned-overmap cleanup-owner tests prove Rust non-RAII ownership after direct or partial release failure; they do not claim C retry semantics, full aligned-allocation policy, or complete VM fault parity",
       "the selected reset-advice regression proves only the private source snapshot/retry control flow with a deterministic advisory mock; it does not claim a live-kernel EAGAIN frequency or complete purge fault parity",

@@ -1194,6 +1194,132 @@ mod tests {
         std::println!("CRABC_MI_M2_PAGE_MAP_TRACE_END");
     }
 
+    /// Emits the selected M2 PageMap lazy-commit failure differential record.
+    ///
+    /// The pinned `mi_page_map_commit_entries` body fails before its Release
+    /// `committed_count` publication and before `mi_page_map_ensure_submap_at`
+    /// can allocate a submap. This Rust witness injects at the matching
+    /// `Mapping::commit` boundary, proves that the existing top-level mapping
+    /// remains the exact retry owner, then retries the one pending extension.
+    /// It deliberately excludes cold initialization, range rollback, submap
+    /// map failure, release failure, and concurrent publication.
+    #[test]
+    fn emit_m2_page_map_lazy_commit_failure_c_rust_trace() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial two-level page map");
+        let control_page_size = page_map.memory_config().page_size().bytes();
+        let control_has_overcommit_false = !page_map.memory_config().has_overcommit();
+        let control_max_vabits = MAX_VABITS;
+        let committed_before = page_map
+            .committed_count()
+            .expect("the initialized PageMap exposes its committed prefix");
+        let target = committed_before
+            .checked_add(1)
+            .expect("the selected lazy extension index is representable");
+        assert!(target < page_map.reserved_count());
+        let top_mapping = page_map
+            .mapping
+            .base()
+            .expect("the initialized PageMap retains its top-level mapping");
+
+        let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let failure_returned = page_map.ensure_submap_at(target) == Err(Errno::NOMEM);
+        let failure_commit_attempts = fault.observed();
+        let failure_committed_unchanged = page_map.committed_count() == Ok(committed_before);
+        // `submap_at` first checks the committed prefix, so this observes the
+        // source's pre-publication boundary without reading an uncommitted
+        // raw slot.
+        let failure_no_submap_result = page_map.submap_at(target) == Ok(None);
+        let failure_submap_allocation_attempts = page_map.test_lazy_submap_allocation_count();
+        let failure_top_owner_retained = page_map.mapping.base() == Ok(top_mapping);
+
+        fault.set(fault::Plan::disabled());
+        let retry_submap = page_map
+            .ensure_submap_at(target)
+            .expect("the unchanged top-level owner retries the lazy extension");
+        let retry_succeeded = page_map.submap_at(target) == Ok(Some(retry_submap));
+        let retry_committed_advanced = page_map
+            .committed_count()
+            .expect("the successful retry leaves the PageMap active")
+            > committed_before;
+        let retry_submap_allocation_attempts = page_map.test_lazy_submap_allocation_count();
+
+        // SAFETY: this test owns the only PageMap client and leaves no root or
+        // registration to quiesce before releasing the successful retry.
+        let cleanup_top_owner_released = unsafe { page_map.destroy() }.is_ok()
+            && page_map.mapping.base() == Err(Errno::INVAL);
+
+        assert_eq!(control_page_size, 4 * 1024);
+        assert!(control_has_overcommit_false);
+        assert_eq!(control_max_vabits, 48);
+        assert!(failure_returned);
+        assert_eq!(failure_commit_attempts, 1);
+        assert!(failure_committed_unchanged);
+        assert!(failure_no_submap_result);
+        assert_eq!(failure_submap_allocation_attempts, 0);
+        assert!(failure_top_owner_retained);
+        assert!(retry_succeeded);
+        assert!(retry_committed_advanced);
+        assert_eq!(retry_submap_allocation_attempts, 1);
+        assert!(cleanup_top_owner_released);
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+        std::println!("CRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_BEGIN");
+        emit!("m2.page_map.lazy_commit.control.page_size", control_page_size);
+        emit!(
+            "m2.page_map.lazy_commit.control.has_overcommit_false",
+            control_has_overcommit_false
+        );
+        emit!("m2.page_map.lazy_commit.control.max_vabits", control_max_vabits);
+        emit!(
+            "m2.page_map.lazy_commit.failure.target_above_committed",
+            target > committed_before
+        );
+        emit!(
+            "m2.page_map.lazy_commit.failure.commit_attempts",
+            failure_commit_attempts
+        );
+        emit!("m2.page_map.lazy_commit.failure.returned", failure_returned);
+        emit!(
+            "m2.page_map.lazy_commit.failure.committed_unchanged",
+            failure_committed_unchanged
+        );
+        emit!(
+            "m2.page_map.lazy_commit.failure.no_submap_result",
+            failure_no_submap_result
+        );
+        emit!(
+            "m2.page_map.lazy_commit.failure.submap_allocation_attempts",
+            failure_submap_allocation_attempts
+        );
+        emit!(
+            "m2.page_map.lazy_commit.failure.top_owner_retained",
+            failure_top_owner_retained
+        );
+        emit!("m2.page_map.lazy_commit.retry.succeeded", retry_succeeded);
+        emit!(
+            "m2.page_map.lazy_commit.retry.committed_advanced",
+            retry_committed_advanced
+        );
+        emit!(
+            "m2.page_map.lazy_commit.retry.submap_present",
+            retry_succeeded
+        );
+        emit!(
+            "m2.page_map.lazy_commit.retry.submap_allocation_attempts",
+            retry_submap_allocation_attempts
+        );
+        emit!(
+            "m2.page_map.lazy_commit.cleanup.top_owner_released",
+            cleanup_top_owner_released
+        );
+        std::println!("CRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_END");
+    }
+
     #[test]
     fn failed_cross_boundary_registration_rolls_back_every_written_entry() {
         let mut page_map = PageMap::initialize(memory_config(false), MIN_VABITS, false)

@@ -536,15 +536,17 @@ assertion-invalid input, not C/Rust invalid-input parity.
   alternate map for shared threads, or page-bearing runtime integration beyond
   the recorded bounded ticket-zero and sequential later-thread slices.
 
-### `CRABC-MI-PAGE-MAP-HEADER-AND-ROOT-OWNER` — recorded M2 success-differential boundary
+### `CRABC-MI-PAGE-MAP-HEADER-AND-ROOT-OWNER` — recorded M2 success and lazy-commit differential boundary
 
-- **Upstream/Rust:** pinned `src/page-map.c:228-457,367-394`, including
-  `mi_page_map_t`, `mi_page_map_init_once`, `mi_page_map_set_range`, and
-  `_mi_page_map_unsafe_destroy`; represented by `page_map::PageMapHeader`,
-  `PageMap`, and `PageMapRoot`.
-- **Category:** Linux/AArch64, source-private M2 success-path evidence only.
-  It has no public C ABI effect and does not establish process lifecycle,
-  allocation routing, or fault parity.
+- **Upstream/Rust:** pinned `src/page-map.c:228-457,236-269,386-427`, including
+  `mi_page_map_t`, `mi_page_map_init_once`, `mi_page_map_commit_entries`,
+  `mi_page_map_ensure_committed`, `mi_page_map_ensure_submap_at`,
+  `mi_page_map_set_range`, and `_mi_page_map_unsafe_destroy`; represented by
+  `page_map::PageMapHeader`, `PageMap`, and `PageMapRoot`.
+- **Category:** Linux/AArch64, source-private M2 success-path evidence plus one
+  initialized lazy-commit C/Rust failure differential. It has no public C ABI
+  effect and does not establish process lifecycle, allocation routing, or
+  general PageMap fault parity.
 - **Difference:** under the pinned Linux/musl fixture, C embeds its
   40-byte `pthread_mutex_t` `mi_lock_t` in an 88-byte PageMap header. The
   `#![no_std]` Rust port embeds its 4-byte `PrivateLock` in a 56-byte header.
@@ -559,7 +561,20 @@ assertion-invalid input, not C/Rust invalid-input parity.
   source fixture and compares the fixed 4-KiB/48-bit selected trace with
   `page_map::tests::emit_m2_page_map_init_c_rust_trace`. It requires every
   other controlled transition field to match and records both header/root
-  values in `m2-memory-substrate-latest.json`.
+  values in `m2-memory-substrate-latest.json`. A separate fresh source process
+  includes `src/os.c`, lexically wraps only `_mi_os_commit` calls emitted by
+  `src/page-map.c`, and calls `mi_page_map_ensure_submap_at` directly after a
+  successful controlled initialization. Its one injected failure returns
+  before `committed_count` Release publication and before `_mi_os_zalloc`; the
+  same global top-level map then retries and publishes one submap. The paired
+  `page_map::tests::emit_m2_page_map_lazy_commit_failure_c_rust_trace` uses the
+  test-only pre-`mprotect` seam and proves the same address-free relations over
+  Rust's typed Mapping owner. This excludes header-size counts, root
+  representation, error/diagnostic form, cold initialization, range rollback,
+  lazy submap-map failure, CAS losers, release failure, races, and live-kernel
+  fault behavior. Normal C destruction only records static-root reset after a
+  void/best-effort release; Rust's successful typed cleanup is not release-failure
+  parity.
 - **Decision/removal:** accepted for this selected no_std PageMap witness.
   A future change may alter the representation only with a source-order,
   ownership, differential, and performance review. This entry does not waive
@@ -571,11 +586,16 @@ assertion-invalid input, not C/Rust invalid-input parity.
   terminal poison for both initial commit branches, and `MetaAllocator` uses
   a distinct terminal slot for its caller path. The paired regressions release
   that exact owner only after the injected cleanup fault is disabled.
-  `page_map::tests::{lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry,lazy_submap_mapping_failure_preserves_the_page_map_for_retry,destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry,destroy_top_mapping_release_failure_retains_the_exact_mapping_for_retry}`
-  separately inject the real `Commit`, `Map`, and `Unmap` seams: they prove
-  the original top-level mapping survives lazy failure, a failed submap
-  reclaim leaves its exact raw slot, and a failed final release leaves its
-  exact top-level owner for retry. The source-shaped CAS loser is not an
+  The new direct C/Rust trace and
+  `page_map::tests::lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry`
+  cover only the initialized lazy `Commit` boundary. The Rust-only
+  `lazy_submap_mapping_failure_preserves_the_page_map_for_retry`,
+  `destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry`, and
+  `destroy_top_mapping_release_failure_retains_the_exact_mapping_for_retry`
+  inject the `Map` and `Unmap` seams: they prove the original top-level mapping
+  survives lazy failure, a failed submap reclaim leaves its exact raw slot, and
+  a failed final release leaves its exact top-level owner for retry. The
+  source-shaped CAS loser is not an
   independently injectable path: fields and atomic-slot access are private
   to `page_map.rs`, and every current publisher owns the same private lock
   and reloads before publication. A future competing writer must retain a

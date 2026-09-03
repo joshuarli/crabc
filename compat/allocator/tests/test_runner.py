@@ -2110,7 +2110,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            59,
+            60,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2606,7 +2606,16 @@ class ContractTests(unittest.TestCase):
                         "os::tests::native_protection_failures_preserve_mapping_owner_and_"
                         "retry"
                     ),
-                }
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "c-rust-page-map-lazy-commit-failure-differential",
+                    "kind": "c-rust-page-map-lazy-commit-failure-differential",
+                    "target": (
+                        "page_map::tests::"
+                        "emit_m2_page_map_lazy_commit_failure_c_rust_trace"
+                    ),
+                },
             ],
         )
         self.assertEqual(fault_injection["completion_status"], "partial")
@@ -2721,6 +2730,13 @@ class ContractTests(unittest.TestCase):
         )
         self.assertTrue(
             any(
+                "lazy-commit fault differential" in nonclaim
+                and "mi_page_map_ensure_submap_at" in nonclaim
+                for nonclaim in summary["milestone"]["nonclaims"]
+            )
+        )
+        self.assertTrue(
+            any(
                 "intentionally accepted bounded safety divergence" in nonclaim
                 for nonclaim in summary["milestone"]["nonclaims"]
             )
@@ -2781,6 +2797,47 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.page_map.register.first_lookup_matches"] = 0
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_page_map_trace(c_trace, rust_trace)
+
+    @staticmethod
+    def _m2_page_map_lazy_commit_failure_trace() -> dict[str, int]:
+        trace = {key: 1 for key in RUNNER.M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS}
+        trace.update(
+            {
+                "m2.page_map.lazy_commit.control.page_size": 4096,
+                "m2.page_map.lazy_commit.control.max_vabits": 48,
+                "m2.page_map.lazy_commit.failure.commit_attempts": 1,
+                "m2.page_map.lazy_commit.failure.submap_allocation_attempts": 0,
+                "m2.page_map.lazy_commit.retry.submap_allocation_attempts": 1,
+            }
+        )
+        return trace
+
+    def test_m2_page_map_lazy_commit_failure_trace_matches_the_selected_relations(self) -> None:
+        c_trace = self._m2_page_map_lazy_commit_failure_trace()
+        output = "CRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_page_map_lazy_commit_failure_trace(
+            output, source="pinned C"
+        )
+        RUNNER.validate_m2_page_map_lazy_commit_failure_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_page_map_lazy_commit_failure_trace()
+        RUNNER.validate_m2_page_map_lazy_commit_failure_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_page_map_lazy_commit_failure_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS),
+        )
+        self.assertEqual(comparison["excluded_differences"]["fields"], [])
+
+    def test_m2_page_map_lazy_commit_failure_trace_rejects_publication_after_failure(self) -> None:
+        c_trace = self._m2_page_map_lazy_commit_failure_trace()
+        rust_trace = self._m2_page_map_lazy_commit_failure_trace()
+        rust_trace["m2.page_map.lazy_commit.failure.committed_unchanged"] = 0
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_page_map_lazy_commit_failure_trace(c_trace, rust_trace)
 
     @staticmethod
     def _m2_page_map_cold_init_trace(*, rust: bool) -> dict[str, int]:
