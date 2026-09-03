@@ -1502,6 +1502,13 @@ LAYOUT_PROBE = r"""
 #define CRABC_MI_PAGE_META_ALIGNMENT 0
 #endif
 
+// `_mi_theap_alloc` rounds the complete pinned C image to one arena minimum
+// object. Rust deliberately does not use its partial Theap representation as
+// a complete C object, so keep the complete C-size fact in this C oracle
+// rather than comparing the two layouts.
+_Static_assert(sizeof(mi_theap_t) <= MI_ARENA_MIN_OBJ_SIZE,
+               "pinned mi_theap_t must fit one arena minimum object");
+
 static uint64_t m1_random_state_fingerprint(const mi_random_ctx_t* ctx) {
   uint64_t fingerprint = UINT64_C(0xcbf29ce484222325);
   for (size_t index = 0; index < 16; index++) {

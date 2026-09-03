@@ -1,10 +1,12 @@
+// Copyright (c) 2018-2026 Microsoft Research, Daan Leijen
 // Copyright (c) 2019-2026 Microsoft Research, Daan Leijen
 // This is free software; you can redistribute it and/or modify it under the
 // terms of the MIT license. A copy of the license can be found in the file
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/arena.c:32-219` (arena identity,
+// Source map: pinned mimalloc v3.5.0 `src/theap.c:308-334` (the selected
+// requested-arena Theap allocation reservation), `src/arena.c:32-219` (arena identity,
 // suitability, registry indexing, geometry, and arena memory IDs),
 // `src/arena.c:1573-1659` (registry insertion and exact metadata/bitmap
 // sizing), `src/arena.c:674-723` (lazy non-main `heap->arena_pages`
@@ -44,7 +46,8 @@ use crate::bitmap::{
     BitmapView, BCHUNK_SIZE,
 };
 use crate::config::{
-    ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, ARENA_SLICE_SIZE,
+    ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MAX_SIZE, ARENA_MIN_OBJ_SLICES, ARENA_MIN_SIZE,
+    ARENA_SLICE_SIZE,
     BCHUNK_BITS, BITMAP_MAX_BIT_COUNT, MAX_ARENAS, PAGE_META_ALIGNED_COUNT,
 };
 use crate::invariants;
@@ -54,7 +57,7 @@ use crate::os::MemoryConfig;
 use crate::subproc::MainSubprocess;
 use crate::types::{
     Arena, ArenaPages, CommitFunction, Heap, HeapArenaPagesError, MemoryId,
-    Page, Subprocess,
+    Page, Subprocess, ThreadSequence,
 };
 
 // Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
@@ -64,6 +67,13 @@ const DEFAULT_PURGE_DELAY_MILLISECONDS: i64 = 1_000;
 const DEFAULT_ARENA_PURGE_MULTIPLIER: i64 = 4;
 const DEFAULT_ARENA_PURGE_DELAY_MILLISECONDS: i64 =
     DEFAULT_PURGE_DELAY_MILLISECONDS * DEFAULT_ARENA_PURGE_MULTIPLIER;
+
+// Pinned v3.5.0's complete C `mi_theap_t` rounds to exactly this one source
+// minimum-object slice in `_mi_theap_alloc`'s requested-arena branch. The C
+// layout probe carries the companion complete-C-type assertion; this Rust
+// assertion verifies only the fixed source constant, never a Rust/C Theap
+// layout equality.
+const _: [(); 1] = [(); (ARENA_MIN_OBJ_SLICES == 1) as usize];
 
 /// Opaque public-source arena identity. Only parent arenas can become IDs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1365,6 +1375,65 @@ impl ArenaSliceClaim<'_> {
     }
 }
 
+/// One private reservation for the requested-arena arm of
+/// `src/theap.c:_mi_theap_alloc`.
+///
+/// Pinned C rounds its complete `mi_theap_t` request to one
+/// `MI_ARENA_MIN_OBJ_SIZE` slice, asks only the already selected parent arena
+/// for committed storage, and records the resulting `MI_MEM_ARENA` identity
+/// before `_mi_theap_init` performs any Theap initialization or publication.
+/// This owner captures that allocation/provenance boundary only. It
+/// deliberately does not construct a Rust [`crate::types::Theap`] prefix,
+/// claim a C `sizeof(mi_theap_t)` equivalence, expose a raw allocation address,
+/// attach a TLD, publish a heap/TLS/list root, or implement
+/// `_mi_theap_create`.
+///
+/// The stored subprocess identity makes a release through a foreign process
+/// structurally unavailable. Its explicit consuming [`Self::release`] follows
+/// the existing selected arena release gate; dropping this owner deliberately
+/// does not return the slice while later source Theap lifecycle is absent.
+#[must_use = "an exclusive-arena Theap reservation must be explicitly released or retained"]
+pub(crate) struct ExclusiveArenaTheapReservation<'arena, 'subprocess> {
+    claim: ArenaSliceClaim<'arena>,
+    subprocess: &'subprocess MainSubprocess,
+}
+
+impl ExclusiveArenaTheapReservation<'_, '_> {
+    /// Returns the selected source `mi_memid_t` result that a future complete
+    /// Theap owner must store before `_mi_theap_init` copies its empty image.
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        self.claim.memory_id()
+    }
+
+    #[inline]
+    pub(crate) fn slice_index(&self) -> usize {
+        self.claim.slice_index()
+    }
+
+    #[inline]
+    pub(crate) fn slice_count(&self) -> usize {
+        self.claim.slice_count()
+    }
+
+    /// Releases this exact requested-arena reservation through its selected
+    /// subprocess identity.
+    ///
+    /// `Ok(false)` is the underlying consumed, non-retryable arena-free
+    /// invariant result. `Err(Self)` is retained only if an impossible future
+    /// mutation invalidates the arena/subprocess identity before the existing
+    /// source gate; it preserves the exact reservation rather than guessing a
+    /// different release owner.
+    #[inline]
+    pub(crate) fn release(self) -> Result<bool, Self> {
+        let Self { claim, subprocess } = self;
+        match claim.release_for_subprocess(subprocess) {
+            Ok(released) => Ok(released),
+            Err(claim) => Err(Self { claim, subprocess }),
+        }
+    }
+}
+
 /// Returns an arena-backed source span to `slices_free`.
 ///
 /// This is the arena branch of `_mi_arenas_free`, including the frozen-default
@@ -2002,6 +2071,49 @@ impl<'arena> ArenaView<'arena> {
         })
     }
 
+    /// Reserves the one source slice used by the requested-parent-arena arm
+    /// of `_mi_theap_alloc`.
+    ///
+    /// This models a caller-selected direct parent as the source
+    /// `heap->exclusive_arena` value; it neither binds nor inspects a
+    /// [`Heap`]. No registry search, child-arena selection, metadata
+    /// allocation, or OS fallback is admitted here. This is only the first
+    /// requested-parent pass: pinned
+    /// `mi_forall_arenas` visits a non-null requested parent once, and
+    /// `mi_arena_is_suitable` accepts that exact parent before consulting
+    /// `is_exclusive`. A source TLD with a nonnegative NUMA node makes a
+    /// separate second requested-parent pass; this reservation has no NUMA
+    /// input and deliberately does not model it. Therefore this accepts either
+    /// value of `Arena::is_exclusive`, but rejects a subarena and a foreign
+    /// subprocess before any bitmap mutation.
+    ///
+    /// The returned reservation carries only the one-slice arena claim and
+    /// `MemoryId`; source Theap construction, `theap->memid` storage,
+    /// `_mi_theap_init`, and every publication/lifecycle step remain a later
+    /// consuming owner.
+    #[inline]
+    pub(crate) fn try_reserve_exclusive_theap<'subprocess>(
+        &self,
+        subprocess: &'subprocess MainSubprocess,
+        thread_sequence: ThreadSequence,
+    ) -> Option<ExclusiveArenaTheapReservation<'arena, 'subprocess>> {
+        let arena = self.arena();
+        if !arena.parent.is_null() || !core::ptr::eq(arena.subprocess, subprocess.as_ptr()) {
+            return None;
+        }
+        // SAFETY: `ArenaView` proves this exact candidate is live and
+        // registry-published. The preceding parent test makes its source ID
+        // the requested parent form rather than a subarena identity.
+        let requested = unsafe { ArenaId::from_arena(self.arena.as_ptr()) }?;
+        let claim = self.try_claim_suitable_slices(
+            requested,
+            ARENA_MIN_OBJ_SLICES,
+            true,
+            thread_sequence.get(),
+        )?;
+        Some(ExclusiveArenaTheapReservation { claim, subprocess })
+    }
+
     /// # Safety
     ///
     /// No independent non-atomic view may alias the free bitmap.
@@ -2487,6 +2599,149 @@ mod tests {
             .try_claim_suitable_slices(managed.arena_id(), 1, true, 0)
             .unwrap();
         assert!(requested.release());
+    }
+
+    #[test]
+    fn exclusive_arena_theap_reservation_uses_only_its_requested_parent_slice() {
+        let selected = MainSubprocess::test_static_owner();
+        let foreign = MainSubprocess::test_static_owner();
+        let sequence = ThreadSequence::from_previous_total_count(11);
+        let registry = ArenaRegistry::new(null_mut());
+        assert!(unsafe { registry.bind_subprocess_before_publication(selected.as_ptr()) });
+
+        let mut selected_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let selected_managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                selected_region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                3,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let mut other_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let other_managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                other_region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+
+        let selected_view = unsafe { ArenaView::from_ptr(selected_managed.arena_id().as_ptr()) }
+            .expect("the selected parent arena is published");
+        let other_view = unsafe { ArenaView::from_ptr(other_managed.arena_id().as_ptr()) }
+            .expect("the unrelated parent arena is published");
+        assert!(
+            !selected_view.arena().is_exclusive,
+            "a heap's requested parent does not require arena::is_exclusive"
+        );
+        let first = selected_view.arena().info_slices;
+        let usable = BCHUNK_BITS - first;
+        let other_first = other_view.arena().info_slices;
+        let other_usable = BCHUNK_BITS - other_first;
+        let selected_free = unsafe { selected_view.slices_free() }.unwrap();
+        let selected_purge = unsafe { selected_view.slices_purge() }.unwrap();
+        let other_free = unsafe { other_view.slices_free() }.unwrap();
+        assert_eq!(selected_free.is_set_range(first, usable), Some(true));
+        assert_eq!(selected_purge.is_clear_range(first, usable), Some(true));
+        assert_eq!(other_free.is_set_range(other_first, other_usable), Some(true));
+
+        assert!(
+            selected_view
+                .try_reserve_exclusive_theap(foreign, sequence)
+                .is_none(),
+            "a foreign subprocess must fail before the source free bitmap changes"
+        );
+        assert_eq!(other_free.is_set_range(other_first, other_usable), Some(true));
+        assert_eq!(selected_free.is_set_range(first, usable), Some(true));
+        assert_eq!(selected_purge.is_clear_range(first, usable), Some(true));
+        assert_eq!(
+            selected_view
+                .arena()
+                .purge_expire
+                .load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+
+        let reservation = selected_view
+            .try_reserve_exclusive_theap(selected, sequence)
+            .expect("the selected requested parent supplies one Theap reservation");
+        assert_eq!(reservation.slice_index(), first);
+        assert_eq!(reservation.slice_count(), ARENA_MIN_OBJ_SLICES);
+        let memory = reservation.memory_id();
+        assert_eq!(memory.kind(), crate::types::MemoryKind::Arena);
+        assert!(memory.initially_committed());
+        assert!(memory.initially_zero());
+        assert!(!memory.is_pinned());
+        let arena_memory = memory.arena_memory().expect("reservation preserves arena provenance");
+        assert_eq!(arena_memory.arena, selected_managed.arena_id().as_ptr());
+        assert_eq!(arena_memory.slice_index as usize, first);
+        assert_eq!(arena_memory.slice_count as usize, ARENA_MIN_OBJ_SLICES);
+        assert_eq!(selected_free.is_clear_range(first, ARENA_MIN_OBJ_SLICES), Some(true));
+        assert_eq!(selected_purge.is_clear_range(first, ARENA_MIN_OBJ_SLICES), Some(true));
+        assert_eq!(
+            selected_view
+                .arena()
+                .purge_expire
+                .load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+        assert_eq!(other_free.is_set_range(other_first, other_usable), Some(true));
+
+        let released = match reservation.release() {
+            Ok(released) => released,
+            Err(_) => panic!("the reservation retains the selected subprocess identity"),
+        };
+        assert!(released);
+        assert_eq!(selected_free.is_set_range(first, ARENA_MIN_OBJ_SLICES), Some(true));
+        assert_eq!(selected_purge.is_set_range(first, ARENA_MIN_OBJ_SLICES), Some(true));
+        assert!(
+            selected_view
+                .arena()
+                .purge_expire
+                .load(core::sync::atomic::Ordering::Acquire)
+                > 0
+        );
+
+        let retry = selected_view
+            .try_reserve_exclusive_theap(selected, sequence)
+            .expect("the same requested parent slice becomes available again");
+        assert_eq!(retry.slice_index(), first);
+        assert!(
+            !retry.memory_id().initially_zero(),
+            "the exact released slice retains its source dirty-bit observation"
+        );
+        assert!(matches!(retry.release(), Ok(true)));
+
+        let blocker = selected_view
+            .try_claim_suitable_slices(selected_managed.arena_id(), usable, true, sequence.get())
+            .expect("the selected parent has one complete usable span");
+        assert!(
+            selected_view
+                .try_reserve_exclusive_theap(selected, sequence)
+                .is_none(),
+            "a requested-parent failure must not search the unrelated arena or fall back to OS memory"
+        );
+        assert_eq!(other_free.is_set_range(other_first, other_usable), Some(true));
+        assert!(
+            matches!(blocker.release_for_subprocess(selected), Ok(true)),
+            "the selected source identity returns the exhausted parent span"
+        );
     }
 
     #[test]

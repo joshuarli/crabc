@@ -2241,6 +2241,15 @@ class ContractTests(unittest.TestCase):
                 },
                 {
                     "expected_passed_test_count": 1,
+                    "id": "requested-parent-theap-one-slice-arena-reservation",
+                    "kind": "rust-unit",
+                    "target": (
+                        "arena::tests::exclusive_arena_theap_reservation_uses_only_"
+                        "its_requested_parent_slice"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
                     "id": "threadlocal-live-rezalloc-malloc-capability-lifetime",
                     "kind": "rust-unit",
                     "target": (
@@ -2514,7 +2523,7 @@ class ContractTests(unittest.TestCase):
                         "single_thread::tests::forced_unpinned_arena_decommit_failure_"
                         "consumes_source_purge_work"
                     ),
-                }
+                },
             ],
         )
         self.assertEqual(arenas["completion_status"], "partial")
