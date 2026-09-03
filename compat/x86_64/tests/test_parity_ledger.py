@@ -70,7 +70,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
-        self.assertEqual(report["header_layout_probe_count"], 54)
+        self.assertEqual(report["header_layout_probe_count"], 55)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -2497,7 +2497,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 54)
+        self.assertEqual(report["header_layout_probe_count"], 55)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -2510,6 +2510,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertNotIn("include", headers_layouts["source_owners"])
         for owner in (
+            "compat/x86_64/stddef_header_abi_probe.c",
+            "compat/x86_64/stddef_header_abi_probe.cpp",
+            "compat/x86_64/run_stddef_header_abi.sh",
+            "compat/x86_64/tests/test_stddef_header_abi.py",
+            "include/stddef.h",
             "compat/x86_64/sys_io_header_abi_probe.c",
             "compat/x86_64/sys_io_header_abi_probe.cpp",
             "compat/x86_64/run_sys_io_header_abi.sh",
@@ -2536,6 +2541,18 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             [probe["id"] for probe in probes],
             list(ledger.EXPECTED_HEADER_LAYOUT_PROBES),
+        )
+        stddef = next(probe for probe in probes if probe["id"] == "stddef")
+        assert isinstance(stddef, dict)
+        self.assertEqual(stddef["kind"], "compile-only")
+        self.assertEqual(stddef["headers"], ["include/stddef.h"])
+        self.assertEqual(
+            stddef["sources"],
+            [
+                "compat/x86_64/stddef_header_abi_probe.c",
+                "compat/x86_64/stddef_header_abi_probe.cpp",
+                "compat/x86_64/run_stddef_header_abi.sh",
+            ],
         )
         stdio_standard = next(
             probe for probe in probes if probe["id"] == "stdio-standard"
@@ -2994,6 +3011,50 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError, "tcp-header-abi evidence must retain"
         ):
             ledger.require_tcp_header_evidence(headers_layouts)
+
+    def test_stddef_header_gate_stays_compile_only_and_non_promoting(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"] == "./scripts/dev-x86_64.sh stddef-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "project-first/pinned-musl seven-profile C/C++",
+            "`<stddef.h>`",
+            "`_STDDEF_H`",
+            "`NULL`",
+            "`__NEED_ptrdiff_t`/`__NEED_size_t`/`__NEED_wchar_t`/`__NEED_max_align_t`",
+            "`bits/alltypes.h`",
+            "LP64 `size_t`/`ptrdiff_t`/`wchar_t`",
+            "`max_align_t`",
+            "`offsetof`",
+            "archive linkage",
+            "allocation behavior",
+            "installed-header completion",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        for owner in (
+            "include/stddef.h",
+            "compat/x86_64/stddef_header_abi_probe.c",
+            "compat/x86_64/stddef_header_abi_probe.cpp",
+            "compat/x86_64/run_stddef_header_abi.sh",
+            "compat/x86_64/tests/test_stddef_header_abi.py",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
+
+        ledger.require_stddef_header_evidence(headers_layouts)
+
+        evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "stddef-header-abi evidence must retain"
+        ):
+            ledger.require_stddef_header_evidence(headers_layouts)
 
     def test_socket_message_helper_macro_gate_stays_header_only(self) -> None:
         data = self.data()
@@ -3492,14 +3553,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 668,
-                "mismatch": 612,
+                "matched": 696,
+                "mismatch": 584,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 16295, "reference_only": 9278},
+            {"candidate_only": 16351, "reference_only": 9033},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3519,8 +3580,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 569,
-                "mismatch": 711,
+                "matched": 597,
+                "mismatch": 683,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4653,12 +4714,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "612 current comparable declaration-or-macro identity mismatch rows",
-            "668 matched identity rows",
+            "584 current comparable declaration-or-macro identity mismatch rows",
+            "696 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "3,113 same-identity source-form differences across 528 rows",
+            "3,093 same-identity source-form differences across 508 rows",
             "99 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
@@ -4710,7 +4771,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "711 current comparable prototype or named source-form mismatch rows",
+            "683 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",

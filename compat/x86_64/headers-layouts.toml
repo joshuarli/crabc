@@ -68,6 +68,18 @@ sources = [
 headers = ["include/sys/types.h"]
 
 [[probe]]
+id = "stddef"
+command = "./scripts/dev-x86_64.sh stddef-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/stddef_header_abi_probe.c",
+  "compat/x86_64/stddef_header_abi_probe.cpp",
+  "compat/x86_64/run_stddef_header_abi.sh",
+]
+headers = ["include/stddef.h"]
+
+[[probe]]
 id = "stat"
 command = "./scripts/dev-x86_64.sh stat-header-abi"
 state = "required"

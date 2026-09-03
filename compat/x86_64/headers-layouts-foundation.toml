@@ -1,7 +1,7 @@
 # Forward-looking native x86-64 header/layout foundation contract.
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
-# `headers-layouts.toml` remains the v1 inventory of fifty-four direct probes.
+# `headers-layouts.toml` remains the v1 inventory of fifty-five direct probes.
 # This v15 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
@@ -1337,10 +1337,10 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 668, mismatch = 612, oracle-not-applicable = 1 }
-identity_difference_counts = { candidate_only = 16295, reference_only = 9278 }
-source_form_difference_count = 3113
-source_form_difference_row_count = 528
+comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 696, mismatch = 584, oracle-not-applicable = 1 }
+identity_difference_counts = { candidate_only = 16351, reference_only = 9033 }
+source_form_difference_count = 3093
+source_form_difference_row_count = 508
 source_form_only_difference_row_count = 99
 scope = "Derived from the checked compiler-generated declaration-form report, this all-header direct-public-include C11/C++17 matrix compares named function, typedef, record, enum, variable, and macro identities only for comparable rows. It preserves same-identity source-form differences as separately accounted context, records every current comparable identity gap, and accounts for project-only and oracle-not-applicable rows through checked candidate fact summaries and digests. It excludes declaration-form equality, macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, and public support."
 
@@ -1372,8 +1372,8 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 569, mismatch = 711, oracle-not-applicable = 1 }
-mismatch_fact_counts = { candidate_only_count = 16295, incompatible_count = 3113, reference_only_count = 9278 }
+comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 597, mismatch = 683, oracle-not-applicable = 1 }
+mismatch_fact_counts = { candidate_only_count = 16351, incompatible_count = 3093, reference_only_count = 9033 }
 scope = "Compiler-derived direct-public-include source declaration forms: function signatures with emitted linkage spellings, named typedefs, named record shapes, enum values, variables, and macro replacement forms across all seven C11/C++17 profiles. It records red source-form differences and one pinned-musl C11 strict aio.h oracle-not-applicable row, but does not classify raw spelling differences as ABI differences or prove record byte layouts, anonymous declarations, archive linkage, runtime behavior, family promotion, or public support."
 
 [[language_profile]]
@@ -1786,7 +1786,7 @@ state = "partial-verified"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
 evidence = ["all-header-declaration-macro-feature-visibility-matrix"]
-description = "The checked derived 1,337-row matrix compares compiler-visible named declaration and macro identities across the full C11/C++17 profile cross-product. It keeps 3,113 same-identity source-form differences separately accounted, records all 612 comparable identity mismatch rows, and accounts for project-only and oracle-not-applicable surface dispositions through checked candidate fact summaries and digests. It excludes declaration-form equality, layouts, linkage, runtime, and promotion closure."
+description = "The checked derived 1,337-row matrix compares compiler-visible named declaration and macro identities across the full C11/C++17 profile cross-product. It keeps 3,093 same-identity source-form differences separately accounted, records all 584 comparable identity mismatch rows, and accounts for project-only and oracle-not-applicable surface dispositions through checked candidate fact summaries and digests. It excludes declaration-form equality, layouts, linkage, runtime, and promotion closure."
 
 [[abi_facet]]
 id = "callable-feature-visibility"
@@ -1818,8 +1818,8 @@ state = "partial-verified"
 scope = "v1-direct-probe-union"
 owner = "libc.headers-layouts"
 evidence = ["headers-layouts.toml"]
-legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "pthread-cancellation", "stdio-standard", "ctype", "integer-arithmetic", "integer-parse", "float-parse", "intmax-arithmetic", "credential-observation", "login-name", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "memccpy", "aio-error", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "sys-io", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "tcp", "nameser", "quota", "sched-cpu-macros", "fanotify", "inet-address", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "xattr-header", "machine-context", "event-descriptors", "dirent"]
-description = "The existing fifty-four direct gates remain required inputs and retain their bounded declaration/layout scopes."
+legacy_probes = ["project", "math-complex", "sys-reg", "types", "stddef", "stat", "utime", "pthread-c11", "pthread-cancellation", "stdio-standard", "ctype", "integer-arithmetic", "integer-parse", "float-parse", "intmax-arithmetic", "credential-observation", "login-name", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "memccpy", "aio-error", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "sys-io", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "tcp", "nameser", "quota", "sched-cpu-macros", "fanotify", "inet-address", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "xattr-header", "machine-context", "event-descriptors", "dirent"]
+description = "The existing fifty-five direct gates remain required inputs and retain their bounded declaration/layout scopes."
 
 [[abi_facet]]
 id = "static-c-cxx-composition"

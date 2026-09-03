@@ -87,6 +87,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
   machine-context-header-abi  verify staged x86 machine/context C/C++ header ABI profiles
   types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
+  stddef-header-abi  verify staged x86 stddef.h C/C++ request-boundary layouts
   stat-header-abi  compile the staged x86 C/C++ sys/stat header layouts
   utime-header-abi  compile the staged x86 C/C++ utime header ABI/linkage slice
   pthread-c11-header-abi  verify staged x86 pthread/C11-thread C/C++ header ABI profiles
@@ -1237,6 +1238,12 @@ archive linkage, header-family completion, or public x86 support.
 pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
 `select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `sendfile-header-abi`, `tee-header-abi`, `splice-header-abi`, `sync-file-range-header-abi`, `copy-file-range-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
 `system-header-abi` compile only their named C/C++ layout/declaration slices.
+`stddef-header-abi` separately compares project-first and pinned-musl strict,
+POSIX, XOPEN, GNU, and BSD C/C++ `<stddef.h>` profiles for its `_STDDEF_H`
+guard, `NULL` spelling, alltypes request boundary, fundamental LP64 types,
+`max_align_t`, and `offsetof`. It is compile-only header evidence; it does not
+select archive linkage, allocation behavior, installed-header completion,
+family completion, or public x86 support.
 `syscall-header-abi` compares only staged syscall number macros.
 `signal-header-abi`, `termios-header-abi`, `mman-header-abi`,
 `memory-sync-header-abi`, `memory-locking-header-abi`,
@@ -2695,6 +2702,10 @@ run_machine_context_header_abi() {
 
 run_types_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_types_header_abi.sh
+}
+
+run_stddef_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_stddef_header_abi.sh
 }
 
 run_stat_header_abi() {
@@ -5100,6 +5111,7 @@ case "$command" in
     pthread-spin-destroy-header-abi) ;;
     sys-io-header-abi) ;;
     tcp-header-abi) ;;
+    stddef-header-abi) ;;
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-general-initial-graph|ldso-general-initial-target-root|ldso-general-initial-tls|ldso-general-initial-tls-target-root|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail|pthread-spin-init-header-abi) ;;
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
@@ -5444,6 +5456,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "types-header-abi takes no arguments"
         ensure_image
         run_types_header_abi
+        ;;
+    stddef-header-abi)
+        [ "$#" -eq 0 ] || fail "stddef-header-abi takes no arguments"
+        ensure_image
+        run_stddef_header_abi
         ;;
     stat-header-abi)
         [ "$#" -eq 0 ] || fail "stat-header-abi takes no arguments"

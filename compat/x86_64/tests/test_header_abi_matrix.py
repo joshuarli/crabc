@@ -665,12 +665,12 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         feature visibility, record forms, macro spellings, and C/C++ declarations.
 
         The all-header ABI matrix reports every declaration inherited by a direct
-        include. Three resolver roots therefore still expose the independently
-        owned ``stddef.h`` form debt, and ``netinet/icmp6.h`` exposes the
-        independently owned ``string.h``/``strings.h`` form debt. Those are
-        named here rather than hidden: a new network-owned difference, including
-        an ``in6_addr``, ``ip6_hdr``, or ``__res_state`` source-form regression,
-        must fail this slice immediately.
+        include. The ``netinet/icmp6.h`` row still exposes independently owned
+        ``string.h``/``strings.h`` form debt. That is named here rather than
+        hidden: a new network-owned difference, including an ``in6_addr``,
+        ``ip6_hdr``, or ``__res_state`` source-form regression, must fail this
+        slice immediately. The nameser/resolver roots must remain exact through
+        their shared musl-style ``stddef.h`` request boundary.
         """
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         rows = {
@@ -704,40 +704,6 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             "cxx17-strict",
         )
         external_transitive_names = {
-            "arpa/nameser.h": frozenset(
-                {
-                    "NULL",
-                    "_CRABC_STDDEF_H",
-                    "_STDDEF_H",
-                    "__DEFINED_max_align_t",
-                    "__NEED_max_align_t",
-                    "__NEED_ptrdiff_t",
-                    "__NEED_size_t",
-                    "__NEED_wchar_t",
-                }
-            ),
-            "arpa/nameser_compat.h": frozenset(
-                {
-                    "NULL",
-                    "_CRABC_STDDEF_H",
-                    "_STDDEF_H",
-                    "__DEFINED_max_align_t",
-                    "__NEED_max_align_t",
-                    "__NEED_ptrdiff_t",
-                    "__NEED_size_t",
-                    "__NEED_wchar_t",
-                }
-            ),
-            "resolv.h": frozenset(
-                {
-                    "NULL",
-                    "_CRABC_STDDEF_H",
-                    "_STDDEF_H",
-                    "__DEFINED_max_align_t",
-                    "__NEED_max_align_t",
-                    "__NEED_ptrdiff_t",
-                }
-            ),
             "netinet/icmp6.h": frozenset(
                 {
                     "_STRINGS_H",
@@ -790,8 +756,8 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         self.assertEqual(len(headers) * len(profiles), 105)
         self.assertGreaterEqual(
             matched,
-            78,
-            "network-owned header rows must not regress behind the completed source closure",
+            99,
+            "nameser/resolver rows must retain their completed stddef source closure",
         )
 
     def test_signal_wait_aio_poll_headers_preserve_musl_x86_ownership(self) -> None:

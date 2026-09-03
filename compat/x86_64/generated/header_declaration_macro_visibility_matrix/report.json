@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "d65fdba9f5f6b137f6fc2f765b7e701c34112fb74e28646f82df3e270a022556"
+    "source_abi_report_sha256": "1d78f3e0862e06aefe246921daf757059a26f7da7e5c376b876edbd7305af1aa"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -1179,27 +1179,22 @@
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-gnu",
       "reference": {
         "count": 399,
@@ -1213,59 +1208,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 392,
+        "count": 397,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 323,
+          "macro": 328,
           "record": 6,
           "typedef": 45,
           "variable": 1
         },
-        "sha256": "dac5a500cb723ed6e607062cc828d9cc38a927db6f8b235c1890b45a1a4538a2"
+        "sha256": "cb4efa3edbecf268717204cd711657962be4b7ec73d7fbdf8275013ad10b98cd"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser.h",
-      "matched_identity_count": 391,
+      "matched_identity_count": 397,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 397,
@@ -1279,59 +1244,29 @@
         },
         "sha256": "cb4efa3edbecf268717204cd711657962be4b7ec73d7fbdf8275013ad10b98cd"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-strict",
       "reference": {
         "count": 399,
@@ -1345,59 +1280,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 399,
@@ -1411,59 +1316,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 399,
@@ -1477,59 +1352,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-bsd",
       "reference": {
         "count": 399,
@@ -1543,59 +1388,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 392,
+        "count": 397,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 323,
+          "macro": 328,
           "record": 6,
           "typedef": 45,
           "variable": 1
         },
-        "sha256": "dac5a500cb723ed6e607062cc828d9cc38a927db6f8b235c1890b45a1a4538a2"
+        "sha256": "cb4efa3edbecf268717204cd711657962be4b7ec73d7fbdf8275013ad10b98cd"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser.h",
-      "matched_identity_count": 391,
+      "matched_identity_count": 397,
       "profile": "cxx17-strict",
       "reference": {
         "count": 397,
@@ -1609,59 +1424,29 @@
         },
         "sha256": "cb4efa3edbecf268717204cd711657962be4b7ec73d7fbdf8275013ad10b98cd"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser_compat.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-gnu",
       "reference": {
         "count": 399,
@@ -1675,59 +1460,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 392,
+        "count": 397,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 323,
+          "macro": 328,
           "record": 6,
           "typedef": 45,
           "variable": 1
         },
-        "sha256": "dac5a500cb723ed6e607062cc828d9cc38a927db6f8b235c1890b45a1a4538a2"
+        "sha256": "cb4efa3edbecf268717204cd711657962be4b7ec73d7fbdf8275013ad10b98cd"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser_compat.h",
-      "matched_identity_count": 391,
+      "matched_identity_count": 397,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 397,
@@ -1741,59 +1496,29 @@
         },
         "sha256": "cb4efa3edbecf268717204cd711657962be4b7ec73d7fbdf8275013ad10b98cd"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser_compat.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-strict",
       "reference": {
         "count": 399,
@@ -1807,59 +1532,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser_compat.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 399,
@@ -1873,59 +1568,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser_compat.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 399,
@@ -1939,59 +1604,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 394,
+        "count": 399,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 324,
+          "macro": 329,
           "record": 6,
           "typedef": 46,
           "variable": 1
         },
-        "sha256": "ee05c566bcfe8574143d7e4b3e4ae98f203f9834fb88a196aa5b7bddd8c3c1cd"
+        "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser_compat.h",
-      "matched_identity_count": 393,
+      "matched_identity_count": 399,
       "profile": "c11-bsd",
       "reference": {
         "count": 399,
@@ -2005,59 +1640,29 @@
         },
         "sha256": "0ccc7cbbcb4e777c30c43d79bc6a5590a5725fbbcdb684126b18bf4d3f85fc86"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 392,
+        "count": 397,
         "kind_counts": {
           "enum": 9,
           "function": 8,
-          "macro": 323,
+          "macro": 328,
           "record": 6,
           "typedef": 45,
           "variable": 1
         },
-        "sha256": "dac5a500cb723ed6e607062cc828d9cc38a927db6f8b235c1890b45a1a4538a2"
+        "sha256": "cb4efa3edbecf268717204cd711657962be4b7ec73d7fbdf8275013ad10b98cd"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "arpa/nameser_compat.h",
-      "matched_identity_count": 391,
+      "matched_identity_count": 397,
       "profile": "cxx17-strict",
       "reference": {
         "count": 397,
@@ -2071,35 +1676,10 @@
         },
         "sha256": "cb4efa3edbecf268717204cd711657962be4b7ec73d7fbdf8275013ad10b98cd"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -20531,14 +20111,14 @@
     },
     {
       "candidate": {
-        "count": 2773,
+        "count": 2778,
         "kind_counts": {
           "function": 1,
-          "macro": 2677,
+          "macro": 2682,
           "record": 3,
           "typedef": 92
         },
-        "sha256": "b89244fc8036d53f8192cb606afc1cd92ba8dcaf8e7ab111a35e764520b18dbd"
+        "sha256": "e795b4acc074b9c242c4816bff5a9fb0bdff43db3946965e634209bacb3eb315"
       },
       "candidate_only": [
         {
@@ -20547,7 +20127,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -20556,6 +20140,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -20577,7 +20173,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "link.h",
-      "matched_identity_count": 2765,
+      "matched_identity_count": 2766,
       "profile": "c11-gnu",
       "reference": {
         "count": 2767,
@@ -20591,10 +20187,6 @@
       },
       "reference_only": [
         {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
           "kind": "typedef",
           "name": "Elf_Symndx"
         }
@@ -20605,14 +20197,14 @@
     },
     {
       "candidate": {
-        "count": 2771,
+        "count": 2776,
         "kind_counts": {
           "function": 1,
-          "macro": 2676,
+          "macro": 2681,
           "record": 3,
           "typedef": 91
         },
-        "sha256": "d26ff94097e165146e1bbceebf5690da787ef6335b5b8c591d9c7b49932c887e"
+        "sha256": "ec1a4648f8a9aaf7b5dbf49e772ade357935ca9a73af624b788a8669bbf07b01"
       },
       "candidate_only": [
         {
@@ -20621,11 +20213,27 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
           "name": "__DEFINED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -20643,7 +20251,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "link.h",
-      "matched_identity_count": 2765,
+      "matched_identity_count": 2766,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 2767,
@@ -20657,10 +20265,6 @@
       },
       "reference_only": [
         {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
           "kind": "typedef",
           "name": "Elf_Symndx"
         }
@@ -20671,14 +20275,14 @@
     },
     {
       "candidate": {
-        "count": 2773,
+        "count": 2778,
         "kind_counts": {
           "function": 1,
-          "macro": 2677,
+          "macro": 2682,
           "record": 3,
           "typedef": 92
         },
-        "sha256": "b89244fc8036d53f8192cb606afc1cd92ba8dcaf8e7ab111a35e764520b18dbd"
+        "sha256": "e795b4acc074b9c242c4816bff5a9fb0bdff43db3946965e634209bacb3eb315"
       },
       "candidate_only": [
         {
@@ -20687,7 +20291,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -20696,6 +20304,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -20717,7 +20337,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "link.h",
-      "matched_identity_count": 2765,
+      "matched_identity_count": 2766,
       "profile": "c11-strict",
       "reference": {
         "count": 2767,
@@ -20731,10 +20351,6 @@
       },
       "reference_only": [
         {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
           "kind": "typedef",
           "name": "Elf_Symndx"
         }
@@ -20745,14 +20361,14 @@
     },
     {
       "candidate": {
-        "count": 2773,
+        "count": 2778,
         "kind_counts": {
           "function": 1,
-          "macro": 2677,
+          "macro": 2682,
           "record": 3,
           "typedef": 92
         },
-        "sha256": "b89244fc8036d53f8192cb606afc1cd92ba8dcaf8e7ab111a35e764520b18dbd"
+        "sha256": "e795b4acc074b9c242c4816bff5a9fb0bdff43db3946965e634209bacb3eb315"
       },
       "candidate_only": [
         {
@@ -20761,7 +20377,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -20770,6 +20390,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -20791,7 +20423,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "link.h",
-      "matched_identity_count": 2765,
+      "matched_identity_count": 2766,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 2767,
@@ -20805,10 +20437,6 @@
       },
       "reference_only": [
         {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
           "kind": "typedef",
           "name": "Elf_Symndx"
         }
@@ -20819,14 +20447,14 @@
     },
     {
       "candidate": {
-        "count": 2773,
+        "count": 2778,
         "kind_counts": {
           "function": 1,
-          "macro": 2677,
+          "macro": 2682,
           "record": 3,
           "typedef": 92
         },
-        "sha256": "b89244fc8036d53f8192cb606afc1cd92ba8dcaf8e7ab111a35e764520b18dbd"
+        "sha256": "e795b4acc074b9c242c4816bff5a9fb0bdff43db3946965e634209bacb3eb315"
       },
       "candidate_only": [
         {
@@ -20835,7 +20463,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -20844,6 +20476,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -20865,7 +20509,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "link.h",
-      "matched_identity_count": 2765,
+      "matched_identity_count": 2766,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 2767,
@@ -20879,10 +20523,6 @@
       },
       "reference_only": [
         {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
           "kind": "typedef",
           "name": "Elf_Symndx"
         }
@@ -20893,14 +20533,14 @@
     },
     {
       "candidate": {
-        "count": 2773,
+        "count": 2778,
         "kind_counts": {
           "function": 1,
-          "macro": 2677,
+          "macro": 2682,
           "record": 3,
           "typedef": 92
         },
-        "sha256": "b89244fc8036d53f8192cb606afc1cd92ba8dcaf8e7ab111a35e764520b18dbd"
+        "sha256": "e795b4acc074b9c242c4816bff5a9fb0bdff43db3946965e634209bacb3eb315"
       },
       "candidate_only": [
         {
@@ -20909,7 +20549,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -20918,6 +20562,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -20939,7 +20595,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "link.h",
-      "matched_identity_count": 2765,
+      "matched_identity_count": 2766,
       "profile": "c11-bsd",
       "reference": {
         "count": 2767,
@@ -20953,10 +20609,6 @@
       },
       "reference_only": [
         {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
           "kind": "typedef",
           "name": "Elf_Symndx"
         }
@@ -20967,14 +20619,14 @@
     },
     {
       "candidate": {
-        "count": 2771,
+        "count": 2776,
         "kind_counts": {
           "function": 1,
-          "macro": 2676,
+          "macro": 2681,
           "record": 3,
           "typedef": 91
         },
-        "sha256": "d26ff94097e165146e1bbceebf5690da787ef6335b5b8c591d9c7b49932c887e"
+        "sha256": "ec1a4648f8a9aaf7b5dbf49e772ade357935ca9a73af624b788a8669bbf07b01"
       },
       "candidate_only": [
         {
@@ -20983,11 +20635,27 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
           "name": "__DEFINED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -21005,7 +20673,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "link.h",
-      "matched_identity_count": 2765,
+      "matched_identity_count": 2766,
       "profile": "cxx17-strict",
       "reference": {
         "count": 2767,
@@ -21018,10 +20686,6 @@
         "sha256": "995273e1ca7ad5fc5f12485877192e2465c349d79540e1634406c6cf2d59222b"
       },
       "reference_only": [
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
         {
           "kind": "typedef",
           "name": "Elf_Symndx"
@@ -21500,13 +21164,13 @@
     },
     {
       "candidate": {
-        "count": 18,
+        "count": 28,
         "kind_counts": {
           "function": 7,
-          "macro": 7,
+          "macro": 17,
           "typedef": 4
         },
-        "sha256": "bb4ca290feb4a0d5ed8f2cf3b1c8fb634fc99148476341c072f964cfaf605a0c"
+        "sha256": "90fed26b06407a8ef3741a8e151033fa868dfbfad078b5c299d07d16dd53ce04"
       },
       "candidate_only": [
         {
@@ -21519,7 +21183,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -21528,6 +21196,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -21549,7 +21229,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "malloc.h",
-      "matched_identity_count": 9,
+      "matched_identity_count": 15,
       "profile": "c11-gnu",
       "reference": {
         "count": 16,
@@ -21564,30 +21244,6 @@
         {
           "kind": "macro",
           "name": "_MALLOC_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
         }
       ],
       "reference_status": "ok",
@@ -21596,13 +21252,13 @@
     },
     {
       "candidate": {
-        "count": 16,
+        "count": 26,
         "kind_counts": {
           "function": 7,
-          "macro": 6,
+          "macro": 16,
           "typedef": 3
         },
-        "sha256": "b9a043b7e3165a43f3aef6e43d0fe356f84f36d4b8a770a2abdeb2d8a94ef07c"
+        "sha256": "c210a8a141bd4098bededb2349d81fe10f79845235ece54e75329522a7679daf"
       },
       "candidate_only": [
         {
@@ -21615,11 +21271,27 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
           "name": "__DEFINED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -21637,7 +21309,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "malloc.h",
-      "matched_identity_count": 9,
+      "matched_identity_count": 15,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 16,
@@ -21652,30 +21324,6 @@
         {
           "kind": "macro",
           "name": "_MALLOC_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
         }
       ],
       "reference_status": "ok",
@@ -21684,13 +21332,13 @@
     },
     {
       "candidate": {
-        "count": 18,
+        "count": 28,
         "kind_counts": {
           "function": 7,
-          "macro": 7,
+          "macro": 17,
           "typedef": 4
         },
-        "sha256": "bb4ca290feb4a0d5ed8f2cf3b1c8fb634fc99148476341c072f964cfaf605a0c"
+        "sha256": "90fed26b06407a8ef3741a8e151033fa868dfbfad078b5c299d07d16dd53ce04"
       },
       "candidate_only": [
         {
@@ -21703,7 +21351,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -21712,6 +21364,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -21733,7 +21397,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "malloc.h",
-      "matched_identity_count": 9,
+      "matched_identity_count": 15,
       "profile": "c11-strict",
       "reference": {
         "count": 16,
@@ -21748,30 +21412,6 @@
         {
           "kind": "macro",
           "name": "_MALLOC_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
         }
       ],
       "reference_status": "ok",
@@ -21780,13 +21420,13 @@
     },
     {
       "candidate": {
-        "count": 18,
+        "count": 28,
         "kind_counts": {
           "function": 7,
-          "macro": 7,
+          "macro": 17,
           "typedef": 4
         },
-        "sha256": "bb4ca290feb4a0d5ed8f2cf3b1c8fb634fc99148476341c072f964cfaf605a0c"
+        "sha256": "90fed26b06407a8ef3741a8e151033fa868dfbfad078b5c299d07d16dd53ce04"
       },
       "candidate_only": [
         {
@@ -21799,7 +21439,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -21808,6 +21452,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -21829,7 +21485,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "malloc.h",
-      "matched_identity_count": 9,
+      "matched_identity_count": 15,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 16,
@@ -21844,30 +21500,6 @@
         {
           "kind": "macro",
           "name": "_MALLOC_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
         }
       ],
       "reference_status": "ok",
@@ -21876,13 +21508,13 @@
     },
     {
       "candidate": {
-        "count": 18,
+        "count": 28,
         "kind_counts": {
           "function": 7,
-          "macro": 7,
+          "macro": 17,
           "typedef": 4
         },
-        "sha256": "bb4ca290feb4a0d5ed8f2cf3b1c8fb634fc99148476341c072f964cfaf605a0c"
+        "sha256": "90fed26b06407a8ef3741a8e151033fa868dfbfad078b5c299d07d16dd53ce04"
       },
       "candidate_only": [
         {
@@ -21895,7 +21527,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -21904,6 +21540,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -21925,7 +21573,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "malloc.h",
-      "matched_identity_count": 9,
+      "matched_identity_count": 15,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 16,
@@ -21940,30 +21588,6 @@
         {
           "kind": "macro",
           "name": "_MALLOC_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
         }
       ],
       "reference_status": "ok",
@@ -21972,13 +21596,13 @@
     },
     {
       "candidate": {
-        "count": 18,
+        "count": 28,
         "kind_counts": {
           "function": 7,
-          "macro": 7,
+          "macro": 17,
           "typedef": 4
         },
-        "sha256": "bb4ca290feb4a0d5ed8f2cf3b1c8fb634fc99148476341c072f964cfaf605a0c"
+        "sha256": "90fed26b06407a8ef3741a8e151033fa868dfbfad078b5c299d07d16dd53ce04"
       },
       "candidate_only": [
         {
@@ -21991,7 +21615,11 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -22000,6 +21628,18 @@
         {
           "kind": "macro",
           "name": "__DEFINED_wchar_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -22021,7 +21661,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "malloc.h",
-      "matched_identity_count": 9,
+      "matched_identity_count": 15,
       "profile": "c11-bsd",
       "reference": {
         "count": 16,
@@ -22036,30 +21676,6 @@
         {
           "kind": "macro",
           "name": "_MALLOC_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
         }
       ],
       "reference_status": "ok",
@@ -22068,13 +21684,13 @@
     },
     {
       "candidate": {
-        "count": 16,
+        "count": 26,
         "kind_counts": {
           "function": 7,
-          "macro": 6,
+          "macro": 16,
           "typedef": 3
         },
-        "sha256": "b9a043b7e3165a43f3aef6e43d0fe356f84f36d4b8a770a2abdeb2d8a94ef07c"
+        "sha256": "c210a8a141bd4098bededb2349d81fe10f79845235ece54e75329522a7679daf"
       },
       "candidate_only": [
         {
@@ -22087,11 +21703,27 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
+          "name": "_STDDEF_H"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
           "name": "__DEFINED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -22109,7 +21741,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "malloc.h",
-      "matched_identity_count": 9,
+      "matched_identity_count": 15,
       "profile": "cxx17-strict",
       "reference": {
         "count": 16,
@@ -22124,30 +21756,6 @@
         {
           "kind": "macro",
           "name": "_MALLOC_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
         }
       ],
       "reference_status": "ok",
@@ -36455,27 +36063,22 @@
     },
     {
       "candidate": {
-        "count": 1190,
+        "count": 1193,
         "kind_counts": {
           "enum": 9,
           "function": 49,
-          "macro": 1040,
+          "macro": 1043,
           "record": 33,
           "typedef": 56,
           "variable": 3
         },
-        "sha256": "e68270a7fdc120377298579c88be175110df3d2ea84f35da7a3a3199f524ff5c"
+        "sha256": "4b1aaf3e3d658a9e9497427f777920dcce0d1c226f9e7b1be012dd386bd291bc"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "resolv.h",
-      "matched_identity_count": 1189,
+      "matched_identity_count": 1193,
       "profile": "c11-gnu",
       "reference": {
         "count": 1193,
@@ -36489,51 +36092,29 @@
         },
         "sha256": "4b1aaf3e3d658a9e9497427f777920dcce0d1c226f9e7b1be012dd386bd291bc"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 1188,
+        "count": 1191,
         "kind_counts": {
           "enum": 9,
           "function": 49,
-          "macro": 1039,
+          "macro": 1042,
           "record": 33,
           "typedef": 55,
           "variable": 3
         },
-        "sha256": "80a2e05704d767cca459b2d1218cd2f0cd53ff0ecf43824b07d21fe862f7eebf"
+        "sha256": "af2ff8909a87ef1f75e47820a09718eadcb30bc6a744728fe2d4ba1395a0f752"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "resolv.h",
-      "matched_identity_count": 1187,
+      "matched_identity_count": 1191,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 1191,
@@ -36547,51 +36128,29 @@
         },
         "sha256": "af2ff8909a87ef1f75e47820a09718eadcb30bc6a744728fe2d4ba1395a0f752"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 1164,
+        "count": 1167,
         "kind_counts": {
           "enum": 9,
           "function": 47,
-          "macro": 1029,
+          "macro": 1032,
           "record": 20,
           "typedef": 56,
           "variable": 3
         },
-        "sha256": "ea9996fe5d05f6ca0e62fe8102ff9c6fea74842201e4ef5f23270056823b3bb4"
+        "sha256": "2da9a943b08ec3aa33918b8614807842aadef5add0a60624abea5be0992cfe29"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "resolv.h",
-      "matched_identity_count": 1163,
+      "matched_identity_count": 1167,
       "profile": "c11-strict",
       "reference": {
         "count": 1167,
@@ -36605,51 +36164,29 @@
         },
         "sha256": "2da9a943b08ec3aa33918b8614807842aadef5add0a60624abea5be0992cfe29"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 1164,
+        "count": 1167,
         "kind_counts": {
           "enum": 9,
           "function": 47,
-          "macro": 1029,
+          "macro": 1032,
           "record": 20,
           "typedef": 56,
           "variable": 3
         },
-        "sha256": "ea9996fe5d05f6ca0e62fe8102ff9c6fea74842201e4ef5f23270056823b3bb4"
+        "sha256": "2da9a943b08ec3aa33918b8614807842aadef5add0a60624abea5be0992cfe29"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "resolv.h",
-      "matched_identity_count": 1163,
+      "matched_identity_count": 1167,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 1167,
@@ -36663,51 +36200,29 @@
         },
         "sha256": "2da9a943b08ec3aa33918b8614807842aadef5add0a60624abea5be0992cfe29"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 1164,
+        "count": 1167,
         "kind_counts": {
           "enum": 9,
           "function": 47,
-          "macro": 1029,
+          "macro": 1032,
           "record": 20,
           "typedef": 56,
           "variable": 3
         },
-        "sha256": "ea9996fe5d05f6ca0e62fe8102ff9c6fea74842201e4ef5f23270056823b3bb4"
+        "sha256": "2da9a943b08ec3aa33918b8614807842aadef5add0a60624abea5be0992cfe29"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "resolv.h",
-      "matched_identity_count": 1163,
+      "matched_identity_count": 1167,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 1167,
@@ -36721,51 +36236,29 @@
         },
         "sha256": "2da9a943b08ec3aa33918b8614807842aadef5add0a60624abea5be0992cfe29"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 1185,
+        "count": 1188,
         "kind_counts": {
           "enum": 9,
           "function": 47,
-          "macro": 1040,
+          "macro": 1043,
           "record": 30,
           "typedef": 56,
           "variable": 3
         },
-        "sha256": "6b36034783cbede08ac73b4d03bcfecf05eeec4c63ad529f4401a32fecbe0cc4"
+        "sha256": "3bfcf45c67b2cbe0ac2bd71ce25c96e313ec46cdf302668cd8c6c6443c86ae96"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "resolv.h",
-      "matched_identity_count": 1184,
+      "matched_identity_count": 1188,
       "profile": "c11-bsd",
       "reference": {
         "count": 1188,
@@ -36779,51 +36272,29 @@
         },
         "sha256": "3bfcf45c67b2cbe0ac2bd71ce25c96e313ec46cdf302668cd8c6c6443c86ae96"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 1188,
+        "count": 1191,
         "kind_counts": {
           "enum": 9,
           "function": 49,
-          "macro": 1039,
+          "macro": 1042,
           "record": 33,
           "typedef": 55,
           "variable": 3
         },
-        "sha256": "80a2e05704d767cca459b2d1218cd2f0cd53ff0ecf43824b07d21fe862f7eebf"
+        "sha256": "af2ff8909a87ef1f75e47820a09718eadcb30bc6a744728fe2d4ba1395a0f752"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "resolv.h",
-      "matched_identity_count": 1187,
+      "matched_identity_count": 1191,
       "profile": "cxx17-strict",
       "reference": {
         "count": 1191,
@@ -36837,27 +36308,10 @@
         },
         "sha256": "af2ff8909a87ef1f75e47820a09718eadcb30bc6a744728fe2d4ba1395a0f752"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -40524,23 +39978,18 @@
     },
     {
       "candidate": {
-        "count": 9,
+        "count": 20,
         "kind_counts": {
-          "macro": 6,
-          "typedef": 3
+          "macro": 16,
+          "typedef": 4
         },
-        "sha256": "6ebcbbe67b7a388fb5311109b396b851d5e3cb3e40726f61ceae6c30f0062c76"
+        "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stddef.h",
-      "matched_identity_count": 8,
+      "matched_identity_count": 20,
       "profile": "c11-gnu",
       "reference": {
         "count": 20,
@@ -40550,79 +39999,25 @@
         },
         "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
-        },
-        {
-          "kind": "typedef",
-          "name": "max_align_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 7,
+        "count": 18,
         "kind_counts": {
-          "macro": 5,
-          "typedef": 2
+          "macro": 15,
+          "typedef": 3
         },
-        "sha256": "ebd592116a072a4aa94ad435a719e4bb2b51a1d08ebd3139f92df5c247c143ea"
+        "sha256": "e7ce33af63af941fa27814d32c7811145152e36d58b832fcadfa122887817e5c"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stddef.h",
-      "matched_identity_count": 6,
+      "matched_identity_count": 18,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 18,
@@ -40632,79 +40027,25 @@
         },
         "sha256": "e7ce33af63af941fa27814d32c7811145152e36d58b832fcadfa122887817e5c"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
-        },
-        {
-          "kind": "typedef",
-          "name": "max_align_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 9,
+        "count": 20,
         "kind_counts": {
-          "macro": 6,
-          "typedef": 3
+          "macro": 16,
+          "typedef": 4
         },
-        "sha256": "6ebcbbe67b7a388fb5311109b396b851d5e3cb3e40726f61ceae6c30f0062c76"
+        "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stddef.h",
-      "matched_identity_count": 8,
+      "matched_identity_count": 20,
       "profile": "c11-strict",
       "reference": {
         "count": 20,
@@ -40714,79 +40055,25 @@
         },
         "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
-        },
-        {
-          "kind": "typedef",
-          "name": "max_align_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 9,
+        "count": 20,
         "kind_counts": {
-          "macro": 6,
-          "typedef": 3
+          "macro": 16,
+          "typedef": 4
         },
-        "sha256": "6ebcbbe67b7a388fb5311109b396b851d5e3cb3e40726f61ceae6c30f0062c76"
+        "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stddef.h",
-      "matched_identity_count": 8,
+      "matched_identity_count": 20,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 20,
@@ -40796,79 +40083,25 @@
         },
         "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
-        },
-        {
-          "kind": "typedef",
-          "name": "max_align_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 9,
+        "count": 20,
         "kind_counts": {
-          "macro": 6,
-          "typedef": 3
+          "macro": 16,
+          "typedef": 4
         },
-        "sha256": "6ebcbbe67b7a388fb5311109b396b851d5e3cb3e40726f61ceae6c30f0062c76"
+        "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stddef.h",
-      "matched_identity_count": 8,
+      "matched_identity_count": 20,
       "profile": "c11-xopen-700",
       "reference": {
         "count": 20,
@@ -40878,79 +40111,25 @@
         },
         "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
-        },
-        {
-          "kind": "typedef",
-          "name": "max_align_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 9,
+        "count": 20,
         "kind_counts": {
-          "macro": 6,
-          "typedef": 3
+          "macro": 16,
+          "typedef": 4
         },
-        "sha256": "6ebcbbe67b7a388fb5311109b396b851d5e3cb3e40726f61ceae6c30f0062c76"
+        "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stddef.h",
-      "matched_identity_count": 8,
+      "matched_identity_count": 20,
       "profile": "c11-bsd",
       "reference": {
         "count": 20,
@@ -40960,79 +40139,25 @@
         },
         "sha256": "78866a7771cd1a74a8dd3160ff437c70d3efb25ee9dc17c9511c59e3f106ba84"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
-        },
-        {
-          "kind": "typedef",
-          "name": "max_align_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 7,
+        "count": 18,
         "kind_counts": {
-          "macro": 5,
-          "typedef": 2
+          "macro": 15,
+          "typedef": 3
         },
-        "sha256": "ebd592116a072a4aa94ad435a719e4bb2b51a1d08ebd3139f92df5c247c143ea"
+        "sha256": "e7ce33af63af941fa27814d32c7811145152e36d58b832fcadfa122887817e5c"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stddef.h",
-      "matched_identity_count": 6,
+      "matched_identity_count": 18,
       "profile": "cxx17-strict",
       "reference": {
         "count": 18,
@@ -41042,59 +40167,10 @@
         },
         "sha256": "e7ce33af63af941fa27814d32c7811145152e36d58b832fcadfa122887817e5c"
       },
-      "reference_only": [
-        {
-          "kind": "macro",
-          "name": "_STDDEF_H"
-        },
-        {
-          "kind": "macro",
-          "name": "__BIG_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__BYTE_ORDER"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__LITTLE_ENDIAN"
-        },
-        {
-          "kind": "macro",
-          "name": "__LONG_MAX"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_max_align_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_ptrdiff_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_size_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_wchar_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__USE_TIME_BITS64"
-        },
-        {
-          "kind": "typedef",
-          "name": "max_align_t"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "mismatch"
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -89961,14 +89037,14 @@
     },
     {
       "candidate": {
-        "count": 217,
+        "count": 221,
         "kind_counts": {
           "function": 6,
-          "macro": 144,
+          "macro": 148,
           "record": 4,
           "typedef": 63
         },
-        "sha256": "838e8006e704dca482f11172db2c97c7affe57e6134fa04f08835252f2139458"
+        "sha256": "8d84904c79b3322c8e506a624db977f35e92bcfd32f3eb2f523ed69578f2342b"
       },
       "candidate_only": [
         {
@@ -90037,10 +89113,6 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        },
-        {
-          "kind": "macro",
           "name": "_CRABC_SYS_RANDOM_H"
         },
         {
@@ -90050,6 +89122,10 @@
         {
           "kind": "macro",
           "name": "_FEATURES_H"
+        },
+        {
+          "kind": "macro",
+          "name": "_STDDEF_H"
         },
         {
           "kind": "macro",
@@ -90118,6 +89194,10 @@
         {
           "kind": "macro",
           "name": "__DEFINED_key_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -90309,6 +89389,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -90377,6 +89461,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_register_t"
         },
         {
@@ -90426,6 +89514,10 @@
         {
           "kind": "macro",
           "name": "__NEED_useconds_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -90806,14 +89898,14 @@
     },
     {
       "candidate": {
-        "count": 214,
+        "count": 218,
         "kind_counts": {
           "function": 6,
-          "macro": 143,
+          "macro": 147,
           "record": 3,
           "typedef": 62
         },
-        "sha256": "9b2607dfeed8ac48c3cce37551a75350f8afad516f469dfd9fc9474fa106ef89"
+        "sha256": "87abd4df297af9027b1407dc13ccf904215ed8f4005cf8703977f07feb0f200e"
       },
       "candidate_only": [
         {
@@ -90882,10 +89974,6 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        },
-        {
-          "kind": "macro",
           "name": "_CRABC_SYS_RANDOM_H"
         },
         {
@@ -90899,6 +89987,10 @@
         {
           "kind": "macro",
           "name": "_Noreturn"
+        },
+        {
+          "kind": "macro",
+          "name": "_STDDEF_H"
         },
         {
           "kind": "macro",
@@ -90967,6 +90059,10 @@
         {
           "kind": "macro",
           "name": "__DEFINED_key_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -91154,6 +90250,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -91222,6 +90322,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_register_t"
         },
         {
@@ -91271,6 +90375,10 @@
         {
           "kind": "macro",
           "name": "__NEED_useconds_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -91639,14 +90747,14 @@
     },
     {
       "candidate": {
-        "count": 129,
+        "count": 133,
         "kind_counts": {
           "function": 1,
-          "macro": 89,
+          "macro": 93,
           "record": 1,
           "typedef": 38
         },
-        "sha256": "6ab3891916ca463390217f575defafb197927b9d01cef2377dc80dd1152b9142"
+        "sha256": "f0f85bcf7c8ba826a8b4870f68d01ddbe636beca8f85104c640eb223326b8d8f"
       },
       "candidate_only": [
         {
@@ -91655,15 +90763,15 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        },
-        {
-          "kind": "macro",
           "name": "_CRABC_SYS_RANDOM_H"
         },
         {
           "kind": "macro",
           "name": "_FEATURES_H"
+        },
+        {
+          "kind": "macro",
+          "name": "_STDDEF_H"
         },
         {
           "kind": "macro",
@@ -91712,6 +90820,10 @@
         {
           "kind": "macro",
           "name": "__DEFINED_key_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -91855,6 +90967,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -91923,6 +91039,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_suseconds_t"
         },
         {
@@ -91940,6 +91060,10 @@
         {
           "kind": "macro",
           "name": "__NEED_useconds_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -92132,14 +91256,14 @@
     },
     {
       "candidate": {
-        "count": 129,
+        "count": 133,
         "kind_counts": {
           "function": 1,
-          "macro": 89,
+          "macro": 93,
           "record": 1,
           "typedef": 38
         },
-        "sha256": "6ab3891916ca463390217f575defafb197927b9d01cef2377dc80dd1152b9142"
+        "sha256": "f0f85bcf7c8ba826a8b4870f68d01ddbe636beca8f85104c640eb223326b8d8f"
       },
       "candidate_only": [
         {
@@ -92148,15 +91272,15 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        },
-        {
-          "kind": "macro",
           "name": "_CRABC_SYS_RANDOM_H"
         },
         {
           "kind": "macro",
           "name": "_FEATURES_H"
+        },
+        {
+          "kind": "macro",
+          "name": "_STDDEF_H"
         },
         {
           "kind": "macro",
@@ -92205,6 +91329,10 @@
         {
           "kind": "macro",
           "name": "__DEFINED_key_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -92348,6 +91476,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -92416,6 +91548,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_suseconds_t"
         },
         {
@@ -92433,6 +91569,10 @@
         {
           "kind": "macro",
           "name": "__NEED_useconds_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -92625,14 +91765,14 @@
     },
     {
       "candidate": {
-        "count": 129,
+        "count": 133,
         "kind_counts": {
           "function": 1,
-          "macro": 89,
+          "macro": 93,
           "record": 1,
           "typedef": 38
         },
-        "sha256": "6ab3891916ca463390217f575defafb197927b9d01cef2377dc80dd1152b9142"
+        "sha256": "f0f85bcf7c8ba826a8b4870f68d01ddbe636beca8f85104c640eb223326b8d8f"
       },
       "candidate_only": [
         {
@@ -92641,15 +91781,15 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        },
-        {
-          "kind": "macro",
           "name": "_CRABC_SYS_RANDOM_H"
         },
         {
           "kind": "macro",
           "name": "_FEATURES_H"
+        },
+        {
+          "kind": "macro",
+          "name": "_STDDEF_H"
         },
         {
           "kind": "macro",
@@ -92698,6 +91838,10 @@
         {
           "kind": "macro",
           "name": "__DEFINED_key_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -92841,6 +91985,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -92909,6 +92057,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_suseconds_t"
         },
         {
@@ -92926,6 +92078,10 @@
         {
           "kind": "macro",
           "name": "__NEED_useconds_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -93118,14 +92274,14 @@
     },
     {
       "candidate": {
-        "count": 217,
+        "count": 221,
         "kind_counts": {
           "function": 6,
-          "macro": 144,
+          "macro": 148,
           "record": 4,
           "typedef": 63
         },
-        "sha256": "838e8006e704dca482f11172db2c97c7affe57e6134fa04f08835252f2139458"
+        "sha256": "8d84904c79b3322c8e506a624db977f35e92bcfd32f3eb2f523ed69578f2342b"
       },
       "candidate_only": [
         {
@@ -93194,10 +92350,6 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        },
-        {
-          "kind": "macro",
           "name": "_CRABC_SYS_RANDOM_H"
         },
         {
@@ -93207,6 +92359,10 @@
         {
           "kind": "macro",
           "name": "_FEATURES_H"
+        },
+        {
+          "kind": "macro",
+          "name": "_STDDEF_H"
         },
         {
           "kind": "macro",
@@ -93275,6 +92431,10 @@
         {
           "kind": "macro",
           "name": "__DEFINED_key_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -93466,6 +92626,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -93534,6 +92698,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_register_t"
         },
         {
@@ -93583,6 +92751,10 @@
         {
           "kind": "macro",
           "name": "__NEED_useconds_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -93963,14 +93135,14 @@
     },
     {
       "candidate": {
-        "count": 214,
+        "count": 218,
         "kind_counts": {
           "function": 6,
-          "macro": 143,
+          "macro": 147,
           "record": 3,
           "typedef": 62
         },
-        "sha256": "9b2607dfeed8ac48c3cce37551a75350f8afad516f469dfd9fc9474fa106ef89"
+        "sha256": "87abd4df297af9027b1407dc13ccf904215ed8f4005cf8703977f07feb0f200e"
       },
       "candidate_only": [
         {
@@ -94039,10 +93211,6 @@
         },
         {
           "kind": "macro",
-          "name": "_CRABC_STDDEF_H"
-        },
-        {
-          "kind": "macro",
           "name": "_CRABC_SYS_RANDOM_H"
         },
         {
@@ -94056,6 +93224,10 @@
         {
           "kind": "macro",
           "name": "_Noreturn"
+        },
+        {
+          "kind": "macro",
+          "name": "_STDDEF_H"
         },
         {
           "kind": "macro",
@@ -94124,6 +93296,10 @@
         {
           "kind": "macro",
           "name": "__DEFINED_key_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__DEFINED_max_align_t"
         },
         {
           "kind": "macro",
@@ -94311,6 +93487,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_max_align_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -94379,6 +93559,10 @@
         },
         {
           "kind": "macro",
+          "name": "__NEED_ptrdiff_t"
+        },
+        {
+          "kind": "macro",
           "name": "__NEED_register_t"
         },
         {
@@ -94428,6 +93612,10 @@
         {
           "kind": "macro",
           "name": "__NEED_useconds_t"
+        },
+        {
+          "kind": "macro",
+          "name": "__NEED_wchar_t"
         },
         {
           "kind": "macro",
@@ -143629,10 +142817,10 @@
     "runtime": false
   },
   "summary": {
-    "candidate_only_identity_count": 16295,
+    "candidate_only_identity_count": 16351,
     "candidate_only_identity_kind_counts": {
       "function": 910,
-      "macro": 11241,
+      "macro": 11297,
       "record": 284,
       "typedef": 3818,
       "variable": 42
@@ -143641,19 +142829,19 @@
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 668,
-      "mismatch": 612,
+      "matched": 696,
+      "mismatch": 584,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "612 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+      "584 comparable pinned header/profile rows have declaration or macro identity visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
-    "matched_identity_count": 286086,
-    "mismatch_row_count": 612,
+    "matched_identity_count": 286331,
+    "mismatch_row_count": 584,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -143662,23 +142850,23 @@
     "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 9278,
+    "reference_only_identity_count": 9033,
     "reference_only_identity_kind_counts": {
       "function": 215,
-      "macro": 8920,
+      "macro": 8682,
       "record": 78,
-      "typedef": 56,
+      "typedef": 49,
       "variable": 9
     },
     "row_count": 1337,
     "source_form_comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 569,
-      "mismatch": 711,
+      "matched": 597,
+      "mismatch": 683,
       "oracle-not-applicable": 1
     },
-    "source_form_difference_count": 3113,
-    "source_form_difference_row_count": 528,
+    "source_form_difference_count": 3093,
+    "source_form_difference_row_count": 508,
     "source_form_only_difference_row_count": 99
   },
   "target": "x86_64-unknown-linux-musl",
