@@ -62,10 +62,13 @@ if ! "$ORACLE_CC" -std=c11 -Werror=implicit-function-declaration \
     cat "$header_trace" >&2
     fail "project C random-entropy header contract drifted"
 fi
-for header in sys/random.h unistd.h sys/types.h; do
+for header in sys/random.h unistd.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "C probe did not use the project $header"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "C random-entropy header closure retained broad project sys/types.h"
+fi
 
 "$ORACLE_CC" -std=c++17 -x c++ -I "$ROOT_DIR/include" \
     -fsyntax-only "$cxx_probe"

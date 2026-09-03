@@ -115,8 +115,8 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1082,
-                "mismatch": 198,
+                "matched": 1089,
+                "mismatch": 191,
                 "oracle-not-applicable": 1,
             },
         )

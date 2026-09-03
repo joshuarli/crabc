@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "d2dd4d2758774fab9a011064211702ae8e041887a1e7a28ac5907cbc576cc4a5",
+    "callable_inventory_sha256": "8958e1f5f61de3788533e0d26746147784c682612e2ea7a8f1b8d62ab2f69311",
     "matrix_contract_sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -17750,127 +17750,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 30,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/random.h",
       "matched_callable_count": 1,
       "profile": "c11-gnu",
@@ -17879,127 +17762,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 30,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/random.h",
       "matched_callable_count": 1,
       "profile": "cxx17-gnu",
@@ -18008,19 +17774,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 3,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/random.h",
       "matched_callable_count": 1,
       "profile": "c11-strict",
@@ -18029,19 +17786,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 3,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/random.h",
       "matched_callable_count": 1,
       "profile": "c11-posix-2008",
@@ -18050,19 +17798,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 3,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/random.h",
       "matched_callable_count": 1,
       "profile": "c11-xopen-700",
@@ -18071,127 +17810,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 30,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/random.h",
       "matched_callable_count": 1,
       "profile": "c11-bsd",
@@ -18200,127 +17822,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 30,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/random.h",
       "matched_callable_count": 1,
       "profile": "cxx17-strict",
@@ -27945,23 +27450,23 @@
     "public_support": false
   },
   "summary": {
-    "candidate_only_callable_count": 2214,
+    "candidate_only_callable_count": 2092,
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-retained-pending-c-abi-policy": 56,
-      "matched": 1082,
-      "mismatch": 198,
+      "matched": 1089,
+      "mismatch": 191,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "198 comparable pinned header/profile rows have callable visibility differences",
+      "191 comparable pinned header/profile rows have callable visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
     "matched_callable_count": 34520,
-    "mismatch_row_count": 198,
+    "mismatch_row_count": 191,
     "oracle_not_applicable_candidate_visible_callable_count": 21,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,

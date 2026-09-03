@@ -3553,14 +3553,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 720,
-                "mismatch": 560,
+                "matched": 727,
+                "mismatch": 553,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 16317, "reference_only": 8765},
+            {"candidate_only": 15145, "reference_only": 8758},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3580,8 +3580,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 642,
-                "mismatch": 638,
+                "matched": 649,
+                "mismatch": 631,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4714,8 +4714,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "560 current comparable declaration-or-macro identity mismatch rows",
-            "720 matched identity rows",
+            "553 current comparable declaration-or-macro identity mismatch rows",
+            "727 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
@@ -4771,7 +4771,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "638 current comparable prototype or named source-form mismatch rows",
+            "631 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",
