@@ -70,11 +70,12 @@ const BOOTSTRAP_RETAINED: u8 = 5;
 // `src/init.c:196` assigns the kind-only static memory ID, line 197
 // Release-stores `mi_process_heap_main` in `subproc->heap_main`, and line 198
 // runs `_mi_heap_init`. The C once envelope keeps callers from treating that
-// early pointer as generally usable. Rust first reserves a pointer-free
-// `RESERVED` state so a rejected stale owner cannot mutate a candidate Heap
-// image; it Release-stores the identity and then makes it `PUBLISHING` only
-// after the line-196 memid transition. A finished foundation alone makes that
-// identity ready for comparison.
+// early pointer as generally usable. Rust first reserves an unpublished
+// `RESERVED` state that privately binds the candidate but leaves the
+// subprocess atomic null, so a rejected stale owner cannot mutate a candidate
+// Heap image; it Release-stores the identity and then makes it `PUBLISHING`
+// only after the line-196 memid transition. A finished foundation alone makes
+// that identity ready for comparison.
 const MAIN_HEAP_ABSENT: u8 = 0;
 const MAIN_HEAP_RESERVED: u8 = 1;
 const MAIN_HEAP_PUBLISHING: u8 = 2;
@@ -164,8 +165,9 @@ unsafe impl Sync for MainSubprocess {}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainHeapPublicationState {
     Absent,
-    /// An owner has acquired the one-way transition but has not yet recorded
-    /// a Heap identity. No pointer is observable through this state.
+    /// An owner has privately bound one candidate Heap, but has not published
+    /// it in the subprocess atomic. No pointer is observable through this
+    /// state.
     Reserved,
     Publishing,
     Ready,
@@ -213,16 +215,19 @@ impl MainHeapReadyIdentity {
     }
 }
 
-/// The pointer-free, current-thread-only `Absent -> Reserved` admission for
+/// The unpublished, current-thread-only `Absent -> Reserved` admission for
 /// one source main-Heap transition.
 ///
-/// The owner must record `src/init.c:196`'s kind-only `memid` before consuming
-/// this token through `publish_main_heap_identity` for line 197's Release
-/// pointer store. Dropping it deliberately leaves the process image
-/// `Reserved`: Rust must not silently reopen a source-static Heap transition.
+/// The token privately binds the final Heap identity, but `MainSubprocess`
+/// stores no pointer until the owner records `src/init.c:196`'s kind-only
+/// `memid` and consumes this token through `publish_main_heap_identity` for
+/// line 197's Release pointer store. Dropping it deliberately leaves the
+/// process image `Reserved`: Rust must not silently reopen a source-static
+/// Heap transition or substitute a different candidate after mutation begins.
 #[must_use = "a reserved source main-Heap transition must publish or retain the process image"]
 pub(crate) struct MainHeapPublicationReservation<'subprocess> {
     subprocess: &'subprocess MainSubprocess,
+    heap: NonNull<Heap>,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
@@ -414,8 +419,8 @@ impl MainSubprocess {
     }
 
     /// Observes whether the canonical source main-Heap identity is absent,
-    /// pointer-free Reserved, being published, or ready. It never returns a
-    /// Heap pointer.
+    /// privately reserved but unpublished, being published, or ready. It
+    /// never returns a Heap pointer.
     #[inline]
     pub(crate) fn main_heap_publication_state(&self) -> MainHeapPublicationState {
         match self.main_heap_state.load(Ordering::Acquire) {
@@ -459,22 +464,26 @@ impl MainSubprocess {
     /// Reserves this subprocess's one `Absent -> Reserved` main-Heap
     /// transition before the source-adjacent Heap image writes occur.
     ///
-    /// The reservation deliberately has no pointer yet. This lets a stale
-    /// owner fail before it can alter a candidate static Heap, while a valid
-    /// owner can still preserve the pinned `src/init.c:196` -> `197` order by
-    /// recording the kind-only static `memid` before calling
-    /// [`Self::publish_main_heap_identity`].
+    /// The subprocess atomic deliberately has no pointer yet, while the
+    /// returned private token binds `heap` as the only candidate that may
+    /// later publish. This lets a stale owner fail before it can alter a
+    /// candidate static Heap, while a valid owner can still preserve the
+    /// pinned `src/init.c:196` -> `197` order by recording the kind-only
+    /// static `memid` before calling [`Self::publish_main_heap_identity`].
     ///
     /// # Safety
     ///
     /// The caller must own this exact subprocess's selected source-main
-    /// initialization branch and either complete or deliberately retain it.
-    /// Dropping the returned reservation leaves `Reserved` permanently set,
-    /// so an arbitrary internal caller must not use this as a probe or retry
+    /// initialization branch and the final process-static `heap` slot. That
+    /// address must remain valid for the process lifetime, and the caller
+    /// must either complete or deliberately retain the transition. Dropping
+    /// the returned reservation leaves `Reserved` permanently set, so an
+    /// arbitrary internal caller must not use this as a probe or retry
     /// mechanism.
     #[inline]
     pub(crate) unsafe fn begin_main_heap_publication(
         &self,
+        heap: NonNull<Heap>,
     ) -> Result<MainHeapPublicationReservation<'_>, MainHeapPublicationError> {
         match self.main_heap_state.compare_exchange(
             MAIN_HEAP_ABSENT,
@@ -484,6 +493,7 @@ impl MainSubprocess {
         ) {
             Ok(_) => Ok(MainHeapPublicationReservation {
                 subprocess: self,
+                heap,
                 _not_send_or_sync: PhantomData,
             }),
             Err(MAIN_HEAP_RESERVED) => Err(MainHeapPublicationError::Reserved),
@@ -505,23 +515,23 @@ impl MainSubprocess {
     /// # Safety
     ///
     /// `reservation` must be the one current transition for this exact
-    /// subprocess. `heap` must name its final process-static
-    /// `mi_process_heap_main` analogue, whose address remains valid for the
-    /// process lifetime. Its kind-only `MemoryId::static_kind_only()` image
-    /// must already be installed, and the caller must exclusively own the
-    /// remaining initialization transition. This method never dereferences
-    /// `heap`, and it provides no Heap projection; an incorrect identity
-    /// would nevertheless permanently bind the subprocess to a foreign or
-    /// stale static slot.
+    /// subprocess and already privately binds its final process-static
+    /// `mi_process_heap_main` analogue. That address must remain valid for
+    /// the process lifetime; its kind-only `MemoryId::static_kind_only()`
+    /// image must already be installed, and the caller must exclusively own
+    /// the remaining initialization transition. This method never
+    /// dereferences the bound Heap and provides no Heap projection; an
+    /// incorrect reservation would nevertheless permanently bind the
+    /// subprocess to a foreign or stale static slot.
     #[inline]
     pub(crate) unsafe fn publish_main_heap_identity(
         &self,
         reservation: MainHeapPublicationReservation<'_>,
-        heap: NonNull<Heap>,
     ) -> Result<MainHeapPublication<'_>, MainHeapPublicationError> {
         if !core::ptr::eq(reservation.subprocess.as_ptr(), self.as_ptr()) {
             return Err(MainHeapPublicationError::ForeignSubprocess);
         }
+        let heap = reservation.heap;
         if self.main_heap_state.load(Ordering::Acquire) != MAIN_HEAP_RESERVED
             || !self.main_heap.load(Ordering::Acquire).is_null()
         {
@@ -1197,10 +1207,14 @@ mod tests {
         let mut selection = main
             .reserve_static_bootstrap()
             .expect("the cold subprocess selects its static branch");
+        let heap = std::boxed::Box::leak(std::boxed::Box::new(Heap::bootstrap_empty()));
+        let heap_identity = NonNull::from(&mut *heap);
 
         // SAFETY: this test owns the selected branch and deliberately keeps
-        // its incomplete source main-Heap transition retained.
-        let reservation = unsafe { main.begin_main_heap_publication() }
+        // its incomplete source main-Heap transition retained. The leaked
+        // image stands in for the final process-static candidate bound by the
+        // reservation before any Heap mutation.
+        let reservation = unsafe { main.begin_main_heap_publication(heap_identity) }
             .expect("the selected branch reserves its only main-Heap transition");
         drop(reservation);
         selection.retain_after_main_heap_reservation();
@@ -1211,7 +1225,7 @@ mod tests {
             MainHeapPublicationState::Reserved
         );
         assert!(matches!(
-            unsafe { main.begin_main_heap_publication() },
+            unsafe { main.begin_main_heap_publication(heap_identity) },
             Err(MainHeapPublicationError::Reserved)
         ));
         assert!(matches!(
@@ -1238,7 +1252,8 @@ mod tests {
 
         // SAFETY: this test owns the selected source-main transition and
         // keeps the process image retained if it does not complete it.
-        let reservation = unsafe { main.begin_main_heap_publication() }
+        let heap_identity = NonNull::from(&mut *heap);
+        let reservation = unsafe { main.begin_main_heap_publication(heap_identity) }
             .expect("the cold source subprocess admits its canonical heap transition");
         assert_eq!(
             main.main_heap_publication_state(),
@@ -1266,13 +1281,11 @@ mod tests {
         assert_eq!(prepared_fields.heap_seq, 0);
         assert_eq!(prepared_fields.theap_slot, 0);
 
-        let heap_identity = NonNull::from(&mut *heap);
         // SAFETY: this leaked test slot represents a process-lifetime static
-        // address, already has line-196 kind-only provenance, and remains
-        // exclusive until its remaining source initialization completes.
-        let mut publication = unsafe {
-            main.publish_main_heap_identity(reservation, heap_identity)
-        }
+        // address. Its previously bound identity has line-196 kind-only
+        // provenance and remains exclusive until the remaining source
+        // initialization completes.
+        let mut publication = unsafe { main.publish_main_heap_identity(reservation) }
         .expect("the reserved subprocess releases its exact canonical Heap identity");
         assert_eq!(
             main.main_heap_publication_state(),
@@ -1328,7 +1341,7 @@ mod tests {
         // SAFETY: a second reservation must not overwrite the already-ready
         // source identity.
         assert!(matches!(
-            unsafe { main.begin_main_heap_publication() },
+            unsafe { main.begin_main_heap_publication(heap_identity) },
             Err(MainHeapPublicationError::AlreadyReady)
         ));
         assert_eq!(main.ready_main_heap_identity(), Ok(ready));
@@ -1341,13 +1354,13 @@ mod tests {
 
         // SAFETY: this test exclusively owns the selected main-Heap branch
         // and deliberately verifies its retained incomplete outcome.
-        let reservation = unsafe { main.begin_main_heap_publication() }
+        let heap_identity = NonNull::from(&mut *heap);
+        let reservation = unsafe { main.begin_main_heap_publication(heap_identity) }
             .expect("the cold subprocess reserves its only main-Heap transition");
         assert!(heap.prepare_main_static_kind_only_memid());
-        let heap_identity = NonNull::from(&mut *heap);
         // SAFETY: the leaked process-lifetime test slot has the required
-        // kind-only memid before its exact identity is Release-published.
-        let publication = unsafe { main.publish_main_heap_identity(reservation, heap_identity) }
+        // kind-only memid before its bound exact identity is Release-published.
+        let publication = unsafe { main.publish_main_heap_identity(reservation) }
             .expect("the reserved subprocess publishes the exact test identity");
         drop(publication);
 
@@ -1365,7 +1378,7 @@ mod tests {
         // after the original token was dropped retained.
         assert!(
             matches!(
-                unsafe { main.begin_main_heap_publication() },
+                unsafe { main.begin_main_heap_publication(heap_identity) },
                 Err(MainHeapPublicationError::Publishing)
             ),
             "a retained publication rejects a second owner without mutation"

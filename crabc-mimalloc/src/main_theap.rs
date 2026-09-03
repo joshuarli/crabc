@@ -117,9 +117,10 @@ impl MainStaticTheapSlot {
 /// Its two independently cache-aligned image fields are slots within this one
 /// Rust process-static owner, rather than separate Rust/source statics. During
 /// its private `HEAP_INITIALIZING` phase, the matching `MainSubprocess` first
-/// reserves the Rust-only pointer-free state, then the Heap records kind-only
-/// static provenance, then the subprocess Release-publishes only the
-/// canonical Heap identity. After the remaining Heap fields initialize, both
+/// reserves a Rust-only unpublished state that privately binds this Heap,
+/// then the Heap records kind-only static provenance, then the subprocess
+/// Release-publishes only the canonical Heap identity. After the remaining
+/// Heap fields initialize, both
 /// owners reach their ready states before this storage admits the unique
 /// non-Send ticket-zero thread attachment. This preserves the source
 /// `src/init.c:196` -> `197` -> `198` order before `_mi_page_map_init` and
@@ -428,9 +429,11 @@ impl MainStaticHeapFoundation {
         let heap = unsafe { storage.heap_mut_for_foundation() };
         // Reserve the one-way subprocess state before touching `heap`: a
         // rejected stale identity must leave this fresh static slot unchanged
-        // so it can return to COLD. The reservation itself stores no Heap
-        // pointer and keeps the source selector terminal on every later error.
-        let reservation = match unsafe { subprocess.begin_main_heap_publication() } {
+        // so it can return to COLD. The subprocess atomic still stores no
+        // pointer, while the private token binds this exact candidate and
+        // keeps the source selector terminal on every later error.
+        let heap_identity = NonNull::from(&mut *heap);
+        let reservation = match unsafe { subprocess.begin_main_heap_publication(heap_identity) } {
             Ok(publication) => publication,
             Err(error) => {
                 storage.release_unstarted_heap_foundation_claim();
@@ -446,9 +449,7 @@ impl MainStaticHeapFoundation {
         // now has exactly `src/init.c:196`'s kind-only static memory ID. The
         // matching selected bootstrap keeps this subprocess's source-main
         // branch exclusive until it either completes or retains.
-        let mut publication = match unsafe {
-            subprocess.publish_main_heap_identity(reservation, NonNull::from(&mut *heap))
-        } {
+        let mut publication = match unsafe { subprocess.publish_main_heap_identity(reservation) } {
             Ok(publication) => publication,
             Err(error) => {
                 selection.retain_after_main_heap_reservation();
