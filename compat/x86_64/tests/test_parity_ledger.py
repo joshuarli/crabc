@@ -3423,7 +3423,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v15"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v16"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -3433,6 +3433,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "compat/x86_64/headers-layouts-foundation.toml",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/headers_layouts_aggregate.py",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/run_headers_layouts_aggregate.sh",
             headers_layouts["source_owners"],
         )
         self.assertIn("compat/upstreams.toml", headers_layouts["source_owners"])
@@ -3542,6 +3550,17 @@ class X86ParityLedgerTests(unittest.TestCase):
             report["header_foundation_prototype_layout_matrix_row_count"],
             1337,
         )
+        aggregate_control = manifest["aggregate_control"]
+        assert isinstance(aggregate_control, dict)
+        self.assertEqual(
+            aggregate_control["command"],
+            "./scripts/dev-x86_64.sh headers-layouts-aggregate",
+        )
+        self.assertFalse(aggregate_control["family_completion"])
+        self.assertFalse(aggregate_control["family_promotion"])
+        self.assertFalse(aggregate_control["public_support"])
+        self.assertEqual(aggregate_control["direct_probe_count"], 55)
+        self.assertEqual(aggregate_control["profile_obligation_count"], 21)
         feature_visibility = manifest["feature_visibility_matrix"]
         assert isinstance(feature_visibility, dict)
         self.assertEqual(

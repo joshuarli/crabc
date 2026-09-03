@@ -49,6 +49,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   campaign-promotion-check  run the final promotion gate when it is ready
   campaign-all  run the complete native x86 campaign gate sequence
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
+  headers-layouts-aggregate  run finite non-promoting header accounting evidence
   image  build the pinned Linux/amd64 core-evidence image
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   linux-5-10-uapi  verify the fixed Linux 5.10 x86 exported-UAPI input
@@ -2574,6 +2575,10 @@ run_public_header_surface() {
 
 run_candidate_header_closure() {
     run_in_container bash /workspace/compat/x86_64/run_candidate_header_closure.sh
+}
+
+run_headers_layouts_aggregate() {
+    run_in_container bash /workspace/compat/x86_64/run_headers_layouts_aggregate.sh
 }
 
 run_installed_header_tree_closure() {
@@ -5151,6 +5156,7 @@ case "$command" in
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
+    headers-layouts-aggregate) ;;
     installed-header-tree-closure) ;;
     selected-header-install-projection) ;;
     header-callable-visibility-matrix) ;;
@@ -5296,6 +5302,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "candidate-header-closure takes no arguments"
         ensure_image
         run_candidate_header_closure
+        ;;
+    headers-layouts-aggregate)
+        [ "$#" -eq 0 ] || fail "headers-layouts-aggregate takes no arguments"
+        ensure_image
+        run_headers_layouts_aggregate
         ;;
     installed-header-tree-closure)
         [ "$#" -eq 0 ] || fail "installed-header-tree-closure takes no arguments"

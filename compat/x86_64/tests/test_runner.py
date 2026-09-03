@@ -1732,6 +1732,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    string-duplication-header-abi) ;;", source)
         self.assertIn("    linux-5-10-uapi) ;;", source)
         self.assertIn("    candidate-header-closure) ;;", source)
+        self.assertIn("    headers-layouts-aggregate) ;;", source)
         self.assertIn("    installed-header-tree-closure) ;;", source)
         self.assertIn("    selected-header-install-projection) ;;", source)
         self.assertIn("    header-callable-visibility-matrix) ;;", source)
@@ -1867,6 +1868,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto",
             "linux-5-10-uapi",
             "candidate-header-closure",
+            "headers-layouts-aggregate",
             "installed-header-tree-closure",
             "selected-header-install-projection",
             "header-callable-visibility-matrix",

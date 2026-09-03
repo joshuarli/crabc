@@ -70,6 +70,13 @@ HEADER_LAYOUT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml
 HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH = (
     ROOT / "compat" / "x86_64" / "headers-layouts-foundation.toml"
 )
+HEADER_LAYOUTS_AGGREGATE_PATH = ROOT / "compat" / "x86_64" / "headers_layouts_aggregate.py"
+HEADER_LAYOUTS_AGGREGATE_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_headers_layouts_aggregate.sh"
+)
+HEADER_LAYOUTS_AGGREGATE_REPORT_PATH = (
+    ROOT / "compat" / "x86_64" / "generated" / "headers_layouts_aggregate" / "report.json"
+)
 HEADER_CALLABLE_VISIBILITY_MATRIX_CONTRACT_PATH = (
     ROOT / "compat" / "x86_64" / "header_callable_visibility_matrix.toml"
 )
@@ -163,7 +170,8 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v15"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v16"
+EXPECTED_HEADER_LAYOUTS_AGGREGATE_COMMAND = "./scripts/dev-x86_64.sh headers-layouts-aggregate"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -3055,6 +3063,7 @@ def validate_header_layout_foundation_manifest(
         "static_c_abi_exports",
         "policy",
         "completion",
+        "aggregate_control",
         "profile_matrix",
         "uapi_input",
         "uapi_wrapper_matrix",
@@ -3417,6 +3426,10 @@ def validate_header_layout_foundation_manifest(
         "compat/upstreams.toml",
         "compat/x86_64/headers-layouts-foundation.toml",
         "compat/x86_64/headers-layouts.toml",
+        "compat/x86_64/headers_layouts_aggregate.py",
+        "compat/x86_64/run_headers_layouts_aggregate.sh",
+        "compat/x86_64/tests/test_headers_layouts_aggregate.py",
+        "compat/x86_64/generated/headers_layouts_aggregate/report.json",
         "compat/x86_64/feature_archive_roster.py",
         "compat/x86_64/header_callable_inventory.toml",
         "compat/x86_64/header_callable_inventory.py",
@@ -3499,6 +3512,205 @@ def validate_header_layout_foundation_manifest(
         "scripts/dev-x86_64.sh",
     ):
         require(owner in source_owners, f"libc.headers-layouts must own {owner}")
+
+    aggregate_control = manifest["aggregate_control"]
+    require(
+        isinstance(aggregate_control, Mapping),
+        "header-foundation aggregate control must be a table",
+    )
+    require(
+        set(aggregate_control)
+        == {
+            "id",
+            "state",
+            "owner",
+            "command",
+            "generated_report",
+            "required_result",
+            "direct_manifest",
+            "direct_probe_count",
+            "profile_obligation_count",
+            "completion_keys",
+            "language_profiles",
+            "header_classes",
+            "abi_facets",
+            "linkage_owners",
+            "evidence_tables",
+            "supporting_commands",
+            "source_owners",
+            "family_completion",
+            "family_promotion",
+            "public_support",
+            "description",
+            "runner",
+        },
+        "header-foundation aggregate control keys drifted",
+    )
+    require(
+        aggregate_control.get("id") == "x86-headers-layouts-accounting-control"
+        and aggregate_control.get("state") == "partial-verified"
+        and aggregate_control.get("owner") == "libc.headers-layouts"
+        and aggregate_control.get("command") == EXPECTED_HEADER_LAYOUTS_AGGREGATE_COMMAND
+        and aggregate_control.get("required_result") == "checked-accounted-partial-report"
+        and aggregate_control.get("direct_manifest") == "compat/x86_64/headers-layouts.toml"
+        and aggregate_control.get("direct_probe_count") == 55
+        and aggregate_control.get("profile_obligation_count") == 21
+        and aggregate_control.get("family_completion") is False
+        and aggregate_control.get("family_promotion") is False
+        and aggregate_control.get("public_support") is False,
+        "header-foundation aggregate control contract drifted",
+    )
+    require(
+        isinstance(aggregate_control.get("description"), str)
+        and "finite" in aggregate_control["description"]
+        and "cannot change family status" in aggregate_control["description"],
+        "header-foundation aggregate control description drifted",
+    )
+    aggregate_report_path = repository_path(
+        str(aggregate_control.get("generated_report", "")),
+        "header-foundation aggregate control generated report",
+    )
+    require(
+        aggregate_report_path == HEADER_LAYOUTS_AGGREGATE_REPORT_PATH,
+        "header-foundation aggregate control report path drifted",
+    )
+    aggregate_owners = nonempty_strings(
+        aggregate_control.get("source_owners"),
+        "header-foundation aggregate control source owners",
+    )
+    require(
+        aggregate_owners
+        == [
+            "compat/x86_64/headers_layouts_aggregate.py",
+            "compat/x86_64/run_headers_layouts_aggregate.sh",
+            "compat/x86_64/tests/test_headers_layouts_aggregate.py",
+            "compat/x86_64/generated/headers_layouts_aggregate/report.json",
+        ],
+        "header-foundation aggregate control source-owner roster drifted",
+    )
+    for owner in aggregate_owners:
+        require(owner in source_owners, f"header-foundation aggregate control source owner is not owned: {owner}")
+    require(
+        HEADER_LAYOUTS_AGGREGATE_PATH.is_file()
+        and HEADER_LAYOUTS_AGGREGATE_RUNNER_PATH.is_file()
+        and HEADER_LAYOUTS_AGGREGATE_REPORT_PATH.is_file(),
+        "header-foundation aggregate control files are missing",
+    )
+
+    completion_keys = nonempty_strings(
+        aggregate_control.get("completion_keys"),
+        "header-foundation aggregate control completion keys",
+    )
+    require(
+        completion_keys == sorted(completion_keys)
+        and completion_keys == sorted(completion),
+        "header-foundation aggregate control completion coverage drifted",
+    )
+    language_profile_ids = [
+        entry.get("id")
+        for entry in manifest.get("language_profile", [])
+        if isinstance(entry, Mapping)
+    ]
+    header_class_ids = [
+        entry.get("id")
+        for entry in manifest.get("header_class", [])
+        if isinstance(entry, Mapping)
+    ]
+    abi_facet_ids = [
+        entry.get("id")
+        for entry in manifest.get("abi_facet", [])
+        if isinstance(entry, Mapping)
+    ]
+    linkage_owner_ids = [
+        entry.get("id")
+        for entry in manifest.get("linkage_owner", [])
+        if isinstance(entry, Mapping)
+    ]
+    require(
+        aggregate_control.get("language_profiles") == language_profile_ids
+        and aggregate_control.get("header_classes") == header_class_ids
+        and aggregate_control.get("abi_facets") == abi_facet_ids
+        and aggregate_control.get("linkage_owners") == linkage_owner_ids,
+        "header-foundation aggregate control roster coverage drifted",
+    )
+    expected_evidence_tables = [
+        "closure_diagnostic",
+        "feature_visibility_matrix",
+        "callable_feature_visibility_matrix",
+        "prototype_layout_matrix",
+        "callable_disposition",
+        "selected_callable_provider_linkage_audit",
+        "selected_header_install_projection",
+        "uapi_wrapper_matrix",
+        "ioctl_header_profile_matrix",
+        "sys_io_header_profile_matrix",
+        "epoll_header_profile_matrix",
+        "event_descriptors_header_profile_matrix",
+        "dirent_header_profile_matrix",
+        "stdlib_header_profile_matrix",
+        "timeval_transitive_header_profile_matrix",
+        "sys_time_direct_header_profile_matrix",
+        "access_header_profile_matrix",
+        "xattr_header_profile_matrix",
+    ]
+    require(
+        aggregate_control.get("evidence_tables") == expected_evidence_tables,
+        "header-foundation aggregate control evidence-table coverage drifted",
+    )
+    expected_supporting_commands = [
+        "./scripts/dev-x86_64.sh musl-oracle",
+        "./scripts/dev-x86_64.sh linux-5-10-uapi",
+        "./scripts/dev-x86_64.sh installed-header-tree-closure",
+        "./scripts/dev-x86_64.sh header-callable-linkage-audit",
+    ]
+    require(
+        aggregate_control.get("supporting_commands") == expected_supporting_commands,
+        "header-foundation aggregate control supporting command coverage drifted",
+    )
+    expected_runner_commands: list[str] = []
+    for table in expected_evidence_tables:
+        value = manifest[table]
+        entries = value if isinstance(value, list) else [value]
+        for entry in entries:
+            require(isinstance(entry, Mapping), f"header-foundation aggregate evidence {table} is invalid")
+            command = entry.get("command")
+            require(isinstance(command, str) and command, f"header-foundation aggregate evidence {table} command is invalid")
+            expected_runner_commands.append(command)
+    expected_runner_commands.extend(expected_supporting_commands)
+    runners = aggregate_control.get("runner")
+    require(isinstance(runners, list), "header-foundation aggregate control runners are invalid")
+    runner_commands: list[str] = []
+    for index, runner in enumerate(runners):
+        require(isinstance(runner, Mapping), f"header-foundation aggregate runner {index} drifted")
+        command = runner.get("command")
+        expected_keys = (
+            {"command", "script", "outcome"}
+            if command == "./scripts/dev-x86_64.sh header-callable-linkage-audit"
+            else {"command", "script"}
+        )
+        require(set(runner) == expected_keys, f"header-foundation aggregate runner {index} drifted")
+        script = runner.get("script")
+        require(isinstance(command, str) and isinstance(script, str), f"header-foundation aggregate runner {index} is invalid")
+        if command == "./scripts/dev-x86_64.sh header-callable-linkage-audit":
+            require(
+                script == "compat/x86_64/run_header_callable_linkage_audit.sh"
+                and runner.get("outcome") == "accounted-incomplete",
+                "header-foundation aggregate accounted-incomplete runner drifted",
+            )
+        runner_commands.append(command)
+        script_path = repository_path(script, f"header-foundation aggregate runner {index} script")
+        require(script_path.suffix == ".sh", f"header-foundation aggregate runner {index} is not a shell runner")
+    require(
+        runner_commands == expected_runner_commands
+        and len(runner_commands) == len(set(runner_commands)),
+        "header-foundation aggregate runner command coverage drifted",
+    )
+    dispatcher = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    require(
+        "    headers-layouts-aggregate)" in dispatcher
+        and HEADER_LAYOUTS_AGGREGATE_RUNNER_PATH.name in dispatcher,
+        "header-foundation aggregate control is absent from the native dispatcher",
+    )
 
     profile_matrix = manifest["profile_matrix"]
     require(isinstance(profile_matrix, Mapping), "header-foundation profile_matrix must be a table")

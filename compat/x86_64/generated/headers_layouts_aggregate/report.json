@@ -1,0 +1,1077 @@
+{
+  "abi_facet_count": 24,
+  "accounting_complete": true,
+  "blocker_counts": {
+    "callable_provider_unprovided": 366,
+    "callable_visibility_mismatch_rows": 177,
+    "declaration_identity_mismatch_rows": 539,
+    "declaration_source_form_differences": 2819,
+    "prototype_or_named_declaration_mismatch_rows": 617
+  },
+  "blockers": [
+    "declaration-macro-identity",
+    "declaration-source-forms",
+    "callable-visibility",
+    "prototype-or-named-declarations",
+    "callable-provider-closure",
+    "record-byte-layouts",
+    "runtime-semantics",
+    "family-promotion"
+  ],
+  "completion_coverage": [
+    {
+      "key": "abi_facet_matrix",
+      "value": false
+    },
+    {
+      "key": "abi_facets_accounted",
+      "value": true
+    },
+    {
+      "key": "access_header_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "c11_consumer_matrix",
+      "value": true
+    },
+    {
+      "key": "callable_disposition",
+      "value": true
+    },
+    {
+      "key": "callable_feature_visibility_matrix",
+      "value": true
+    },
+    {
+      "key": "callable_linkage_audit",
+      "value": false
+    },
+    {
+      "key": "callable_linkage_owners_accounted",
+      "value": true
+    },
+    {
+      "key": "candidate_transitive_include_closure",
+      "value": true
+    },
+    {
+      "key": "cxx17_consumer_matrix",
+      "value": true
+    },
+    {
+      "key": "dirent_header_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "epoll_header_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "event_descriptors_header_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "family_promotion",
+      "value": false
+    },
+    {
+      "key": "feature_modes_accounted",
+      "value": true
+    },
+    {
+      "key": "feature_visibility_matrix",
+      "value": true
+    },
+    {
+      "key": "inventory_accounted",
+      "value": true
+    },
+    {
+      "key": "ioctl_header_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "language_profiles_accounted",
+      "value": true
+    },
+    {
+      "key": "legacy_direct_inputs_accounted",
+      "value": true
+    },
+    {
+      "key": "project_only_paths_accounted",
+      "value": true
+    },
+    {
+      "key": "prototype_layout_matrix",
+      "value": true
+    },
+    {
+      "key": "public_support",
+      "value": false
+    },
+    {
+      "key": "runtime_completion",
+      "value": false
+    },
+    {
+      "key": "selected_callable_provider_linkage_audit",
+      "value": true
+    },
+    {
+      "key": "selected_header_install_projection",
+      "value": true
+    },
+    {
+      "key": "stdlib_header_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "sys_io_header_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "sys_time_direct_header_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "timeval_transitive_header_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "uapi_paths_accounted",
+      "value": true
+    },
+    {
+      "key": "uapi_wrapper_profile_matrix_slice",
+      "value": true
+    },
+    {
+      "key": "xattr_header_profile_matrix_slice",
+      "value": true
+    }
+  ],
+  "control": {
+    "id": "x86-headers-layouts-accounting-control",
+    "required_result": "checked-accounted-partial-report",
+    "state": "partial-verified"
+  },
+  "direct_probe_count": 55,
+  "direct_probes": [
+    {
+      "command": "./scripts/dev-x86_64.sh header-abi-project",
+      "id": "project",
+      "runner": "compat/x86_64/run_project_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh math-complex-header-abi",
+      "id": "math-complex",
+      "runner": "compat/x86_64/run_math_complex_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh sys-reg-header-abi",
+      "id": "sys-reg",
+      "runner": "compat/x86_64/run_sys_reg_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh types-header-abi",
+      "id": "types",
+      "runner": "compat/x86_64/run_types_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh stddef-header-abi",
+      "id": "stddef",
+      "runner": "compat/x86_64/run_stddef_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh stat-header-abi",
+      "id": "stat",
+      "runner": "compat/x86_64/run_stat_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh utime-header-abi",
+      "id": "utime",
+      "runner": "compat/x86_64/run_utime_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh pthread-c11-header-abi",
+      "id": "pthread-c11",
+      "runner": "compat/x86_64/run_pthread_c11_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh pthread-cancellation-header-abi",
+      "id": "pthread-cancellation",
+      "runner": "compat/x86_64/run_pthread_cancellation_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh stdio-standard-header-abi",
+      "id": "stdio-standard",
+      "runner": "compat/x86_64/run_stdio_standard_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh ctype-header-abi",
+      "id": "ctype",
+      "runner": "compat/x86_64/run_ctype_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh integer-arithmetic-header-abi",
+      "id": "integer-arithmetic",
+      "runner": "compat/x86_64/run_integer_arithmetic_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh integer-parse-header-abi",
+      "id": "integer-parse",
+      "runner": "compat/x86_64/run_integer_parse_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh float-parse-header-abi",
+      "id": "float-parse",
+      "runner": "compat/x86_64/run_float_parse_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh intmax-arithmetic-header-abi",
+      "id": "intmax-arithmetic",
+      "runner": "compat/x86_64/run_intmax_arithmetic_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh credential-observation-header-abi",
+      "id": "credential-observation",
+      "runner": "compat/x86_64/run_credential_observation_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh login-name-header-abi",
+      "id": "login-name",
+      "runner": "compat/x86_64/run_login_name_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh child-reaping-header-abi",
+      "id": "child-reaping",
+      "runner": "compat/x86_64/run_child_reaping_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh immediate-termination-header-abi",
+      "id": "immediate-termination",
+      "runner": "compat/x86_64/run_immediate_termination_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh callback-algorithms-header-abi",
+      "id": "callback-algorithms",
+      "runner": "compat/x86_64/run_callback_algorithms_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh ffs-header-abi",
+      "id": "ffs",
+      "runner": "compat/x86_64/run_ffs_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh memccpy-header-abi",
+      "id": "memccpy",
+      "runner": "compat/x86_64/run_memccpy_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh aio-error-header-abi",
+      "id": "aio-error",
+      "runner": "compat/x86_64/run_aio_error_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh byte-strings-header-abi",
+      "id": "byte-strings",
+      "runner": "compat/x86_64/run_byte_strings_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh memory-search-header-abi",
+      "id": "memory-search",
+      "runner": "compat/x86_64/run_memory_search_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh string-copy-header-abi",
+      "id": "string-copy",
+      "runner": "compat/x86_64/run_string_copy_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh random-entropy-header-abi",
+      "id": "random-entropy",
+      "runner": "compat/x86_64/run_random_entropy_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh time-header-abi",
+      "id": "time",
+      "runner": "compat/x86_64/run_time_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh poll-header-abi",
+      "id": "poll",
+      "runner": "compat/x86_64/run_poll_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh select-header-abi",
+      "id": "select",
+      "runner": "compat/x86_64/run_select_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh fcntl-header-abi",
+      "id": "fcntl",
+      "runner": "compat/x86_64/run_fcntl_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh ioctl-header-abi",
+      "id": "ioctl",
+      "runner": "compat/x86_64/run_ioctl_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh sys-io-header-abi",
+      "id": "sys-io",
+      "runner": "compat/x86_64/run_sys_io_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh unistd-header-abi",
+      "id": "unistd",
+      "runner": "compat/x86_64/run_unistd_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh system-header-abi",
+      "id": "system",
+      "runner": "compat/x86_64/run_system_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh syscall-header-abi",
+      "id": "syscall",
+      "runner": "compat/x86_64/run_x86_syscall_header.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh signal-header-abi",
+      "id": "signal",
+      "runner": "compat/x86_64/run_signal_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh termios-header-abi",
+      "id": "termios",
+      "runner": "compat/x86_64/run_termios_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh mman-header-abi",
+      "id": "mman",
+      "runner": "compat/x86_64/run_mman_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh resource-header-abi",
+      "id": "resource",
+      "runner": "compat/x86_64/run_resource_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh socket-header-abi",
+      "id": "socket",
+      "runner": "compat/x86_64/run_socket_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh tcp-header-abi",
+      "id": "tcp",
+      "runner": "compat/x86_64/run_tcp_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh nameser-header-abi",
+      "id": "nameser",
+      "runner": "compat/x86_64/run_nameser_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh quota-header-abi",
+      "id": "quota",
+      "runner": "compat/x86_64/run_quota_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh sched-cpu-macros-header-abi",
+      "id": "sched-cpu-macros",
+      "runner": "compat/x86_64/run_sched_cpu_macros_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh fanotify-header-abi",
+      "id": "fanotify",
+      "runner": "compat/x86_64/run_fanotify_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh inet-address-header-abi",
+      "id": "inet-address",
+      "runner": "compat/x86_64/run_inet_address_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh epoll-header-abi",
+      "id": "epoll",
+      "runner": "compat/x86_64/run_epoll_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
+      "id": "timeval-transitive",
+      "runner": "compat/x86_64/run_timeval_transitive_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh sys-time-direct-header-abi",
+      "id": "sys-time-direct",
+      "runner": "compat/x86_64/run_sys_time_direct_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh access-header-abi",
+      "id": "access-header",
+      "runner": "compat/x86_64/run_access_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh xattr-header-abi",
+      "id": "xattr-header",
+      "runner": "compat/x86_64/run_xattr_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh machine-context-header-abi",
+      "id": "machine-context",
+      "runner": "compat/x86_64/run_machine_context_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh event-descriptors-header-abi",
+      "id": "event-descriptors",
+      "runner": "compat/x86_64/run_event_descriptors_header_abi.sh"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh dirent-header-abi",
+      "id": "dirent",
+      "runner": "compat/x86_64/run_dirent_header_abi.sh"
+    }
+  ],
+  "evidence": [
+    {
+      "command": "./scripts/dev-x86_64.sh candidate-header-closure",
+      "id": "isolated-candidate-header-closure",
+      "state": "partial-verified",
+      "table": "closure_diagnostic"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh header-declaration-macro-visibility-matrix",
+      "id": "all-header-declaration-macro-feature-visibility-matrix",
+      "state": "partial-verified",
+      "table": "feature_visibility_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh header-callable-visibility-matrix",
+      "id": "all-header-callable-feature-visibility-matrix",
+      "state": "partial-verified",
+      "table": "callable_feature_visibility_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh header-abi-matrix",
+      "id": "generated-x86-prototype-layout-matrix",
+      "state": "partial-verified",
+      "table": "prototype_layout_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh header-callable-disposition",
+      "id": "header-callable-disposition",
+      "state": "partial-verified",
+      "table": "callable_disposition"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
+      "id": "selected-header-callable-provider-linkage-audit",
+      "state": "partial-verified",
+      "table": "selected_callable_provider_linkage_audit"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh selected-header-install-projection",
+      "id": "x86-selected-header-install-projection",
+      "state": "partial-verified",
+      "table": "selected_header_install_projection"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh uapi-wrapper-matrix",
+      "id": "linux-5.10-uapi-wrapper-profile-matrix",
+      "state": "partial-verified",
+      "table": "uapi_wrapper_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh ioctl-header-abi",
+      "id": "x86-ioctl-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "ioctl_header_profile_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh sys-io-header-abi",
+      "id": "x86-sys-io-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "sys_io_header_profile_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh epoll-header-abi",
+      "id": "x86-epoll-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "epoll_header_profile_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh event-descriptors-header-abi",
+      "id": "x86-event-descriptors-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "event_descriptors_header_profile_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh dirent-header-abi",
+      "id": "x86-dirent-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "dirent_header_profile_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh stdlib-header-abi",
+      "id": "x86-stdlib-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "stdlib_header_profile_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
+      "id": "x86-timeval-transitive-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "timeval_transitive_header_profile_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh sys-time-direct-header-abi",
+      "id": "x86-sys-time-direct-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "sys_time_direct_header_profile_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh access-header-abi",
+      "id": "x86-access-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "access_header_profile_matrix"
+    },
+    {
+      "command": "./scripts/dev-x86_64.sh xattr-header-abi",
+      "id": "x86-xattr-header-profile-matrix",
+      "state": "partial-verified",
+      "table": "xattr_header_profile_matrix"
+    }
+  ],
+  "family": "libc.headers-layouts",
+  "family_completion": false,
+  "generic_reports": [
+    {
+      "id": "declaration-macro-visibility",
+      "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
+      "schema": "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v1",
+      "sha256": "87a005d9d0e8f21cf831baedf920fde2f0aea3a7f924c34078277ee6093e1c0f",
+      "summary": {
+        "candidate_only_identity_count": 12954,
+        "candidate_only_identity_kind_counts": {
+          "function": 850,
+          "macro": 9044,
+          "record": 233,
+          "typedef": 2785,
+          "variable": 42
+        },
+        "candidate_public_header_count": 191,
+        "comparable_row_count": 1280,
+        "comparison_counts": {
+          "candidate-only-pending-c-abi-policy": 56,
+          "matched": 741,
+          "mismatch": 539,
+          "oracle-not-applicable": 1
+        },
+        "complete": false,
+        "incomplete_reasons": [
+          "539 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+          "1 pinned-musl header/profile rows are oracle-not-applicable",
+          "56 project-only header/profile rows remain pending C ABI policy",
+          "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
+        ],
+        "matched_identity_count": 286613,
+        "mismatch_row_count": 539,
+        "oracle_not_applicable_candidate_fact_count": 117,
+        "oracle_not_applicable_row_count": 1,
+        "pinned_public_header_count": 183,
+        "pinned_row_count": 1281,
+        "profile_count": 7,
+        "project_only_candidate_fact_count": 2125,
+        "project_only_header_count": 8,
+        "project_only_row_count": 56,
+        "reference_only_identity_count": 8751,
+        "reference_only_identity_kind_counts": {
+          "function": 71,
+          "macro": 8544,
+          "record": 78,
+          "typedef": 49,
+          "variable": 9
+        },
+        "row_count": 1337,
+        "source_form_comparison_counts": {
+          "candidate-only-pending-c-abi-policy": 56,
+          "matched": 663,
+          "mismatch": 617,
+          "oracle-not-applicable": 1
+        },
+        "source_form_difference_count": 2819,
+        "source_form_difference_row_count": 453,
+        "source_form_only_difference_row_count": 78
+      },
+      "table": "feature_visibility_matrix"
+    },
+    {
+      "id": "callable-visibility",
+      "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
+      "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
+      "sha256": "613823c077a2461be3f12c4d42a13e65e54778457c86a003091188087d17d989",
+      "summary": {
+        "candidate_only_callable_count": 1862,
+        "candidate_public_header_count": 191,
+        "comparable_row_count": 1280,
+        "comparison_counts": {
+          "candidate-only-retained-pending-c-abi-policy": 56,
+          "matched": 1103,
+          "mismatch": 177,
+          "oracle-not-applicable": 1
+        },
+        "complete": false,
+        "incomplete_reasons": [
+          "177 comparable pinned header/profile rows have callable visibility differences",
+          "1 pinned-musl header/profile rows are oracle-not-applicable",
+          "56 project-only header/profile rows remain pending C ABI policy"
+        ],
+        "matched_callable_count": 34520,
+        "mismatch_row_count": 177,
+        "oracle_not_applicable_candidate_visible_callable_count": 21,
+        "oracle_not_applicable_row_count": 1,
+        "pinned_public_header_count": 183,
+        "pinned_row_count": 1281,
+        "profile_count": 7,
+        "project_only_callable_count": 407,
+        "project_only_header_count": 8,
+        "project_only_row_count": 56,
+        "reference_only_callable_count": 172,
+        "row_count": 1337
+      },
+      "table": "callable_feature_visibility_matrix"
+    },
+    {
+      "id": "prototype-layout",
+      "path": "compat/x86_64/generated/header_abi_matrix/report.json",
+      "schema": "crabc.x86_64-header-abi-matrix-report/v1",
+      "sha256": "77588ce898c0c226b0c3620d75dc38b96acc27518e25011d6dd2fa2fbe86dcc2",
+      "summary": {
+        "candidate_public_header_count": 191,
+        "comparison_counts": {
+          "candidate-only-pending-c-abi-policy": 56,
+          "matched": 663,
+          "mismatch": 617,
+          "oracle-not-applicable": 1
+        },
+        "complete": false,
+        "incomplete_reasons": [
+          "617 comparable header/profile rows have prototype or named declaration-form differences",
+          "1 pinned-musl header/profile rows are oracle-not-applicable",
+          "56 project-only header/profile rows remain pending C ABI policy",
+          "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
+        ],
+        "mismatch_fact_counts": {
+          "candidate_only_count": 12954,
+          "incompatible_count": 2819,
+          "reference_only_count": 8751
+        },
+        "mismatch_row_count": 617,
+        "pinned_public_header_count": 183,
+        "profile_count": 7,
+        "row_count": 1337
+      },
+      "table": "prototype_layout_matrix"
+    },
+    {
+      "id": "callable-disposition",
+      "path": "compat/x86_64/header_callable_disposition.json",
+      "schema": "crabc.x86_64-header-callable-disposition-report/v1",
+      "sha256": "69411c63b195d759878364fad03451936e46f9e19c70cf483eeafc6250aa52c5",
+      "summary": {
+        "candidate_external_callable_count": 1526,
+        "declared_unverified_feature_callable_count": 0,
+        "default_static_callable_count": 1113,
+        "deferred_resolution_counts": {
+          "compiler-builtin": 1,
+          "consumer-supplied": 1,
+          "oracle-declared-no-provider": 7,
+          "planned-provider": 351,
+          "policy-decision-required": 6
+        },
+        "final_provider_archive_closure_complete": false,
+        "header_declaration_parity_complete": false,
+        "header_ownership_routing_complete": true,
+        "missing_reference_declaration_name_count": 0,
+        "missing_reference_declaration_record_count": 0,
+        "missing_reference_declaration_routing_complete": true,
+        "primary_disposition_exact_coverage": true,
+        "undispositioned_candidate_callable_count": 0,
+        "undispositioned_missing_reference_name_count": 0,
+        "unprovided_callable_count": 366,
+        "verified_feature_callable_count": 47
+      },
+      "table": "callable_disposition"
+    }
+  ],
+  "header_classes": [
+    "pinned-non-uapi",
+    "pinned-uapi-inputs",
+    "project-only-extensions"
+  ],
+  "inputs": [
+    {
+      "path": "compat/x86_64/headers-layouts-foundation.toml",
+      "sha256": "d7e64ea537706c32dade518694495c75f7342ea93939effacc8e329b1af7979b"
+    },
+    {
+      "path": "compat/x86_64/headers-layouts.toml",
+      "sha256": "2717dfa53102dbf9eb0a1d7ebfe8278f37d07c2764e2161a7ad948a78cd9aa62"
+    },
+    {
+      "path": "compat/x86_64/parity.toml",
+      "sha256": "ed1f5ab57177a313934aad8582b5b8c594b0a588d1d7d0a8f0913f7c8d153d00"
+    },
+    {
+      "path": "compat/x86_64/public_headers.txt",
+      "sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
+    },
+    {
+      "path": "compat/x86_64/static_c_abi_exports.txt",
+      "sha256": "ba6d5107f5db1176812a9eae768519b086b7b41c7942aa81afd2cd63366bc312"
+    },
+    {
+      "path": "compat/x86_64/header_callable_inventory.json",
+      "sha256": "80fd582d3a8d91edb3a214d1105018f25313b60988270b76307f94a8a81e636f"
+    },
+    {
+      "path": "compat/x86_64/header_callable_disposition.toml",
+      "sha256": "dd9c72ef9885ff0fd0a166a40defd6be59a87f095df04f5e401f69eb1d878256"
+    },
+    {
+      "path": "compat/x86_64/header_callable_visibility_matrix.toml",
+      "sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be"
+    },
+    {
+      "path": "compat/x86_64/header_abi_matrix.toml",
+      "sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d"
+    },
+    {
+      "path": "compat/x86_64/header_declaration_macro_visibility_matrix.toml",
+      "sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8"
+    },
+    {
+      "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
+      "sha256": "87a005d9d0e8f21cf831baedf920fde2f0aea3a7f924c34078277ee6093e1c0f"
+    },
+    {
+      "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
+      "sha256": "613823c077a2461be3f12c4d42a13e65e54778457c86a003091188087d17d989"
+    },
+    {
+      "path": "compat/x86_64/generated/header_abi_matrix/report.json",
+      "sha256": "77588ce898c0c226b0c3620d75dc38b96acc27518e25011d6dd2fa2fbe86dcc2"
+    },
+    {
+      "path": "compat/x86_64/header_callable_disposition.json",
+      "sha256": "69411c63b195d759878364fad03451936e46f9e19c70cf483eeafc6250aa52c5"
+    },
+    {
+      "path": "compat/x86_64/headers_layouts_aggregate.py",
+      "sha256": "10d9f347e36dd75c929808345c69a670b2c92d12210548ed588a7834dc1b69e5"
+    },
+    {
+      "path": "compat/x86_64/run_headers_layouts_aggregate.sh",
+      "sha256": "f0bc6c1b07994f5f1802c6479bd5647d3d118bf049b291794fda9b77f0c1d082"
+    },
+    {
+      "path": "compat/x86_64/run_candidate_header_closure.sh",
+      "sha256": "68a4a3cc70db51247bc9aa826968666eed8457017d9423cbb8272191ffb63634"
+    },
+    {
+      "path": "compat/x86_64/run_header_declaration_macro_visibility_matrix.sh",
+      "sha256": "d1ea8d78f4c46d98ef7ddf40109b659a55f92475d9d33cd30b2b3516f2d71716"
+    },
+    {
+      "path": "compat/x86_64/run_header_callable_visibility_matrix.sh",
+      "sha256": "7ab7cf873fabdf5b2c4a5e95cbc2df9b2056cbfe41efdcdf14286d158a316493"
+    },
+    {
+      "path": "compat/x86_64/run_header_abi_matrix.sh",
+      "sha256": "30b99fe2c93e2c7bcf1e6608d305bf961b4c5e9aa6e2c166089535144d814b72"
+    },
+    {
+      "path": "compat/x86_64/run_header_callable_disposition.sh",
+      "sha256": "f12885b53929da4571f8ce65bd2ce52cf4cdadfc7e4eebabfe3a8e708d53bf2b"
+    },
+    {
+      "path": "compat/x86_64/run_header_callable_provider_linkage_audit.sh",
+      "sha256": "cc21c0acfbd9860079b7bde6251c538f7f62d3f4d335713ab2b359f4372c088a"
+    },
+    {
+      "path": "compat/x86_64/run_selected_header_install_projection.sh",
+      "sha256": "5aa0ca847f2644585c734f1bca39c8ba5549cfc93847a9b1b5eb246eca990208"
+    },
+    {
+      "path": "compat/x86_64/run_uapi_wrapper_matrix.sh",
+      "sha256": "d942f15d7c24ced4c6e153ba16f0c8505cfa880edc5add88b7d3c1369279067a"
+    },
+    {
+      "path": "compat/x86_64/run_ioctl_header_abi.sh",
+      "sha256": "cb04cf37a9c17dc70f57e9ade1c1a863f11a5920a213d17f8f99549677033e35"
+    },
+    {
+      "path": "compat/x86_64/run_sys_io_header_abi.sh",
+      "sha256": "fddb31deacbd65853299c09eb7b6cd3743d94ce8340ae77f34488647a72a9040"
+    },
+    {
+      "path": "compat/x86_64/run_epoll_header_abi.sh",
+      "sha256": "6fbb6f8f7bbded31c542f21f063e9182bb3e2d8d496ef7f3922feefa42f30140"
+    },
+    {
+      "path": "compat/x86_64/run_event_descriptors_header_abi.sh",
+      "sha256": "1f5d117b0a4d1873d50cd06b641df0e930eabc86b43de0d7ee66f329abb64f88"
+    },
+    {
+      "path": "compat/x86_64/run_dirent_header_abi.sh",
+      "sha256": "49b0b397860253972b541a9201a7f6d109125da05d01f9b8b2511a8a9c47956d"
+    },
+    {
+      "path": "compat/x86_64/run_stdlib_header_abi.sh",
+      "sha256": "8d3bf58cd3570fe41f807a741bdf98ac0793f314860fe29a4cbaed06c17a9c59"
+    },
+    {
+      "path": "compat/x86_64/run_timeval_transitive_header_abi.sh",
+      "sha256": "1b9ab5e71ae6ca93c3d54a76f91cf81062c383765a38c18d1f52060941deed74"
+    },
+    {
+      "path": "compat/x86_64/run_sys_time_direct_header_abi.sh",
+      "sha256": "a0de6671a0971d7c4c52e4bfd1eba0a1da36f3be5b13b67124ee05d6f841ffe1"
+    },
+    {
+      "path": "compat/x86_64/run_access_header_abi.sh",
+      "sha256": "84eb1898fafbf754b3217081c0bcc6b9fb30a2536549b075f2455caee535cc03"
+    },
+    {
+      "path": "compat/x86_64/run_xattr_header_abi.sh",
+      "sha256": "13a407b639845e35fa23f1a56f636575130029e7c62e501a2b762a7ed5bf3a10"
+    },
+    {
+      "path": "compat/x86_64/run_musl_oracle.sh",
+      "sha256": "e75847e1bb0c3de59056f1998b39a63e04dc09822e0e3128d853f6efb4af2647"
+    },
+    {
+      "path": "compat/x86_64/run_linux_5_10_uapi.sh",
+      "sha256": "7c58431e5b8894cfa538a4ec81914d8363aff997125d85e7f4c1afcf04240d0a"
+    },
+    {
+      "path": "compat/x86_64/run_installed_header_tree_closure.sh",
+      "sha256": "7df4acf67f6af8225931553d71c461de5c7c39a00131a1c04db48bf1578a71c3"
+    },
+    {
+      "path": "compat/x86_64/run_header_callable_linkage_audit.sh",
+      "sha256": "9de77c9effb7eb58492bd8367729ec7bbd6d7f8aad6ef5ab5581ca5ecf16f9ad"
+    },
+    {
+      "path": "compat/x86_64/run_project_header_abi.sh",
+      "sha256": "8226408967db053d797ff97b34e0599eb13dd187cdc1ca925fc4f4684fb6e351"
+    },
+    {
+      "path": "compat/x86_64/run_math_complex_header_abi.sh",
+      "sha256": "df38d26e6302d0e3a8c00a094033c0e5295bd9c2992a16ce5c20e75fd146a7ee"
+    },
+    {
+      "path": "compat/x86_64/run_sys_reg_header_abi.sh",
+      "sha256": "b2247e585aaa62f97a804d03907b5efb92a77a4ac56f6c8f92a0d21c808c0485"
+    },
+    {
+      "path": "compat/x86_64/run_types_header_abi.sh",
+      "sha256": "01b80fc643393a0cf18236135a723f2a809c4ad73b513f9c4588ef205b89bad9"
+    },
+    {
+      "path": "compat/x86_64/run_stddef_header_abi.sh",
+      "sha256": "cd8827145733b1f07915f7e12e9db8ae7537435a32f383a3b9ec7a34d1e250af"
+    },
+    {
+      "path": "compat/x86_64/run_stat_header_abi.sh",
+      "sha256": "a08ea748cbca6eb88fe7b802be64089373376cc5c4494c14fa977abf448f540f"
+    },
+    {
+      "path": "compat/x86_64/run_utime_header_abi.sh",
+      "sha256": "45ceeb9d2392651a57d57bfc93813bf2f0e8c6c99a3184ab4736cf9f4963b9a2"
+    },
+    {
+      "path": "compat/x86_64/run_pthread_c11_header_abi.sh",
+      "sha256": "c2b606e45e3cd5c0cbaa9c814469f52d3bb816c35effaf8973ff4b48cbf3bbe9"
+    },
+    {
+      "path": "compat/x86_64/run_pthread_cancellation_header_abi.sh",
+      "sha256": "aebe1a6b9b4f3a1edc8768d9d46df390bd8b5092e4838ad65d5372a139e70c68"
+    },
+    {
+      "path": "compat/x86_64/run_stdio_standard_header_abi.sh",
+      "sha256": "89f8248f0be04ceb4a3b59ad54bd94e4b3a80db36daee8d7f98c1ea0934d49a3"
+    },
+    {
+      "path": "compat/x86_64/run_ctype_header_abi.sh",
+      "sha256": "747d149c4ed30f41a172d4399be7564b5ac5a32fdc8416ad9798ac7641c33585"
+    },
+    {
+      "path": "compat/x86_64/run_integer_arithmetic_header_abi.sh",
+      "sha256": "c22b1bcdfcdfc328bcc8be298201e2bac6212f2ee3e0c1a319f902f790e6e7a6"
+    },
+    {
+      "path": "compat/x86_64/run_integer_parse_header_abi.sh",
+      "sha256": "7bad2ba8c51bceb0f1a4f01796f37b0cecea24115bf7d41130df715b07fdee8c"
+    },
+    {
+      "path": "compat/x86_64/run_float_parse_header_abi.sh",
+      "sha256": "7cf8dedbf221e22574f6785beae77f63807130b04fcbe69ecbf1fc2697dc598c"
+    },
+    {
+      "path": "compat/x86_64/run_intmax_arithmetic_header_abi.sh",
+      "sha256": "87c39c721d4e2ef60ba7ca9cba0c3f549a5ffaec42cb99ec464c81972bbcee5c"
+    },
+    {
+      "path": "compat/x86_64/run_credential_observation_header_abi.sh",
+      "sha256": "4677c08730c9ec9d7e4168a78a766394fad2b210579016a75a39eae1b454984a"
+    },
+    {
+      "path": "compat/x86_64/run_login_name_header_abi.sh",
+      "sha256": "af600d8830b8102b919972a50689935973ba8bde80df966c6ba43cc3b58063a8"
+    },
+    {
+      "path": "compat/x86_64/run_child_reaping_header_abi.sh",
+      "sha256": "799eff6ba8f0abe6fe82d3cef3ea0db61bdfc240a2bb1d10a182589ab1b64580"
+    },
+    {
+      "path": "compat/x86_64/run_immediate_termination_header_abi.sh",
+      "sha256": "5407cecba7942f34a6a0716d7d7964c2f47f8ad3bcefc294fdfe60a3392219ad"
+    },
+    {
+      "path": "compat/x86_64/run_callback_algorithms_header_abi.sh",
+      "sha256": "0718691f3ed51976bfa05e452c9eee8f30ae2b32767469c888be414c2dfee649"
+    },
+    {
+      "path": "compat/x86_64/run_ffs_header_abi.sh",
+      "sha256": "de8daabaa6bcb137138965cf8d9a97b16018b31b2ffc134984ce6aa6970bd9d2"
+    },
+    {
+      "path": "compat/x86_64/run_memccpy_header_abi.sh",
+      "sha256": "83edeef029784b62225200d6114a4f75be5394a58cd307e1b2f0b07334e38216"
+    },
+    {
+      "path": "compat/x86_64/run_aio_error_header_abi.sh",
+      "sha256": "efadbc4fc47b2b014fe5204c237fd9ae8442fd1db23917c57cf00f315968c827"
+    },
+    {
+      "path": "compat/x86_64/run_byte_strings_header_abi.sh",
+      "sha256": "3c0e3217a8d84cbc7f64ae05a841615d9753b570d1770321708709e56cf08429"
+    },
+    {
+      "path": "compat/x86_64/run_memory_search_header_abi.sh",
+      "sha256": "eeacbd3bd8e0a27849274a9924d8658064b718dad2bf67c20f312d75ecb52b4b"
+    },
+    {
+      "path": "compat/x86_64/run_string_copy_header_abi.sh",
+      "sha256": "29e4962668ba01296ba02caa6c06c9031d13f7ab521a8788393026ce9afab73c"
+    },
+    {
+      "path": "compat/x86_64/run_random_entropy_header_abi.sh",
+      "sha256": "dc1175f215dc91c8c91709f24a8585ff8e11edfa57411e13a048abcd6b0e78a8"
+    },
+    {
+      "path": "compat/x86_64/run_time_header_abi.sh",
+      "sha256": "0d673da9b3f6b98f7365cb9e9720cb6fbf7c5b4c5f8a54553c222158685c7520"
+    },
+    {
+      "path": "compat/x86_64/run_poll_header_abi.sh",
+      "sha256": "02865a1d5ed54394a7e881f795ba89557912a43b23f4ea88963a0c6caf4d4b38"
+    },
+    {
+      "path": "compat/x86_64/run_select_header_abi.sh",
+      "sha256": "3a04510de903df7f0a3df35f8fc279574c0bf49ef1310926d7aa94786ca665b3"
+    },
+    {
+      "path": "compat/x86_64/run_fcntl_header_abi.sh",
+      "sha256": "13b4b68d432ebe3b608a47e0f0acf218741b0f86805b8240a009c9bfb20ad0e4"
+    },
+    {
+      "path": "compat/x86_64/run_unistd_header_abi.sh",
+      "sha256": "afdc2ab10e56a3621efb263220c639c76008b89fb0566e381bfe8cb8f3c912c7"
+    },
+    {
+      "path": "compat/x86_64/run_system_header_abi.sh",
+      "sha256": "2fb826e2460b526376fc9e4d8d56a02d352e29f9dc8eac8e73d2ef43b850d3b8"
+    },
+    {
+      "path": "compat/x86_64/run_x86_syscall_header.sh",
+      "sha256": "78e8357c9627c4f44cbf79eea12e1d17b556ea2c9f1b829d3681a364e6a94f37"
+    },
+    {
+      "path": "compat/x86_64/run_signal_header_abi.sh",
+      "sha256": "e02a34ab49f07898e65d2843bb8075a55396f6181be20266ee86e0d2a3d25319"
+    },
+    {
+      "path": "compat/x86_64/run_termios_header_abi.sh",
+      "sha256": "c6d9c7451e0ac9ee15be4e916f11d588cd9eeccef84ba2fec30eada409d46b33"
+    },
+    {
+      "path": "compat/x86_64/run_mman_header_abi.sh",
+      "sha256": "04fd91c8da280005e2fd6fdbbef172186188b4ce4b894dba476d479f13a17bee"
+    },
+    {
+      "path": "compat/x86_64/run_resource_header_abi.sh",
+      "sha256": "ef5f24c31d9e8bd9af70fc437733bc5fc942501891a967a6215b32e604710fb7"
+    },
+    {
+      "path": "compat/x86_64/run_socket_header_abi.sh",
+      "sha256": "83c3b8e5e6a45c3c531eadb585dc03a9e003cddae00ddc638cd3a14fa33324ce"
+    },
+    {
+      "path": "compat/x86_64/run_tcp_header_abi.sh",
+      "sha256": "91feb3b1b23c1c3164bfbc5e0cf9a70604434bafeb816487bcfa7cd7a1bf7179"
+    },
+    {
+      "path": "compat/x86_64/run_nameser_header_abi.sh",
+      "sha256": "7455ef4521040ba46d9856276d733633b4f4d352b6554885b8a49a5c8e474a5b"
+    },
+    {
+      "path": "compat/x86_64/run_quota_header_abi.sh",
+      "sha256": "249b7cf45bb20de90d33f30a61a9058a533b134a9dd88db1c93f4fb4fdd875d1"
+    },
+    {
+      "path": "compat/x86_64/run_sched_cpu_macros_header_abi.sh",
+      "sha256": "66e272b4d609eb81290a93d37db98b9ed2feacb38eab834f5bfbfceef7edfa70"
+    },
+    {
+      "path": "compat/x86_64/run_fanotify_header_abi.sh",
+      "sha256": "ea21707fee4dacd30800522d17b90743b2010da6117cc37378711abd53ea906d"
+    },
+    {
+      "path": "compat/x86_64/run_inet_address_header_abi.sh",
+      "sha256": "7f60418289b4419d73bb746935f8b19fd32960bf4cc0be9a49785f18d4217e3b"
+    },
+    {
+      "path": "compat/x86_64/run_machine_context_header_abi.sh",
+      "sha256": "7c0eb962968b67a53a20b782f137815e03870ad5a1dd59971569c341fcb2adcd"
+    }
+  ],
+  "language_profile_count": 7,
+  "language_profiles": [
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-strict",
+    "c11-posix-2008",
+    "c11-xopen-700",
+    "c11-bsd",
+    "cxx17-strict"
+  ],
+  "linkage_owner_count": 3,
+  "linkage_owners": [
+    "current-static-c-exports",
+    "header-callable-disposition",
+    "noncallable-header-abi"
+  ],
+  "oracle": "Pinned musl 1.2.6",
+  "platform": "Linux/x86-64 little-endian",
+  "profile_obligation_count": 21,
+  "promotion_ready": false,
+  "public_support": false,
+  "schema": "crabc.x86_64-headers-layouts-aggregate-report/v1",
+  "scope": "finite native x86 header accounting only; no family completion, product admission, promotion, or public support",
+  "target": "x86_64-unknown-linux-musl"
+}

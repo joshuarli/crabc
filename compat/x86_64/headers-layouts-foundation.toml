@@ -13,7 +13,7 @@
 # `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
 # x86 `headers_install` identity; it is repeated here and in the Docker build
 # because those independent consumers cannot load TOML from one another.
-schema = "crabc.x86_64-headers-layouts-foundation/v15"
+schema = "crabc.x86_64-headers-layouts-foundation/v16"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -83,6 +83,126 @@ callable_linkage_audit = false
 runtime_completion = false
 family_promotion = false
 public_support = false
+
+# This control closes Phase 0 accounting over the current finite header
+# evidence without treating its intentionally red reports as a waiver. It
+# records every direct probe, profile/facet/ownership roster, and checked
+# generic report in one digest-bound result. `family_completion` remains false
+# until those finite blockers are actually discharged.
+[aggregate_control]
+id = "x86-headers-layouts-accounting-control"
+state = "partial-verified"
+owner = "libc.headers-layouts"
+command = "./scripts/dev-x86_64.sh headers-layouts-aggregate"
+generated_report = "compat/x86_64/generated/headers_layouts_aggregate/report.json"
+required_result = "checked-accounted-partial-report"
+direct_manifest = "compat/x86_64/headers-layouts.toml"
+direct_probe_count = 55
+profile_obligation_count = 21
+completion_keys = ["abi_facet_matrix", "abi_facets_accounted", "access_header_profile_matrix_slice", "c11_consumer_matrix", "callable_disposition", "callable_feature_visibility_matrix", "callable_linkage_audit", "callable_linkage_owners_accounted", "candidate_transitive_include_closure", "cxx17_consumer_matrix", "dirent_header_profile_matrix_slice", "epoll_header_profile_matrix_slice", "event_descriptors_header_profile_matrix_slice", "family_promotion", "feature_modes_accounted", "feature_visibility_matrix", "inventory_accounted", "ioctl_header_profile_matrix_slice", "language_profiles_accounted", "legacy_direct_inputs_accounted", "project_only_paths_accounted", "prototype_layout_matrix", "public_support", "runtime_completion", "selected_callable_provider_linkage_audit", "selected_header_install_projection", "stdlib_header_profile_matrix_slice", "sys_io_header_profile_matrix_slice", "sys_time_direct_header_profile_matrix_slice", "timeval_transitive_header_profile_matrix_slice", "uapi_paths_accounted", "uapi_wrapper_profile_matrix_slice", "xattr_header_profile_matrix_slice"]
+language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+header_classes = ["pinned-non-uapi", "pinned-uapi-inputs", "project-only-extensions"]
+abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "sys-io-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "xattr-header-profile-matrix", "uapi-input-provenance", "uapi-wrapper-profile-matrix", "project-only-extension-policy", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
+linkage_owners = ["current-static-c-exports", "header-callable-disposition", "noncallable-header-abi"]
+evidence_tables = ["closure_diagnostic", "feature_visibility_matrix", "callable_feature_visibility_matrix", "prototype_layout_matrix", "callable_disposition", "selected_callable_provider_linkage_audit", "selected_header_install_projection", "uapi_wrapper_matrix", "ioctl_header_profile_matrix", "sys_io_header_profile_matrix", "epoll_header_profile_matrix", "event_descriptors_header_profile_matrix", "dirent_header_profile_matrix", "stdlib_header_profile_matrix", "timeval_transitive_header_profile_matrix", "sys_time_direct_header_profile_matrix", "access_header_profile_matrix", "xattr_header_profile_matrix"]
+supporting_commands = ["./scripts/dev-x86_64.sh musl-oracle", "./scripts/dev-x86_64.sh linux-5-10-uapi", "./scripts/dev-x86_64.sh installed-header-tree-closure", "./scripts/dev-x86_64.sh header-callable-linkage-audit"]
+source_owners = ["compat/x86_64/headers_layouts_aggregate.py", "compat/x86_64/run_headers_layouts_aggregate.sh", "compat/x86_64/tests/test_headers_layouts_aggregate.py", "compat/x86_64/generated/headers_layouts_aggregate/report.json"]
+family_completion = false
+family_promotion = false
+public_support = false
+description = "The checked aggregate records finite current header evidence and exact remaining declaration, layout, callable-provider, runtime, and promotion blockers. It executes only reviewed direct runner paths through its dedicated native wrapper, preserves every partial report, and cannot change family status, promotion readiness, or public x86 support."
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh candidate-header-closure"
+script = "compat/x86_64/run_candidate_header_closure.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh header-declaration-macro-visibility-matrix"
+script = "compat/x86_64/run_header_declaration_macro_visibility_matrix.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh header-callable-visibility-matrix"
+script = "compat/x86_64/run_header_callable_visibility_matrix.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh header-abi-matrix"
+script = "compat/x86_64/run_header_abi_matrix.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh header-callable-disposition"
+script = "compat/x86_64/run_header_callable_disposition.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
+script = "compat/x86_64/run_header_callable_provider_linkage_audit.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh selected-header-install-projection"
+script = "compat/x86_64/run_selected_header_install_projection.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh uapi-wrapper-matrix"
+script = "compat/x86_64/run_uapi_wrapper_matrix.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh ioctl-header-abi"
+script = "compat/x86_64/run_ioctl_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh sys-io-header-abi"
+script = "compat/x86_64/run_sys_io_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh epoll-header-abi"
+script = "compat/x86_64/run_epoll_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh event-descriptors-header-abi"
+script = "compat/x86_64/run_event_descriptors_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh dirent-header-abi"
+script = "compat/x86_64/run_dirent_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh stdlib-header-abi"
+script = "compat/x86_64/run_stdlib_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh timeval-transitive-header-abi"
+script = "compat/x86_64/run_timeval_transitive_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh sys-time-direct-header-abi"
+script = "compat/x86_64/run_sys_time_direct_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh access-header-abi"
+script = "compat/x86_64/run_access_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh xattr-header-abi"
+script = "compat/x86_64/run_xattr_header_abi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh musl-oracle"
+script = "compat/x86_64/run_musl_oracle.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh linux-5-10-uapi"
+script = "compat/x86_64/run_linux_5_10_uapi.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh installed-header-tree-closure"
+script = "compat/x86_64/run_installed_header_tree_closure.sh"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh header-callable-linkage-audit"
+script = "compat/x86_64/run_header_callable_linkage_audit.sh"
+# This runner deliberately exits 1 after writing its finite red audit. The
+# aggregate accepts only that exact report through its dedicated validator;
+# every other runner remains an ordinary native pass requirement.
+outcome = "accounted-incomplete"
 
 [selected_callable_provider_linkage_audit]
 id = "selected-header-callable-provider-linkage-audit"
