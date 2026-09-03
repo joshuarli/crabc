@@ -18,8 +18,6 @@ extern int mkstemps(char *, int);
 extern void *memalign(size_t, size_t);
 extern void *valloc(size_t);
 extern size_t malloc_usable_size(void *);
-extern int putw(int, FILE *);
-extern int getw(FILE *);
 extern char *getpass(const char *);
 
 #define CHECK(condition, message) \

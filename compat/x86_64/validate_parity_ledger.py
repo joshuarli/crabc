@@ -386,23 +386,23 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 283,
-        "mismatch": 997,
+        "matched": 314,
+        "mismatch": 966,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "997 comparable header/profile rows have prototype or named declaration-form differences",
+        "966 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 40499,
-        "incompatible_count": 22208,
-        "reference_only_count": 84940,
+        "candidate_only_count": 37595,
+        "incompatible_count": 22147,
+        "reference_only_count": 84766,
     },
-    "mismatch_row_count": 997,
+    "mismatch_row_count": 966,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -417,31 +417,31 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 40499,
+    "candidate_only_identity_count": 37595,
     "candidate_only_identity_kind_counts": {
-        "function": 6835,
-        "macro": 17105,
-        "record": 975,
-        "typedef": 15187,
-        "variable": 397,
+        "function": 5382,
+        "macro": 16361,
+        "record": 953,
+        "typedef": 14562,
+        "variable": 337,
     },
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 338,
-        "mismatch": 942,
+        "matched": 367,
+        "mismatch": 913,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "942 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "913 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 210424,
-    "mismatch_row_count": 942,
+    "matched_identity_count": 210598,
+    "mismatch_row_count": 913,
     "oracle_not_applicable_candidate_fact_count": 243,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -450,25 +450,25 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 1964,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 84940,
+    "reference_only_identity_count": 84766,
     "reference_only_identity_kind_counts": {
         "enum": 66,
-        "function": 1169,
-        "macro": 81197,
-        "record": 922,
-        "typedef": 1549,
+        "function": 1089,
+        "macro": 81105,
+        "record": 921,
+        "typedef": 1548,
         "variable": 37,
     },
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 283,
-        "mismatch": 997,
+        "matched": 314,
+        "mismatch": 966,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 22208,
-    "source_form_difference_row_count": 766,
-    "source_form_only_difference_row_count": 55,
+    "source_form_difference_count": 22147,
+    "source_form_difference_row_count": 756,
+    "source_form_only_difference_row_count": 53,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -2654,23 +2654,23 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 8256,
+            "candidate_only_callable_count": 6782,
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 720,
-                "mismatch": 560,
+                "matched": 749,
+                "mismatch": 531,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "560 comparable pinned header/profile rows have callable visibility differences",
+                "531 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
-            "matched_callable_count": 32168,
-            "mismatch_row_count": 560,
+            "matched_callable_count": 32248,
+            "mismatch_row_count": 531,
             "oracle_not_applicable_candidate_visible_callable_count": 39,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
@@ -2679,7 +2679,7 @@ def require_header_callable_visibility_matrix(
             "project_only_callable_count": 414,
             "project_only_header_count": 8,
             "project_only_row_count": 56,
-            "reference_only_callable_count": 2524,
+            "reference_only_callable_count": 2444,
             "row_count": 1337,
         },
         "callable visibility matrix finite baseline drifted",
@@ -3174,12 +3174,12 @@ def validate_header_layout_foundation_manifest(
             "state": "partial-verified",
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
-            "candidate_external_callable_count": 1515,
+            "candidate_external_callable_count": 1526,
             "default_static_callable_count": 1113,
             "verified_feature_callable_count": 47,
             "verified_feature_profile_count": 21,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 355,
+            "unprovided_callable_count": 366,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3240,13 +3240,13 @@ def validate_header_layout_foundation_manifest(
             "command": EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND,
             "contract": "compat/x86_64/header_callable_disposition.toml",
             "report": "compat/x86_64/header_callable_disposition.json",
-            "candidate_external_callable_count": 1515,
+            "candidate_external_callable_count": 1526,
             "default_static_callable_count": 1113,
             "verified_feature_callable_count": 47,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 355,
-            "missing_reference_declaration_name_count": 13,
-            "missing_reference_declaration_record_count": 45,
+            "unprovided_callable_count": 366,
+            "missing_reference_declaration_name_count": 1,
+            "missing_reference_declaration_record_count": 3,
             "missing_reference_declaration_routing_complete": True,
             "header_ownership_routing_complete": True,
             "header_declaration_parity_complete": False,
@@ -3260,8 +3260,8 @@ def validate_header_layout_foundation_manifest(
     description = callable_disposition["description"]
     require(
         isinstance(description, str)
-        and "all 1,515 selected external callable names" in description
-        and "13 pinned-musl declaration names" in description
+        and "all 1,526 selected external callable names" in description
+        and "one pinned-musl declaration name" in description
         and "archive extraction" in description
         and "final C ABI provider/archive closure" in description
         and "public x86 support" in description,
@@ -6169,13 +6169,13 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "942 current comparable declaration-or-macro identity mismatch rows",
-        "338 matched identity rows",
+        "913 current comparable declaration-or-macro identity mismatch rows",
+        "367 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "22,208 same-identity source-form differences across 766 rows",
-        "55 form-only rows",
+        "22,147 same-identity source-form differences across 756 rows",
+        "53 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"declaration/macro visibility artifact description omits {phrase}")
@@ -6243,7 +6243,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "560 current comparable callable name/class mismatch rows",
+        "531 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6290,11 +6290,11 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     assert isinstance(description, str)
     for phrase in (
         "still-planned `libc.headers-layouts`",
-        "all 1,515 current names",
+        "all 1,526 current names",
         "1,113 default-static",
         "47 verified feature-provider",
-        "355 exact deferred-owner records",
-        "45 current pinned-musl missing declaration records across 13 names",
+        "366 exact deferred-owner records",
+        "3 current pinned-musl missing declaration records across one name",
         "not declaration parity",
         "does not perform archive extraction",
         "runtime semantics",
@@ -6334,8 +6334,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "355 deferred providers" in scope
-        and "13 missing reference declaration names" in scope
+        and "366 deferred providers" in scope
+        and "one missing reference declaration name" in scope
         and "not archive extraction, runtime semantics, declaration parity, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
     )
@@ -6356,26 +6356,26 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     require(
         dict(summary)
         == {
-            "candidate_external_callable_count": 1515,
+            "candidate_external_callable_count": 1526,
             "declared_unverified_feature_callable_count": 0,
             "default_static_callable_count": 1113,
             "deferred_resolution_counts": {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 8,
-                "planned-provider": 339,
+                "planned-provider": 350,
                 "policy-decision-required": 6,
             },
             "final_provider_archive_closure_complete": False,
             "header_declaration_parity_complete": False,
             "header_ownership_routing_complete": True,
-            "missing_reference_declaration_name_count": 13,
-            "missing_reference_declaration_record_count": 45,
+            "missing_reference_declaration_name_count": 1,
+            "missing_reference_declaration_record_count": 3,
             "missing_reference_declaration_routing_complete": True,
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 355,
+            "unprovided_callable_count": 366,
             "verified_feature_callable_count": 47,
         },
         "header callable disposition summary drifted",
@@ -6442,7 +6442,7 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "355-name unprovided complement",
+        "366-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -6541,7 +6541,7 @@ def require_all_header_prototype_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "997 current comparable prototype or named source-form mismatch rows",
+        "966 current comparable prototype or named source-form mismatch rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",

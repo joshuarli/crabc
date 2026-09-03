@@ -3338,14 +3338,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 338,
-                "mismatch": 942,
+                "matched": 367,
+                "mismatch": 913,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 40499, "reference_only": 84940},
+            {"candidate_only": 37595, "reference_only": 84766},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3365,8 +3365,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 283,
-                "mismatch": 997,
+                "matched": 314,
+                "mismatch": 966,
                 "oracle-not-applicable": 1,
             },
         )
@@ -3376,13 +3376,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             disposition["command"],
             "./scripts/dev-x86_64.sh header-callable-disposition",
         )
-        self.assertEqual(disposition["candidate_external_callable_count"], 1515)
+        self.assertEqual(disposition["candidate_external_callable_count"], 1526)
         self.assertEqual(disposition["default_static_callable_count"], 1113)
         self.assertEqual(disposition["verified_feature_callable_count"], 47)
         self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 355)
-        self.assertEqual(disposition["missing_reference_declaration_name_count"], 13)
-        self.assertEqual(disposition["missing_reference_declaration_record_count"], 45)
+        self.assertEqual(disposition["unprovided_callable_count"], 366)
+        self.assertEqual(disposition["missing_reference_declaration_name_count"], 1)
+        self.assertEqual(disposition["missing_reference_declaration_record_count"], 3)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
         self.assertTrue(disposition["header_ownership_routing_complete"])
         self.assertFalse(disposition["header_declaration_parity_complete"])
@@ -3395,12 +3395,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             provider_audit["command"],
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
-        self.assertEqual(provider_audit["candidate_external_callable_count"], 1515)
+        self.assertEqual(provider_audit["candidate_external_callable_count"], 1526)
         self.assertEqual(provider_audit["default_static_callable_count"], 1113)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 355)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 366)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -4499,13 +4499,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "942 current comparable declaration-or-macro identity mismatch rows",
-            "338 matched identity rows",
+            "913 current comparable declaration-or-macro identity mismatch rows",
+            "367 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "22,208 same-identity source-form differences across 766 rows",
-            "55 form-only rows",
+            "22,147 same-identity source-form differences across 756 rows",
+            "53 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -4556,7 +4556,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "997 current comparable prototype or named source-form mismatch rows",
+            "966 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",

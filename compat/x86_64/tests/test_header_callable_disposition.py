@@ -37,17 +37,17 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         DISPOSITION.validate_checked_report(report, contract)
 
         summary = report["summary"]
-        self.assertEqual(summary["candidate_external_callable_count"], 1515)
+        self.assertEqual(summary["candidate_external_callable_count"], 1526)
         self.assertEqual(summary["default_static_callable_count"], 1113)
         self.assertEqual(summary["verified_feature_callable_count"], 47)
-        self.assertEqual(summary["unprovided_callable_count"], 355)
+        self.assertEqual(summary["unprovided_callable_count"], 366)
         self.assertEqual(
             summary["deferred_resolution_counts"],
             {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 8,
-                "planned-provider": 339,
+                "planned-provider": 350,
                 "policy-decision-required": 6,
             },
         )
@@ -56,8 +56,8 @@ class HeaderCallableDispositionTests(unittest.TestCase):
             summary["unprovided_callable_count"],
         )
         self.assertEqual(summary["undispositioned_candidate_callable_count"], 0)
-        self.assertEqual(summary["missing_reference_declaration_name_count"], 13)
-        self.assertEqual(summary["missing_reference_declaration_record_count"], 45)
+        self.assertEqual(summary["missing_reference_declaration_name_count"], 1)
+        self.assertEqual(summary["missing_reference_declaration_record_count"], 3)
         self.assertEqual(summary["undispositioned_missing_reference_name_count"], 0)
         self.assertTrue(summary["missing_reference_declaration_routing_complete"])
         self.assertTrue(summary["header_ownership_routing_complete"])

@@ -111,10 +111,18 @@ FILE *fmemopen(void *, size_t, const char *);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 void setbuffer(FILE *, char *, size_t);
 void setlinebuf(FILE *);
+int fgetc_unlocked(FILE *);
+int fputc_unlocked(int, FILE *);
+int fflush_unlocked(FILE *);
+size_t fread_unlocked(void *, size_t, size_t, FILE *);
+size_t fwrite_unlocked(const void *, size_t, size_t, FILE *);
+void clearerr_unlocked(FILE *);
 char *fgetln(FILE *, size_t *);
 int feof_unlocked(FILE *);
 int ferror_unlocked(FILE *);
 int fileno_unlocked(FILE *);
+int getw(FILE *);
+int putw(int, FILE *);
 #endif
 
 /* Direct I/O */
@@ -213,6 +221,9 @@ char *cuserid(char *);
 
 /* GNU callback-backed streams */
 #ifdef _GNU_SOURCE
+char *fgets_unlocked(char *, int, FILE *);
+int fputs_unlocked(const char *, FILE *);
+
 typedef ssize_t (cookie_read_function_t)(void *, char *, size_t);
 typedef ssize_t (cookie_write_function_t)(void *, const char *, size_t);
 typedef int (cookie_seek_function_t)(void *, off_t *, int);

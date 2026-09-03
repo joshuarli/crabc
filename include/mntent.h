@@ -5,7 +5,8 @@
 extern "C" {
 #endif
 
-#include <stdio.h>
+#define __NEED_FILE
+#include <bits/alltypes.h>
 
 #define MOUNTED "/etc/mtab"
 

@@ -1714,16 +1714,16 @@ archive, runtime, installed-header, family-promotion, or public-x86 evidence.
 The wider candidate visibility for those `aio.h` rows remains a tracked parity
 question rather than being silently treated as equivalent. The static-export
 list is only an input to the default archive linkage audit. The checked
-`header-callable-disposition` report now routes all 1,515 current selected
+`header-callable-disposition` report now routes all 1,526 current selected
 external callables through current selected provider assignments or exact deferred owners, while
-separately retaining 45 missing pinned-musl declaration records across 13
-names. That closes accounting only: missing declarations remain header-parity
+separately retaining 3 missing pinned-musl declaration records across one
+name. That closes accounting only: missing declarations remain header-parity
 work, and `libc.c-abi-compat` retains final provider selection, ordinary
 archive extraction, behavior, and C-ABI closure.
 
 `header-callable-disposition` regenerates the compiler-derived callable
 inventory, then checks that its 1,113 default-static, 47 verified
-feature-provider, and 355 deferred names form one exact primary partition.
+feature-provider, and 366 deferred names form one exact primary partition.
 Its deferred groups distinguish planned semantic providers from compiler
 builtins, consumer-supplied callbacks, oracle-declared no-provider names, and
 project-only atomic policy. It neither performs archive extraction nor claims
@@ -1735,14 +1735,14 @@ to ordinarily extract the 1,113 current default-static and 47 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 355-name unprovided complement remains explicit:
+selection and behavior. Its 366-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 
 `header-abi-matrix` adds a separate checked Clang-derived 1,337-row report for
 function source declaration forms and emitted linkage spellings plus named
 typedefs, record shapes, enum values, variables, and macro replacement forms.
-Its current 997 comparable red source-form rows, one
+Its current 966 comparable red source-form rows, one
 `aio.h:c11-strict` oracle-not-applicable row, and 56 project-only rows are
 evidence to review—not parity waivers or ABI classifications. It excludes byte
 layouts, anonymous declarations, inline behavior, archive linkage, runtime,
@@ -1751,11 +1751,11 @@ family promotion, and public x86 support.
 `header-declaration-macro-visibility-matrix` derives a checked identity report
 from that same refreshed compiler collection, rather than collecting another
 header cross-product. It compares only named `(kind, name)` declaration and
-macro visibility across all 1,337 rows: 942 current identity-mismatch rows,
-338 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
+macro visibility across all 1,337 rows: 913 current identity-mismatch rows,
+367 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
 and 56 project-only rows retain checked candidate fact summaries and digests.
-Its 22,208 same-identity source-form
-differences across 766 rows—including 55 form-only rows—remain separately
+Its 22,147 same-identity source-form
+differences across 756 rows—including 53 form-only rows—remain separately
 accounted and are not an ABI-equality claim. This is generic feature-visibility
 evidence only; declaration-form equality, layouts, linkage, runtime, family
 promotion, and public x86 support remain outside it.

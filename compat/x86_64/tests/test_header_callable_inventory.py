@@ -334,6 +334,131 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         }
         self.assertEqual(missing, set())
 
+    def test_stdio_and_monetary_declarations_match_pinned_visibility(self) -> None:
+        """Keep header parity distinct from the deferred stream/locale providers."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        profiles = {
+            "all": {
+                "c11-bsd",
+                "c11-gnu",
+                "c11-posix-2008",
+                "c11-strict",
+                "c11-xopen-700",
+                "cxx17-gnu",
+                "cxx17-strict",
+            },
+            "gnu": {"c11-gnu", "cxx17-gnu", "cxx17-strict"},
+            "gnu_or_bsd": {
+                "c11-bsd",
+                "c11-gnu",
+                "cxx17-gnu",
+                "cxx17-strict",
+            },
+        }
+        expected = {
+            "clearerr_unlocked": (
+                profiles["gnu_or_bsd"],
+                {"c": "void (FILE *)", "cxx": "void (FILE *)"},
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "fflush_unlocked": (
+                profiles["gnu_or_bsd"],
+                {"c": "int (FILE *)", "cxx": "int (FILE *)"},
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "fgetc_unlocked": (
+                profiles["gnu_or_bsd"],
+                {"c": "int (FILE *)", "cxx": "int (FILE *)"},
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "fgets_unlocked": (
+                profiles["gnu"],
+                {"c": "char *(char *, int, FILE *)", "cxx": "char *(char *, int, FILE *)"},
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "fputc_unlocked": (
+                profiles["gnu_or_bsd"],
+                {"c": "int (int, FILE *)", "cxx": "int (int, FILE *)"},
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "fputs_unlocked": (
+                profiles["gnu"],
+                {"c": "int (const char *, FILE *)", "cxx": "int (const char *, FILE *)"},
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "fputws_unlocked": (
+                profiles["gnu"],
+                {
+                    "c": "int (const wchar_t *restrict, FILE *restrict)",
+                    "cxx": "int (const wchar_t *__restrict, FILE *__restrict)",
+                },
+                ["wchar.h"],
+            ),
+            "fread_unlocked": (
+                profiles["gnu_or_bsd"],
+                {
+                    "c": "size_t (void *, size_t, size_t, FILE *)",
+                    "cxx": "size_t (void *, size_t, size_t, FILE *)",
+                },
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "fwrite_unlocked": (
+                profiles["gnu_or_bsd"],
+                {
+                    "c": "size_t (const void *, size_t, size_t, FILE *)",
+                    "cxx": "size_t (const void *, size_t, size_t, FILE *)",
+                },
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "getw": (
+                profiles["gnu_or_bsd"],
+                {"c": "int (FILE *)", "cxx": "int (FILE *)"},
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "putw": (
+                profiles["gnu_or_bsd"],
+                {"c": "int (int, FILE *)", "cxx": "int (int, FILE *)"},
+                ["stdio.h", "stdio_ext.h"],
+            ),
+            "strfmon_l": (
+                profiles["all"],
+                {
+                    "c": "ssize_t (char *restrict, size_t, locale_t, const char *restrict, ...)",
+                    "cxx": "ssize_t (char *__restrict, size_t, locale_t, const char *__restrict, ...)",
+                },
+                ["monetary.h"],
+            ),
+        }
+        callables = report["callables"]
+        assert isinstance(callables, list)
+
+        for name, (visible_profiles, signatures, visible_headers) in expected.items():
+            for tree in ("reference", "candidate"):
+                rows = [
+                    row
+                    for row in callables
+                    if row.get("tree") == tree
+                    and row.get("classification") == "external"
+                    and row.get("name") == name
+                ]
+                self.assertEqual(
+                    {row["profile"] for row in rows},
+                    visible_profiles,
+                    f"{tree} {name} visibility drifted",
+                )
+                for row in rows:
+                    spelling = "cxx" if row["profile"].startswith("cxx17") else "c"
+                    self.assertEqual(row["type"], signatures[spelling])
+                    self.assertEqual(row["visible_from_headers"], visible_headers)
+
+        partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
+        unprovided = set(partition["unprovided"]["members"])
+        self.assertFalse(set(expected) & default_static)
+        self.assertTrue(set(expected) <= unprovided)
+
     def test_pthread_barrier_provider_block_is_default_static_not_unprovided(self) -> None:
         """Keep the selected barrier ABI in the default archive provider partition."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:

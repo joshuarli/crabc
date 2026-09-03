@@ -1,12 +1,13 @@
 #ifndef _SHADOW_H
 #define _SHADOW_H
 
-#include <stddef.h>
-#include <stdio.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define __NEED_FILE
+#define __NEED_size_t
+#include <bits/alltypes.h>
 
 #define SHADOW "/etc/shadow"
 

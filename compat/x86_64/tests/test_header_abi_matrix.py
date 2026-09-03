@@ -434,6 +434,78 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                     f"{row['header']}:{row['profile']} {field} GNU namespace facts",
                 )
 
+    def test_stdio_wchar_and_monetary_declarations_match_musl_forms(self) -> None:
+        """Header visibility must not promote deferred stream or locale providers."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+
+        profiles = (
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-bsd",
+            "cxx17-strict",
+        )
+
+        def assert_no_named_differences(selected_rows, names):
+            for row in selected_rows:
+                difference = row["difference"]
+                for field in ("reference_only", "candidate_only", "incompatible"):
+                    facts = [
+                        fact
+                        for fact in difference[field]
+                        if fact.get("name") in names
+                    ]
+                    self.assertEqual(
+                        facts,
+                        [],
+                        f"{row['header']}:{row['profile']} {field} stdio/locale facts",
+                    )
+
+        unlocked_gnu_or_bsd = {
+            "clearerr_unlocked",
+            "fflush_unlocked",
+            "fgetc_unlocked",
+            "fputc_unlocked",
+            "fread_unlocked",
+            "fwrite_unlocked",
+            "getw",
+            "putw",
+        }
+        unlocked_gnu_only = {"fgets_unlocked", "fputs_unlocked"}
+        stdio_profiles = {
+            "c11-bsd": unlocked_gnu_or_bsd,
+            "c11-gnu": unlocked_gnu_or_bsd | unlocked_gnu_only,
+            "cxx17-gnu": unlocked_gnu_or_bsd | unlocked_gnu_only,
+            "cxx17-strict": unlocked_gnu_or_bsd | unlocked_gnu_only,
+        }
+        for header in ("stdio.h", "stdio_ext.h"):
+            assert_no_named_differences(
+                [rows[(header, profile)] for profile in stdio_profiles],
+                set().union(*stdio_profiles.values()),
+            )
+
+        assert_no_named_differences(
+            [rows[("wchar.h", profile)] for profile in profiles],
+            {"fputws", "fgetws_unlocked", "fputws_unlocked"},
+        )
+        assert_no_named_differences(
+            [rows[("monetary.h", profile)] for profile in profiles],
+            {"strfmon_l"},
+        )
+        assert_no_named_differences(
+            [
+                rows[("monetary.h", "cxx17-gnu")],
+                rows[("monetary.h", "cxx17-strict")],
+            ],
+            {"strfmon", "strfmon_l"},
+        )
+
     def test_features_header_uses_pinned_musl_include_guard(self) -> None:
         """Keep the public feature-selection prelude's identity aligned with musl."""
         profiles = (

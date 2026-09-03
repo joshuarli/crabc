@@ -1,8 +1,21 @@
 #ifndef _PWD_H
 #define _PWD_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <features.h>
-#include <sys/types.h>
+
+#define __NEED_size_t
+#define __NEED_uid_t
+#define __NEED_gid_t
+
+#ifdef _GNU_SOURCE
+#define __NEED_FILE
+#endif
+
+#include <bits/alltypes.h>
 
 struct passwd {
     char *pw_name;
@@ -26,9 +39,12 @@ int getpwuid_r(uid_t, struct passwd *, char *, size_t, struct passwd **);
 void setpwent(void);
 #endif
 #ifdef _GNU_SOURCE
-#include <stdio.h>
 struct passwd *fgetpwent(FILE *);
 int putpwent(const struct passwd *, FILE *);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif

@@ -13,7 +13,6 @@ extern wchar_t *wcpncpy(wchar_t *, const wchar_t *, size_t);
 extern wchar_t *wcswcs(const wchar_t *, const wchar_t *);
 extern wint_t fgetwc_unlocked(FILE *);
 extern wint_t fputwc_unlocked(wchar_t, FILE *);
-extern int fputws_unlocked(const wchar_t *, FILE *);
 extern wint_t getwc_unlocked(FILE *);
 extern wint_t putwc_unlocked(wchar_t, FILE *);
 extern wint_t __fgetwc_unlocked(FILE *);

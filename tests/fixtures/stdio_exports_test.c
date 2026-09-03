@@ -3,13 +3,6 @@
 #include <string.h>
 #include <wchar.h>
 
-extern int fgetc_unlocked(FILE *);
-extern char *fgets_unlocked(char *, int, FILE *);
-extern int fputc_unlocked(int, FILE *);
-extern int fputs_unlocked(const char *, FILE *);
-extern int feof_unlocked(FILE *);
-extern int ferror_unlocked(FILE *);
-extern void clearerr_unlocked(FILE *);
 extern int __isoc99_vsscanf(const char *, const char *, va_list);
 extern int __isoc99_vfscanf(FILE *, const char *, va_list);
 extern int __isoc99_sscanf(const char *, const char *, ...);

@@ -94,13 +94,10 @@ long double wcstold(const wchar_t *, wchar_t **);
 /* Wide stdio */
 wint_t fgetwc(FILE *);
 wchar_t *fgetws(wchar_t *__restrict, int, FILE *__restrict);
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
-wchar_t *fgetws_unlocked(wchar_t *__restrict, int, FILE *__restrict);
-#endif
 wint_t getwchar(void);
 wint_t fputwc(wchar_t, FILE *);
 wint_t putwchar(wchar_t);
-int fputws(const wchar_t *, FILE *);
+int fputws(const wchar_t *__restrict, FILE *__restrict);
 wint_t ungetwc(wint_t, FILE *);
 int fwide(FILE *, int);
 wint_t getwc(FILE *);
@@ -133,9 +130,11 @@ size_t wcsftime(wchar_t *__restrict, size_t, const wchar_t *__restrict, const st
 
 #if defined(_GNU_SOURCE)
 wint_t fgetwc_unlocked(FILE *);
+wchar_t *fgetws_unlocked(wchar_t *__restrict, int, FILE *__restrict);
 wint_t getwc_unlocked(FILE *);
 wint_t getwchar_unlocked(void);
 wint_t fputwc_unlocked(wchar_t, FILE *);
+int fputws_unlocked(const wchar_t *__restrict, FILE *__restrict);
 wint_t putwc_unlocked(wchar_t, FILE *);
 wint_t putwchar_unlocked(wchar_t);
 #endif

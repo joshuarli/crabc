@@ -24,11 +24,6 @@ extern const char *__freadptr(FILE *, size_t *);
 extern void __freadptrinc(FILE *, size_t);
 extern void __fseterr(FILE *);
 
-extern int fflush_unlocked(FILE *);
-extern int fileno_unlocked(FILE *);
-extern size_t fread_unlocked(void *, size_t, size_t, FILE *);
-extern size_t fwrite_unlocked(const void *, size_t, size_t, FILE *);
-
 static int call_vasprintf(char **out, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
