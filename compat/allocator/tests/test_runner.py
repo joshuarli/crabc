@@ -2274,6 +2274,15 @@ class ContractTests(unittest.TestCase):
                         "purge_or_free_then_releases_selected_claim"
                     ),
                 },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "bound-subprocess-metadata-page-identity-query",
+                    "kind": "rust-unit",
+                    "target": (
+                        "meta::tests::bound_subprocess_metadata_page_query_is_exact_"
+                        "without_backing"
+                    ),
+                },
             ],
         )
         bitmaps = next(component for component in summary["components"] if component["id"] == "bitmaps")

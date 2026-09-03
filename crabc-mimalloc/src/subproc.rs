@@ -4,9 +4,9 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/subproc.c:12-46,95-101`
-// (`mi_process_subproc_main`, `_mi_meta_zalloc`, and
-// `_mi_meta_zalloc_aligned`), `include/mimalloc/types.h:651-680`
+// Source map: pinned mimalloc v3.5.0 `src/subproc.c:12-46,84-101`
+// (`mi_process_subproc_main`, `_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`,
+// and `_mi_meta_is_meta_page`), `include/mimalloc/types.h:651-680`
 // (the bounded `mi_subproc_t` fields), `include/mimalloc/types.h:690-701`
 // (`mi_tld_t`), and `src/init.c:155-157,184-205,236-282`
 // (`mi_process_tld_main`, the detached metadata-Theap publication,
@@ -16,12 +16,14 @@
 //!
 //! Upstream places a complete `mi_subproc_t` in static storage. This module
 //! intentionally represents only the process-main identity, the detached
-//! metadata-Theap identity needed before `_mi_meta_zalloc`, and the two
-//! counters directly required by `mi_tld_create`/`mi_tld_free`: the relaxed
-//! total-thread sequence and the relaxed current-thread count. It is not a
-//! Rust layout claim for `mi_subproc_t`: `theap_meta` is an identity-admission
-//! gate, not the C lock/layout or normal C backing route. It supplies no
-//! subprocess list, heap, arena, statistics, or public subprocess API.
+//! metadata-Theap identity needed before `_mi_meta_zalloc`, its selected
+//! lock-free metadata-page equality query, and the two counters directly
+//! required by `mi_tld_create`/`mi_tld_free`: the relaxed total-thread
+//! sequence and the relaxed current-thread count. It is not a Rust layout
+//! claim for `mi_subproc_t`: `theap_meta` is a source admission and read-only
+//! comparison field, not the C lock/layout or normal C backing route. It
+//! supplies no subprocess list, heap, arena, statistics, or public
+//! subprocess API.
 //!
 //! A [`ThreadRegistrationTicket`] is the old result of the source relaxed
 //! `thread_total_count` increment. Tickets are consumed even when a later
@@ -39,7 +41,7 @@ use core::mem::{MaybeUninit, size_of};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
-use crate::types::{LiveThreadId, MemoryId, Theap, ThreadLocalData, ThreadSequence};
+use crate::types::{LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, ThreadSequence};
 
 const MAIN_TLD_COLD: u8 = 0;
 const MAIN_TLD_CLAIMED: u8 = 1;
@@ -313,6 +315,23 @@ impl MainSubprocess {
     #[inline]
     pub(crate) fn matches_published_detached_metadata_theap(&self, theap: NonNull<Theap>) -> bool {
         core::ptr::eq(self.theap_meta.load(Ordering::Acquire), theap.as_ptr())
+    }
+
+    /// Implements the selected read-only `_mi_meta_is_meta_page` predicate.
+    ///
+    /// `None` represents C's null `mi_page_t*` input. A Rust `&Page` proves
+    /// that the page image is readable for the field load; this method grants
+    /// neither a Theap reference nor authority to change the page or
+    /// subprocess. It deliberately takes no metadata or subprocess lock,
+    /// does not inspect COLD/BOUND/READY state, and does not start backing or
+    /// a detached session.
+    #[inline]
+    pub(crate) fn is_metadata_page(&self, page: Option<&Page>) -> bool {
+        let Some(page) = page else {
+            return false;
+        };
+        let theap = page.theap();
+        !theap.is_null() && core::ptr::eq(theap, self.theap_meta.load(Ordering::Acquire))
     }
 
     /// Test-only observation of whether the source metadata-Theap identity is

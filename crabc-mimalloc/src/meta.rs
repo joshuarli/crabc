@@ -4,10 +4,9 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/subproc.c:19-88`
+// Source map: pinned mimalloc v3.5.0 `src/subproc.c:19-81`
 // (`_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, `_mi_meta_rezalloc`, the
-// selected Malloc branch of `_mi_meta_free`, and `_mi_meta_is_meta_page`) with
-// bootstrap ordering from
+// selected Malloc branch of `_mi_meta_free`) with bootstrap ordering from
 // `src/init.c:15-145,184-208`, plus `src/arena.c:1433-1490` for selected
 // regular-OS release and the separate typed `MI_MEM_ARENA` identity-gated
 // release witness in `ArenaSliceClaim`, and `src/arena.c:674-723,1613-1673`
@@ -1496,23 +1495,6 @@ impl MetaAllocator {
         }
     }
 
-    /// Implements the source `_mi_meta_is_meta_page` identity check.
-    ///
-    /// Like the source, this is only a raw comparison of the readable
-    /// `page->theap` field against the process-stable metadata-theap address.
-    /// It neither dereferences that target nor proves an abandoned page's
-    /// lifetime; callers retain the normal readable-page precondition.
-    pub(crate) fn is_metadata_page(
-        self: Pin<&'static Self>,
-        page: &Page,
-    ) -> Result<bool, MetaError> {
-        let entry = self.enter()?;
-        if entry.status() != READY {
-            return Ok(false);
-        }
-        Ok(page.theap() == entry.allocator_ref().theap_identity())
-    }
-
     /// Enforces the source `_mi_meta_zalloc` precondition before a metadata
     /// caller can enter its private lock. A cold owner has no published
     /// source-static image, so only `prepare_for_main_subprocess` may bind and
@@ -2768,19 +2750,118 @@ mod tests {
     }
 
     #[test]
-    fn released_capability_rejects_double_release_and_metadata_page_identity() {
+    fn released_capability_rejects_double_release() {
         let allocator = static_allocator();
         let mut block = allocator.zalloc(config(), 8).unwrap();
-        let page = {
-            let entry = allocator.enter().unwrap();
-            // SAFETY: the held private lock excludes page-map mutation and
-            // block is a current allocation from this exact metadata owner.
-            unsafe { entry.allocator_ref().page_for_block(block.pointer()) }
-        };
-        let page = unsafe { page.as_ref() }.unwrap();
-        assert!(allocator.is_metadata_page(page).unwrap());
         allocator.free(&mut block).unwrap();
         assert_eq!(allocator.free(&mut block), Err(MetaError::ReleasedOrStale));
+    }
+
+    #[test]
+    fn bound_subprocess_metadata_page_query_is_exact_without_backing() {
+        let selected_allocator = cold_static_allocator();
+        let selected = selected_allocator.test_default_subprocess();
+        let foreign_allocator = cold_static_allocator();
+        let foreign = foreign_allocator.test_default_subprocess();
+        selected_allocator
+            .prepare_for_main_subprocess(config(), selected)
+            .expect("the selected source-static Theap publishes before any private backing");
+        foreign_allocator
+            .prepare_for_main_subprocess(config(), foreign)
+            .expect("the foreign source-static Theap publishes before any private backing");
+
+        for allocator in [selected_allocator, foreign_allocator] {
+            assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+            assert!(
+                allocator.test_private_page_map_address().is_none(),
+                "the query is valid while the detached Theap is bound but has no private backing"
+            );
+            assert_eq!(
+                allocator.test_allocation_audit(),
+                MetaAllocationAudit {
+                    live_capability_count: 0,
+                    high_water_capability_count: 0,
+                },
+                "the query starts before any metadata allocation or detached session"
+            );
+        }
+
+        let selected_identity = NonNull::new(
+            selected_allocator
+                .get_ref()
+                .detached_metadata_theap
+                .load(Ordering::Acquire),
+        )
+        .expect("BOUND Release-publishes the selected detached metadata-Theap identity");
+        let foreign_identity = NonNull::new(
+            foreign_allocator
+                .get_ref()
+                .detached_metadata_theap
+                .load(Ordering::Acquire),
+        )
+        .expect("BOUND Release-publishes the foreign detached metadata-Theap identity");
+        let mut page = Page::remote_free_test_unassociated();
+
+        let selected_entries_before_lock = selected_allocator.test_entry_attempt_count();
+        let foreign_entries = foreign_allocator.test_entry_attempt_count();
+        let _selected_entry = selected_allocator
+            .enter()
+            .expect("the selected metadata owner accepts one held entry");
+        let selected_entries = selected_allocator.test_entry_attempt_count();
+        assert_eq!(selected_entries, selected_entries_before_lock + 1);
+
+        assert!(
+            !selected.is_metadata_page(None),
+            "None represents C's null page pointer"
+        );
+        assert!(
+            !selected.is_metadata_page(Some(&page)),
+            "a readable page with a null Theap field does not match a bound subprocess"
+        );
+        page.abandoned_test_set_theap(foreign_identity.as_ptr());
+        assert!(
+            !selected.is_metadata_page(Some(&page)),
+            "the selected subprocess rejects the foreign published identity"
+        );
+        assert!(
+            foreign.is_metadata_page(Some(&page)),
+            "the foreign subprocess accepts only its exact published identity"
+        );
+        page.abandoned_test_set_theap(selected_identity.as_ptr());
+        assert!(
+            selected.is_metadata_page(Some(&page)),
+            "the selected subprocess accepts its exact published identity without READY"
+        );
+        assert!(
+            !foreign.is_metadata_page(Some(&page)),
+            "the foreign subprocess rejects the selected published identity"
+        );
+
+        assert_eq!(
+            selected_allocator.test_entry_attempt_count(),
+            selected_entries,
+            "the source page query stays outside the selected metadata allocator lock"
+        );
+        assert_eq!(
+            foreign_allocator.test_entry_attempt_count(),
+            foreign_entries,
+            "the source page query stays outside the foreign metadata allocator lock"
+        );
+        for allocator in [selected_allocator, foreign_allocator] {
+            assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+            assert!(
+                allocator.test_private_page_map_address().is_none(),
+                "the read-only comparison does not map metadata backing"
+            );
+            assert_eq!(
+                allocator.test_allocation_audit(),
+                MetaAllocationAudit {
+                    live_capability_count: 0,
+                    high_water_capability_count: 0,
+                },
+                "the read-only comparison does not lend a detached session"
+            );
+        }
     }
 
     #[test]

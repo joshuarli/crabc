@@ -306,7 +306,7 @@ assertion-invalid input, not C/Rust invalid-input parity.
   `types::Theap::{set_detached_main_metadata_static_memid,bind_exclusive_detached}`,
   `random::TheapRandomImage::{initialize,next}`,
   `process_page_map::ProcessPageMapStorage`, and
-  `subproc::{MainStaticBootstrapSelection,MainSubprocess::publish_detached_metadata_theap,MainSubprocess::matches_published_detached_metadata_theap}`.
+  `subproc::{MainStaticBootstrapSelection,MainSubprocess::publish_detached_metadata_theap,MainSubprocess::matches_published_detached_metadata_theap,MainSubprocess::is_metadata_page}`.
 - **Category:** crate-private source-order startup boundary. It has no C ABI
   surface or valid allocation-trace differential entry.
 - **Difference:** the Rust coordinator proves the central source order—static
@@ -333,10 +333,17 @@ assertion-invalid input, not C/Rust invalid-input parity.
   `MainSubprocess` atomic; COLD direct `zalloc`, aligned `zalloc`, and
   `rezalloc(None)` reject with `TheapMetaUnpublished` before the metadata lock,
   mapping, or capability creation, while a collision or mismatched image fails
-  closed. This maps only the identity role of
-  `subproc_main->theap_meta = &mi_process_theap_meta`, not the actual
-  `mi_subproc_t` field/layout, `theap_meta_lock`, a dereference-capable
-  subprocess API, actual main-Heap linkage, or general Theap API. It does not
+  closed. `MainSubprocess::is_metadata_page(Option<&Page>)` separately maps
+  `src/subproc.c:_mi_meta_is_meta_page`: `None` models a null C page pointer,
+  and a caller-readable page with a null or foreign `theap` field returns
+  false while only its exact bound subprocess identity returns true. It uses
+  one Acquire-loaded raw-pointer comparison and neither enters a metadata or
+  subprocess lock nor forms backing, lends a detached session, or dereferences
+  the Theap. Its Release/Acquire slot is a Rust safety representation, not C
+  field-memory-order parity. This maps only the source identity/publication
+  role and selected raw equality predicate, not the actual `mi_subproc_t` byte layout,
+  `theap_meta_lock`, a dereference-capable subprocess API, Page lifetime or
+  abandonment, actual main-Heap linkage, or general Theap API. It does not
   claim the rest of `_mi_theap_init`, mutable option/OS processing, TLD/Heap
   list relations or locking, guarded initialization/statistics, or random-split
   parity. A first valid prepared Rust metadata request forms a private
@@ -375,7 +382,11 @@ assertion-invalid input, not C/Rust invalid-input parity.
   proves the three COLD demand forms refuse before lock/map/capability work;
   preparation publishes the selected identity without consuming a map fault,
   then a prepared demand consumes the pending map failure and a later retry
-  succeeds.
+  succeeds. `meta::tests::bound_subprocess_metadata_page_query_is_exact_without_backing`
+  holds one selected metadata entry while two separately BOUND subprocesses
+  have no private backing, then proves null-page, null-field, foreign, and
+  exact-identity results without changing either entry count, map state, or
+  allocation audit.
   `process_main_once_blocks_a_distinct_racer_until_release_and_refuses_reentry`,
   `process_main_once_blocks_a_terminal_ready_observer_until_once_release`, and
   `process_main_once_wakes_a_distinct_racer_with_retained_after_failure` prove
