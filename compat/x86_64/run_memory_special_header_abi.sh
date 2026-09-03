@@ -93,7 +93,7 @@ header_trace="$work_dir/project-gnu-header-trace"
 "$ORACLE_CC" -std=c11 -Werror=implicit-function-declaration -fno-builtin \
     "${gnu_definitions[@]}" -I "$ROOT_DIR/include" -H -fsyntax-only "$C_PROBE" \
     >/dev/null 2>"$header_trace"
-for header in string.h unistd.h sys/types.h features.h bits/alltypes.h; do
+for header in string.h unistd.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "project trace omitted $header"
 done

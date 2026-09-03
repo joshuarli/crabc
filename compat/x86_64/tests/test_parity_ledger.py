@@ -3431,14 +3431,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 630,
-                "mismatch": 650,
+                "matched": 644,
+                "mismatch": 636,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 22468, "reference_only": 12123},
+            {"candidate_only": 16302, "reference_only": 12116},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3458,8 +3458,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 527,
-                "mismatch": 753,
+                "matched": 541,
+                "mismatch": 739,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4592,12 +4592,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "650 current comparable declaration-or-macro identity mismatch rows",
-            "630 matched identity rows",
+            "636 current comparable declaration-or-macro identity mismatch rows",
+            "644 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "3,481 same-identity source-form differences across 557 rows",
+            "3,136 same-identity source-form differences across 543 rows",
             "103 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
@@ -4649,7 +4649,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "753 current comparable prototype or named source-form mismatch rows",
+            "739 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",
@@ -30992,6 +30992,44 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-readiness-signal-waits",
             "static-c-event-descriptors",
         ):
+            owners = records[artifact_id]["source_owners"]
+            assert isinstance(owners, list)
+            self.assertIn("include/sys/types.h", owners, artifact_id)
+
+    def test_unistd_header_trace_owners_follow_direct_fixture_includes(self) -> None:
+        records = self.verified_records(self.data())
+        # These probes include unistd.h directly. On x86, musl's header owns
+        # its narrow alltypes request; it does not inherit sys/types.h.
+        unistd_only = (
+            "static-c-isatty",
+            "static-c-ttyname-r",
+            "static-c-tcgetpgrp",
+            "static-c-tcsetpgrp",
+            "static-c-getpass",
+            "static-c-confstr",
+            "static-c-fpathconf",
+            "static-c-pathconf",
+            "static-c-sysconf",
+            "static-c-syncfs",
+            "static-c-explicit-bzero-swab",
+        )
+        for artifact_id in unistd_only:
+            owners = records[artifact_id]["source_owners"]
+            assert isinstance(owners, list)
+            self.assertIn("include/bits/alltypes.h", owners, artifact_id)
+            self.assertNotIn("include/sys/types.h", owners, artifact_id)
+
+        # These runtime fixtures retain an explicit sys/types.h import even
+        # though their direct header gates now follow musl's unistd.h closure.
+        direct_types = (
+            "static-c-sendfile",
+            "static-c-copy-file-range",
+            "static-c-credential-observation",
+            "static-c-linkat",
+            "static-c-readlinkat",
+            "static-c-unlinkat",
+        )
+        for artifact_id in direct_types:
             owners = records[artifact_id]["source_owners"]
             assert isinstance(owners, list)
             self.assertIn("include/sys/types.h", owners, artifact_id)

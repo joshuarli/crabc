@@ -49,7 +49,7 @@ if ! "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_EXPECT_GETPASS \
     sed -n '1,160p' "$header_trace" >&2
     fail "project C getpass header contract drifted"
 fi
-for header in unistd.h sys/types.h features.h; do
+for header in unistd.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "C probe did not use the project <$header>"
 done

@@ -175,21 +175,10 @@ check_trace() {
     if trace_has_unapproved_path "$tree" "$trace"; then
         fail "$profile $tree trace escaped its declared header roots"
     fi
-    for header in fcntl.h sys/syscall.h unistd.h features.h; do
+    for header in fcntl.h sys/syscall.h unistd.h features.h bits/alltypes.h bits/syscall.h; do
         grep -Fq "$root/$header" "$trace" ||
             fail "$profile $tree trace omitted $root/$header"
     done
-    if [ "$tree" = candidate ]; then
-        grep -Fq "$root/sys/types.h" "$trace" ||
-            fail "$profile project trace omitted $root/sys/types.h"
-        grep -Fq "$root/bits/syscall.h" "$trace" ||
-            fail "$profile project trace omitted $root/bits/syscall.h"
-    else
-        grep -Fq "$root/bits/alltypes.h" "$trace" ||
-            fail "$profile pinned-musl trace omitted $root/bits/alltypes.h"
-        grep -Fq "$root/bits/syscall.h" "$trace" ||
-            fail "$profile pinned-musl trace omitted $root/bits/syscall.h"
-    fi
 }
 
 check_cxx_symbol() {

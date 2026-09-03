@@ -50,7 +50,7 @@ if ! "$ORACLE_CC" -std=c11 -fno-builtin -I "$ROOT_DIR/include" -H \
     sed -n '1,160p' "$header_trace" >&2
     fail "project C ttyname_r header contract drifted"
 fi
-for header in unistd.h sys/types.h features.h; do
+for header in unistd.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "C probe did not use the project <$header>"
 done

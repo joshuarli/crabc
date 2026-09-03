@@ -1,0 +1,37 @@
+# Linux/x86-64 process/file public-header closure work package.
+schema = "crabc.x86_64-unistd-sendfile-header-closure/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+
+[work_package]
+target_family = "libc.headers-layouts"
+target_obligations = ["process-file-header-closure", "selected-header-declaration-forms"]
+blocker = "The x86 public unistd.h body retained non-musl shared type imports and declarations owned by fcntl, stat, and time headers. Its direct dependent sys/sendfile.h retained a private guard and broad type imports rather than musl's small unistd.h closure."
+prerequisites = ["oracle.musl-toolchain", "libc.errno-tls", "libc.headers-layouts callable declaration inventory"]
+dependent_work = ["libc.headers-layouts family aggregate", "libc.posix-runtime process and file consumers", "owned static and dynamic sysroot header closure"]
+baseline_contract = "Pinned musl 1.2.6 x86-64 include/unistd.h and include/sys/sendfile.h source, Linux 5.10 UAPI inputs, System V AMD64 LP64 ABI, and the frozen AArch64 header baseline."
+source_owners = [
+  "compat/x86_64/unistd-sendfile-header-closure.toml",
+  "compat/x86_64/tests/test_header_abi_matrix.py",
+  "compat/x86_64/header_abi_matrix.py",
+  "compat/x86_64/header_declaration_macro_visibility_matrix.py",
+  "compat/x86_64/header_callable_visibility_matrix.py",
+  "compat/x86_64/run_unistd_header_abi.sh",
+  "compat/x86_64/run_sendfile_header_abi.sh",
+  "compat/x86_64/run_libc_sendfile.sh",
+  "include/unistd.h",
+  "include/sys/sendfile.h",
+]
+focused_evidence_command = "./scripts/dev-x86_64.sh header-abi-matrix"
+family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
+product_command = "./scripts/dev-x86_64.sh campaign-static"
+negative_scope = "This x86-only package restores selected public declarations, macros, feature visibility, and include ownership. It does not select process or file archive providers; process, filesystem, or sendfile runtime behavior; libc.so; CRT; loader; sysroot completion; family promotion; or public x86 support."
+expected_transition = "All fourteen direct unistd.h and sys/sendfile.h C11/C++17 profile rows match pinned musl with no candidate-only, reference-only, or source-form differences. The x86 unistd.h branch requests only musl-owned alltypes definitions, while sys/sendfile.h retains musl's direct features.h plus unistd.h dependency and _SYS_SENDFILE_H guard. The AArch64 preprocessed public-header output remains byte-identical to the frozen baseline. libc.headers-layouts remains planned until its complete declaration/layout/provider aggregate is satisfied; no capability, product, promotion, or public-support state changes here."
+evidence = [
+  "pinned-musl/project direct C11/C++17 all-profile declaration-form matrix",
+  "unistd.h and sys/sendfile.h fourteen-row exact ownership regression",
+  "direct unistd.h and sys/sendfile.h C/C++ ABI gates",
+  "AArch64 seven-profile preprocessed-output preservation audit",
+  "header declaration/macro and callable-visibility matrix regeneration",
+]

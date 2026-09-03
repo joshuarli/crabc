@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "8d1ecc9ae6dfd8c92f9af87affa3b0e21a591d4fb6f198df3cc1ac5e472aab01",
+    "callable_inventory_sha256": "d57f6d9d7d1fc4399703b5831ed1d39bd35f4be880c9b3839861dbdbfec7759a",
     "matrix_contract_sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -19185,35 +19185,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 180,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 174,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/procfs.h",
       "matched_callable_count": 174,
       "profile": "c11-gnu",
@@ -19222,35 +19197,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 180,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 174,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/procfs.h",
       "matched_callable_count": 174,
       "profile": "cxx17-gnu",
@@ -19259,35 +19209,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 104,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 98,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/procfs.h",
       "matched_callable_count": 98,
       "profile": "c11-strict",
@@ -19296,35 +19221,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 104,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 98,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/procfs.h",
       "matched_callable_count": 98,
       "profile": "c11-posix-2008",
@@ -19333,35 +19233,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 114,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 108,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/procfs.h",
       "matched_callable_count": 108,
       "profile": "c11-xopen-700",
@@ -19370,35 +19245,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 168,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 162,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/procfs.h",
       "matched_callable_count": 162,
       "profile": "c11-bsd",
@@ -19407,35 +19257,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 180,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 174,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/procfs.h",
       "matched_callable_count": 174,
       "profile": "cxx17-strict",
@@ -20275,183 +20100,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 164,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 121,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/reg.h",
       "matched_callable_count": 121,
       "profile": "c11-gnu",
@@ -20460,183 +20112,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 164,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 121,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/reg.h",
       "matched_callable_count": 121,
       "profile": "cxx17-gnu",
@@ -20645,75 +20124,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 94,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 78,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/reg.h",
       "matched_callable_count": 78,
       "profile": "c11-strict",
@@ -20722,75 +20136,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 94,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 78,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/reg.h",
       "matched_callable_count": 78,
       "profile": "c11-posix-2008",
@@ -20799,75 +20148,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 104,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 88,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/reg.h",
       "matched_callable_count": 88,
       "profile": "c11-xopen-700",
@@ -20876,183 +20160,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 154,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 111,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/reg.h",
       "matched_callable_count": 111,
       "profile": "c11-bsd",
@@ -21061,183 +20172,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 164,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 121,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/reg.h",
       "matched_callable_count": 121,
       "profile": "cxx17-strict",
@@ -21498,187 +20436,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 166,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 122,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/sendfile.h",
       "matched_callable_count": 122,
       "profile": "c11-gnu",
@@ -21687,187 +20448,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 166,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 122,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/sendfile.h",
       "matched_callable_count": 122,
       "profile": "cxx17-gnu",
@@ -21876,79 +20460,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 96,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 79,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/sendfile.h",
       "matched_callable_count": 79,
       "profile": "c11-strict",
@@ -21957,79 +20472,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 96,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 79,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/sendfile.h",
       "matched_callable_count": 79,
       "profile": "c11-posix-2008",
@@ -22038,79 +20484,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 106,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 89,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/sendfile.h",
       "matched_callable_count": 89,
       "profile": "c11-xopen-700",
@@ -22119,187 +20496,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 156,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 112,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/sendfile.h",
       "matched_callable_count": 112,
       "profile": "c11-bsd",
@@ -22308,187 +20508,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 166,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 122,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/sendfile.h",
       "matched_callable_count": 122,
       "profile": "cxx17-strict",
@@ -27219,143 +25242,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 164,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 131,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/user.h",
       "matched_callable_count": 131,
       "profile": "c11-gnu",
@@ -27364,143 +25254,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 164,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 131,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/user.h",
       "matched_callable_count": 131,
       "profile": "cxx17-gnu",
@@ -27509,35 +25266,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 94,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 88,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/user.h",
       "matched_callable_count": 88,
       "profile": "c11-strict",
@@ -27546,35 +25278,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 94,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 88,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/user.h",
       "matched_callable_count": 88,
       "profile": "c11-posix-2008",
@@ -27583,35 +25290,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 104,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        }
-      ],
+      "candidate_callable_count": 98,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/user.h",
       "matched_callable_count": 98,
       "profile": "c11-xopen-700",
@@ -27620,143 +25302,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 154,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 121,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/user.h",
       "matched_callable_count": 121,
       "profile": "c11-bsd",
@@ -27765,143 +25314,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 164,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 131,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/user.h",
       "matched_callable_count": 131,
       "profile": "cxx17-strict",
@@ -29762,183 +27178,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 164,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 121,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "unistd.h",
       "matched_callable_count": 121,
       "profile": "c11-gnu",
@@ -29947,183 +27190,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 164,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 121,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "unistd.h",
       "matched_callable_count": 121,
       "profile": "cxx17-gnu",
@@ -30132,75 +27202,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 94,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 78,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "unistd.h",
       "matched_callable_count": 78,
       "profile": "c11-strict",
@@ -30209,75 +27214,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 94,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 78,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "unistd.h",
       "matched_callable_count": 78,
       "profile": "c11-posix-2008",
@@ -30286,75 +27226,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 104,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 88,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "unistd.h",
       "matched_callable_count": 88,
       "profile": "c11-xopen-700",
@@ -30363,183 +27238,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 154,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 111,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "unistd.h",
       "matched_callable_count": 111,
       "profile": "c11-bsd",
@@ -30548,183 +27250,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 164,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "chmod"
-        },
-        {
-          "classification": "external",
-          "name": "fchmod"
-        },
-        {
-          "classification": "external",
-          "name": "fcntl"
-        },
-        {
-          "classification": "external",
-          "name": "mkdir"
-        },
-        {
-          "classification": "external",
-          "name": "nanosleep"
-        },
-        {
-          "classification": "external",
-          "name": "pselect"
-        },
-        {
-          "classification": "external",
-          "name": "select"
-        },
-        {
-          "classification": "external",
-          "name": "umask"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap16"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap32"
-        },
-        {
-          "classification": "inline",
-          "name": "__bswap64"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_CLR"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ISSET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_SET"
-        },
-        {
-          "classification": "macro",
-          "name": "FD_ZERO"
-        },
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "be16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "be64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "betoh64"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe16"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe32"
-        },
-        {
-          "classification": "macro",
-          "name": "htobe64"
-        },
-        {
-          "classification": "macro",
-          "name": "htole16"
-        },
-        {
-          "classification": "macro",
-          "name": "htole32"
-        },
-        {
-          "classification": "macro",
-          "name": "htole64"
-        },
-        {
-          "classification": "macro",
-          "name": "le16toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le32toh"
-        },
-        {
-          "classification": "macro",
-          "name": "le64toh"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh16"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh32"
-        },
-        {
-          "classification": "macro",
-          "name": "letoh64"
-        }
-      ],
+      "candidate_callable_count": 121,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "unistd.h",
       "matched_callable_count": 121,
       "profile": "cxx17-strict",
@@ -33103,23 +29632,23 @@
     "public_support": false
   },
   "summary": {
-    "candidate_only_callable_count": 3073,
+    "candidate_only_callable_count": 2214,
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-retained-pending-c-abi-policy": 56,
-      "matched": 1028,
-      "mismatch": 252,
+      "matched": 1063,
+      "mismatch": 217,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "252 comparable pinned header/profile rows have callable visibility differences",
+      "217 comparable pinned header/profile rows have callable visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
     "matched_callable_count": 34103,
-    "mismatch_row_count": 252,
+    "mismatch_row_count": 217,
     "oracle_not_applicable_candidate_visible_callable_count": 21,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,

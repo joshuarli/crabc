@@ -903,6 +903,56 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         self.assertEqual(matched, 9)
         self.assertEqual(mismatched, 18)
 
+    def test_unistd_and_sendfile_headers_match_musl_x86_ownership(self) -> None:
+        """Keep the process/file declaration boundary source-faithful.
+
+        Musl owns the `unistd.h` type requests directly and makes
+        `sys/sendfile.h` a small dependent of that header.  Neither public
+        root may retain the legacy x86 `sys/types.h`/`stdint.h` umbrella or
+        declarations that belong to fcntl, stat, or time headers.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        headers = ("unistd.h", "sys/sendfile.h")
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+
+        for header in headers:
+            for profile in profiles:
+                row = rows[(header, profile)]
+                self.assertEqual(row["candidate_status"], "ok")
+                self.assertEqual(row["reference_status"], "ok")
+                self.assertEqual(
+                    row["comparison"],
+                    "matched",
+                    f"{header}:{profile} must retain only musl-owned declarations",
+                )
+                self.assertEqual(
+                    row["difference"],
+                    {
+                        "candidate_only": [],
+                        "candidate_only_count": 0,
+                        "incompatible": [],
+                        "incompatible_count": 0,
+                        "matched_count": row["candidate"]["count"],
+                        "reference_only": [],
+                        "reference_only_count": 0,
+                    },
+                    f"{header}:{profile} must have no ownership or source-form debt",
+                )
+
+        self.assertEqual(len(headers) * len(profiles), 14)
+
     def test_stdio_wchar_and_monetary_declarations_match_musl_forms(self) -> None:
         """Header visibility must not promote deferred stream or locale providers."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

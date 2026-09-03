@@ -174,7 +174,7 @@ while IFS= read -r path; do
         *) fail "project GNU header trace escaped its declared roots: $path" ;;
     esac
 done < <(trace_paths "$header_trace")
-for header in unistd.h features.h sys/types.h stdint.h; do
+for header in unistd.h features.h bits/alltypes.h sys/types.h; do
     grep -Fq "$PROJECT_INCLUDE/$header" "$header_trace" ||
         fail "GNU C probe did not use the project <$header>"
 done

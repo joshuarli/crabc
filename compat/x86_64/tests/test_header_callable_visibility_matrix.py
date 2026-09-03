@@ -115,8 +115,8 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1028,
-                "mismatch": 252,
+                "matched": 1063,
+                "mismatch": 217,
                 "oracle-not-applicable": 1,
             },
         )
@@ -151,6 +151,39 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             "checked finite report",
         ):
             self.assertIn(phrase, runner)
+
+    def test_unistd_and_sendfile_keep_the_exact_musl_callable_surface(self) -> None:
+        """The process/file ownership repair cannot leave callable leakage."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+        for header in ("unistd.h", "sys/sendfile.h"):
+            for profile in profiles:
+                row = rows[(header, profile)]
+                self.assertEqual(row["candidate_status"], "ok")
+                self.assertEqual(row["reference_status"], "ok")
+                self.assertEqual(row["comparison"], "matched")
+                self.assertEqual(row["candidate_only"], [])
+                self.assertEqual(row["reference_only"], [])
+                self.assertEqual(
+                    row["candidate_callable_count"],
+                    row["reference_callable_count"],
+                )
+                self.assertEqual(
+                    row["matched_callable_count"],
+                    row["candidate_callable_count"],
+                )
 
     def test_build_report_uses_direct_consumer_visibility_and_keeps_red_rows_explicit(self) -> None:
         contract = MATRIX.MatrixContract(
