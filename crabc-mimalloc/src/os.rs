@@ -470,6 +470,18 @@ pub(crate) enum DecommitOutcome {
     DoesNotNeedRecommit,
 }
 
+/// The fixed Linux `_mi_os_reuse` outcome.
+///
+/// Pinned `src/prim/unix/prim.c:_mi_prim_reuse` has no Linux VM operation:
+/// its only non-no-op branch is Apple's `MADV_FREE_REUSE`. The explicit value
+/// prevents a caller from mistaking this source-shaped success for a
+/// recommit, reclamation, or access transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReuseOutcome {
+    /// A complete contained page range was accepted without a Linux transition.
+    NoOp,
+}
+
 /// Applies the pinned default arena-purge decommit to one non-owning span.
 ///
 /// This is the `purge_decommits=1` arm of `_mi_os_purge_ex` used by
@@ -903,6 +915,25 @@ impl Mapping {
             unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) }
         })
         .map(|()| true)
+    }
+
+    /// Accepts a complete contained range for `_mi_os_reuse`.
+    ///
+    /// `src/os.c:643-653` applies conservative page normalization before
+    /// calling the Unix primitive. On Linux that primitive is a no-op, so this
+    /// method deliberately performs no syscall, fault-injection edge, or
+    /// mapping-state mutation. `None` represents the source branch where that
+    /// normalization contains no complete page.
+    #[inline]
+    pub(crate) fn reuse(
+        &self,
+        offset: usize,
+        length: usize,
+    ) -> Result<Option<ReuseOutcome>> {
+        let Some(_range) = self.page_range(offset, length, PageAlignment::Contained)? else {
+            return Ok(None);
+        };
+        Ok(Some(ReuseOutcome::NoOp))
     }
 
     /// Makes complete pages inside the requested range inaccessible.
@@ -1968,6 +1999,43 @@ mod tests {
         );
         assert!(mapping.purge(0, page).expect("purge a full mapped page"));
         mapping.unmap().expect("release the mapped page");
+    }
+
+    #[test]
+    fn reuse_is_a_contained_range_noop_on_linux() {
+        let fault = fault::install(fault::Plan::disabled());
+        let startup = current_startup();
+        let page = startup.page_size().bytes();
+        let length = page.checked_mul(2).expect("the selected two-page map fits");
+        let mut mapping = Mapping::map_anonymous(startup, length, MapAccess::Committed)
+            .expect("map two committed kernel pages");
+        let base = mapping.base().expect("the mapping remains live");
+
+        fault.set(fault::Plan::any_nth(1, Errno::NOMEM));
+        assert_eq!(
+            mapping.reuse(1, page - 1),
+            Ok(None),
+            "a source-conservative range with no complete page is a no-op"
+        );
+        assert_eq!(
+            mapping.reuse(page, page),
+            Ok(Some(ReuseOutcome::NoOp)),
+            "Linux _mi_prim_reuse has no VM transition for a complete page"
+        );
+        assert_eq!(fault.observed(), 0, "Linux reuse does not enter a faultable VM edge");
+        assert_eq!(mapping.base(), Ok(base));
+        assert_eq!(mapping.length(), Ok(length));
+        // SAFETY: Linux reuse leaves this owned committed mapping accessible.
+        unsafe {
+            core::ptr::write_volatile(base.wrapping_add(page), 0x6d);
+            assert_eq!(core::ptr::read_volatile(base.wrapping_add(page)), 0x6d);
+        }
+
+        assert_eq!(mapping.reuse(length, 1), Err(Errno::INVAL));
+        assert_eq!(fault.observed(), 0, "invalid input must not cross a VM edge");
+        fault.set(fault::Plan::disabled());
+        mapping.unmap().expect("release the exact mapping once");
+        assert_eq!(mapping.reuse(0, page), Err(Errno::INVAL));
     }
 
     #[test]
