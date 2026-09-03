@@ -1942,6 +1942,13 @@ impl<'storage> BinnedBitmapView<'storage> {
         word_load_relaxed(&self.prefix().chunk_max_accessed)
     }
 
+    /// Port of `mi_bbitmap_bsr_inv`: scan every rounded bitmap chunk from
+    /// high to low for its highest clear bit. This deliberately does not use
+    /// the conservative set-bit chunk map; as noted in the pinned source, the
+    /// rounded top-padding remains observable here.
+    ///
+    /// Each chunk result is only a Relaxed observation. This narrow helper is
+    /// not a binned allocation search or a concurrent snapshot.
     pub(crate) fn highest_clear_relaxed(&self) -> Option<usize> {
         for chunk_index in (0..self.chunk_count()).rev() {
             if let Some(index) = self.chunk(chunk_index).highest_clear_relaxed() {
@@ -2362,6 +2369,83 @@ mod tests {
             9 * BCHUNK_SIZE,
         );
         assert_eq!(BinnedBitmapLayout::for_bit_count(BITMAP_MAX_BIT_COUNT + 1), None);
+    }
+
+    #[test]
+    fn binned_highest_clear_scans_the_source_rounded_top_padding() {
+        // `mi_bbitmap_bsr_inv` deliberately scans the rounded `chunk_count`
+        // capacity rather than the requested logical count; the pinned source
+        // records this as a TODO at `src/bitmap.c:1619`.
+        let logical_bit_count = BCHUNK_BITS + 1;
+        let layout = BinnedBitmapLayout::for_bit_count(logical_bit_count).unwrap();
+        assert_eq!(layout.chunk_count(), 2);
+        assert_eq!(layout.max_bits(), BCHUNK_BITS * 2);
+        let mut storage = BinnedBitmapTestStorage::uninit();
+        let bitmap = unsafe {
+            BinnedBitmapView::initialize(
+                core::ptr::null_mut(),
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+
+        // Initialization leaves the conservative set-bit map empty. The
+        // inverse scan must still inspect every data chunk and return the
+        // highest bit of the rounded (therefore padded) second chunk.
+        assert!(bitmap.chunkmap().all_are_clear_relaxed());
+        assert_eq!(
+            bitmap.highest_clear_relaxed(),
+            Some(layout.max_bits() - 1),
+        );
+    }
+
+    #[test]
+    fn binned_highest_clear_scans_chunks_and_fields_from_high_to_low() {
+        let layout = BinnedBitmapLayout::for_bit_count(BCHUNK_BITS * 2).unwrap();
+        let mut storage = BinnedBitmapTestStorage::uninit();
+        let bitmap = unsafe {
+            BinnedBitmapView::initialize(
+                core::ptr::null_mut(),
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(bitmap.set_range(0, layout.max_bits()), Some(true));
+        assert_eq!(bitmap.highest_clear_relaxed(), None);
+
+        let lower_chunk = BCHUNK_BITS - 1;
+        let upper_chunk_lower_field = BCHUNK_BITS + BFIELD_BITS + 9;
+        let upper_chunk_higher_field = BCHUNK_BITS + BCHUNK_BITS - BFIELD_BITS + 3;
+        assert_eq!(bitmap.try_clear_within_chunk(lower_chunk, 1), Some(true));
+        assert_eq!(
+            bitmap.try_clear_within_chunk(upper_chunk_lower_field, 1),
+            Some(true)
+        );
+        assert_eq!(
+            bitmap.try_clear_within_chunk(upper_chunk_higher_field, 1),
+            Some(true)
+        );
+
+        // `mi_bbitmap_bsr_inv` descends chunks, and `mi_bchunk_bsr_inv`
+        // descends fields within a selected chunk.
+        assert_eq!(
+            bitmap.highest_clear_relaxed(),
+            Some(upper_chunk_higher_field),
+        );
+        assert_eq!(bitmap.set_range(upper_chunk_higher_field, 1), Some(true));
+        assert_eq!(
+            bitmap.highest_clear_relaxed(),
+            Some(upper_chunk_lower_field),
+        );
+        assert_eq!(bitmap.set_range(upper_chunk_lower_field, 1), Some(true));
+        assert_eq!(bitmap.highest_clear_relaxed(), Some(lower_chunk));
     }
 
     #[test]
