@@ -7,8 +7,9 @@
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/prim.h`,
 // `src/prim/prim.c`, `src/prim/unix/prim.c` (including the raw
 // `_mi_prim_numa_node_count` observation), and the raw page-alignment and
-// memory-transition portions of `src/os.c`, including `src/os.c:655-680`'s
-// default `purge_decommits` branch for non-owning arena spans.
+// memory-transition portions of `src/os.c`, including `src/os.c:240-294`,
+// `src/os.c:344-467`, `src/os.c:502-527`, and `src/os.c:655-680`'s default
+// `purge_decommits` branch for non-owning arena spans.
 
 //! Private, allocation-free Linux virtual-memory primitives for the allocator
 //! engine.
@@ -33,11 +34,13 @@
 use core::ffi::CStr;
 use core::fmt;
 use core::num::NonZeroUsize;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crabc_core::{Errno, Result};
 
 use crate::invariants;
+use crate::types::MemoryId;
 
 // Linux values shared by the exact AArch64 and x86-64 Unix primitive paths.
 // These are intentionally private: allocator policy does not receive an open
@@ -1056,6 +1059,347 @@ impl Mapping {
     }
 }
 
+/// One regular Linux OS allocation together with its exact release mapping.
+///
+/// This is the fixed normal, non-huge, non-hinted owner for
+/// `_mi_os_alloc`, `_mi_os_alloc_aligned`, and
+/// `_mi_os_alloc_aligned_at_offset` in pinned `src/os.c:438-527`. Its
+/// [`MemoryId`] always describes the `Mapping` base and complete mapped
+/// length, while `pointer` is the client result that can be interior after an
+/// offset-aligned allocation. The owner deliberately has no huge-page, hint,
+/// NUMA, option, or accounting policy: those source choices belong to later
+/// runtime owners.
+///
+/// Like [`Mapping`], this type has no `Drop` release. The source allocation
+/// pointer and copied `MemoryId` do not themselves own `munmap`; this value
+/// retains the one explicit release right until [`Self::release`] succeeds.
+#[must_use = "a normal OS allocation must be explicitly released or retained"]
+pub(crate) struct NormalOsAllocation {
+    mapping: Mapping,
+    pointer: NonNull<u8>,
+    memory: MemoryId,
+}
+
+/// A normal OS allocation attempt which may retain an untrimmed live map.
+///
+/// The regular direct map branch has no owner on failure. The aligned branch
+/// can fail after `mi_os_prim_alloc_aligned` acquired a direct candidate or
+/// overmap whose partial cleanup failed. Rust preserves that lower
+/// [`AlignedMappingFailure`] as an explicit `Mapping` here rather than
+/// collapsing it into an errno before a finished [`MemoryId`] exists.
+#[must_use = "a retained normal OS allocation map must move into an explicit owner"]
+pub(crate) struct NormalOsAllocationFailure {
+    error: Errno,
+    mapping: Option<Mapping>,
+}
+
+impl NormalOsAllocationFailure {
+    #[inline]
+    fn without_mapping(error: Errno) -> Self {
+        Self {
+            error,
+            mapping: None,
+        }
+    }
+
+    #[inline]
+    fn with_mapping(error: Errno, mapping: Mapping) -> Self {
+        Self {
+            error,
+            mapping: Some(mapping),
+        }
+    }
+
+    #[inline]
+    fn from_aligned_failure(failure: AlignedMappingFailure) -> Self {
+        let error = failure.error();
+        match failure.into_mapping() {
+            Some(mapping) => Self::with_mapping(error, mapping),
+            None => Self::without_mapping(error),
+        }
+    }
+
+    /// Returns the Rust diagnostic for this failed allocation without
+    /// consuming a map.
+    #[inline]
+    pub(crate) const fn error(&self) -> Errno { self.error }
+
+    /// Transfers a still-live map when aligned cleanup failed after mapping.
+    #[inline]
+    pub(crate) fn into_mapping(self) -> Option<Mapping> { self.mapping }
+}
+
+impl fmt::Debug for NormalOsAllocationFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NormalOsAllocationFailure")
+            .field("error", &self.error)
+            .field("retains_mapping", &self.mapping.is_some())
+            .finish()
+    }
+}
+
+/// One failed normal OS release which retains its exact allocation owner.
+///
+/// Pinned `_mi_os_free_ex` releases `memid.mem.os.base` and its full size
+/// even when the client pointer is interior. A failed Linux `munmap` leaves
+/// that complete mapping live, so this error returns the same typed owner for
+/// a later explicit retry instead of losing the base/full-length provenance.
+#[must_use = "a failed normal OS release retains an allocation that must be retried or parked"]
+pub(crate) struct NormalOsAllocationReleaseFailure {
+    error: Errno,
+    allocation: NormalOsAllocation,
+}
+
+impl NormalOsAllocationReleaseFailure {
+    /// Returns the failed exact Linux release error.
+    #[inline]
+    pub(crate) const fn error(&self) -> Errno { self.error }
+
+    /// Transfers the still-live allocation back to its caller for retry.
+    #[inline]
+    pub(crate) fn into_allocation(self) -> NormalOsAllocation { self.allocation }
+}
+
+impl fmt::Debug for NormalOsAllocationReleaseFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NormalOsAllocationReleaseFailure")
+            .field("error", &self.error)
+            .field("retains_allocation", &true)
+            .finish()
+    }
+}
+
+#[allow(dead_code)]
+impl NormalOsAllocation {
+    /// Allocates the fixed normal committed `_mi_os_alloc` route.
+    ///
+    /// This applies the pinned `_mi_os_good_alloc_size` rule and selects only
+    /// the existing regular `mmap` policy. In particular, it fixes
+    /// `allow_large = false` and does not synthesize a source hint.
+    pub(crate) fn allocate(
+        config: MemoryConfig,
+        size: usize,
+    ) -> core::result::Result<Self, NormalOsAllocationFailure> {
+        let length = Self::good_allocation_size(config, size)?;
+        let mapping = Mapping::map_for_allocator(config, length, MapAccess::Committed)
+            .map_err(NormalOsAllocationFailure::without_mapping)?;
+        Self::from_mapping(mapping, 0)
+    }
+
+    /// Allocates the fixed normal `_mi_os_alloc_aligned` route.
+    ///
+    /// The `access` argument is the pinned source `commit` boolean. This
+    /// boundary deliberately fixes its companion `allow_large` argument to
+    /// false; huge-page policy is not implicit in an aligned allocation.
+    pub(crate) fn allocate_aligned(
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        access: MapAccess,
+    ) -> core::result::Result<Self, NormalOsAllocationFailure> {
+        let mapping = Self::allocate_aligned_mapping(config, size, alignment, access)?;
+        Self::from_mapping(mapping, 0)
+    }
+
+    /// Allocates `_mi_os_alloc_aligned_at_offset` without source policy extras.
+    ///
+    /// For a nonzero offset, the returned client pointer is `extra` bytes
+    /// after an aligned mapping base, where the source computes
+    /// `extra = align_up(offset, alignment) - offset`. The copied
+    /// [`MemoryId`] deliberately remains at that base with the complete map
+    /// length, so later release cannot mistake the interior client pointer for
+    /// the `munmap` address.
+    pub(crate) fn allocate_aligned_at_offset(
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+        access: MapAccess,
+    ) -> core::result::Result<Self, NormalOsAllocationFailure> {
+        if offset > size {
+            return Err(NormalOsAllocationFailure::without_mapping(Errno::INVAL));
+        }
+
+        if offset == 0 {
+            // Pinned `src/os.c:507-510` delegates exactly to the ordinary
+            // aligned path, including its size/alignment normalization.
+            return Self::allocate_aligned(config, size, alignment, access);
+        }
+
+        let page_size = config.page_size().bytes();
+        // `src/os.c:504` asserts this source precondition, but its zero-offset
+        // return at `:507-510` still delegates before this branch computes
+        // `extra`. Make the Rust boundary checked for this nonzero branch
+        // instead of silently normalizing it; the delegation above retains
+        // `_mi_os_alloc_aligned`'s own page rounding at `:458-461`.
+        if alignment == 0 || alignment % page_size != 0 {
+            return Err(NormalOsAllocationFailure::without_mapping(Errno::INVAL));
+        }
+
+        let extra = invariants::align_up(offset, alignment)
+            .and_then(|aligned_offset| aligned_offset.checked_sub(offset))
+            .ok_or_else(|| NormalOsAllocationFailure::without_mapping(Errno::NOMEM))?;
+        // Keep the C comparison (`>=`) rather than relying only on checked
+        // addition: equality cannot produce the source's `oversize` either.
+        if size >= usize::MAX - extra {
+            return Err(NormalOsAllocationFailure::without_mapping(Errno::NOMEM));
+        }
+        let oversize = size + extra;
+        let mapping = Self::allocate_aligned_mapping(config, oversize, alignment, access)?;
+        let allocation = Self::from_mapping(mapping, extra)?;
+
+        if matches!(access, MapAccess::Committed) && extra >= page_size {
+            // Pinned `src/os.c:521-525` intentionally ignores the result of
+            // `_mi_os_decommit`: this is a best-effort prefix discard after a
+            // successful allocation, not an allocation rollback. Preserve the
+            // full owner and client pointer even when Linux rejects advice.
+            let _ = allocation.mapping.decommit(0, extra);
+        }
+        Ok(allocation)
+    }
+
+    /// Returns the source client pointer while this exact allocation is live.
+    #[inline]
+    pub(crate) fn pointer(&self) -> Result<NonNull<u8>> {
+        self.mapping.base()?;
+        Ok(self.pointer)
+    }
+
+    /// Returns the full mapping base used by `_mi_os_free_ex`.
+    #[inline]
+    pub(crate) fn base(&self) -> Result<*mut u8> {
+        self.mapping.base()
+    }
+
+    /// Returns the complete mapped extent rather than the client request.
+    #[inline]
+    pub(crate) fn full_size(&self) -> Result<usize> {
+        self.mapping.length()
+    }
+
+    /// Returns the OS provenance bound to this exact live mapping.
+    #[inline]
+    pub(crate) fn memory_id(&self) -> Result<MemoryId> {
+        let base = self.mapping.base()?;
+        let length = self.mapping.length()?;
+        debug_assert_eq!(self.memory.os_base().map(|address| address.value()), Some(base.addr()));
+        debug_assert_eq!(self.memory.size(), Some(length));
+        Ok(self.memory)
+    }
+
+    /// Releases the full mapping base/length exactly once.
+    ///
+    /// This represents the resource effect of `_mi_os_free_ex` for regular
+    /// OS memory. The source accounting and huge-page branches are deliberately
+    /// outside this owner; `Mapping` supplies the complete normal `munmap`.
+    pub(crate) fn release(
+        mut self,
+    ) -> core::result::Result<(), NormalOsAllocationReleaseFailure> {
+        match self.mapping.unmap() {
+            Ok(()) => Ok(()),
+            Err(error) => Err(NormalOsAllocationReleaseFailure {
+                error,
+                allocation: self,
+            }),
+        }
+    }
+
+    fn allocate_aligned_mapping(
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        access: MapAccess,
+    ) -> core::result::Result<Mapping, NormalOsAllocationFailure> {
+        let length = Self::good_allocation_size(config, size)?;
+        let alignment = Self::aligned_allocation_alignment(config, alignment)?;
+        Mapping::map_aligned_for_allocator(config, length, alignment, access)
+            .map_err(NormalOsAllocationFailure::from_aligned_failure)
+    }
+
+    #[cfg(test)]
+    fn allocate_aligned_force_full_trim_for_test(
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        access: MapAccess,
+    ) -> core::result::Result<Self, NormalOsAllocationFailure> {
+        let length = Self::good_allocation_size(config, size)?;
+        let alignment = Self::aligned_allocation_alignment(config, alignment)?;
+        let mapping = Mapping::map_aligned_for_allocator_force_full_trim_for_test(
+            config,
+            length,
+            alignment,
+            access,
+        )
+        .map_err(NormalOsAllocationFailure::from_aligned_failure)?;
+        Self::from_mapping(mapping, 0)
+    }
+
+    fn good_allocation_size(
+        config: MemoryConfig,
+        size: usize,
+    ) -> core::result::Result<usize, NormalOsAllocationFailure> {
+        if size == 0 {
+            return Err(NormalOsAllocationFailure::without_mapping(Errno::INVAL));
+        }
+        let length = config.good_alloc_size(size);
+        if length < size || length == 0 || length % config.page_size().bytes() != 0 {
+            return Err(NormalOsAllocationFailure::without_mapping(Errno::NOMEM));
+        }
+        Ok(length)
+    }
+
+    fn aligned_allocation_alignment(
+        config: MemoryConfig,
+        alignment: usize,
+    ) -> core::result::Result<usize, NormalOsAllocationFailure> {
+        let page_size = config.page_size().bytes();
+        let alignment = invariants::align_up(alignment, page_size)
+            .ok_or_else(|| NormalOsAllocationFailure::without_mapping(Errno::NOMEM))?;
+        if alignment < page_size || !alignment.is_power_of_two() {
+            return Err(NormalOsAllocationFailure::without_mapping(Errno::INVAL));
+        }
+        Ok(alignment)
+    }
+
+    fn from_mapping(
+        mapping: Mapping,
+        client_offset: usize,
+    ) -> core::result::Result<Self, NormalOsAllocationFailure> {
+        let base = match mapping.base() {
+            Ok(base) => base,
+            Err(error) => return Err(NormalOsAllocationFailure::with_mapping(error, mapping)),
+        };
+        let length = match mapping.length() {
+            Ok(length) => length,
+            Err(error) => return Err(NormalOsAllocationFailure::with_mapping(error, mapping)),
+        };
+        if client_offset >= length || base.addr().checked_add(client_offset).is_none() {
+            return Err(NormalOsAllocationFailure::with_mapping(Errno::NOMEM, mapping));
+        }
+        // Bounds above prove the client pointer stays within the exact live
+        // mapping; `wrapping_add` preserves the kernel mapping's provenance.
+        let pointer = match NonNull::new(base.wrapping_add(client_offset)) {
+            Some(pointer) => pointer,
+            None => return Err(NormalOsAllocationFailure::with_mapping(Errno::NOMEM, mapping)),
+        };
+        let memory = MemoryId::os(
+            base,
+            length,
+            mapping.initially_committed(),
+            mapping.initially_zero(),
+            false,
+        );
+        Ok(Self {
+            mapping,
+            pointer,
+            memory,
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 struct MappingRange {
     address: *mut u8,
@@ -1748,6 +2092,265 @@ mod tests {
         unprotect_mapping
             .unmap()
             .expect("the unprotect route releases its retained mapping once");
+    }
+
+    #[test]
+    fn normal_offset_os_allocation_retains_full_provenance_and_retries_release() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let size = page.checked_mul(2).expect("the selected allocation size fits");
+        let alignment = page
+            .checked_mul(4)
+            .expect("the selected allocation alignment fits");
+        let offset = page;
+        let expected_extra = invariants::align_up(offset, alignment)
+            .and_then(|aligned_offset| aligned_offset.checked_sub(offset))
+            .expect("the selected source offset extra fits");
+
+        // `_mi_os_alloc_aligned_at_offset` ignores a failed prefix decommit:
+        // the returned allocation still owns the full mapping and client
+        // pointer. The injected failure occurs before `madvise`, so the
+        // committed client byte remains directly observable here.
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        let allocation = NormalOsAllocation::allocate_aligned_at_offset(
+            config,
+            size,
+            alignment,
+            offset,
+            MapAccess::Committed,
+        )
+        .expect("a failed best-effort prefix decommit must not discard the allocation");
+        assert_eq!(fault.observed(), 1, "the prefix decommit was attempted once");
+
+        let base = allocation
+            .base()
+            .expect("the allocation retains its full mapping base");
+        let full_size = allocation
+            .full_size()
+            .expect("the allocation retains its full mapping length");
+        let pointer = allocation
+            .pointer()
+            .expect("the allocation exposes its interior client pointer");
+        let memory = allocation
+            .memory_id()
+            .expect("the allocation retains OS provenance for the full map");
+        assert_eq!(pointer.as_ptr().addr() - base.addr(), expected_extra);
+        assert_eq!((pointer.as_ptr().addr() + offset) % alignment, 0);
+        assert_eq!(full_size, config.good_alloc_size(size + expected_extra));
+        assert_eq!(memory.os_base().map(|address| address.value()), Some(base.addr()));
+        assert_eq!(memory.size(), Some(full_size));
+        assert!(memory.is_os());
+        assert!(!memory.is_pinned());
+        assert!(memory.initially_committed());
+        assert!(memory.initially_zero());
+        // SAFETY: the committed mapping remains live, and `pointer` is its
+        // client start after the source-shaped reserved/decommitted prefix.
+        unsafe {
+            core::ptr::write_volatile(pointer.as_ptr(), 0x5a);
+            assert_eq!(core::ptr::read_volatile(pointer.as_ptr()), 0x5a);
+        }
+
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let failure = match allocation.release() {
+            Ok(()) => panic!("the selected release must retain its owner on failure"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error(), Errno::NOMEM);
+        assert_eq!(fault.observed(), 1, "the failed release must not retry");
+
+        let allocation = failure.into_allocation();
+        assert_eq!(allocation.base(), Ok(base));
+        assert_eq!(allocation.full_size(), Ok(full_size));
+        assert_eq!(allocation.pointer(), Ok(pointer));
+        assert_eq!(
+            allocation.memory_id().unwrap().os_base().map(|address| address.value()),
+            Some(base.addr()),
+        );
+
+        fault.set(fault::Plan::disabled());
+        allocation
+            .release()
+            .expect("the retained exact mapping releases once after retry");
+    }
+
+    #[test]
+    fn normal_os_allocation_uses_good_size_and_base_provenance() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let requested_size = page
+            .checked_add(1)
+            .expect("the selected normal allocation size fits");
+
+        let allocation = NormalOsAllocation::allocate(config, requested_size)
+            .expect("the fixed normal OS route maps one committed owner");
+        let base = allocation.base().expect("the normal mapping remains live");
+        assert_eq!(allocation.pointer(), Ok(NonNull::new(base).unwrap()));
+        assert_eq!(allocation.full_size(), Ok(config.good_alloc_size(requested_size)));
+        let memory = allocation.memory_id().expect("the normal map has OS provenance");
+        assert_eq!(memory.os_base().map(|address| address.value()), Some(base.addr()));
+        assert_eq!(memory.size(), allocation.full_size().ok());
+        assert!(memory.initially_committed());
+        assert!(memory.initially_zero());
+        allocation
+            .release()
+            .expect("the normal owner releases its exact mapping");
+    }
+
+    #[test]
+    fn normal_offset_os_allocation_delegates_zero_and_rejects_invalid_geometry() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let size = page.checked_mul(2).expect("the selected allocation size fits");
+        let alignment = page
+            .checked_mul(4)
+            .expect("the selected allocation alignment fits");
+
+        // The zero-offset route is exactly the ordinary aligned-allocation
+        // route: it has no interior client pointer or prefix decommit.
+        let allocation = NormalOsAllocation::allocate_aligned_at_offset(
+            config,
+            size,
+            alignment,
+            0,
+            MapAccess::Reserved,
+        )
+        .expect("zero offset delegates to the ordinary aligned mapping");
+        let base = allocation.base().expect("the zero-offset base remains live");
+        assert_eq!(allocation.pointer(), Ok(NonNull::new(base).unwrap()));
+        assert_eq!(allocation.full_size(), Ok(config.good_alloc_size(size)));
+        let memory = allocation.memory_id().expect("the zero-offset mapping has provenance");
+        assert_eq!(memory.os_base().map(|address| address.value()), Some(base.addr()));
+        assert_eq!(memory.size(), allocation.full_size().ok());
+        assert!(!memory.initially_committed());
+        allocation
+            .release()
+            .expect("the zero-offset owner releases its exact mapping");
+
+        // The zero-offset delegate reaches `_mi_os_alloc_aligned`, which
+        // rounds this source input up to the kernel page before its primitive
+        // aligned-map check. The nonzero-offset branch must not preempt that
+        // separate route with its own page-multiple input boundary.
+        let sub_page_alignment = page
+            .checked_sub(1)
+            .expect("the Linux page size exceeds one byte");
+        let allocation = NormalOsAllocation::allocate_aligned_at_offset(
+            config,
+            size,
+            sub_page_alignment,
+            0,
+            MapAccess::Reserved,
+        )
+        .expect("zero offset delegates through source page alignment normalization");
+        let base = allocation
+            .base()
+            .expect("the normalized zero-offset mapping remains live");
+        assert_eq!(base.addr() % page, 0);
+        assert_eq!(allocation.pointer(), Ok(NonNull::new(base).unwrap()));
+        allocation
+            .release()
+            .expect("the normalized zero-offset owner releases its exact mapping");
+
+        // The source only discards an offset prefix after a committed map.
+        // A reserved interior allocation still carries its full base/length
+        // owner, but it must not issue a decommit advisory.
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        let allocation = NormalOsAllocation::allocate_aligned_at_offset(
+            config,
+            size,
+            alignment,
+            page,
+            MapAccess::Reserved,
+        )
+        .expect("a reserved offset allocation does not decommit its prefix");
+        assert_eq!(fault.observed(), 0, "reserved offset allocation must not decommit");
+        let memory = allocation
+            .memory_id()
+            .expect("the reserved offset map retains OS provenance");
+        assert!(!memory.initially_committed());
+        allocation
+            .release()
+            .expect("the reserved offset owner releases its exact mapping");
+
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        let invalid_offset = match NormalOsAllocation::allocate_aligned_at_offset(
+            config,
+            size,
+            alignment,
+            size.checked_add(1).expect("the selected invalid offset fits"),
+            MapAccess::Committed,
+        ) {
+            Ok(allocation) => {
+                let _ = allocation.release();
+                panic!("an offset beyond the requested size must not map")
+            }
+            Err(failure) => failure,
+        };
+        assert_eq!(invalid_offset.error(), Errno::INVAL);
+        assert!(invalid_offset.into_mapping().is_none());
+        assert_eq!(fault.observed(), 0, "invalid geometry must not reach mmap");
+
+        let extra = invariants::align_up(page, alignment)
+            .and_then(|aligned_offset| aligned_offset.checked_sub(page))
+            .expect("the selected source offset extra fits");
+        let overflowing_size = usize::MAX - extra;
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        let overflow = match NormalOsAllocation::allocate_aligned_at_offset(
+            config,
+            overflowing_size,
+            alignment,
+            page,
+            MapAccess::Committed,
+        ) {
+            Ok(allocation) => {
+                let _ = allocation.release();
+                panic!("an overflowing source oversize must not map")
+            }
+            Err(failure) => failure,
+        };
+        assert_eq!(overflow.error(), Errno::NOMEM);
+        assert!(overflow.into_mapping().is_none());
+        assert_eq!(fault.observed(), 0, "overflow must not reach mmap");
+    }
+
+    #[test]
+    fn normal_os_allocation_preserves_a_failed_aligned_map_owner() {
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let size = page.checked_mul(2).expect("the selected allocation size fits");
+        let alignment = page
+            .checked_mul(2)
+            .expect("the selected allocation alignment fits");
+
+        let failure = match NormalOsAllocation::allocate_aligned_force_full_trim_for_test(
+            config,
+            size,
+            alignment,
+            MapAccess::Reserved,
+        ) {
+            Ok(allocation) => {
+                let _ = allocation.release();
+                panic!("a failed direct-candidate cleanup must retain its mapping")
+            }
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error(), Errno::NOMEM);
+        let mut mapping = failure
+            .into_mapping()
+            .expect("the owner boundary must retain the failed aligned-map candidate");
+        assert_eq!(mapping.length(), Ok(config.good_alloc_size(size)));
+
+        fault.set(fault::Plan::disabled());
+        mapping
+            .unmap()
+            .expect("the retained aligned-map candidate releases after retry");
     }
 
     #[test]
