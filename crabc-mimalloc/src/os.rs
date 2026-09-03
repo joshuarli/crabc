@@ -8,8 +8,9 @@
 // `src/prim/prim.c`, `src/prim/unix/prim.c` (including the raw
 // `_mi_prim_numa_node_count` observation), and the raw page-alignment and
 // memory-transition portions of `src/os.c`, including `src/os.c:240-294`,
-// `src/os.c:344-467`, `src/os.c:502-527`, and `src/os.c:655-680`'s default
-// `purge_decommits` branch for non-owning arena spans.
+// `src/os.c:344-467`, `src/os.c:502-527`, `src/os.c:655-680`'s default
+// `purge_decommits` branch for non-owning arena spans, and the fixed,
+// no-option NUMA wrapper at `src/os.c:860-898`.
 
 //! Private, allocation-free Linux virtual-memory primitives for the allocator
 //! engine.
@@ -69,6 +70,14 @@ const NUMA_NODE_PATH_PREFIX: &[u8] = b"/sys/devices/system/node/node";
 const NUMA_NODE_DECIMAL_CAPACITY: usize = 3;
 const NUMA_NODE_PATH_CAPACITY: usize =
     NUMA_NODE_PATH_PREFIX.len() + NUMA_NODE_DECIMAL_CAPACITY + 1;
+
+// `src/os.c:860-898` caches the allocator-facing NUMA count separately from
+// the raw Unix observations. This fixed profile omits
+// `mi_option_use_numa_nodes`, so its first cache fill always normalizes the
+// raw count. Keep the cache private and zero-initialized like the source:
+// callers of the wrapper never own or reset process topology state.
+const NUMA_NODE_INT_MAX: usize = i32::MAX as usize;
+static OS_NUMA_NODE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // `src/prim/unix/prim.c:_mi_prim_reset` starts with MADV_FREE and permanently
 // switches to MADV_DONTNEED only when Linux says MADV_FREE is unsupported.
@@ -346,9 +355,9 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 /// result, read `mi_option_use_numa_nodes`, normalize a current-node value,
 /// or choose arena placement; those are separate `src/os.c` policy concerns.
 ///
-/// The current bounded engine has no consumer for a topology count yet. Keep
-/// the primitive available for that later owner without turning its absence
-/// into a guessed allocator policy now.
+/// The M1 raw C/Rust trace calls this primitive directly. The separately named
+/// fixed [`os_numa_node_count`] wrapper consumes it only for the selected
+/// cache, leaving this raw observation and its trace unchanged.
 #[allow(dead_code)]
 pub(crate) fn numa_node_count() -> usize {
     scan_linux_numa_node_count(linux_numa_node_path_is_readable)
@@ -1697,6 +1706,91 @@ pub(crate) fn numa_node() -> usize {
     }
 }
 
+/// Returns the fixed allocator-facing cached NUMA-node count.
+///
+/// This is the no-option part of pinned `src/os.c:_mi_os_numa_node_count`.
+/// It is intentionally distinct from [`numa_node_count`], which remains the
+/// uncached Unix primitive used by the M1 raw C/Rust trace. The first wrapper
+/// call uses that raw count, normalizes zero and values above `INT_MAX` to one,
+/// and publishes the result with the source Release store.
+#[allow(dead_code)]
+#[inline]
+pub(crate) fn os_numa_node_count() -> usize {
+    os_numa_node_count_with_raw(&OS_NUMA_NODE_COUNT, numa_node_count)
+}
+
+/// Implements the fixed no-option count cache with injectable raw input.
+///
+/// The generic closure is statically dispatched in production and lets the
+/// focused regression exercise cache and boundary behavior without changing
+/// global process topology state. Deliberately retain the source's simple
+/// load/fill/store shape: racing first callers may each observe the raw count;
+/// this is not a CAS or once-initialization protocol.
+#[inline]
+fn os_numa_node_count_with_raw(
+    cache: &AtomicUsize,
+    mut raw_count: impl FnMut() -> usize,
+) -> usize {
+    let count = cache.load(Ordering::Acquire);
+    let count = if count == 0 {
+        let observed = raw_count();
+        let normalized = if observed == 0 || observed > NUMA_NODE_INT_MAX {
+            1
+        } else {
+            observed
+        };
+        cache.store(normalized, Ordering::Release);
+        normalized
+    } else {
+        count
+    };
+    debug_assert!((1..=NUMA_NODE_INT_MAX).contains(&count));
+    count
+}
+
+/// Returns the fixed allocator-facing current NUMA node.
+///
+/// This maps pinned `src/os.c:_mi_os_numa_node` and its private
+/// `mi_os_numa_node_get` helper without options, diagnostics, arena placement,
+/// or a caller integration. It keeps the raw [`numa_node`] observation intact
+/// for the M1 trace and applies the source's cached-single-node shortcut,
+/// strict `INT_MAX` current-node boundary, and modulo normalization only here.
+#[allow(dead_code)]
+#[inline]
+pub(crate) fn os_numa_node() -> usize {
+    os_numa_node_with_raw(&OS_NUMA_NODE_COUNT, numa_node_count, numa_node)
+}
+
+/// Implements the fixed cached current-node wrapper with injectable raw input.
+#[inline]
+fn os_numa_node_with_raw(
+    cache: &AtomicUsize,
+    raw_count: impl FnMut() -> usize,
+    mut raw_current: impl FnMut() -> usize,
+) -> usize {
+    // `_mi_os_numa_node` uses a Relaxed fast path before it calls the helper
+    // that performs the Acquire count load. A cached single-node process must
+    // not perform either raw primitive observation.
+    if cache.load(Ordering::Relaxed) == 1 {
+        return 0;
+    }
+
+    let count = os_numa_node_count_with_raw(cache, raw_count);
+    if count <= 1 {
+        return 0;
+    }
+
+    // The source uses `n < INT_MAX`, deliberately excluding INT_MAX itself.
+    let mut current = raw_current();
+    if current >= NUMA_NODE_INT_MAX {
+        current = 0;
+    }
+    if current >= count {
+        current %= count;
+    }
+    current
+}
+
 /// Yields the calling task through Linux's direct scheduler primitive.
 ///
 /// The Unix source's `sleep(0)` is only a best-effort yield request. Linux's
@@ -1977,6 +2071,92 @@ mod tests {
             scan_linux_numa_node_count(|node| node == 1 || node % 5 == 0),
             256,
             "the source scans node 255 and reports its index plus one",
+        );
+    }
+
+    #[test]
+    fn os_numa_wrapper_caches_and_normalizes_the_raw_primitives() {
+        let cache = AtomicUsize::new(0);
+        let mut raw_count_calls = 0;
+        let mut raw_current_calls = 0;
+
+        assert_eq!(
+            os_numa_node_with_raw(
+                &cache,
+                || {
+                    raw_count_calls += 1;
+                    3
+                },
+                || {
+                    raw_current_calls += 1;
+                    8
+                },
+            ),
+            2,
+            "the source wrapper reduces the current node modulo its cached count",
+        );
+        assert_eq!(
+            os_numa_node_count_with_raw(&cache, || panic!("the cached count must be reused")),
+            3,
+        );
+        assert_eq!(raw_count_calls, 1, "the raw count is cached after its first probe");
+        assert_eq!(raw_current_calls, 1);
+
+        let cached_single_node = AtomicUsize::new(1);
+        assert_eq!(
+            os_numa_node_with_raw(
+                &cached_single_node,
+                || panic!("the relaxed single-node fast path must not probe a count"),
+                || panic!("the relaxed single-node fast path must not probe a current node"),
+            ),
+            0,
+        );
+
+        let int_max = i32::MAX as usize;
+        let accepted_maximum = AtomicUsize::new(0);
+        assert_eq!(
+            os_numa_node_count_with_raw(&accepted_maximum, || int_max),
+            int_max,
+            "the count condition accepts INT_MAX itself",
+        );
+        assert_eq!(accepted_maximum.load(Ordering::Relaxed), int_max);
+
+        let oversized_count = AtomicUsize::new(0);
+        assert_eq!(
+            os_numa_node_count_with_raw(&oversized_count, || int_max + 1),
+            1,
+            "only counts above INT_MAX normalize to one",
+        );
+        let zero_count = AtomicUsize::new(0);
+        assert_eq!(os_numa_node_count_with_raw(&zero_count, || 0), 1);
+
+        let multi_node = AtomicUsize::new(5);
+        assert_eq!(
+            os_numa_node_with_raw(
+                &multi_node,
+                || panic!("a cached multi-node count must be reused"),
+                || int_max - 1,
+            ),
+            (int_max - 1) % 5,
+            "a current node below INT_MAX remains eligible for modulo normalization",
+        );
+        assert_eq!(
+            os_numa_node_with_raw(
+                &multi_node,
+                || panic!("a cached multi-node count must be reused"),
+                || int_max,
+            ),
+            0,
+            "the current-node condition maps INT_MAX itself to zero",
+        );
+        assert_eq!(
+            os_numa_node_with_raw(
+                &multi_node,
+                || panic!("a cached multi-node count must be reused"),
+                || int_max + 1,
+            ),
+            0,
+            "the current-node condition maps values above INT_MAX to zero",
         );
     }
 
