@@ -401,6 +401,45 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                 f"{sorted(owned_names & differing_names)}",
             )
 
+    def test_features_header_uses_pinned_musl_include_guard(self) -> None:
+        """Keep the public feature-selection prelude's identity aligned with musl."""
+        profiles = (
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-bsd",
+            "cxx17-strict",
+        )
+        source = (ROOT / "include" / "features.h").read_text(encoding="utf-8")
+        self.assertTrue(
+            source.startswith("#ifndef _FEATURES_H\n#define _FEATURES_H\n"),
+            "features.h must use musl's _FEATURES_H include guard",
+        )
+
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = [row for row in checked["rows"] if row["header"] == "features.h"]
+        self.assertEqual([row["profile"] for row in rows], list(profiles))
+        for row in rows:
+            self.assertEqual(row["comparison"], "matched")
+            self.assertEqual(row["candidate_status"], "ok")
+            self.assertEqual(row["reference_status"], "ok")
+            self.assertEqual(row["candidate"], row["reference"])
+            self.assertEqual(
+                row["difference"],
+                {
+                    "candidate_only": [],
+                    "candidate_only_count": 0,
+                    "incompatible": [],
+                    "incompatible_count": 0,
+                    "matched_count": 4,
+                    "reference_only": [],
+                    "reference_only_count": 0,
+                },
+                f"features.h:{row['profile']} must differ from musl in no facts",
+            )
+
     def test_leaf_headers_use_pinned_musl_include_guards(self) -> None:
         """Keep isolated public-header identities out of private guard namespaces."""
         expected_headers = {

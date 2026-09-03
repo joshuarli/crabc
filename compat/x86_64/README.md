@@ -1720,18 +1720,18 @@ callables remain owned by planned `libc.c-abi-compat`, while noncallable header
 ABI remains owned by `libc.headers-layouts`.
 
 `header-callable-provider-linkage-audit` separately uses the checked inventory
-to ordinarily extract the 1,084 current default-static and 47 verified
+to ordinarily extract the 1,113 current default-static and 47 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 382-name unprovided complement remains explicit:
+selection and behavior. Its 353-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 
 `header-abi-matrix` adds a separate checked Clang-derived 1,337-row report for
 function source declaration forms and emitted linkage spellings plus named
 typedefs, record shapes, enum values, variables, and macro replacement forms.
-Its current 1,086 comparable red source-form rows, one
+Its current 997 comparable red source-form rows, one
 `aio.h:c11-strict` oracle-not-applicable row, and 56 project-only rows are
 evidence to review—not parity waivers or ABI classifications. It excludes byte
 layouts, anonymous declarations, inline behavior, archive linkage, runtime,
@@ -1740,11 +1740,11 @@ family promotion, and public x86 support.
 `header-declaration-macro-visibility-matrix` derives a checked identity report
 from that same refreshed compiler collection, rather than collecting another
 header cross-product. It compares only named `(kind, name)` declaration and
-macro visibility across all 1,337 rows: 1,072 current identity-mismatch rows,
-208 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
+macro visibility across all 1,337 rows: 942 current identity-mismatch rows,
+338 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
 and 56 project-only rows retain checked candidate fact summaries and digests.
 Its 22,208 same-identity source-form
-differences across 766 rows—including 14 form-only rows—remain separately
+differences across 766 rows—including 55 form-only rows—remain separately
 accounted and are not an ABI-equality claim. This is generic feature-visibility
 evidence only; declaration-form equality, layouts, linkage, runtime, family
 promotion, and public x86 support remain outside it.

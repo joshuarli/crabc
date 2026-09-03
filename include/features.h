@@ -1,5 +1,5 @@
-#ifndef _CRABC_FEATURES_H
-#define _CRABC_FEATURES_H
+#ifndef _FEATURES_H
+#define _FEATURES_H
 
 /* Keep feature selection compatible with the pinned musl public vocabulary. */
 #if defined(_ALL_SOURCE) && !defined(_GNU_SOURCE)
