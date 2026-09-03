@@ -281,7 +281,7 @@ read as a broader source-unit claim.
 | `include/mimalloc/atomic.h`: active `MI_USE_PTHREADS` private normal-mutex capability | `src/lock.rs` over `crabc-core` private futex primitives | Source-specific 2018–2024 Microsoft Research/Daan Leijen MIT notice preserved; the no-libc boundary uses a documented 0/1/2 futex state machine and makes no once or fork-repair claim |
 | `src/libc.c`: bounded byte-string helpers; `include/mimalloc/internal.h`: byte copy/fill/zero helpers and aligned forms | `src/support.rs` | Source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notice preserved; the support slice excludes getenv, once, pthread, CPU detection, and formatting |
 | `src/libc.c:115-140`: `_mi_atomic_once_enter`/`_mi_atomic_once_release`; `include/mimalloc/atomic.h:544-557`: `mi_atomic_once_t` | `src/once.rs` over `src/lock.rs` | Source-specific 2018–2024 and 2018–2026 Microsoft Research/Daan Leijen MIT notices preserved; thread identity is an explicit validated input and a non-Send completion token owns the release obligation. The one intentional non-upstream transition is an unsafe, allocation-free/callback-free pre-body cancellation for a rejected Rust lifecycle preflight: it preserves recursive owner recognition through private unlock, then reopens `tid = 0`; a waiter that sees the unlock-to-reopen handoff unlocks and retries. No source body action, failure-state policy, process lifecycle, or fork repair is added. |
-| Test-only mapping transitions corresponding to `src/prim/unix/prim.c` and `src/os.c` | `src/os_host_model.rs` under `cfg(miri)` | Original crabc verification instrument; fixed-capacity atomically owned static slots preserve pointer provenance, concurrent page-map commitment, non-owning arena decommit, and logical transitions but do not model protection faults, RSS, delayed clock progression, or kernel reclamation |
+| Test-only mapping transitions corresponding to `src/prim/unix/prim.c` and `src/os.c` | `src/os_host_model.rs` under `cfg(miri)` | Original crabc verification instrument; fixed-capacity atomically owned static slots preserve pointer provenance, concurrent page-map commitment, non-owning arena decommit, and logical transitions but do not model kernel `mprotect` state or access faults, RSS, delayed clock progression, or kernel reclamation |
 
 #### M1 same-TLD trace clarification
 
@@ -550,6 +550,24 @@ Theap API, actual main-Heap linkage, normal C `_mi_meta_zalloc` backing, or
 full process initialization. The source map therefore remains a bounded
 identity/precondition checkpoint, not a `mi_subproc_t` or metadata-lifecycle
 port.
+
+### Native protection failure boundary
+
+Pinned `src/prim/unix/prim.c:600-604` exposes `_mi_prim_protect`, and
+`src/os.c:690-712` routes `_mi_os_protect` and `_mi_os_unprotect` through
+`mi_os_protectx`. `Mapping::protect_with` retains that selected raw transition
+over a live mapping. The native
+`os::tests::native_protection_failures_preserve_mapping_owner_and_retry`
+regression injects one `NOMEM` before each corresponding syscall: after a
+failed protect it proves the committed page remains writable, and after either
+failure it retains the same mapping base and length until a disabled-plan retry
+succeeds.
+
+This is a test-only pre-syscall Rust safety witness, not C failure equivalence
+or a live-kernel-error observation. It does not establish state after a failed
+unprotect, partial/empty/aligned ranges, guarded or secure policy, allocator
+callers, decommit/commit/purge, PageMap/arena/metadata/bitmap/release paths,
+signals, races, or the wider OS allocation lifecycle.
 
 ### Same-thread direct metadata reentry guard
 

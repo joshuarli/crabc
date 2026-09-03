@@ -1673,6 +1673,84 @@ mod tests {
     }
 
     #[test]
+    fn native_protection_failures_preserve_mapping_owner_and_retry() {
+        let fault = fault::install(fault::Plan::disabled());
+        let startup = current_startup();
+        let page = startup.page_size().bytes();
+
+        let mut protect_mapping = Mapping::map_anonymous(startup, page, MapAccess::Committed)
+            .expect("map one committed page for the protect failure route");
+        let protect_base = protect_mapping
+            .base()
+            .expect("the protect route starts with a live mapping owner");
+        let protect_length = protect_mapping
+            .length()
+            .expect("the protect route starts with a live mapping extent");
+        // SAFETY: this one committed page remains owned and accessible before
+        // the selected test-only pre-syscall failure.
+        unsafe {
+            core::ptr::write_volatile(protect_base, 0x51);
+            assert_eq!(core::ptr::read_volatile(protect_base), 0x51);
+        }
+
+        fault.set(fault::Plan::at(fault::Point::Protect, 1, Errno::NOMEM));
+        assert_eq!(protect_mapping.protect(0, page), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1, "the failed protect must not retry");
+        assert_eq!(protect_mapping.base(), Ok(protect_base));
+        assert_eq!(protect_mapping.length(), Ok(protect_length));
+        // The injection occurs before `mprotect`, so a failed protect leaves
+        // the page writable rather than creating an unobservable state.
+        // SAFETY: the retained mapping is still committed, live, and writable.
+        unsafe {
+            core::ptr::write_volatile(protect_base, 0x52);
+            assert_eq!(core::ptr::read_volatile(protect_base), 0x52);
+        }
+
+        fault.set(fault::Plan::disabled());
+        assert_eq!(protect_mapping.protect(0, page), Ok(true));
+        assert_eq!(protect_mapping.unprotect(0, page), Ok(true));
+        // SAFETY: the successful retry restored read/write access before this
+        // direct byte observation.
+        unsafe {
+            core::ptr::write_volatile(protect_base, 0x53);
+            assert_eq!(core::ptr::read_volatile(protect_base), 0x53);
+        }
+        protect_mapping
+            .unmap()
+            .expect("the protect route releases its retained mapping once");
+
+        let mut unprotect_mapping = Mapping::map_anonymous(startup, page, MapAccess::Committed)
+            .expect("map one committed page for the unprotect failure route");
+        let unprotect_base = unprotect_mapping
+            .base()
+            .expect("the unprotect route starts with a live mapping owner");
+        let unprotect_length = unprotect_mapping
+            .length()
+            .expect("the unprotect route starts with a live mapping extent");
+        assert_eq!(unprotect_mapping.protect(0, page), Ok(true));
+
+        fault.set(fault::Plan::at(fault::Point::Unprotect, 1, Errno::NOMEM));
+        assert_eq!(unprotect_mapping.unprotect(0, page), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1, "the failed unprotect must not retry");
+        assert_eq!(unprotect_mapping.base(), Ok(unprotect_base));
+        assert_eq!(unprotect_mapping.length(), Ok(unprotect_length));
+        // Do not dereference after the injected pre-syscall failure: the
+        // preceding successful protect may still leave this page `PROT_NONE`.
+
+        fault.set(fault::Plan::disabled());
+        assert_eq!(unprotect_mapping.unprotect(0, page), Ok(true));
+        // SAFETY: the successful retry restored read/write access to this
+        // still-owned committed page.
+        unsafe {
+            core::ptr::write_volatile(unprotect_base, 0x54);
+            assert_eq!(core::ptr::read_volatile(unprotect_base), 0x54);
+        }
+        unprotect_mapping
+            .unmap()
+            .expect("the unprotect route releases its retained mapping once");
+    }
+
+    #[test]
     fn aligned_mapping_retains_the_direct_candidate_when_its_cleanup_fails() {
         let fault = fault::install(fault::Plan::at(
             fault::Point::Unmap,

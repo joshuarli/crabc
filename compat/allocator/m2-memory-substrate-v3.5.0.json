@@ -54,7 +54,7 @@
       "completion_status": "partial",
       "id": "vm-primitives",
       "remaining_conditions": [
-        "complete the remaining Linux/AArch64 reserve, commit, decommit, purge, protect, unmap, reuse, huge-page, hint, NUMA, and aligned-overmap substrate with fault-injection evidence beyond the selected direct/prefix/suffix cleanup-owner and reset-advice retry-snapshot slices"
+        "complete the remaining Linux/AArch64 reserve, commit, decommit, purge, protect, unmap, reuse, huge-page, hint, NUMA, and aligned-overmap substrate with fault-injection evidence beyond the selected direct/prefix/suffix cleanup-owner, reset-advice retry-snapshot, and native one-page protection-owner/retry slices"
       ],
       "source_units": [
         "include/mimalloc/prim.h",
@@ -283,11 +283,18 @@
       ]
     },
     {
-      "checks": [],
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "native-protection-failure-owner-and-retry",
+          "kind": "rust-unit",
+          "target": "os::tests::native_protection_failures_preserve_mapping_owner_and_retry"
+        }
+      ],
       "completion_status": "partial",
       "id": "fault-injection",
       "remaining_conditions": [
-        "exercise allocation, commit, map, metadata, bitmap, PageMap, arena, and release failures without leaking or changing ownership"
+        "exercise all remaining allocation, commit, map, metadata, bitmap, PageMap, arena, and release failures without leaking or changing ownership beyond the selected native one-page protect/unprotect owner-and-retry boundary"
       ],
       "source_units": [
         "src/prim/unix/prim.c",
@@ -374,6 +381,7 @@
       "the separate PageMap cold-init differential records the C static-empty-root/later-success behavior and the Rust absent-root/typed-poison result as an intentionally accepted bounded safety divergence; it does not claim a common cold lookup, public C ABI behavior, or full process-initialization parity",
       "the selected aligned-overmap cleanup-owner tests prove Rust non-RAII ownership after direct or partial release failure; they do not claim C retry semantics, full aligned-allocation policy, or complete VM fault parity",
       "the selected reset-advice regression proves only the private source snapshot/retry control flow with a deterministic advisory mock; it does not claim a live-kernel EAGAIN frequency or complete purge fault parity",
+      "the selected native protection test proves only one committed anonymous page under test-only pre-syscall Protect and Unprotect NOMEM injection: the mapping's base/length remain owned, failed protect leaves the page writable, and each disabled-plan retry succeeds. It does not observe live kernel error behavior or C diagnostics, prove protection state after failed unprotect, cover partial, empty, or aligned ranges, secure or guarded policy, allocator callers, decommit, commit, purge, PageMap, arena, metadata, bitmap, or release paths, signals, races, or C/Rust failure equivalence",
       "the selected arena-purge regressions prove only default one-slice delayed-purge callback splitting at a source 64-bit bitmap-field boundary and frozen-Linux default-decommit-error consumption; they do not claim general visitor behavior, configurable purge policy, general purge fault parity, registry-wide collection, concurrent arena use, or arena lifecycle parity",
       "the selected detached-metadata checks prove only that Rust binds its static detached metadata image before global PageMap publication and, for the bounded same-subprocess, empty-head, non-threadpool input, preserves kind-only static provenance and frozen normal enabled page-reclaim, initializes a possibly-weak random context, and derives an odd cookie before first session/backing. After that bounded image is fully formed, preparation one-way Release-CAS publishes its exact identity through a comparison-only Rust MainSubprocess slot; COLD direct zalloc, aligned zalloc, and rezalloc(None) refuse before the metadata lock, mapping, or capability creation. A nonempty head, mismatched subprocess, or thread-pool input is rejected before mutation rather than claiming C's locked list/split or option-adjustment path. This does not model the actual mi_subproc_t::theap_meta field/layout, theap_meta_lock, a dereference-capable subprocess API, actual main-Heap linkage, or normal C metadata backing, nor establish complete _mi_theap_init, metadata, initialization, mutable-options, or fault-injection parity",
       "the selected same-thread metadata recursion regression proves only Rust marker rejection for prepared direct zalloc, aligned-zalloc, and rezalloc before first backing or old-capability claim, plus post-drop recovery. It is not a C nonrecursive-lock or deadlock equivalence claim and does not cover reentrant callbacks or signals, cross-thread contention or races, PageMap, arena, OS, release, copy, or general metadata lifecycle paths",

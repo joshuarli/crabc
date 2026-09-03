@@ -2104,6 +2104,7 @@ class ContractTests(unittest.TestCase):
                 "page-map",
                 "arenas",
                 "initialization",
+                "fault-injection",
                 "allocator-recursion",
             ],
         )
@@ -2428,6 +2429,25 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(initialization["completion_status"], "partial")
         self.assertTrue(initialization["remaining_conditions"])
+        fault_injection = next(
+            component for component in summary["components"] if component["id"] == "fault-injection"
+        )
+        self.assertEqual(
+            fault_injection["checks"],
+            [
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "native-protection-failure-owner-and-retry",
+                    "kind": "rust-unit",
+                    "target": (
+                        "os::tests::native_protection_failures_preserve_mapping_owner_and_"
+                        "retry"
+                    ),
+                }
+            ],
+        )
+        self.assertEqual(fault_injection["completion_status"], "partial")
+        self.assertTrue(fault_injection["remaining_conditions"])
         allocator_recursion = next(
             component
             for component in summary["components"]
