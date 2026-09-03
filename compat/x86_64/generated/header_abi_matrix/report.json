@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "5cba30cb9887baa593e015d496a8c335ab789dca902fa5a51d46235ad4c48bc3",
+    "callable_inventory_sha256": "93ab66f9e82d77a4563b595c9ded13fab7c96ab54f2918038b73269beb1f8344",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -28833,14 +28833,14 @@
     },
     {
       "candidate": {
-        "count": 64,
+        "count": 77,
         "kind_counts": {
-          "function": 44,
-          "macro": 17,
+          "function": 56,
+          "macro": 18,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "62cf94363f479da074c4873c9a724fcea8c6ae63984f59c4b17a98974b1af590"
+        "sha256": "86280d66c70c5cb82d562926c7640ea7fa45a2717fa5207cdc12ebd260d69622"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -28853,90 +28853,11 @@
           }
         ],
         "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "void *(void *restrict, const void *, size_t)|mangled=mempcpy",
-            "kind": "function",
-            "name": "mempcpy",
-            "reference_signature": "void *(void *, const void *, size_t)|mangled=mempcpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 61,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 76,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "memory.h",
       "profile": "c11-gnu",
@@ -28954,14 +28875,14 @@
     },
     {
       "candidate": {
-        "count": 64,
+        "count": 77,
         "kind_counts": {
-          "function": 44,
-          "macro": 17,
+          "function": 56,
+          "macro": 18,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "49bc0042b406ab8a2f6bec6f8f9eb147efe3d51ee39f1b62dcabd62ee8679fca"
+        "sha256": "4e60610452cc8bbfc5a9731679e5c6e092706f18f007eeea5ca20632eedbcb03"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -28974,108 +28895,11 @@
           }
         ],
         "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "void *(void *, const void *, size_t)|mangled=memcpy",
-            "kind": "function",
-            "name": "memcpy",
-            "reference_signature": "void *(void *__restrict, const void *__restrict, size_t)|mangled=memcpy"
-          },
-          {
-            "candidate_signature": "void *(void *__restrict, const void *, size_t)|mangled=mempcpy",
-            "kind": "function",
-            "name": "mempcpy",
-            "reference_signature": "void *(void *, const void *, size_t)|mangled=mempcpy"
-          },
-          {
-            "candidate_signature": "char *(char *, const char *)|mangled=strtok",
-            "kind": "function",
-            "name": "strtok",
-            "reference_signature": "char *(char *__restrict, const char *__restrict)|mangled=strtok"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t)|mangled=strxfrm",
-            "kind": "function",
-            "name": "strxfrm",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t)|mangled=strxfrm"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 5,
-        "matched_count": 58,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 76,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "memory.h",
       "profile": "cxx17-gnu",
@@ -29140,7 +28964,7 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "b0854e4e55916b2ee246687be208fb72b89a10bff34db881eb224936ea4550ba"
+        "sha256": "3b460f4bc105b25e70268faacdeb803a4d52e97f91614ca9ed683e4f79a41541"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -29153,16 +28977,9 @@
           }
         ],
         "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 51,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 52,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -29189,7 +29006,7 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "443c9257bbf2cd23b88b8c3651e0126d0673c48c21fb49e9659f5f9c505c4436"
+        "sha256": "b8313004ca05970ca9008a7defe80b821f4c1e1ea98ec1189540f09c531138d9"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -29202,16 +29019,9 @@
           }
         ],
         "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 52,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 53,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -29231,14 +29041,14 @@
     },
     {
       "candidate": {
-        "count": 58,
+        "count": 71,
         "kind_counts": {
-          "function": 39,
-          "macro": 16,
+          "function": 51,
+          "macro": 17,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "a8091c57c31bd419483853cc9e5d3a8925c70fdff936743a1a8bba2a0fe5f4f3"
+        "sha256": "64266f923f73a29075df89e8c70fce583aa4f06602ca2a1e61ac01600f9e2f47"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -29251,84 +29061,11 @@
           }
         ],
         "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 56,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 70,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "memory.h",
       "profile": "c11-bsd",
@@ -29346,14 +29083,14 @@
     },
     {
       "candidate": {
-        "count": 64,
+        "count": 77,
         "kind_counts": {
-          "function": 44,
-          "macro": 17,
+          "function": 56,
+          "macro": 18,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "49bc0042b406ab8a2f6bec6f8f9eb147efe3d51ee39f1b62dcabd62ee8679fca"
+        "sha256": "4e60610452cc8bbfc5a9731679e5c6e092706f18f007eeea5ca20632eedbcb03"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -29366,108 +29103,11 @@
           }
         ],
         "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "void *(void *, const void *, size_t)|mangled=memcpy",
-            "kind": "function",
-            "name": "memcpy",
-            "reference_signature": "void *(void *__restrict, const void *__restrict, size_t)|mangled=memcpy"
-          },
-          {
-            "candidate_signature": "void *(void *__restrict, const void *, size_t)|mangled=mempcpy",
-            "kind": "function",
-            "name": "mempcpy",
-            "reference_signature": "void *(void *, const void *, size_t)|mangled=mempcpy"
-          },
-          {
-            "candidate_signature": "char *(char *, const char *)|mangled=strtok",
-            "kind": "function",
-            "name": "strtok",
-            "reference_signature": "char *(char *__restrict, const char *__restrict)|mangled=strtok"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t)|mangled=strxfrm",
-            "kind": "function",
-            "name": "strxfrm",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t)|mangled=strxfrm"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 5,
-        "matched_count": 58,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 76,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "memory.h",
       "profile": "cxx17-strict",
@@ -32265,105 +31905,26 @@
     },
     {
       "candidate": {
-        "count": 1180,
+        "count": 1193,
         "kind_counts": {
-          "function": 80,
-          "macro": 963,
+          "function": 92,
+          "macro": 964,
           "record": 47,
           "typedef": 88,
           "variable": 2
         },
-        "sha256": "b7858d3594c643a37df34d3b7197064aeb755c13605371d778c0eef0c154a4ef"
+        "sha256": "1aaee7cb20be11148861ec2f72d52ecbef71739b5216d46c02009fd9c6dbc71f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "void *(void *restrict, const void *, size_t)|mangled=mempcpy",
-            "kind": "function",
-            "name": "mempcpy",
-            "reference_signature": "void *(void *, const void *, size_t)|mangled=mempcpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 1178,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 1193,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "netinet/icmp6.h",
       "profile": "c11-gnu",
@@ -32382,123 +31943,26 @@
     },
     {
       "candidate": {
-        "count": 1177,
+        "count": 1190,
         "kind_counts": {
-          "function": 80,
-          "macro": 962,
+          "function": 92,
+          "macro": 963,
           "record": 46,
           "typedef": 87,
           "variable": 2
         },
-        "sha256": "29b1626044bb7158979ba58a2eecd80f396f8db02f501561cb2a068c686a3571"
+        "sha256": "5fae19841c760731e0a2913b858684080cc975a9f9d4732a85bc1de48972dc6f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "void *(void *, const void *, size_t)|mangled=memcpy",
-            "kind": "function",
-            "name": "memcpy",
-            "reference_signature": "void *(void *__restrict, const void *__restrict, size_t)|mangled=memcpy"
-          },
-          {
-            "candidate_signature": "void *(void *__restrict, const void *, size_t)|mangled=mempcpy",
-            "kind": "function",
-            "name": "mempcpy",
-            "reference_signature": "void *(void *, const void *, size_t)|mangled=mempcpy"
-          },
-          {
-            "candidate_signature": "char *(char *, const char *)|mangled=strtok",
-            "kind": "function",
-            "name": "strtok",
-            "reference_signature": "char *(char *__restrict, const char *__restrict)|mangled=strtok"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t)|mangled=strxfrm",
-            "kind": "function",
-            "name": "strxfrm",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t)|mangled=strxfrm"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 5,
-        "matched_count": 1172,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 1190,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "netinet/icmp6.h",
       "profile": "cxx17-gnu",
@@ -32563,23 +32027,16 @@
           "typedef": 70,
           "variable": 2
         },
-        "sha256": "99750521b9ba68e0a4af471eaa4c3fd7339fe94b5f0c56176ac012ece6e8a8d4"
+        "sha256": "18ddef65eb8072d15da31b1619e3e7157d484991fa131a80badee862185ac383"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 1076,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 1077,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -32608,23 +32065,16 @@
           "typedef": 70,
           "variable": 2
         },
-        "sha256": "b5a95585326a238891d11db71c26b236d04e7cdbf1aab0e053a9466223fb429a"
+        "sha256": "2f8380b7f0868e2955c5b17aebf371738c08438b0312b7e77d227941e5777fb8"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 1077,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 1078,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -32645,99 +32095,26 @@
     },
     {
       "candidate": {
-        "count": 1170,
+        "count": 1183,
         "kind_counts": {
-          "function": 73,
-          "macro": 962,
+          "function": 85,
+          "macro": 963,
           "record": 45,
           "typedef": 88,
           "variable": 2
         },
-        "sha256": "71a452dfb1483b64e302c2c66fa698704a0fc6289965bf3241617aac299c7232"
+        "sha256": "d88b94991060ad3821909c6f640784a7736d80ac82d20bbcac94ace90c12d688"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 1169,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 1183,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "netinet/icmp6.h",
       "profile": "c11-bsd",
@@ -32756,123 +32133,26 @@
     },
     {
       "candidate": {
-        "count": 1177,
+        "count": 1190,
         "kind_counts": {
-          "function": 80,
-          "macro": 962,
+          "function": 92,
+          "macro": 963,
           "record": 46,
           "typedef": 87,
           "variable": 2
         },
-        "sha256": "29b1626044bb7158979ba58a2eecd80f396f8db02f501561cb2a068c686a3571"
+        "sha256": "5fae19841c760731e0a2913b858684080cc975a9f9d4732a85bc1de48972dc6f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "void *(void *, const void *, size_t)|mangled=memcpy",
-            "kind": "function",
-            "name": "memcpy",
-            "reference_signature": "void *(void *__restrict, const void *__restrict, size_t)|mangled=memcpy"
-          },
-          {
-            "candidate_signature": "void *(void *__restrict, const void *, size_t)|mangled=mempcpy",
-            "kind": "function",
-            "name": "mempcpy",
-            "reference_signature": "void *(void *, const void *, size_t)|mangled=mempcpy"
-          },
-          {
-            "candidate_signature": "char *(char *, const char *)|mangled=strtok",
-            "kind": "function",
-            "name": "strtok",
-            "reference_signature": "char *(char *__restrict, const char *__restrict)|mangled=strtok"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t)|mangled=strxfrm",
-            "kind": "function",
-            "name": "strxfrm",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t)|mangled=strxfrm"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 5,
-        "matched_count": 1172,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 1190,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "netinet/icmp6.h",
       "profile": "cxx17-strict",
@@ -55213,104 +54493,25 @@
     },
     {
       "candidate": {
-        "count": 63,
+        "count": 76,
         "kind_counts": {
-          "function": 44,
-          "macro": 16,
+          "function": 56,
+          "macro": 17,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "5b3c8b9f511dcd07733cd370993e0623992e272088a87a2044372bf066d7e37e"
+        "sha256": "258aba1ecb39e4e42e4500eb9d9671de219b334995183ea94fd5fd4bae923069"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "void *(void *restrict, const void *, size_t)|mangled=mempcpy",
-            "kind": "function",
-            "name": "mempcpy",
-            "reference_signature": "void *(void *, const void *, size_t)|mangled=mempcpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 61,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 76,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "string.h",
       "profile": "c11-gnu",
@@ -55328,122 +54529,25 @@
     },
     {
       "candidate": {
-        "count": 63,
+        "count": 76,
         "kind_counts": {
-          "function": 44,
-          "macro": 16,
+          "function": 56,
+          "macro": 17,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "d26883a3d3545427c87f0aa97b6c401b0b8102f30adf5df11cf539e68da30e43"
+        "sha256": "a2f319f17d7ca26b5ea15fc39a1269f5e1c12e0748b0f8851688b7ece00b30ce"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "void *(void *, const void *, size_t)|mangled=memcpy",
-            "kind": "function",
-            "name": "memcpy",
-            "reference_signature": "void *(void *__restrict, const void *__restrict, size_t)|mangled=memcpy"
-          },
-          {
-            "candidate_signature": "void *(void *__restrict, const void *, size_t)|mangled=mempcpy",
-            "kind": "function",
-            "name": "mempcpy",
-            "reference_signature": "void *(void *, const void *, size_t)|mangled=mempcpy"
-          },
-          {
-            "candidate_signature": "char *(char *, const char *)|mangled=strtok",
-            "kind": "function",
-            "name": "strtok",
-            "reference_signature": "char *(char *__restrict, const char *__restrict)|mangled=strtok"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t)|mangled=strxfrm",
-            "kind": "function",
-            "name": "strxfrm",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t)|mangled=strxfrm"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 5,
-        "matched_count": 58,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 76,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "string.h",
       "profile": "cxx17-gnu",
@@ -55502,23 +54606,16 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "e19dc3cac0c5d7a6447e75ba15686c8c0a1ec7cc220555e503e16d5cf97ebe7e"
+        "sha256": "445134b073c9c35d1df12f2e2eb4647d0a18680ab2d4d3a4bd167da1a23fea34"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 51,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 52,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -55545,23 +54642,16 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "30154ce9aeb0aa31b5ab73fd7230520970687094691a47e50877a47d5691787a"
+        "sha256": "d3a93cfe8b988be6968c6d867555e81931aecadcbfc0db26cebe51b83af5edc4"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 52,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 53,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -55581,98 +54671,25 @@
     },
     {
       "candidate": {
-        "count": 57,
+        "count": 70,
         "kind_counts": {
-          "function": 39,
-          "macro": 15,
+          "function": 51,
+          "macro": 16,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "ee167bf7e18c51bf3075b47210a0807125d7188412e4ce07f6dc5f333bf190ec"
+        "sha256": "98fe8c6220982fcb7339c124737e376c2a294fc4af789db40459ae7ead8cd21b"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *restrict, const char *restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 56,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 70,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "string.h",
       "profile": "c11-bsd",
@@ -55690,122 +54707,25 @@
     },
     {
       "candidate": {
-        "count": 63,
+        "count": 76,
         "kind_counts": {
-          "function": 44,
-          "macro": 16,
+          "function": 56,
+          "macro": 17,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "d26883a3d3545427c87f0aa97b6c401b0b8102f30adf5df11cf539e68da30e43"
+        "sha256": "a2f319f17d7ca26b5ea15fc39a1269f5e1c12e0748b0f8851688b7ece00b30ce"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "void *(void *, const void *, size_t)|mangled=memcpy",
-            "kind": "function",
-            "name": "memcpy",
-            "reference_signature": "void *(void *__restrict, const void *__restrict, size_t)|mangled=memcpy"
-          },
-          {
-            "candidate_signature": "void *(void *__restrict, const void *, size_t)|mangled=mempcpy",
-            "kind": "function",
-            "name": "mempcpy",
-            "reference_signature": "void *(void *, const void *, size_t)|mangled=mempcpy"
-          },
-          {
-            "candidate_signature": "char *(char *, const char *)|mangled=strtok",
-            "kind": "function",
-            "name": "strtok",
-            "reference_signature": "char *(char *__restrict, const char *__restrict)|mangled=strtok"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t)|mangled=strxfrm",
-            "kind": "function",
-            "name": "strxfrm",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t)|mangled=strxfrm"
-          },
-          {
-            "candidate_signature": "size_t (char *, const char *, size_t, locale_t)|mangled=strxfrm_l",
-            "kind": "function",
-            "name": "strxfrm_l",
-            "reference_signature": "size_t (char *__restrict, const char *__restrict, size_t, locale_t)|mangled=strxfrm_l"
-          }
-        ],
-        "incompatible_count": 5,
-        "matched_count": 58,
-        "reference_only": [
-          {
-            "kind": "function",
-            "name": "bcmp",
-            "signature": "int (const void *, const void *, size_t)|mangled=bcmp"
-          },
-          {
-            "kind": "function",
-            "name": "bcopy",
-            "signature": "void (const void *, void *, size_t)|mangled=bcopy"
-          },
-          {
-            "kind": "function",
-            "name": "bzero",
-            "signature": "void (void *, size_t)|mangled=bzero"
-          },
-          {
-            "kind": "function",
-            "name": "ffs",
-            "signature": "int (int)|mangled=ffs"
-          },
-          {
-            "kind": "function",
-            "name": "ffsl",
-            "signature": "int (long)|mangled=ffsl"
-          },
-          {
-            "kind": "function",
-            "name": "ffsll",
-            "signature": "int (long long)|mangled=ffsll"
-          },
-          {
-            "kind": "function",
-            "name": "index",
-            "signature": "char *(const char *, int)|mangled=index"
-          },
-          {
-            "kind": "function",
-            "name": "rindex",
-            "signature": "char *(const char *, int)|mangled=rindex"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp",
-            "signature": "int (const char *, const char *)|mangled=strcasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strcasecmp_l",
-            "signature": "int (const char *, const char *, locale_t)|mangled=strcasecmp_l"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp",
-            "signature": "int (const char *, const char *, size_t)|mangled=strncasecmp"
-          },
-          {
-            "kind": "function",
-            "name": "strncasecmp_l",
-            "signature": "int (const char *, const char *, size_t, locale_t)|mangled=strncasecmp_l"
-          },
-          {
-            "kind": "macro",
-            "name": "_STRINGS_H",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 13
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 76,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "string.h",
       "profile": "cxx17-strict",
@@ -192297,23 +191217,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 597,
-      "mismatch": 683,
+      "matched": 609,
+      "mismatch": 671,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "683 comparable header/profile rows have prototype or named declaration-form differences",
+      "671 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
       "candidate_only_count": 16351,
-      "incompatible_count": 3093,
-      "reference_only_count": 9033
+      "incompatible_count": 3048,
+      "reference_only_count": 8877
     },
-    "mismatch_row_count": 683,
+    "mismatch_row_count": 671,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337

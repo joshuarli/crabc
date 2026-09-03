@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "5cba30cb9887baa593e015d496a8c335ab789dca902fa5a51d46235ad4c48bc3",
+    "callable_inventory_sha256": "93ab66f9e82d77a4563b595c9ded13fab7c96ab54f2918038b73269beb1f8344",
     "matrix_contract_sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -7548,125 +7548,27 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 46,
+      "candidate_callable_count": 58,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "memory.h",
-      "matched_callable_count": 46,
+      "matched_callable_count": 58,
       "profile": "c11-gnu",
       "reference_callable_count": 58,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 46,
+      "candidate_callable_count": 58,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "memory.h",
-      "matched_callable_count": 46,
+      "matched_callable_count": 58,
       "profile": "cxx17-gnu",
       "reference_callable_count": 58,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -7706,125 +7608,27 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 40,
+      "candidate_callable_count": 52,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "memory.h",
-      "matched_callable_count": 40,
+      "matched_callable_count": 52,
       "profile": "c11-bsd",
       "reference_callable_count": 52,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 46,
+      "candidate_callable_count": 58,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "memory.h",
-      "matched_callable_count": 46,
+      "matched_callable_count": 58,
       "profile": "cxx17-strict",
       "reference_callable_count": 58,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -8599,125 +8403,27 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 152,
+      "candidate_callable_count": 164,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_callable_count": 152,
+      "matched_callable_count": 164,
       "profile": "c11-gnu",
       "reference_callable_count": 164,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 152,
+      "candidate_callable_count": 164,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_callable_count": 152,
+      "matched_callable_count": 164,
       "profile": "cxx17-gnu",
       "reference_callable_count": 164,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -8757,125 +8463,27 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 144,
+      "candidate_callable_count": 156,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_callable_count": 144,
+      "matched_callable_count": 156,
       "profile": "c11-bsd",
       "reference_callable_count": 156,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 152,
+      "candidate_callable_count": 164,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_callable_count": 152,
+      "matched_callable_count": 164,
       "profile": "cxx17-strict",
       "reference_callable_count": 164,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -13282,125 +12890,27 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 46,
+      "candidate_callable_count": 58,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "string.h",
-      "matched_callable_count": 46,
+      "matched_callable_count": 58,
       "profile": "c11-gnu",
       "reference_callable_count": 58,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 46,
+      "candidate_callable_count": 58,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "string.h",
-      "matched_callable_count": 46,
+      "matched_callable_count": 58,
       "profile": "cxx17-gnu",
       "reference_callable_count": 58,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -13440,125 +12950,27 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 40,
+      "candidate_callable_count": 52,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "string.h",
-      "matched_callable_count": 40,
+      "matched_callable_count": 52,
       "profile": "c11-bsd",
       "reference_callable_count": 52,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 46,
+      "candidate_callable_count": 58,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "string.h",
-      "matched_callable_count": 46,
+      "matched_callable_count": 58,
       "profile": "cxx17-strict",
       "reference_callable_count": 58,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "bcmp"
-        },
-        {
-          "classification": "external",
-          "name": "bcopy"
-        },
-        {
-          "classification": "external",
-          "name": "bzero"
-        },
-        {
-          "classification": "external",
-          "name": "ffs"
-        },
-        {
-          "classification": "external",
-          "name": "ffsl"
-        },
-        {
-          "classification": "external",
-          "name": "ffsll"
-        },
-        {
-          "classification": "external",
-          "name": "index"
-        },
-        {
-          "classification": "external",
-          "name": "rindex"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strcasecmp_l"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp"
-        },
-        {
-          "classification": "external",
-          "name": "strncasecmp_l"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -28538,18 +27950,18 @@
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-retained-pending-c-abi-policy": 56,
-      "matched": 1070,
-      "mismatch": 210,
+      "matched": 1082,
+      "mismatch": 198,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "210 comparable pinned header/profile rows have callable visibility differences",
+      "198 comparable pinned header/profile rows have callable visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
-    "matched_callable_count": 34376,
-    "mismatch_row_count": 210,
+    "matched_callable_count": 34520,
+    "mismatch_row_count": 198,
     "oracle_not_applicable_candidate_visible_callable_count": 21,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -28558,7 +27970,7 @@
     "project_only_callable_count": 407,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_callable_count": 316,
+    "reference_only_callable_count": 172,
     "row_count": 1337
   },
   "target": "x86_64-unknown-linux-musl"

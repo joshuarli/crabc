@@ -665,12 +665,13 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         feature visibility, record forms, macro spellings, and C/C++ declarations.
 
         The all-header ABI matrix reports every declaration inherited by a direct
-        include. The ``netinet/icmp6.h`` row still exposes independently owned
-        ``string.h``/``strings.h`` form debt. That is named here rather than
-        hidden: a new network-owned difference, including an ``in6_addr``,
-        ``ip6_hdr``, or ``__res_state`` source-form regression, must fail this
-        slice immediately. The nameser/resolver roots must remain exact through
-        their shared musl-style ``stddef.h`` request boundary.
+        include. ``netinet/icmp6.h`` reaches the byte-string headers through its
+        musl-owned include path, so that path must retain their selected feature
+        visibility and declaration forms as well as the network records. A new
+        difference, including an ``in6_addr``, ``ip6_hdr``, ``__res_state``, or
+        byte-string source-form regression, must fail this slice immediately.
+        The nameser/resolver roots must remain exact through their shared musl
+        ``stddef.h`` request boundary.
         """
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         rows = {
@@ -703,62 +704,53 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             "cxx17-gnu",
             "cxx17-strict",
         )
-        external_transitive_names = {
-            "netinet/icmp6.h": frozenset(
-                {
-                    "_STRINGS_H",
-                    "bcmp",
-                    "bcopy",
-                    "bzero",
-                    "ffs",
-                    "ffsl",
-                    "ffsll",
-                    "index",
-                    "memcpy",
-                    "mempcpy",
-                    "rindex",
-                    "strcasecmp",
-                    "strcasecmp_l",
-                    "strncasecmp",
-                    "strncasecmp_l",
-                    "strtok",
-                    "strxfrm",
-                    "strxfrm_l",
-                }
-            ),
-        }
-
-        matched = 0
         for header in headers:
             for profile in profiles:
                 row = rows[(header, profile)]
-                if row["comparison"] == "matched":
-                    matched += 1
-                    continue
-
                 self.assertEqual(
                     row["comparison"],
-                    "mismatch",
-                    f"{header}:{profile} has an unexpected matrix state",
-                )
-                difference = row["difference"]
-                difference_names = {
-                    fact["name"]
-                    for key in ("candidate_only", "incompatible", "reference_only")
-                    for fact in difference[key]
-                }
-                self.assertTrue(
-                    difference_names <= external_transitive_names.get(header, frozenset()),
-                    f"{header}:{profile} leaked a network/resolver-owned difference: "
-                    f"{sorted(difference_names)}",
+                    "matched",
+                    f"{header}:{profile} must retain the complete musl-owned "
+                    "network/resolver declaration closure",
                 )
 
         self.assertEqual(len(headers) * len(profiles), 105)
-        self.assertGreaterEqual(
-            matched,
-            99,
-            "nameser/resolver rows must retain their completed stddef source closure",
+
+    def test_byte_string_headers_preserve_musl_x86_declaration_forms(self) -> None:
+        """Keep direct byte-string declaration forms and feature closure exact.
+
+        The compile-only byte-string gate proves C/C++ spelling, linkage, and
+        feature visibility, while this compiler-derived matrix keeps the
+        source-significant ``restrict`` forms and GNU/BSD ``strings.h`` include
+        closure from silently drifting. ``netinet/icmp6.h`` consumes this same
+        public boundary and is covered separately by the network closure test.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        headers = ("string.h", "strings.h")
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
         )
+
+        for header in headers:
+            for profile in profiles:
+                self.assertEqual(
+                    rows[(header, profile)]["comparison"],
+                    "matched",
+                    f"{header}:{profile} must retain musl's byte-string "
+                    "declaration form and selected feature closure",
+                )
+
+        self.assertEqual(len(headers) * len(profiles), 14)
 
     def test_signal_wait_aio_poll_headers_preserve_musl_x86_ownership(self) -> None:
         """Keep the signal/process-control declaration spine source-faithful.

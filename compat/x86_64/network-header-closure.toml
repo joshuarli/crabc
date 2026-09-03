@@ -7,7 +7,7 @@ oracle = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947
 [work_package]
 target_family = "libc.headers-layouts"
 target_obligations = ["network-resolver-header-closure", "selected-header-declaration-forms"]
-blocker = "The remaining x86 public network/resolver header debt is limited to six of 105 direct profile rows: netinet/icmp6.h inherits non-musl string.h/strings.h declaration forms. The shared stddef.h request boundary is now source-faithful and leaves no nameser/resolver-owned difference."
+blocker = "The x86 network/resolver source-closure sub-obligation is exact across all 105 direct profile rows. The wider libc.headers-layouts declaration/layout/provider aggregate remains incomplete and separately tracked."
 prerequisites = ["oracle.musl-toolchain", "libc.errno-tls", "libc.headers-layouts callable declaration inventory"]
 dependent_work = ["libc.headers-layouts family aggregate", "libc.resolver public C ABI integration", "libc.posix-runtime socket consumers", "owned static and dynamic sysroot header closure"]
 baseline_contract = "Pinned musl 1.2.6 x86-64 public header source, Linux 5.10 UAPI inputs, System V AMD64 LP64 ABI, and the frozen AArch64 header baseline."
@@ -16,6 +16,9 @@ source_owners = [
   "compat/x86_64/tests/test_header_abi_matrix.py",
   "compat/x86_64/tests/test_tcp_header_abi.py",
   "compat/x86_64/tests/test_stddef_header_abi.py",
+  "compat/x86_64/byte_strings_header_abi_probe.c",
+  "compat/x86_64/byte_strings_header_abi_probe.cpp",
+  "compat/x86_64/run_byte_strings_header_abi.sh",
   "compat/x86_64/header_abi_matrix.py",
   "compat/x86_64/header_declaration_macro_visibility_matrix.py",
   "compat/x86_64/header_callable_visibility_matrix.py",
@@ -26,6 +29,8 @@ source_owners = [
   "compat/x86_64/stddef_header_abi_probe.cpp",
   "compat/x86_64/run_stddef_header_abi.sh",
   "include/stddef.h",
+  "include/string.h",
+  "include/strings.h",
   "include/bits/stdint.h",
   "include/stdint.h",
   "include/inttypes.h",
@@ -47,13 +52,14 @@ focused_evidence_command = "./scripts/dev-x86_64.sh header-abi-matrix"
 family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
 product_command = "./scripts/dev-x86_64.sh campaign-static"
 negative_scope = "This x86-only package restores selected public header declarations, layouts, macros, include ownership, and C/C++ linkage. It does not select archive providers, resolver configuration or DNS I/O, socket runtime behavior, libc.so, CRT, loader, sysroot completion, family promotion, or public x86 support."
-expected_transition = "The 105 listed direct header/profile records retain no network/resolver-owned declaration-form difference. The generated matrix reports 99 currently exact rows; the remaining six rows are limited to declared external string.h/strings.h source-form debt through netinet/icmp6.h, with no network-owned fact hidden by that attribution. libc.headers-layouts remains planned until its complete declaration/layout/provider aggregate is satisfied; no capability, product, promotion, or public-support state changes here."
+expected_transition = "All 105 listed direct header/profile records are exact through the musl-owned string.h/strings.h closure, with no network/resolver declaration-form attribution left outstanding. libc.headers-layouts remains planned until its complete declaration/layout/provider aggregate is satisfied; no capability, product, promotion, or public-support state changes here."
 evidence = [
   "pinned-musl/project direct C11/C++17 all-profile declaration-form matrix",
   "int_fast16_t/int_fast32_t LP64 width and limits regression",
   "arpa/netdb/resolv transitive netinet closure regression",
   "socket/inet restrict signature and network record/macro regression",
   "105-row direct network/resolver difference-origin regression",
+  "direct C/C++ string.h/strings.h feature and linkage regression",
   "pinned-musl/project seven-profile stddef.h declaration/layout and request-boundary matrix",
   "pinned-musl/project seven-profile netinet/tcp.h declaration/layout and feature-gate matrix",
   "header declaration/macro and callable-visibility matrix regeneration",

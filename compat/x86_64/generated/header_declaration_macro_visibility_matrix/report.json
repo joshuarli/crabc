@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "1d78f3e0862e06aefe246921daf757059a26f7da7e5c376b876edbd7305af1aa"
+    "source_abi_report_sha256": "5c5fb77bf1f985910fa6930b4eccf20d96ec6fdcb6005984aa43d135568c7d64"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -22025,14 +22025,14 @@
     },
     {
       "candidate": {
-        "count": 64,
+        "count": 77,
         "kind_counts": {
-          "function": 44,
-          "macro": 17,
+          "function": 56,
+          "macro": 18,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "62cf94363f479da074c4873c9a724fcea8c6ae63984f59c4b17a98974b1af590"
+        "sha256": "86280d66c70c5cb82d562926c7640ea7fa45a2717fa5207cdc12ebd260d69622"
       },
       "candidate_only": [
         {
@@ -22043,7 +22043,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "memory.h",
-      "matched_identity_count": 63,
+      "matched_identity_count": 76,
       "profile": "c11-gnu",
       "reference": {
         "count": 76,
@@ -22055,74 +22055,21 @@
         },
         "sha256": "258aba1ecb39e4e42e4500eb9d9671de219b334995183ea94fd5fd4bae923069"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 2,
+      "separately_accounted_source_form_difference_count": 0,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 64,
+        "count": 77,
         "kind_counts": {
-          "function": 44,
-          "macro": 17,
+          "function": 56,
+          "macro": 18,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "49bc0042b406ab8a2f6bec6f8f9eb147efe3d51ee39f1b62dcabd62ee8679fca"
+        "sha256": "4e60610452cc8bbfc5a9731679e5c6e092706f18f007eeea5ca20632eedbcb03"
       },
       "candidate_only": [
         {
@@ -22133,7 +22080,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "memory.h",
-      "matched_identity_count": 63,
+      "matched_identity_count": 76,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 76,
@@ -22145,62 +22092,9 @@
         },
         "sha256": "a2f319f17d7ca26b5ea15fc39a1269f5e1c12e0748b0f8851688b7ece00b30ce"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 5,
+      "separately_accounted_source_form_difference_count": 0,
       "source_form_comparison": "mismatch"
     },
     {
@@ -22247,7 +22141,7 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "b0854e4e55916b2ee246687be208fb72b89a10bff34db881eb224936ea4550ba"
+        "sha256": "3b460f4bc105b25e70268faacdeb803a4d52e97f91614ca9ed683e4f79a41541"
       },
       "candidate_only": [
         {
@@ -22272,7 +22166,7 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
+      "separately_accounted_source_form_difference_count": 0,
       "source_form_comparison": "mismatch"
     },
     {
@@ -22284,7 +22178,7 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "443c9257bbf2cd23b88b8c3651e0126d0673c48c21fb49e9659f5f9c505c4436"
+        "sha256": "b8313004ca05970ca9008a7defe80b821f4c1e1ea98ec1189540f09c531138d9"
       },
       "candidate_only": [
         {
@@ -22309,19 +22203,19 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
+      "separately_accounted_source_form_difference_count": 0,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 58,
+        "count": 71,
         "kind_counts": {
-          "function": 39,
-          "macro": 16,
+          "function": 51,
+          "macro": 17,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "a8091c57c31bd419483853cc9e5d3a8925c70fdff936743a1a8bba2a0fe5f4f3"
+        "sha256": "64266f923f73a29075df89e8c70fce583aa4f06602ca2a1e61ac01600f9e2f47"
       },
       "candidate_only": [
         {
@@ -22332,7 +22226,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "memory.h",
-      "matched_identity_count": 57,
+      "matched_identity_count": 70,
       "profile": "c11-bsd",
       "reference": {
         "count": 70,
@@ -22344,74 +22238,21 @@
         },
         "sha256": "98fe8c6220982fcb7339c124737e376c2a294fc4af789db40459ae7ead8cd21b"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
+      "separately_accounted_source_form_difference_count": 0,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 64,
+        "count": 77,
         "kind_counts": {
-          "function": 44,
-          "macro": 17,
+          "function": 56,
+          "macro": 18,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "49bc0042b406ab8a2f6bec6f8f9eb147efe3d51ee39f1b62dcabd62ee8679fca"
+        "sha256": "4e60610452cc8bbfc5a9731679e5c6e092706f18f007eeea5ca20632eedbcb03"
       },
       "candidate_only": [
         {
@@ -22422,7 +22263,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "memory.h",
-      "matched_identity_count": 63,
+      "matched_identity_count": 76,
       "profile": "cxx17-strict",
       "reference": {
         "count": 76,
@@ -22434,62 +22275,9 @@
         },
         "sha256": "a2f319f17d7ca26b5ea15fc39a1269f5e1c12e0748b0f8851688b7ece00b30ce"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 5,
+      "separately_accounted_source_form_difference_count": 0,
       "source_form_comparison": "mismatch"
     },
     {
@@ -24846,21 +24634,21 @@
     },
     {
       "candidate": {
-        "count": 1180,
+        "count": 1193,
         "kind_counts": {
-          "function": 80,
-          "macro": 963,
+          "function": 92,
+          "macro": 964,
           "record": 47,
           "typedef": 88,
           "variable": 2
         },
-        "sha256": "b7858d3594c643a37df34d3b7197064aeb755c13605371d778c0eef0c154a4ef"
+        "sha256": "1aaee7cb20be11148861ec2f72d52ecbef71739b5216d46c02009fd9c6dbc71f"
       },
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_identity_count": 1180,
+      "matched_identity_count": 1193,
       "profile": "c11-gnu",
       "reference": {
         "count": 1193,
@@ -24873,81 +24661,28 @@
         },
         "sha256": "1aaee7cb20be11148861ec2f72d52ecbef71739b5216d46c02009fd9c6dbc71f"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 2,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 1177,
+        "count": 1190,
         "kind_counts": {
-          "function": 80,
-          "macro": 962,
+          "function": 92,
+          "macro": 963,
           "record": 46,
           "typedef": 87,
           "variable": 2
         },
-        "sha256": "29b1626044bb7158979ba58a2eecd80f396f8db02f501561cb2a068c686a3571"
+        "sha256": "5fae19841c760731e0a2913b858684080cc975a9f9d4732a85bc1de48972dc6f"
       },
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_identity_count": 1177,
+      "matched_identity_count": 1190,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 1190,
@@ -24960,63 +24695,10 @@
         },
         "sha256": "5fae19841c760731e0a2913b858684080cc975a9f9d4732a85bc1de48972dc6f"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 5,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -25062,7 +24744,7 @@
           "typedef": 70,
           "variable": 2
         },
-        "sha256": "99750521b9ba68e0a4af471eaa4c3fd7339fe94b5f0c56176ac012ece6e8a8d4"
+        "sha256": "18ddef65eb8072d15da31b1619e3e7157d484991fa131a80badee862185ac383"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -25083,8 +24765,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -25096,7 +24778,7 @@
           "typedef": 70,
           "variable": 2
         },
-        "sha256": "b5a95585326a238891d11db71c26b236d04e7cdbf1aab0e053a9466223fb429a"
+        "sha256": "2f8380b7f0868e2955c5b17aebf371738c08438b0312b7e77d227941e5777fb8"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -25117,26 +24799,26 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 1170,
+        "count": 1183,
         "kind_counts": {
-          "function": 73,
-          "macro": 962,
+          "function": 85,
+          "macro": 963,
           "record": 45,
           "typedef": 88,
           "variable": 2
         },
-        "sha256": "71a452dfb1483b64e302c2c66fa698704a0fc6289965bf3241617aac299c7232"
+        "sha256": "d88b94991060ad3821909c6f640784a7736d80ac82d20bbcac94ace90c12d688"
       },
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_identity_count": 1170,
+      "matched_identity_count": 1183,
       "profile": "c11-bsd",
       "reference": {
         "count": 1183,
@@ -25149,81 +24831,28 @@
         },
         "sha256": "d88b94991060ad3821909c6f640784a7736d80ac82d20bbcac94ace90c12d688"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 1177,
+        "count": 1190,
         "kind_counts": {
-          "function": 80,
-          "macro": 962,
+          "function": 92,
+          "macro": 963,
           "record": 46,
           "typedef": 87,
           "variable": 2
         },
-        "sha256": "29b1626044bb7158979ba58a2eecd80f396f8db02f501561cb2a068c686a3571"
+        "sha256": "5fae19841c760731e0a2913b858684080cc975a9f9d4732a85bc1de48972dc6f"
       },
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "netinet/icmp6.h",
-      "matched_identity_count": 1177,
+      "matched_identity_count": 1190,
       "profile": "cxx17-strict",
       "reference": {
         "count": 1190,
@@ -25236,63 +24865,10 @@
         },
         "sha256": "5fae19841c760731e0a2913b858684080cc975a9f9d4732a85bc1de48972dc6f"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 5,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -41472,20 +41048,20 @@
     },
     {
       "candidate": {
-        "count": 63,
+        "count": 76,
         "kind_counts": {
-          "function": 44,
-          "macro": 16,
+          "function": 56,
+          "macro": 17,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "5b3c8b9f511dcd07733cd370993e0623992e272088a87a2044372bf066d7e37e"
+        "sha256": "258aba1ecb39e4e42e4500eb9d9671de219b334995183ea94fd5fd4bae923069"
       },
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "string.h",
-      "matched_identity_count": 63,
+      "matched_identity_count": 76,
       "profile": "c11-gnu",
       "reference": {
         "count": 76,
@@ -41497,80 +41073,27 @@
         },
         "sha256": "258aba1ecb39e4e42e4500eb9d9671de219b334995183ea94fd5fd4bae923069"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 2,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 63,
+        "count": 76,
         "kind_counts": {
-          "function": 44,
-          "macro": 16,
+          "function": 56,
+          "macro": 17,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "d26883a3d3545427c87f0aa97b6c401b0b8102f30adf5df11cf539e68da30e43"
+        "sha256": "a2f319f17d7ca26b5ea15fc39a1269f5e1c12e0748b0f8851688b7ece00b30ce"
       },
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "string.h",
-      "matched_identity_count": 63,
+      "matched_identity_count": 76,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 76,
@@ -41582,63 +41105,10 @@
         },
         "sha256": "a2f319f17d7ca26b5ea15fc39a1269f5e1c12e0748b0f8851688b7ece00b30ce"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 5,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -41679,7 +41149,7 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "e19dc3cac0c5d7a6447e75ba15686c8c0a1ec7cc220555e503e16d5cf97ebe7e"
+        "sha256": "445134b073c9c35d1df12f2e2eb4647d0a18680ab2d4d3a4bd167da1a23fea34"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -41699,8 +41169,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -41711,7 +41181,7 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "30154ce9aeb0aa31b5ab73fd7230520970687094691a47e50877a47d5691787a"
+        "sha256": "d3a93cfe8b988be6968c6d867555e81931aecadcbfc0db26cebe51b83af5edc4"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -41731,25 +41201,25 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 57,
+        "count": 70,
         "kind_counts": {
-          "function": 39,
-          "macro": 15,
+          "function": 51,
+          "macro": 16,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "ee167bf7e18c51bf3075b47210a0807125d7188412e4ce07f6dc5f333bf190ec"
+        "sha256": "98fe8c6220982fcb7339c124737e376c2a294fc4af789db40459ae7ead8cd21b"
       },
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "string.h",
-      "matched_identity_count": 57,
+      "matched_identity_count": 70,
       "profile": "c11-bsd",
       "reference": {
         "count": 70,
@@ -41761,80 +41231,27 @@
         },
         "sha256": "98fe8c6220982fcb7339c124737e376c2a294fc4af789db40459ae7ead8cd21b"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 63,
+        "count": 76,
         "kind_counts": {
-          "function": 44,
-          "macro": 16,
+          "function": 56,
+          "macro": 17,
           "record": 1,
           "typedef": 2
         },
-        "sha256": "d26883a3d3545427c87f0aa97b6c401b0b8102f30adf5df11cf539e68da30e43"
+        "sha256": "a2f319f17d7ca26b5ea15fc39a1269f5e1c12e0748b0f8851688b7ece00b30ce"
       },
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "string.h",
-      "matched_identity_count": 63,
+      "matched_identity_count": 76,
       "profile": "cxx17-strict",
       "reference": {
         "count": 76,
@@ -41846,63 +41263,10 @@
         },
         "sha256": "a2f319f17d7ca26b5ea15fc39a1269f5e1c12e0748b0f8851688b7ece00b30ce"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "bcmp"
-        },
-        {
-          "kind": "function",
-          "name": "bcopy"
-        },
-        {
-          "kind": "function",
-          "name": "bzero"
-        },
-        {
-          "kind": "function",
-          "name": "ffs"
-        },
-        {
-          "kind": "function",
-          "name": "ffsl"
-        },
-        {
-          "kind": "function",
-          "name": "ffsll"
-        },
-        {
-          "kind": "function",
-          "name": "index"
-        },
-        {
-          "kind": "function",
-          "name": "rindex"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strcasecmp_l"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp"
-        },
-        {
-          "kind": "function",
-          "name": "strncasecmp_l"
-        },
-        {
-          "kind": "macro",
-          "name": "_STRINGS_H"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 5,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -142829,19 +142193,19 @@
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 696,
-      "mismatch": 584,
+      "matched": 704,
+      "mismatch": 576,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "584 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+      "576 comparable pinned header/profile rows have declaration or macro identity visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
-    "matched_identity_count": 286331,
-    "mismatch_row_count": 584,
+    "matched_identity_count": 286487,
+    "mismatch_row_count": 576,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -142850,10 +142214,10 @@
     "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 9033,
+    "reference_only_identity_count": 8877,
     "reference_only_identity_kind_counts": {
-      "function": 215,
-      "macro": 8682,
+      "function": 71,
+      "macro": 8670,
       "record": 78,
       "typedef": 49,
       "variable": 9
@@ -142861,13 +142225,13 @@
     "row_count": 1337,
     "source_form_comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 597,
-      "mismatch": 683,
+      "matched": 609,
+      "mismatch": 671,
       "oracle-not-applicable": 1
     },
-    "source_form_difference_count": 3093,
-    "source_form_difference_row_count": 508,
-    "source_form_only_difference_row_count": 99
+    "source_form_difference_count": 3048,
+    "source_form_difference_row_count": 490,
+    "source_form_only_difference_row_count": 95
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {
