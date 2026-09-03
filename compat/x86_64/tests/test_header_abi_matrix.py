@@ -342,6 +342,38 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         ):
             self.assertIn(phrase, runner)
 
+    def test_dirent_and_sys_dir_have_exact_pinned_source_forms(self) -> None:
+        """The directory compatibility aliases must not hide a second header form."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        profiles = {
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-bsd",
+            "cxx17-strict",
+        }
+
+        rows = [
+            row
+            for row in checked["rows"]
+            if row["header"] in {"dirent.h", "sys/dir.h"}
+        ]
+        self.assertEqual(
+            {(row["header"], row["profile"]) for row in rows},
+            {
+                (header, profile)
+                for header in ("dirent.h", "sys/dir.h")
+                for profile in profiles
+            },
+        )
+        for row in rows:
+            self.assertEqual(row["comparison"], "matched")
+            self.assertEqual(row["difference"]["candidate_only_count"], 0)
+            self.assertEqual(row["difference"]["incompatible_count"], 0)
+            self.assertEqual(row["difference"]["reference_only_count"], 0)
+
     def test_quota_header_has_no_owned_pinned_musl_fact_differences(self) -> None:
         """Keep quota-header completion distinct from inherited stdint.h differences."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

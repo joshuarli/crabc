@@ -386,23 +386,23 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 541,
-        "mismatch": 739,
+        "matched": 555,
+        "mismatch": 725,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "739 comparable header/profile rows have prototype or named declaration-form differences",
+        "725 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 16302,
-        "incompatible_count": 3136,
-        "reference_only_count": 12116,
+        "candidate_only_count": 16295,
+        "incompatible_count": 3120,
+        "reference_only_count": 12074,
     },
-    "mismatch_row_count": 739,
+    "mismatch_row_count": 725,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -417,10 +417,10 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 16302,
+    "candidate_only_identity_count": 16295,
     "candidate_only_identity_kind_counts": {
         "function": 910,
-        "macro": 11248,
+        "macro": 11241,
         "record": 284,
         "typedef": 3818,
         "variable": 42,
@@ -429,19 +429,19 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 644,
-        "mismatch": 636,
+        "matched": 658,
+        "mismatch": 622,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "636 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "622 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 283248,
-    "mismatch_row_count": 636,
+    "matched_identity_count": 283290,
+    "mismatch_row_count": 622,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -450,11 +450,11 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 12116,
+    "reference_only_identity_count": 12074,
     "reference_only_identity_kind_counts": {
         "enum": 3,
         "function": 317,
-        "macro": 11254,
+        "macro": 11212,
         "record": 141,
         "typedef": 392,
         "variable": 9,
@@ -462,12 +462,12 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 541,
-        "mismatch": 739,
+        "matched": 555,
+        "mismatch": 725,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 3136,
-    "source_form_difference_row_count": 543,
+    "source_form_difference_count": 3120,
+    "source_form_difference_row_count": 535,
     "source_form_only_difference_row_count": 103,
 }
 
@@ -6186,12 +6186,12 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "636 current comparable declaration-or-macro identity mismatch rows",
-        "644 matched identity rows",
+        "622 current comparable declaration-or-macro identity mismatch rows",
+        "658 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "3,136 same-identity source-form differences across 543 rows",
+        "3,120 same-identity source-form differences across 535 rows",
         "103 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
@@ -6558,7 +6558,7 @@ def require_all_header_prototype_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "739 current comparable prototype or named source-form mismatch rows",
+        "725 current comparable prototype or named source-form mismatch rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",
@@ -6931,6 +6931,7 @@ def require_dirent_header_profile_matrix_artifact(family: Mapping[str, Any]) -> 
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "seven base plus four GNU/strict `_LARGEFILE64_SOURCE`",
+        "source-faithful private `bits/dirent.h` record owner",
         "`struct dirent`",
         "`struct posix_dent`",
         "GNU-or-BSD IFTODT/DTTOIF/getdents",
@@ -6959,7 +6960,9 @@ def require_dirent_header_profile_matrix_artifact(family: Mapping[str, Any]) -> 
         "compat/x86_64/tests/test_dirent_header_abi.py",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
+        "include/bits/dirent.h",
         "include/dirent.h",
+        "include/sys/dir.h",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in owners, f"dirent-header-profile-matrix must own {owner}")

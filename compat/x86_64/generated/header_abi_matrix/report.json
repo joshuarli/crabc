@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "d57f6d9d7d1fc4399703b5831ed1d39bd35f4be880c9b3839861dbdbfec7759a",
+    "callable_inventory_sha256": "3cbee26104e75bf98a081bf084ff740815e129ecb53b27a611e6b931b89daf1a",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -5421,54 +5421,25 @@
     },
     {
       "candidate": {
-        "count": 52,
+        "count": 55,
         "kind_counts": {
           "function": 14,
-          "macro": 30,
+          "macro": 33,
           "record": 3,
           "typedef": 5
         },
-        "sha256": "fabee9deee5331d3768c6fe87e17959e36491d0a705cecd8d92d788cf06f5489"
+        "sha256": "bd4b61ac2230dd4aecdd02a7692a20358566b419f927cf76ccedce7602557568"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(type) ((type) << 12)",
-            "kind": "macro",
-            "name": "DTTOIF",
-            "reference_signature": "function-like:(x) ((x)<<12)"
-          },
-          {
-            "candidate_signature": "function-like:(mode) (((mode) >> 12) & 017)",
-            "kind": "macro",
-            "name": "IFTODT",
-            "reference_signature": "function-like:(x) ((x)>>12 & 017)"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 50,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 55,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "c11-gnu",
@@ -5486,54 +5457,25 @@
     },
     {
       "candidate": {
-        "count": 52,
+        "count": 55,
         "kind_counts": {
           "function": 14,
-          "macro": 30,
+          "macro": 33,
           "record": 3,
           "typedef": 5
         },
-        "sha256": "2eb1761dbb1c3a32e053ac695ddf663ba13d5b377401c24efb2f555bbb5e2a92"
+        "sha256": "91bf438676f7a7ba47d056d38fe7137f2e39844443a95df87a6f6b39029e7e5f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(type) ((type) << 12)",
-            "kind": "macro",
-            "name": "DTTOIF",
-            "reference_signature": "function-like:(x) ((x)<<12)"
-          },
-          {
-            "candidate_signature": "function-like:(mode) (((mode) >> 12) & 017)",
-            "kind": "macro",
-            "name": "IFTODT",
-            "reference_signature": "function-like:(x) ((x)>>12 & 017)"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 50,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 55,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "cxx17-gnu",
@@ -5551,41 +5493,25 @@
     },
     {
       "candidate": {
-        "count": 46,
+        "count": 49,
         "kind_counts": {
           "function": 10,
-          "macro": 28,
+          "macro": 31,
           "record": 3,
           "typedef": 5
         },
-        "sha256": "f0b408c8e83408893c2ec3d78c4418795e9651d92322cc131a735f30c1333039"
+        "sha256": "36cb81270947824ec3fd0f8e539288d3497e777f9c802215023cff134e555557"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 46,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "matched_count": 49,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "c11-strict",
@@ -5603,41 +5529,25 @@
     },
     {
       "candidate": {
-        "count": 46,
+        "count": 49,
         "kind_counts": {
           "function": 10,
-          "macro": 28,
+          "macro": 31,
           "record": 3,
           "typedef": 5
         },
-        "sha256": "f0b408c8e83408893c2ec3d78c4418795e9651d92322cc131a735f30c1333039"
+        "sha256": "36cb81270947824ec3fd0f8e539288d3497e777f9c802215023cff134e555557"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 46,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "matched_count": 49,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "c11-posix-2008",
@@ -5655,41 +5565,25 @@
     },
     {
       "candidate": {
-        "count": 48,
+        "count": 51,
         "kind_counts": {
           "function": 12,
-          "macro": 28,
+          "macro": 31,
           "record": 3,
           "typedef": 5
         },
-        "sha256": "da3ab6340373c40c146afca1fb490eb4b8ffbf0d9a62237e7f38abb4019ef44b"
+        "sha256": "fd477958559acb085e7212f3d467e47156954b48999f6ce9ce31544ed8c2f2d9"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 48,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "matched_count": 51,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "c11-xopen-700",
@@ -5707,54 +5601,25 @@
     },
     {
       "candidate": {
-        "count": 51,
+        "count": 54,
         "kind_counts": {
           "function": 13,
-          "macro": 30,
+          "macro": 33,
           "record": 3,
           "typedef": 5
         },
-        "sha256": "7cfca55e0be57840453ecf8ddfeed65325afae0a12326d86943da813ea76e6bc"
+        "sha256": "1f010b4c5a871e4845cbe480a2d32eb8c76b44e466c0f7e77a8ec9289ed224b7"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(type) ((type) << 12)",
-            "kind": "macro",
-            "name": "DTTOIF",
-            "reference_signature": "function-like:(x) ((x)<<12)"
-          },
-          {
-            "candidate_signature": "function-like:(mode) (((mode) >> 12) & 017)",
-            "kind": "macro",
-            "name": "IFTODT",
-            "reference_signature": "function-like:(x) ((x)>>12 & 017)"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 49,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 54,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "c11-bsd",
@@ -5772,54 +5637,25 @@
     },
     {
       "candidate": {
-        "count": 52,
+        "count": 55,
         "kind_counts": {
           "function": 14,
-          "macro": 30,
+          "macro": 33,
           "record": 3,
           "typedef": 5
         },
-        "sha256": "2eb1761dbb1c3a32e053ac695ddf663ba13d5b377401c24efb2f555bbb5e2a92"
+        "sha256": "91bf438676f7a7ba47d056d38fe7137f2e39844443a95df87a6f6b39029e7e5f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(type) ((type) << 12)",
-            "kind": "macro",
-            "name": "DTTOIF",
-            "reference_signature": "function-like:(x) ((x)<<12)"
-          },
-          {
-            "candidate_signature": "function-like:(mode) (((mode) >> 12) & 017)",
-            "kind": "macro",
-            "name": "IFTODT",
-            "reference_signature": "function-like:(x) ((x)>>12 & 017)"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 50,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 55,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "cxx17-strict",
@@ -75828,60 +75664,25 @@
     },
     {
       "candidate": {
-        "count": 55,
+        "count": 57,
         "kind_counts": {
           "function": 14,
-          "macro": 32,
+          "macro": 34,
           "record": 3,
           "typedef": 6
         },
-        "sha256": "60c739d955f61236fe5eba0b7a7ab50e0924c39eb8b1eb3e168c8849088d60ce"
+        "sha256": "7209af660c6c12aa20e2881806e0f615d46a4a27a0b54dd2e54a88fc14a182d7"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "macro",
-            "name": "_CRABC_SYS_DIR_H",
-            "signature": "object-like: "
-          }
-        ],
-        "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(type) ((type) << 12)",
-            "kind": "macro",
-            "name": "DTTOIF",
-            "reference_signature": "function-like:(x) ((x)<<12)"
-          },
-          {
-            "candidate_signature": "function-like:(mode) (((mode) >> 12) & 017)",
-            "kind": "macro",
-            "name": "IFTODT",
-            "reference_signature": "function-like:(x) ((x)>>12 & 017)"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 52,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 57,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/dir.h",
       "profile": "c11-gnu",
@@ -75899,60 +75700,25 @@
     },
     {
       "candidate": {
-        "count": 55,
+        "count": 57,
         "kind_counts": {
           "function": 14,
-          "macro": 32,
+          "macro": 34,
           "record": 3,
           "typedef": 6
         },
-        "sha256": "be6fc64c35349c42a72e6d2cfce1d35349100bb3cf02a156129e2100a25ab3d9"
+        "sha256": "21315daaede310f3680ba49453a324e40983ef88f826cbdad01af74e9999458a"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "macro",
-            "name": "_CRABC_SYS_DIR_H",
-            "signature": "object-like: "
-          }
-        ],
-        "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(type) ((type) << 12)",
-            "kind": "macro",
-            "name": "DTTOIF",
-            "reference_signature": "function-like:(x) ((x)<<12)"
-          },
-          {
-            "candidate_signature": "function-like:(mode) (((mode) >> 12) & 017)",
-            "kind": "macro",
-            "name": "IFTODT",
-            "reference_signature": "function-like:(x) ((x)>>12 & 017)"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 52,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 57,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/dir.h",
       "profile": "cxx17-gnu",
@@ -75970,47 +75736,25 @@
     },
     {
       "candidate": {
-        "count": 49,
+        "count": 51,
         "kind_counts": {
           "function": 10,
-          "macro": 30,
+          "macro": 32,
           "record": 3,
           "typedef": 6
         },
-        "sha256": "01de2efeb5bc5876fafe37625fc49f4a905fd037c70f2d98c0c2e8ff7c85acb9"
+        "sha256": "8b5834a10464a89e5575de8c24c36291444e37568ecd15e6e48743c6972ac157"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "macro",
-            "name": "_CRABC_SYS_DIR_H",
-            "signature": "object-like: "
-          }
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 48,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "matched_count": 51,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/dir.h",
       "profile": "c11-strict",
@@ -76028,47 +75772,25 @@
     },
     {
       "candidate": {
-        "count": 49,
+        "count": 51,
         "kind_counts": {
           "function": 10,
-          "macro": 30,
+          "macro": 32,
           "record": 3,
           "typedef": 6
         },
-        "sha256": "01de2efeb5bc5876fafe37625fc49f4a905fd037c70f2d98c0c2e8ff7c85acb9"
+        "sha256": "8b5834a10464a89e5575de8c24c36291444e37568ecd15e6e48743c6972ac157"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "macro",
-            "name": "_CRABC_SYS_DIR_H",
-            "signature": "object-like: "
-          }
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 48,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "matched_count": 51,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/dir.h",
       "profile": "c11-posix-2008",
@@ -76086,47 +75808,25 @@
     },
     {
       "candidate": {
-        "count": 51,
+        "count": 53,
         "kind_counts": {
           "function": 12,
-          "macro": 30,
+          "macro": 32,
           "record": 3,
           "typedef": 6
         },
-        "sha256": "976da86b47fe6462af900129d8afd11a3ffe18c0e9d3a06df5e5f18ddd093cfc"
+        "sha256": "aaf635fef541394b7b84816ec0fc76f0c9b851e4f56a54a69ac40902d06f4959"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "macro",
-            "name": "_CRABC_SYS_DIR_H",
-            "signature": "object-like: "
-          }
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 50,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "matched_count": 53,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/dir.h",
       "profile": "c11-xopen-700",
@@ -76144,60 +75844,25 @@
     },
     {
       "candidate": {
-        "count": 54,
+        "count": 56,
         "kind_counts": {
           "function": 13,
-          "macro": 32,
+          "macro": 34,
           "record": 3,
           "typedef": 6
         },
-        "sha256": "c2d0a6c470fe16ab1974380af3a60c621895ab7c2033652eab88e9c5ea3d1656"
+        "sha256": "27eee557df4cdd580d1370adb3a12a7235389ee0a3e1a04ece541e2eb8c0a0eb"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "macro",
-            "name": "_CRABC_SYS_DIR_H",
-            "signature": "object-like: "
-          }
-        ],
-        "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(type) ((type) << 12)",
-            "kind": "macro",
-            "name": "DTTOIF",
-            "reference_signature": "function-like:(x) ((x)<<12)"
-          },
-          {
-            "candidate_signature": "function-like:(mode) (((mode) >> 12) & 017)",
-            "kind": "macro",
-            "name": "IFTODT",
-            "reference_signature": "function-like:(x) ((x)>>12 & 017)"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 51,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 56,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/dir.h",
       "profile": "c11-bsd",
@@ -76215,60 +75880,25 @@
     },
     {
       "candidate": {
-        "count": 55,
+        "count": 57,
         "kind_counts": {
           "function": 14,
-          "macro": 32,
+          "macro": 34,
           "record": 3,
           "typedef": 6
         },
-        "sha256": "be6fc64c35349c42a72e6d2cfce1d35349100bb3cf02a156129e2100a25ab3d9"
+        "sha256": "21315daaede310f3680ba49453a324e40983ef88f826cbdad01af74e9999458a"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "macro",
-            "name": "_CRABC_SYS_DIR_H",
-            "signature": "object-like: "
-          }
-        ],
-        "candidate_only_count": 1,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(type) ((type) << 12)",
-            "kind": "macro",
-            "name": "DTTOIF",
-            "reference_signature": "function-like:(x) ((x)<<12)"
-          },
-          {
-            "candidate_signature": "function-like:(mode) (((mode) >> 12) & 017)",
-            "kind": "macro",
-            "name": "IFTODT",
-            "reference_signature": "function-like:(x) ((x)>>12 & 017)"
-          }
-        ],
-        "incompatible_count": 2,
-        "matched_count": 52,
-        "reference_only": [
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_OFF",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_RECLEN",
-            "signature": "object-like: "
-          },
-          {
-            "kind": "macro",
-            "name": "_DIRENT_HAVE_D_TYPE",
-            "signature": "object-like: "
-          }
-        ],
-        "reference_only_count": 3
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 57,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/dir.h",
       "profile": "cxx17-strict",
@@ -207832,23 +207462,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 541,
-      "mismatch": 739,
+      "matched": 555,
+      "mismatch": 725,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "739 comparable header/profile rows have prototype or named declaration-form differences",
+      "725 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
-      "candidate_only_count": 16302,
-      "incompatible_count": 3136,
-      "reference_only_count": 12116
+      "candidate_only_count": 16295,
+      "incompatible_count": 3120,
+      "reference_only_count": 12074
     },
-    "mismatch_row_count": 739,
+    "mismatch_row_count": 725,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337

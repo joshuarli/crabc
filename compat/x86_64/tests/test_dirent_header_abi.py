@@ -13,9 +13,42 @@ ROOT = Path(__file__).resolve().parents[3]
 C_PROBE = ROOT / "compat" / "x86_64" / "dirent_header_abi_probe.c"
 CXX_PROBE = ROOT / "compat" / "x86_64" / "dirent_header_abi_probe.cpp"
 RUNNER = ROOT / "compat" / "x86_64" / "run_dirent_header_abi.sh"
+DIRENT_HEADER = ROOT / "include" / "dirent.h"
+BITS_DIRENT_HEADER = ROOT / "include" / "bits" / "dirent.h"
+SYS_DIR_HEADER = ROOT / "include" / "sys" / "dir.h"
 
 
 class DirentHeaderAbiTests(unittest.TestCase):
+    def test_x86_dirent_record_uses_the_pinned_private_leaf(self) -> None:
+        dirent = DIRENT_HEADER.read_text(encoding="utf-8")
+        bits_dirent = BITS_DIRENT_HEADER.read_text(encoding="utf-8")
+        sys_dir = SYS_DIR_HEADER.read_text(encoding="utf-8")
+
+        self.assertIn("#include <bits/dirent.h>", dirent)
+        x86_dirent = dirent.split("#if defined(__x86_64__)", 1)[1].split("#else", 1)[0]
+        self.assertNotIn("struct dirent {", x86_dirent)
+        self.assertEqual(
+            bits_dirent,
+            "#define _DIRENT_HAVE_D_RECLEN\n"
+            "#define _DIRENT_HAVE_D_OFF\n"
+            "#define _DIRENT_HAVE_D_TYPE\n\n"
+            "struct dirent {\n"
+            "\tino_t d_ino;\n"
+            "\toff_t d_off;\n"
+            "\tunsigned short d_reclen;\n"
+            "\tunsigned char d_type;\n"
+            "\tchar d_name[256];\n"
+            "};\n",
+        )
+        self.assertIn(
+            "#if defined(__x86_64__)\n"
+            "/* Keep the historical AArch64 guard isolated from musl's x86 public form. */\n"
+            "#undef _CRABC_SYS_DIR_H\n"
+            "#include <dirent.h>\n"
+            "#define direct dirent",
+            sys_dir,
+        )
+
     def test_probes_fix_the_oracle_layout_signatures_and_visibility_contract(self) -> None:
         c_probe = C_PROBE.read_text(encoding="utf-8")
         cxx_probe = CXX_PROBE.read_text(encoding="utf-8")
@@ -93,7 +126,7 @@ class DirentHeaderAbiTests(unittest.TestCase):
             "-nostdinc",
             "-nostdinc++",
             "bits/alltypes.h bits/dirent.h",
-            "dirent.h features.h bits/alltypes.h",
+            "dirent.h features.h bits/alltypes.h bits/dirent.h",
             "candidate trace unexpectedly retained $root/sys/types.h",
             "CRABC_DIRENT_EXPECT_HIDDEN_DECLARATIONS",
             "unexpectedly exposed a hidden dirent declaration",
