@@ -58,6 +58,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   installed-header-tree-closure  verify the materialized target-owned x86 public-header closure
   selected-header-install-projection  verify the private pinned-path x86 installed-header projection
   header-callable-visibility-matrix  check all-header callable feature-visibility evidence
+  header-callable-disposition  check all-header callable ownership routing evidence
   header-abi-matrix  check all-header callable and named noncallable ABI evidence
   header-declaration-macro-visibility-matrix  check all-header declaration/macro feature-visibility evidence
   header-callable-linkage-audit  audit declared x86 header callables against the static archive
@@ -2570,6 +2571,10 @@ run_selected_header_install_projection() {
 
 run_header_callable_visibility_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_header_callable_visibility_matrix.sh
+}
+
+run_header_callable_disposition() {
+    run_in_container bash /workspace/compat/x86_64/run_header_callable_disposition.sh
 }
 
 run_header_abi_matrix() {
@@ -5124,6 +5129,7 @@ case "$command" in
     installed-header-tree-closure) ;;
     selected-header-install-projection) ;;
     header-callable-visibility-matrix) ;;
+    header-callable-disposition) ;;
     header-abi-matrix) ;;
     header-declaration-macro-visibility-matrix) ;;
     header-callable-linkage-audit) ;;
@@ -5280,6 +5286,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "header-callable-visibility-matrix takes no arguments"
         ensure_image
         run_header_callable_visibility_matrix
+        ;;
+    header-callable-disposition)
+        [ "$#" -eq 0 ] || fail "header-callable-disposition takes no arguments"
+        ensure_image
+        run_header_callable_disposition
         ;;
     header-abi-matrix)
         [ "$#" -eq 0 ] || fail "header-abi-matrix takes no arguments"

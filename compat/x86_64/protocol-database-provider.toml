@@ -11,7 +11,7 @@ oracle = "Pinned musl 1.2.6"
 
 [work_package]
 target_family = "libc.headers-layouts"
-target_obligations = ["unlisted-public-callables", "current-static-c-exports"]
+target_obligations = ["header-callable-disposition", "current-static-c-exports"]
 target_verified_slice = "static-c-protocol-database"
 blocker = "Resolved by this selected artifact: the unconditional pinned-musl `<netdb.h>` declarations `endprotoent`, `getprotobyname`, `getprotobynumber`, `getprotoent`, and `setprotoent` appeared in all seven frozen profiles with no default static provider."
 prerequisites = ["oracle.musl-toolchain"]

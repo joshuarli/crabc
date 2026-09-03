@@ -2,7 +2,7 @@
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
 # `headers-layouts.toml` remains the v1 inventory of fifty-three direct probes.
-# This v14 manifest accounts for every pinned public header and every project-
+# This v15 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
 # event-descriptor, timeval-transitive, direct sys/time, and access-header profile ABI slices
@@ -13,7 +13,7 @@
 # `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
 # x86 `headers_install` identity; it is repeated here and in the Docker build
 # because those independent consumers cannot load TOML from one another.
-schema = "crabc.x86_64-headers-layouts-foundation/v14"
+schema = "crabc.x86_64-headers-layouts-foundation/v15"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -36,6 +36,7 @@ feature_visibility_matrix = true
 callable_feature_visibility_matrix = true
 prototype_layout_matrix = true
 abi_facet_matrix = false
+callable_disposition = true
 # The selected-provider audit proves ordinary extraction for the present
 # default and verified feature providers only. The separate full audit remains
 # false until every candidate callable, including the explicit unprovided set,
@@ -76,6 +77,7 @@ feature_visibility_matrix = true
 callable_feature_visibility_matrix = true
 prototype_layout_matrix = true
 abi_facet_matrix = false
+callable_disposition = true
 selected_callable_provider_linkage_audit = true
 callable_linkage_audit = false
 runtime_completion = false
@@ -100,6 +102,28 @@ full_callable_closure = false
 family_promotion = false
 public_support = false
 description = "The native selected-provider audit builds the no-feature default archive plus isolated exact Cargo feature requests, uses ordinary archive extraction for all declared default and verified feature providers, checks each declared replacement symbol is extractable from both profiles, proves weak same-address alias contracts, and retains the named crypt/allocator composition's intentionally rejected direct baseline through its dedicated evidence. Dedicated environment and resolver evidence retains replacement-provider selection and behavior. It records the finite unprovided complement instead of claiming full callable closure, runtime behavior, header-family promotion, or public x86 support."
+
+[callable_disposition]
+id = "header-callable-disposition"
+state = "partial-verified"
+owner = "libc.headers-layouts"
+command = "./scripts/dev-x86_64.sh header-callable-disposition"
+contract = "compat/x86_64/header_callable_disposition.toml"
+report = "compat/x86_64/header_callable_disposition.json"
+candidate_external_callable_count = 1513
+default_static_callable_count = 1113
+verified_feature_callable_count = 47
+declared_unverified_feature_callable_count = 0
+unprovided_callable_count = 353
+missing_reference_declaration_name_count = 16
+missing_reference_declaration_record_count = 53
+missing_reference_declaration_routing_complete = true
+header_ownership_routing_complete = true
+header_declaration_parity_complete = false
+final_provider_archive_closure_complete = false
+family_promotion = false
+public_support = false
+description = "The checked compiler-derived disposition routes all 1,513 selected external callable names through current default or verified-feature provider assignments, exact planned semantic owners, compiler-builtin, consumer-supplied, oracle-declared-no-provider, or explicit atomic-policy records. It separately records all 16 pinned-musl declaration names currently missing from project headers, so a routing pass does not imply declaration parity. It excludes archive extraction, runtime semantics, final C ABI provider/archive closure, header-family promotion, and public x86 support."
 
 [selected_header_install_projection]
 id = "x86-selected-header-install-projection"
@@ -1567,7 +1591,7 @@ expected_count = 180
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 future_feature_profiles = []
 abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "sys-io-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "xattr-header-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
-linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
+linkage_owners = ["current-static-c-exports", "header-callable-disposition", "noncallable-header-abi"]
 
 [[header_class]]
 id = "pinned-uapi-inputs"
@@ -1577,7 +1601,7 @@ expected_count = 3
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 future_feature_profiles = []
 abi_facets = ["public-path-inventory", "candidate-tree-presence", "uapi-input-provenance", "uapi-wrapper-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-feature-visibility", "callable-prototype-layout", "callable-linkage-ownership"]
-linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
+linkage_owners = ["current-static-c-exports", "header-callable-disposition", "noncallable-header-abi"]
 
 [[header_class]]
 id = "project-only-extensions"
@@ -1587,7 +1611,7 @@ expected_count = 8
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 future_feature_profiles = []
 abi_facets = ["project-only-extension-policy", "candidate-tree-presence", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-feature-visibility", "callable-prototype-layout", "callable-linkage-ownership"]
-linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
+linkage_owners = ["current-static-c-exports", "header-callable-disposition", "noncallable-header-abi"]
 
 # These wrapper paths are tied to the one declared, fixed Linux 5.10 UAPI
 # export. Their remaining language/profile and ABI work stays planned; an
@@ -1784,9 +1808,9 @@ description = "The checked compiler-derived 1,337-row matrix records callable so
 id = "callable-linkage-ownership"
 state = "partial-verified"
 scope = "all-pinned-and-project-only-public-headers"
-owner = "libc.c-abi-compat"
-evidence = ["generated-callable-provider-partition"]
-description = "The generated all-header inventory now partitions every declared external callable among the default archive, verified feature archives, declared unverified feature archives, and no-provider work. It does not complete archive extraction or runtime linkage."
+owner = "libc.headers-layouts"
+evidence = ["generated-header-callable-disposition"]
+description = "The checked all-header disposition routes every declared external callable through a current selected provider assignment or an exact named deferred owner, and records missing pinned-musl declarations separately. It does not complete archive extraction, runtime linkage, declaration parity, or final C ABI closure."
 
 [[abi_facet]]
 id = "legacy-direct-layout-inputs"
@@ -1805,10 +1829,11 @@ owner = "libc.headers-layouts"
 evidence = ["static-c-header-layouts-baseline"]
 description = "The existing static C/C++ aggregate proves only its named selected archive leaves and cannot stand in for header closure."
 
-# Linkage ownership is intentionally a two-stage accounting rule. Named
-# current archive exports are only partially evidenced; every other callable
-# declaration is explicitly reserved for the later final C ABI audit. This
-# prevents an include-only success from silently becoming a linkage promise.
+# Header ownership routing and final C ABI provider/archive closure are
+# intentionally separate. Named current archive exports are only partially
+# evidenced; the checked disposition makes every selected callable and every
+# missing reference declaration findable without turning that accounting into
+# an include-only linkage promise.
 [[linkage_owner]]
 id = "current-static-c-exports"
 state = "partial-verified"
@@ -1818,12 +1843,12 @@ evidence = ["compat/x86_64/static_c_abi_exports.txt", "selected-static-artifacts
 description = "The current crate-owned static export ratchet is an input to, not completion of, final callable linkage compatibility."
 
 [[linkage_owner]]
-id = "unlisted-public-callables"
+id = "header-callable-disposition"
 state = "partial-verified"
-scope = "every public callable declaration without a verified default-static or feature-archive provider"
-family = "libc.c-abi-compat"
-evidence = ["generated-callable-provider-partition"]
-description = "The generated provider partition leaves declared-unverified feature archives and unprovided declarations explicit; the final C ABI compatibility family still owns their extraction, behavior, and closure."
+scope = "every selected external callable has a current selected provider assignment or an exact named deferred owner, while each missing pinned-musl declaration has a separate exact record"
+family = "libc.headers-layouts"
+evidence = ["generated-header-callable-disposition"]
+description = "The checked disposition completes header ownership routing only. `libc.c-abi-compat` still owns provider selection, ordinary archive extraction, behavior, and final callable-provider closure."
 
 [[linkage_owner]]
 id = "noncallable-header-abi"

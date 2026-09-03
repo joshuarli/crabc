@@ -106,7 +106,7 @@ require(
 require(
     work["target_family"] == "libc.headers-layouts"
     and work["target_obligations"]
-    == ["unlisted-public-callables", "current-static-c-exports"]
+    == ["header-callable-disposition", "current-static-c-exports"]
     and work["target_verified_slice"] == "static-c-protocol-database",
     "protocol-database provider target obligation drifted",
 )

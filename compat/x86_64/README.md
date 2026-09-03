@@ -1715,9 +1715,22 @@ matrix, not feature-visibility, declaration/layout, callable-linkage,
 archive, runtime, installed-header, family-promotion, or public-x86 evidence.
 The wider candidate visibility for those `aio.h` rows remains a tracked parity
 question rather than being silently treated as equivalent. The static-export
-list is only an input to the default archive linkage audit: unlisted public
-callables remain owned by planned `libc.c-abi-compat`, while noncallable header
-ABI remains owned by `libc.headers-layouts`.
+list is only an input to the default archive linkage audit. The checked
+`header-callable-disposition` report now routes all 1,513 current selected
+external callables through current selected provider assignments or exact deferred owners, while
+separately retaining 53 missing pinned-musl declaration records across 16
+names. That closes accounting only: missing declarations remain header-parity
+work, and `libc.c-abi-compat` retains final provider selection, ordinary
+archive extraction, behavior, and C-ABI closure.
+
+`header-callable-disposition` regenerates the compiler-derived callable
+inventory, then checks that its 1,113 default-static, 47 verified
+feature-provider, and 353 deferred names form one exact primary partition.
+Its deferred groups distinguish planned semantic providers from compiler
+builtins, consumer-supplied callbacks, oracle-declared no-provider names, and
+project-only atomic policy. It neither performs archive extraction nor claims
+runtime behavior, declaration parity, family promotion, final C-ABI closure,
+or public x86 support.
 
 `header-callable-provider-linkage-audit` separately uses the checked inventory
 to ordinarily extract the 1,113 current default-static and 47 verified

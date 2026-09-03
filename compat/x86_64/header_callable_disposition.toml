@@ -1,0 +1,149 @@
+# Checked x86 header-callable ownership routing.
+#
+# This contract consumes the compiler-derived callable inventory but does not
+# claim archive extraction or runtime behavior.  It makes every currently
+# selected external callable either a current selected provider assignment or
+# one exact deferred owner, while keeping missing pinned-musl declarations as
+# a separate headers blocker.
+schema = "crabc.x86_64-header-callable-disposition/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6"
+callable_inventory = "compat/x86_64/header_callable_inventory.json"
+static_c_abi_exports = "compat/x86_64/static_c_abi_exports.txt"
+parity_ledger = "compat/x86_64/parity.toml"
+generated_report = "compat/x86_64/header_callable_disposition.json"
+
+[policy]
+compiler_derived_candidate_externals = true
+exclusive_exhaustive_primary_disposition = true
+header_ownership_routing = true
+archive_extraction = false
+runtime_semantics = false
+family_promotion = false
+public_support = false
+
+[work_package]
+target_family = "libc.headers-layouts"
+target_obligation = "header-callable-disposition"
+blocker = "The frozen selected external callable surface had a single no-provider bucket, which could not distinguish planned semantic owners, compiler builtins, consumer callbacks, oracle-declared no-provider declarations, or project-only atomic policy work."
+prerequisites = ["oracle.musl-toolchain", "compiler-derived selected header callable inventory", "selected static C ABI export ratchet", "checked feature-archive provider partition"]
+dependent_work = ["zero missing selected header declarations", "libc.c-abi-compat final callable-provider archive closure", "ordinary archive extraction for future providers", "header-family aggregate closure"]
+baseline_source = "Pinned musl 1.2.6 selected x86 public headers and the checked compiler-derived candidate callable inventory."
+source_owners = ["compat/x86_64/header_callable_disposition.toml", "compat/x86_64/header_callable_disposition.py", "compat/x86_64/header_callable_linkage_audit.py", "compat/x86_64/header_callable_inventory.json", "compat/x86_64/static_c_abi_exports.txt", "compat/x86_64/parity.toml", "compat/x86_64/headers-layouts-foundation.toml", "compat/x86_64/tests/test_header_callable_disposition.py", "scripts/dev-x86_64.sh"]
+focused_evidence_command = "./scripts/dev-x86_64.sh header-callable-disposition"
+family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
+negative_scope = "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not waive the 16 missing pinned-musl declaration names, infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support."
+expected_transition = "Completed as a non-promoting checked disposition: all 1,513 current candidate external callable names and all 16 current missing reference declaration names receive exact accounting records. The 353 deferred names remain provider/archive work. Declaration parity remains red after the missing reference names reach zero until the independent declaration/macro matrix and remaining header obligations close."
+evidence = ["compiler-derived inventory digest binding", "exact disjoint primary callable partition", "exact deferred-owner roster", "exact missing-reference declaration roster", "native x86 inventory regeneration plus checked report"]
+
+[[deferred_owner_group]]
+id = "x86-cabi-text-math-locale-stdio-v1"
+semantic_family = "libc.text-math-locale-stdio"
+linkage_owner_family = "libc.c-abi-compat"
+linkage_owner_obligation = "final-callable-provider-archive-closure"
+resolution = "planned-provider"
+provider_target = "future selected C ABI providers in libc.text-math-locale-stdio"
+source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
+members = ["__fpending", "__fpurge", "__freadahead", "__freadptr", "__freadptrinc", "__fwriting", "_flushlbf", "acos", "acosf", "adjtime", "adjtimex", "asctime", "asctime_r", "asin", "asinf", "asprintf", "atan", "atan2", "atan2f", "atanf", "ctime", "ctime_r", "dprintf", "fdopen", "fgetln", "fgetwc", "fgetwc_unlocked", "fgetws", "fgetws_unlocked", "flockfile", "fma", "fmaf", "fmemopen", "fnmatch", "fopencookie", "fprintf", "fputwc", "fputwc_unlocked", "fputws", "freopen", "fscanf", "ftrylockfile", "funlockfile", "fwide", "fwprintf", "fwscanf", "getc_unlocked", "getchar_unlocked", "getdate", "getdelim", "getline", "gets", "getwc", "getwc_unlocked", "getwchar", "getwchar_unlocked", "glob", "globfree", "hypot", "hypotf", "localtime", "localtime_r", "log1p", "log1pf", "mbsnrtowcs", "mktime", "open_memstream", "open_wmemstream", "pclose", "popen", "printf", "putc_unlocked", "putchar_unlocked", "putwc", "putwc_unlocked", "putwchar", "putwchar_unlocked", "scanf", "setbuf", "setbuffer", "setlinebuf", "settimeofday", "stime", "strfmon", "strfmon_l", "strftime", "strftime_l", "strptime", "swprintf", "swscanf", "tzset", "ungetwc", "vasprintf", "vdprintf", "vfprintf", "vfscanf", "vfwprintf", "vfwscanf", "vprintf", "vscanf", "vswprintf", "vswscanf", "vwprintf", "vwscanf", "wcsdup", "wcsftime", "wcsftime_l", "wcsnrtombs", "wordexp", "wordfree", "wprintf", "wscanf"]
+
+[[deferred_owner_group]]
+id = "x86-cabi-pthread-tls-completion-v1"
+semantic_family = "libc.pthread-tls"
+linkage_owner_family = "libc.c-abi-compat"
+linkage_owner_obligation = "final-callable-provider-archive-closure"
+resolution = "planned-provider"
+provider_target = "future selected C ABI providers in libc.pthread-tls"
+source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
+members = ["cnd_timedwait", "mtx_timedlock", "pthread_cond_timedwait", "pthread_getattr_default_np", "pthread_getattr_np", "pthread_getschedparam", "pthread_kill", "pthread_mutex_consistent", "pthread_mutex_setprioceiling", "pthread_mutex_timedlock", "pthread_mutexattr_getprioceiling", "pthread_mutexattr_setprioceiling", "pthread_mutexattr_setprotocol", "pthread_mutexattr_setpshared", "pthread_mutexattr_setrobust", "pthread_setattr_default_np", "pthread_setschedparam", "pthread_setschedprio", "pthread_sigmask", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock", "pthread_timedjoin_np", "pthread_tryjoin_np"]
+
+[[deferred_owner_group]]
+id = "x86-cabi-resolver-netdb-classic-v1"
+semantic_family = "libc.resolver"
+linkage_owner_family = "libc.c-abi-compat"
+linkage_owner_obligation = "final-callable-provider-archive-closure"
+resolution = "planned-provider"
+provider_target = "future selected C ABI providers in libc.resolver"
+source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
+members = ["gethostbyaddr", "gethostbyaddr_r", "gethostbyname", "gethostbyname2", "gethostbyname2_r", "gethostbyname_r", "gethostent", "getnetbyaddr", "getnetbyname", "getnetent", "getservbyname", "getservbyname_r", "getservbyport", "getservbyport_r"]
+
+[[deferred_owner_group]]
+id = "x86-cabi-posix-runtime-missing-v1"
+semantic_family = "libc.posix-runtime"
+linkage_owner_family = "libc.c-abi-compat"
+linkage_owner_obligation = "final-callable-provider-archive-closure"
+resolution = "planned-provider"
+provider_target = "future selected C ABI providers in libc.posix-runtime"
+source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
+members = ["acct", "aio_cancel", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "brk", "capget", "capset", "chroot", "clone", "closelog", "daemon", "delete_module", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fallocate", "fanotify_init", "fanotify_mark", "fchmodat", "fchown", "fchownat", "fexecve", "forkpty", "get_current_dir_name", "getitimer", "gmtime", "init_module", "initstate", "isastream", "klogctl", "lio_listio", "lockf", "login_tty", "mkdtemp", "mknod", "mknodat", "mkostemp", "mkostemps", "mkstemp", "mkstemps", "mount", "mq_close", "mq_getattr", "mq_notify", "mq_open", "mq_receive", "mq_send", "mq_timedreceive", "mq_timedsend", "mq_unlink", "mremap", "name_to_handle_at", "open_by_handle_at", "openlog", "openpty", "pivot_root", "posix_openpt", "posix_spawn", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "posix_spawnp", "prctl", "preadv2", "process_vm_readv", "process_vm_writev", "ptrace", "ptsname", "ptsname_r", "pwritev2", "quotactl", "rand", "random", "realpath", "reboot", "remap_file_pages", "renameat", "sbrk", "sem_close", "sem_open", "sem_timedwait", "sem_unlink", "setitimer", "setlogmask", "setstate", "shm_open", "shm_unlink", "srand", "srandom", "swapoff", "swapon", "symlinkat", "syscall", "syslog", "system", "tcdrain", "tcgetsid", "tempnam", "timer_create", "times", "tmpnam", "ttyname", "umount", "umount2", "vfork", "vhangup", "vmsplice", "vsyslog"]
+
+[[deferred_owner_group]]
+id = "x86-cabi-compat-errors-users-v1"
+semantic_family = "libc.c-abi-compat"
+linkage_owner_family = "libc.c-abi-compat"
+linkage_owner_obligation = "final-callable-provider-archive-closure"
+resolution = "planned-provider"
+provider_target = "future selected C ABI providers in libc.c-abi-compat"
+source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
+members = ["_Fork", "__assert_fail", "abort", "addmntent", "at_quick_exit", "cuserid", "endgrent", "endmntent", "endpwent", "endspent", "endusershell", "endutent", "endutxent", "err", "errx", "fgetgrent", "fgetpwent", "fgetspent", "getgrent", "getgrgid", "getgrgid_r", "getgrnam", "getgrnam_r", "getgrouplist", "getmntent", "getmntent_r", "getpwent", "getpwnam", "getpwnam_r", "getpwuid", "getpwuid_r", "getspent", "getspnam", "getspnam_r", "getusershell", "getutent", "getutid", "getutline", "getutxent", "getutxid", "getutxline", "herror", "initgroups", "lckpwdf", "perror", "putgrent", "putpwent", "putspent", "pututline", "pututxline", "quick_exit", "setgrent", "setmntent", "setpwent", "setspent", "setusershell", "setutent", "setutxent", "ulckpwdf", "updwtmp", "updwtmpx", "utmpname", "utmpxname", "verr", "verrx", "vwarn", "vwarnx", "warn", "warnx"]
+
+[[deferred_owner_group]]
+id = "x86-header-callable-builtin-v1"
+semantic_family = "libc.headers-layouts"
+linkage_owner_family = "libc.c-abi-compat"
+linkage_owner_obligation = "final-callable-provider-archive-closure"
+resolution = "compiler-builtin"
+provider_target = "compiler builtin boundary; no crabc archive member is selected"
+source_oracle = "Pinned musl 1.2.6 alloca.h compiler-builtin declaration boundary"
+members = ["alloca"]
+
+[[deferred_owner_group]]
+id = "x86-header-callable-consumer-supplied-v1"
+semantic_family = "libc.headers-layouts"
+linkage_owner_family = "libc.c-abi-compat"
+linkage_owner_obligation = "final-callable-provider-archive-closure"
+resolution = "consumer-supplied"
+provider_target = "program-supplied Linux UAPI sequencer callback; no crabc archive member is selected"
+source_oracle = "Pinned Linux 5.10 UAPI sys/soundcard.h callback declaration boundary"
+members = ["seqbuf_dump"]
+
+[[deferred_owner_group]]
+id = "x86-header-callable-oracle-no-provider-v1"
+semantic_family = "libc.c-abi-compat"
+linkage_owner_family = "libc.c-abi-compat"
+linkage_owner_obligation = "final-callable-provider-archive-closure"
+resolution = "oracle-declared-no-provider"
+provider_target = "Pinned musl declares these names without a pinned x86 libc.a or libc.so provider; do not invent one"
+source_oracle = "Pinned musl 1.2.6 x86 header and archive export inventory"
+members = ["_flush_cache", "cachectl", "cacheflush", "getcontext", "makecontext", "setcontext", "swapcontext", "tgkill"]
+
+[[deferred_owner_group]]
+id = "x86-header-callable-atomic-policy-v1"
+semantic_family = "libc.headers-layouts"
+linkage_owner_family = "libc.c-abi-compat"
+linkage_owner_obligation = "final-callable-provider-archive-closure"
+resolution = "policy-decision-required"
+provider_target = "Project-only addressable stdatomic declarations require an explicit C ABI policy before provider selection"
+source_oracle = "Project include/stdatomic.h plus checked candidate callable inventory"
+members = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_flag_test_and_set", "atomic_flag_test_and_set_explicit", "atomic_signal_fence", "atomic_thread_fence"]
+
+[[missing_reference_declaration_group]]
+id = "x86-header-missing-stdio-unlocked-v1"
+semantic_family = "libc.text-math-locale-stdio"
+resolution = "candidate-declaration-missing"
+source_oracle = "Pinned musl 1.2.6 stdio.h and monetary.h declaration inventory"
+members = ["clearerr_unlocked", "fflush_unlocked", "fgetc_unlocked", "fgets_unlocked", "fputc_unlocked", "fputs_unlocked", "fputws_unlocked", "fread_unlocked", "fwrite_unlocked", "getw", "putw", "strfmon_l"]
+
+[[missing_reference_declaration_group]]
+id = "x86-header-missing-filesystem-v1"
+semantic_family = "libc.posix-runtime"
+resolution = "candidate-declaration-missing"
+source_oracle = "Pinned musl 1.2.6 ftw.h and sys/stat.h declaration inventory"
+members = ["ftw", "statx"]
+
+[[missing_reference_declaration_group]]
+id = "x86-header-missing-namespace-v1"
+semantic_family = "libc.posix-runtime"
+resolution = "candidate-declaration-missing"
+source_oracle = "Pinned musl 1.2.6 sched.h declaration inventory"
+members = ["setns", "unshare"]

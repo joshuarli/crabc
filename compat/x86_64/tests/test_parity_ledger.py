@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 368)
+        self.assertEqual(report["verified_artifact_count"], 369)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -3208,7 +3208,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v14"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v15"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -3223,6 +3223,22 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("compat/upstreams.toml", headers_layouts["source_owners"])
         self.assertIn(
             "compat/x86_64/header_callable_visibility_matrix.toml",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/header_callable_disposition.toml",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/header_callable_disposition.py",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/header_callable_disposition.json",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/run_header_callable_disposition.sh",
             headers_layouts["source_owners"],
         )
         self.assertIn(
@@ -3354,6 +3370,25 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "oracle-not-applicable": 1,
             },
         )
+        disposition = manifest["callable_disposition"]
+        assert isinstance(disposition, dict)
+        self.assertEqual(
+            disposition["command"],
+            "./scripts/dev-x86_64.sh header-callable-disposition",
+        )
+        self.assertEqual(disposition["candidate_external_callable_count"], 1513)
+        self.assertEqual(disposition["default_static_callable_count"], 1113)
+        self.assertEqual(disposition["verified_feature_callable_count"], 47)
+        self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
+        self.assertEqual(disposition["unprovided_callable_count"], 353)
+        self.assertEqual(disposition["missing_reference_declaration_name_count"], 16)
+        self.assertEqual(disposition["missing_reference_declaration_record_count"], 53)
+        self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
+        self.assertTrue(disposition["header_ownership_routing_complete"])
+        self.assertFalse(disposition["header_declaration_parity_complete"])
+        self.assertFalse(disposition["final_provider_archive_closure_complete"])
+        self.assertFalse(disposition["family_promotion"])
+        self.assertFalse(disposition["public_support"])
         provider_audit = manifest["selected_callable_provider_linkage_audit"]
         assert isinstance(provider_audit, dict)
         self.assertEqual(
@@ -3981,7 +4016,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             [entry["id"] for entry in owners],
             [
                 "current-static-c-exports",
-                "unlisted-public-callables",
+                "header-callable-disposition",
                 "noncallable-header-abi",
             ],
         )
@@ -4309,9 +4344,28 @@ class X86ParityLedgerTests(unittest.TestCase):
         manifest = self.header_foundation_manifest()
         owners = manifest["linkage_owner"]
         assert isinstance(owners, list) and isinstance(owners[1], dict)
-        owners[1]["family"] = "libc.headers-layouts"
+        owners[1]["family"] = "libc.c-abi-compat"
         with self.assertRaisesRegex(ledger.LedgerError, "family drifted"):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+    def test_protocol_database_work_package_targets_active_header_linkage_owners(self) -> None:
+        provider = ledger.load_toml(ledger.PROTOCOL_DATABASE_PROVIDER_PATH)
+        package = provider["work_package"]
+        assert isinstance(package, dict)
+        manifest = self.header_foundation_manifest()
+        owners = manifest["linkage_owner"]
+        assert isinstance(owners, list)
+        owner_ids = {
+            owner["id"]
+            for owner in owners
+            if isinstance(owner, dict) and isinstance(owner.get("id"), str)
+        }
+
+        self.assertEqual(
+            package["target_obligations"],
+            ["header-callable-disposition", "current-static-c-exports"],
+        )
+        self.assertTrue(set(package["target_obligations"]) <= owner_ids)
 
     def test_public_header_surface_inventory_is_a_checked_partial_artifact(self) -> None:
         """Every pinned public header must be visible before ABI closure is claimed."""
@@ -4357,7 +4411,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         artifact = next(
             entry
             for entry in artifacts
@@ -4410,7 +4464,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         artifact = next(
             entry
             for entry in artifacts
@@ -4474,7 +4528,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         artifact = next(
             entry
             for entry in artifacts
@@ -4531,7 +4585,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         matching = [
             entry
             for entry in artifacts
@@ -4608,7 +4662,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         matching = [
             entry
             for entry in artifacts
@@ -4673,7 +4727,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         artifact = next(
             entry
             for entry in artifacts
@@ -4744,7 +4798,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         artifact = next(
             entry
             for entry in artifacts
@@ -13231,7 +13285,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(detail, socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         bootstrap = next(
             entry
             for entry in artifacts
@@ -17741,7 +17795,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         artifact = next(
             entry
             for entry in artifacts
@@ -17755,7 +17809,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 13
+        assert isinstance(artifacts, list) and len(artifacts) == 14
         artifact = next(
             entry
             for entry in artifacts

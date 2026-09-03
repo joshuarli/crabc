@@ -46,6 +46,11 @@ from header_declaration_macro_visibility_matrix import (  # noqa: E402
     load_contract as load_declaration_macro_visibility_contract,
     validate_checked_report as validate_declaration_macro_visibility_report,
 )
+from header_callable_disposition import (  # noqa: E402
+    HeaderCallableDispositionError,
+    load_contract as load_header_callable_disposition_contract,
+    validate_checked_report as validate_header_callable_disposition_report,
+)
 from selected_header_install_projection import (  # noqa: E402
     ProjectionError,
     load_contract as load_selected_header_install_projection_contract,
@@ -99,6 +104,15 @@ HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_PATH = (
 HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_header_callable_provider_linkage_audit.sh"
 )
+HEADER_CALLABLE_DISPOSITION_CONTRACT_PATH = (
+    ROOT / "compat" / "x86_64" / "header_callable_disposition.toml"
+)
+HEADER_CALLABLE_DISPOSITION_REPORT_PATH = (
+    ROOT / "compat" / "x86_64" / "header_callable_disposition.json"
+)
+HEADER_CALLABLE_DISPOSITION_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_header_callable_disposition.sh"
+)
 PUBLIC_HEADER_INVENTORY_PATH = ROOT / "compat" / "x86_64" / "public_headers.txt"
 PUBLIC_HEADER_SURFACE_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_public_header_surface.sh"
 LINUX_5_10_UAPI_VERIFIER_PATH = ROOT / "compat" / "x86_64" / "run_linux_5_10_uapi.sh"
@@ -149,7 +163,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v14"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v15"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -399,6 +413,9 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_COMMAND = (
 EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
 )
+EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
+    "./scripts/dev-x86_64.sh header-callable-disposition"
+)
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "candidate_only_identity_count": 40499,
     "candidate_only_identity_kind_counts": {
@@ -559,17 +576,17 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
 EXPECTED_HEADER_FOUNDATION_CLASS_LINKAGE_OWNERS = {
     "pinned-non-uapi": (
         "current-static-c-exports",
-        "unlisted-public-callables",
+        "header-callable-disposition",
         "noncallable-header-abi",
     ),
     "pinned-uapi-inputs": (
         "current-static-c-exports",
-        "unlisted-public-callables",
+        "header-callable-disposition",
         "noncallable-header-abi",
     ),
     "project-only-extensions": (
         "current-static-c-exports",
-        "unlisted-public-callables",
+        "header-callable-disposition",
         "noncallable-header-abi",
     ),
 }
@@ -842,8 +859,8 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
     "callable-linkage-ownership": (
         "partial-verified",
         "all-pinned-and-project-only-public-headers",
-        "libc.c-abi-compat",
-        ("generated-callable-provider-partition",),
+        "libc.headers-layouts",
+        ("generated-header-callable-disposition",),
     ),
     "legacy-direct-layout-inputs": (
         "partial-verified",
@@ -866,11 +883,11 @@ EXPECTED_HEADER_FOUNDATION_LINKAGE_OWNERS = {
         "libc.c-abi-compat",
         ("compat/x86_64/static_c_abi_exports.txt", "selected-static-artifacts"),
     ),
-    "unlisted-public-callables": (
+    "header-callable-disposition": (
         "partial-verified",
-        "every public callable declaration without a verified default-static or feature-archive provider",
-        "libc.c-abi-compat",
-        ("generated-callable-provider-partition",),
+        "every selected external callable has a current selected provider assignment or an exact named deferred owner, while each missing pinned-musl declaration has a separate exact record",
+        "libc.headers-layouts",
+        ("generated-header-callable-disposition",),
     ),
     "noncallable-header-abi": (
         "partial-verified",
@@ -3027,6 +3044,7 @@ def validate_header_layout_foundation_manifest(
         "feature_visibility_matrix",
         "callable_feature_visibility_matrix",
         "prototype_layout_matrix",
+        "callable_disposition",
         "selected_callable_provider_linkage_audit",
         "selected_header_install_projection",
         "language_profile",
@@ -3070,6 +3088,7 @@ def validate_header_layout_foundation_manifest(
             "callable_feature_visibility_matrix": True,
             "prototype_layout_matrix": True,
             "abi_facet_matrix": False,
+            "callable_disposition": True,
             "selected_callable_provider_linkage_audit": True,
             "callable_linkage_audit": False,
             "aggregate_family_completion": False,
@@ -3110,6 +3129,7 @@ def validate_header_layout_foundation_manifest(
             "callable_feature_visibility_matrix": True,
             "prototype_layout_matrix": True,
             "abi_facet_matrix": False,
+            "callable_disposition": True,
             "selected_callable_provider_linkage_audit": True,
             "callable_linkage_audit": False,
             "runtime_completion": False,
@@ -3178,6 +3198,84 @@ def validate_header_layout_foundation_manifest(
         and "full callable closure" in description
         and "public x86 support" in description,
         "header-foundation selected provider audit description drifted",
+    )
+
+    callable_disposition = manifest["callable_disposition"]
+    require(
+        isinstance(callable_disposition, Mapping),
+        "header-foundation callable disposition must be a table",
+    )
+    require(
+        set(callable_disposition)
+        == {
+            "id",
+            "state",
+            "owner",
+            "command",
+            "contract",
+            "report",
+            "candidate_external_callable_count",
+            "default_static_callable_count",
+            "verified_feature_callable_count",
+            "declared_unverified_feature_callable_count",
+            "unprovided_callable_count",
+            "missing_reference_declaration_name_count",
+            "missing_reference_declaration_record_count",
+            "missing_reference_declaration_routing_complete",
+            "header_ownership_routing_complete",
+            "header_declaration_parity_complete",
+            "final_provider_archive_closure_complete",
+            "family_promotion",
+            "public_support",
+            "description",
+        },
+        "header-foundation callable disposition keys drifted",
+    )
+    require(
+        dict(callable_disposition)
+        == {
+            "id": "header-callable-disposition",
+            "state": "partial-verified",
+            "owner": "libc.headers-layouts",
+            "command": EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND,
+            "contract": "compat/x86_64/header_callable_disposition.toml",
+            "report": "compat/x86_64/header_callable_disposition.json",
+            "candidate_external_callable_count": 1513,
+            "default_static_callable_count": 1113,
+            "verified_feature_callable_count": 47,
+            "declared_unverified_feature_callable_count": 0,
+            "unprovided_callable_count": 353,
+            "missing_reference_declaration_name_count": 16,
+            "missing_reference_declaration_record_count": 53,
+            "missing_reference_declaration_routing_complete": True,
+            "header_ownership_routing_complete": True,
+            "header_declaration_parity_complete": False,
+            "final_provider_archive_closure_complete": False,
+            "family_promotion": False,
+            "public_support": False,
+            "description": callable_disposition["description"],
+        },
+        "header-foundation callable disposition contract drifted",
+    )
+    description = callable_disposition["description"]
+    require(
+        isinstance(description, str)
+        and "all 1,513 selected external callable names" in description
+        and "16 pinned-musl declaration names" in description
+        and "archive extraction" in description
+        and "final C ABI provider/archive closure" in description
+        and "public x86 support" in description,
+        "header-foundation callable disposition description drifted",
+    )
+    require(
+        repository_path(str(callable_disposition["contract"]), "header-foundation callable disposition contract")
+        == HEADER_CALLABLE_DISPOSITION_CONTRACT_PATH,
+        "header-foundation callable disposition contract path drifted",
+    )
+    require(
+        repository_path(str(callable_disposition["report"]), "header-foundation callable disposition report")
+        == HEADER_CALLABLE_DISPOSITION_REPORT_PATH,
+        "header-foundation callable disposition report path drifted",
     )
 
     selected_install_projection = manifest["selected_header_install_projection"]
@@ -3295,6 +3393,10 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/header_callable_inventory.toml",
         "compat/x86_64/header_callable_inventory.py",
         "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_disposition.toml",
+        "compat/x86_64/header_callable_disposition.py",
+        "compat/x86_64/header_callable_disposition.json",
+        "compat/x86_64/run_header_callable_disposition.sh",
         "compat/x86_64/header_callable_visibility_matrix.toml",
         "compat/x86_64/header_callable_visibility_matrix.py",
         "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
@@ -3354,6 +3456,7 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/tests/test_selected_header_install_projection.py",
         "compat/x86_64/tests/test_feature_archive_roster.py",
         "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_header_callable_disposition.py",
         "compat/x86_64/tests/test_header_callable_provider_linkage_audit.py",
         "compat/x86_64/tests/test_header_callable_visibility_matrix.py",
         "compat/x86_64/tests/test_header_abi_matrix.py",
@@ -5758,8 +5861,8 @@ def validate_header_layout_foundation_manifest(
     )
     static_export_names = static_c_abi_export_names(static_export_path)
     require(
-        "unlisted-public-callables" in linkage_ids,
-        "header-foundation needs the declared-callable catch-all ownership rule",
+        "header-callable-disposition" in linkage_ids,
+        "header-foundation needs the checked callable-disposition ownership rule",
     )
     require(
         "noncallable-header-abi" in linkage_ids,
@@ -6166,6 +6269,144 @@ def require_all_header_callable_feature_visibility_artifact(
         {entry["command"] for entry in evidence}
         == {"./scripts/dev-x86_64.sh header-callable-visibility-matrix"},
         "callable visibility artifact must use the dedicated native command",
+    )
+
+
+def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> None:
+    """Keep header ownership routing distinct from provider archive closure."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "header-callable-disposition"]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one header callable disposition artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "all 1,513 current names",
+        "1,113 default-static",
+        "47 verified feature-provider",
+        "353 exact deferred-owner records",
+        "53 current pinned-musl missing declaration records across 16 names",
+        "not declaration parity",
+        "does not perform archive extraction",
+        "runtime semantics",
+        "final C ABI provider/archive closure",
+        "public x86 support",
+    ):
+        require(phrase in description, f"header callable disposition description omits {phrase}")
+    owners = set(
+        string_list(artifact["source_owners"], "header callable disposition artifact source owners")
+    )
+    for owner in (
+        "compat/x86_64/header_callable_disposition.toml",
+        "compat/x86_64/header_callable_disposition.py",
+        "compat/x86_64/header_callable_disposition.json",
+        "compat/x86_64/header_callable_linkage_audit.py",
+        "compat/x86_64/header_callable_inventory.toml",
+        "compat/x86_64/header_callable_inventory.py",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/parity.toml",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/run_header_callable_disposition.sh",
+        "compat/x86_64/tests/test_header_callable_disposition.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"header callable disposition artifact must own {owner}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        [entry["command"] for entry in evidence]
+        == [EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND],
+        "header callable disposition artifact must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    require(
+        isinstance(scope, str)
+        and "353 deferred providers" in scope
+        and "16 missing reference declaration names" in scope
+        and "not archive extraction, runtime semantics, declaration parity, final C ABI closure, promotion, or public-support evidence" in scope,
+        "header callable disposition evidence scope drifted",
+    )
+    require(
+        HEADER_CALLABLE_DISPOSITION_CONTRACT_PATH.is_file()
+        and HEADER_CALLABLE_DISPOSITION_REPORT_PATH.is_file()
+        and HEADER_CALLABLE_DISPOSITION_RUNNER_PATH.is_file(),
+        "header callable disposition implementation is missing",
+    )
+    try:
+        contract = load_header_callable_disposition_contract()
+        report = json.loads(HEADER_CALLABLE_DISPOSITION_REPORT_PATH.read_text(encoding="utf-8"))
+        validate_header_callable_disposition_report(report, contract)
+    except (HeaderCallableDispositionError, OSError, json.JSONDecodeError) as error:
+        raise LedgerError(f"header callable disposition report is invalid: {error}") from error
+    summary = report.get("summary")
+    require(isinstance(summary, Mapping), "header callable disposition report summary is invalid")
+    require(
+        dict(summary)
+        == {
+            "candidate_external_callable_count": 1513,
+            "declared_unverified_feature_callable_count": 0,
+            "default_static_callable_count": 1113,
+            "deferred_resolution_counts": {
+                "compiler-builtin": 1,
+                "consumer-supplied": 1,
+                "oracle-declared-no-provider": 8,
+                "planned-provider": 337,
+                "policy-decision-required": 6,
+            },
+            "final_provider_archive_closure_complete": False,
+            "header_declaration_parity_complete": False,
+            "header_ownership_routing_complete": True,
+            "missing_reference_declaration_name_count": 16,
+            "missing_reference_declaration_record_count": 53,
+            "missing_reference_declaration_routing_complete": True,
+            "primary_disposition_exact_coverage": True,
+            "undispositioned_candidate_callable_count": 0,
+            "undispositioned_missing_reference_name_count": 0,
+            "unprovided_callable_count": 353,
+            "verified_feature_callable_count": 47,
+        },
+        "header callable disposition summary drifted",
+    )
+    scope_report = report.get("scope")
+    require(
+        scope_report
+        == {
+            "archive_extraction": False,
+            "compiler_derived_candidate_externals": True,
+            "exclusive_exhaustive_primary_disposition": True,
+            "family_promotion": False,
+            "header_ownership_routing": True,
+            "public_support": False,
+            "runtime_semantics": False,
+        },
+        "header callable disposition scope drifted",
+    )
+    runner = HEADER_CALLABLE_DISPOSITION_RUNNER_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        "header_callable_inventory.py",
+        "header_callable_disposition.py",
+        "run_musl_oracle.sh",
+        "run_linux_5_10_uapi.sh",
+        "does not claim archive extraction",
+    ):
+        require(phrase in runner, f"header callable disposition runner omits {phrase}")
+    dispatch = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    require(
+        "header-callable-disposition)" in dispatch,
+        "header callable disposition is absent from the native dispatcher",
     )
 
 
@@ -46706,9 +46947,28 @@ def require_protocol_database_artifact(family: Mapping[str, Any]) -> None:
     require(
         package.get("target_family") == "libc.headers-layouts"
         and package.get("target_obligations")
-        == ["unlisted-public-callables", "current-static-c-exports"]
+        == ["header-callable-disposition", "current-static-c-exports"]
         and package.get("target_verified_slice") == "static-c-protocol-database",
         "protocol database work package target drifted",
+    )
+    header_foundation = load_toml(HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH)
+    header_linkage_owners = header_foundation.get("linkage_owner")
+    require(
+        isinstance(header_linkage_owners, list)
+        and all(
+            isinstance(owner, Mapping)
+            and isinstance(owner.get("id"), str)
+            and owner.get("id")
+            for owner in header_linkage_owners
+        ),
+        "protocol database target header linkage-owner roster is invalid",
+    )
+    header_linkage_owner_ids = {owner["id"] for owner in header_linkage_owners}
+    target_obligations = package["target_obligations"]
+    assert isinstance(target_obligations, list)
+    require(
+        set(target_obligations) <= header_linkage_owner_ids,
+        "protocol database work package target obligations must resolve to header linkage owners",
     )
     for field, phrases in (
         (
@@ -75809,6 +76069,7 @@ def validate_ledger(
     require_all_header_callable_feature_visibility_artifact(
         by_id["libc.headers-layouts"]
     )
+    require_header_callable_disposition_artifact(by_id["libc.headers-layouts"])
     require_selected_header_callable_provider_linkage_audit_artifact(
         by_id["libc.headers-layouts"]
     )
