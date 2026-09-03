@@ -1245,7 +1245,7 @@ impl MetaAllocator {
         size: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
         self.require_published_detached_metadata_theap(subprocess)?;
-        let mut entry = self.enter()?;
+        let mut entry = self.enter_for_main_subprocess(subprocess)?;
         entry.ensure_ready(config, subprocess)?;
         #[cfg(test)]
         if size != 0
@@ -1328,7 +1328,7 @@ impl MetaAllocator {
             return Err(MetaError::InvalidAlignment);
         }
         self.require_published_detached_metadata_theap(subprocess)?;
-        let mut entry = self.enter()?;
+        let mut entry = self.enter_for_main_subprocess(subprocess)?;
         entry.ensure_ready(config, subprocess)?;
         #[cfg(test)]
         if size != 0
@@ -1391,7 +1391,7 @@ impl MetaAllocator {
         self.require_published_detached_metadata_theap(subprocess)?;
 
         let (replacement, copy_size) = {
-            let mut entry = self.enter()?;
+            let mut entry = self.enter_for_main_subprocess(subprocess)?;
             entry.ensure_ready(config, subprocess)?;
             if !old.claim(ALLOCATION_LIVE, ALLOCATION_MOVING)
                 || !old.has_consistent_malloc_provenance()
@@ -1560,8 +1560,25 @@ impl MetaAllocator {
         Ok(MetaEntry {
             owner: self,
             entry_thread: thread,
+            theap_meta_guard: None,
             guard: Some(guard),
         })
+    }
+
+    /// Enters the selected direct metadata-allocation phase after the source
+    /// `theap_meta` identity preflight. The Rust backing lock is acquired
+    /// first so its existing same-thread marker covers a wait on the source
+    /// nonrecursive lock; the source guard then nests inside it and is
+    /// released first. Bootstrap and exact-owner free keep using only the
+    /// backing lock because neither is a selected source allocation phase.
+    fn enter_for_main_subprocess(
+        self: Pin<&'static Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<MetaEntry, MetaError> {
+        let mut entry = self.enter()?;
+        let theap_meta_guard = subprocess.lock_metadata_theap().map_err(MetaError::Lock)?;
+        entry.theap_meta_guard = Some(theap_meta_guard);
+        Ok(entry)
     }
 
     fn release_claimed(
@@ -1868,6 +1885,10 @@ impl MetaAllocator {
 struct MetaEntry {
     owner: Pin<&'static MetaAllocator>,
     entry_thread: usize,
+    /// The bounded source-owned lock for direct allocation phases. It is
+    /// nested inside `guard` so the existing recursion marker covers a wait
+    /// on this nonrecursive lock; Drop releases it before the backing lock.
+    theap_meta_guard: Option<PrivateLockGuard<'static>>,
     guard: Option<PrivateLockGuard<'static>>,
 }
 
@@ -1951,11 +1972,14 @@ impl MetaEntry {
 
 impl Drop for MetaEntry {
     fn drop(&mut self) {
-        // Unlock before clearing the recursion marker. Clearing first would
-        // let same-thread signal reentry miss the marker and wait forever on
-        // this still-held nonrecursive lock. A different thread may acquire
-        // and replace the marker between these operations, so cleanup uses a
-        // compare-exchange and must not erase that successor's ownership.
+        // Unlock the nested selected source lock, then the Rust backing lock,
+        // before clearing the recursion marker. The first release preserves
+        // source `_mi_meta_rezalloc`'s unlock-before-copy/free order. Clearing
+        // first would let same-thread signal reentry miss the marker and wait
+        // forever on a still-held nonrecursive lock. A different thread may
+        // acquire and replace the marker between these operations, so cleanup
+        // uses a compare-exchange and must not erase that successor's owner.
+        drop(self.theap_meta_guard.take());
         drop(self.guard.take());
         clear_entry_thread_after_unlock(
             &self.owner.get_ref().active_entry_thread,
@@ -1990,8 +2014,9 @@ mod tests {
 
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{mpsc, Arc, Barrier};
     use std::thread;
+    use std::time::{Duration, Instant};
 
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
@@ -2017,6 +2042,17 @@ mod tests {
             .prepare_for_main_subprocess(config(), allocator.test_default_subprocess())
             .expect("the isolated fixture publishes its detached metadata-Theap before demand");
         allocator
+    }
+
+    fn wait_for_metadata_theap_lock_contention(subprocess: &MainSubprocess) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !subprocess.test_metadata_theap_lock_is_contended() {
+            assert!(
+                Instant::now() < deadline,
+                "the selected direct metadata caller must reach the subprocess metadata lock"
+            );
+            thread::yield_now();
+        }
     }
 
     #[test]
@@ -2862,6 +2898,208 @@ mod tests {
                 "the read-only comparison does not lend a detached session"
             );
         }
+    }
+
+    #[test]
+    fn bound_subprocess_theap_meta_lock_serializes_direct_allocation_phase() {
+        let allocator = cold_static_allocator();
+        let subprocess = allocator.test_default_subprocess();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image binds before direct demand");
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+        assert!(allocator.test_private_page_map_address().is_none());
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            }
+        );
+
+        thread::scope(|scope| {
+            let held = subprocess
+                .test_hold_metadata_theap_lock()
+                .expect("the selected subprocess metadata lock starts unlocked");
+            let (started_sender, started_receiver) = mpsc::channel();
+            let (completed_sender, completed_receiver) = mpsc::channel();
+            let worker = scope.spawn(move || {
+                started_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+                let mut allocation = allocator
+                    .zalloc_for_main_subprocess(config(), subprocess, 64)
+                    .expect("the selected direct allocation resumes after the subprocess lock releases");
+                allocator
+                    .free(&mut allocation)
+                    .expect("the worker returns its selected direct capability");
+                completed_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+            });
+
+            started_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the direct worker starts while the subprocess lock is held");
+            wait_for_metadata_theap_lock_contention(subprocess);
+            assert!(
+                completed_receiver
+                    .recv_timeout(Duration::from_millis(50))
+                    .is_err(),
+                "direct zalloc must not reach backing or create a capability before the selected subprocess lock releases"
+            );
+            assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+            assert!(allocator.test_private_page_map_address().is_none());
+            assert_eq!(
+                allocator.test_allocation_audit(),
+                MetaAllocationAudit {
+                    live_capability_count: 0,
+                    high_water_capability_count: 0,
+                }
+            );
+
+            drop(held);
+            completed_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("direct zalloc completes after the selected subprocess lock releases");
+            worker.join().expect("the direct worker completes");
+        });
+
+        assert_eq!(allocator.status.load(Ordering::Acquire), READY);
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 1,
+            }
+        );
+
+        thread::scope(|scope| {
+            let held = subprocess
+                .test_hold_metadata_theap_lock()
+                .expect("the selected subprocess metadata lock is reusable");
+            let (started_sender, started_receiver) = mpsc::channel();
+            let (completed_sender, completed_receiver) = mpsc::channel();
+            let worker = scope.spawn(move || {
+                started_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+                let mut allocation = allocator
+                    .zalloc_aligned_for_main_subprocess(config(), subprocess, 64, 64)
+                    .expect("the selected aligned direct allocation resumes after the subprocess lock releases");
+                allocator
+                    .free(&mut allocation)
+                    .expect("the worker returns its selected aligned capability");
+                completed_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+            });
+
+            started_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the aligned direct worker starts while the subprocess lock is held");
+            wait_for_metadata_theap_lock_contention(subprocess);
+            assert!(
+                completed_receiver
+                    .recv_timeout(Duration::from_millis(50))
+                    .is_err(),
+                "direct aligned zalloc must wait for the selected subprocess lock"
+            );
+
+            drop(held);
+            completed_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("direct aligned zalloc completes after the selected subprocess lock releases");
+            worker.join().expect("the aligned direct worker completes");
+        });
+
+        let mut old = allocator
+            .zalloc_for_main_subprocess(config(), subprocess, 32)
+            .expect("the selected old capability is live before rezalloc");
+        // SAFETY: `old` is a current exclusive metadata capability.
+        unsafe { core::ptr::write_bytes(old.pointer().as_ptr(), 0xa5, 32) };
+        thread::scope(|scope| {
+            let held = subprocess
+                .test_hold_metadata_theap_lock()
+                .expect("the selected subprocess metadata lock is reusable for rezalloc");
+            let (started_sender, started_receiver) = mpsc::channel();
+            let (completed_sender, completed_receiver) = mpsc::channel();
+            let worker = scope.spawn(move || {
+                started_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+                let mut replacement = allocator
+                    .rezalloc_for_main_subprocess(config(), subprocess, Some(&mut old), 96)
+                    .expect("the selected rezalloc resumes after the subprocess lock releases");
+                // SAFETY: the successful replacement owns the copied source prefix.
+                assert!(unsafe { core::slice::from_raw_parts(replacement.pointer().as_ptr(), 32) }
+                    .iter()
+                    .all(|byte| *byte == 0xa5));
+                allocator
+                    .free(&mut replacement)
+                    .expect("the worker returns the selected replacement capability");
+                completed_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+            });
+
+            started_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the rezalloc worker starts while the subprocess lock is held");
+            wait_for_metadata_theap_lock_contention(subprocess);
+            assert!(
+                completed_receiver
+                    .recv_timeout(Duration::from_millis(50))
+                    .is_err(),
+                "rezalloc must wait for the selected subprocess lock before its replacement allocation"
+            );
+
+            drop(held);
+            completed_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("rezalloc completes after the selected subprocess lock releases");
+            worker.join().expect("the rezalloc worker completes");
+        });
+
+        let block = allocator
+            .zalloc_for_main_subprocess(config(), subprocess, 64)
+            .expect("the selected capability is live before exact-owner free");
+        thread::scope(|scope| {
+            let held = subprocess
+                .test_hold_metadata_theap_lock()
+                .expect("the selected subprocess metadata lock is reusable for free");
+            let (started_sender, started_receiver) = mpsc::channel();
+            let (completed_sender, completed_receiver) = mpsc::channel();
+            let worker = scope.spawn(move || {
+                started_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+                let mut block = block;
+                allocator
+                    .free(&mut block)
+                    .expect("the exact-owner Malloc free stays outside the source allocation lock");
+                completed_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+            });
+
+            started_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the exact-owner free worker starts while the subprocess lock is held");
+            completed_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the exact-owner Malloc free remains outside the source allocation lock");
+            worker.join().expect("the exact-owner free worker completes");
+            drop(held);
+        });
+
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 2,
+            }
+        );
     }
 
     #[test]

@@ -4,9 +4,9 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/subproc.c:12-46,84-101`
+// Source map: pinned mimalloc v3.5.0 `src/subproc.c:12-70,84-101`
 // (`mi_process_subproc_main`, `_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`,
-// and `_mi_meta_is_meta_page`), `include/mimalloc/types.h:651-680`
+// `_mi_meta_rezalloc`, and `_mi_meta_is_meta_page`), `include/mimalloc/types.h:651-680`
 // (the bounded `mi_subproc_t` fields), `include/mimalloc/types.h:690-701`
 // (`mi_tld_t`), and `src/init.c:155-157,184-205,236-282`
 // (`mi_process_tld_main`, the detached metadata-Theap publication,
@@ -16,13 +16,14 @@
 //!
 //! Upstream places a complete `mi_subproc_t` in static storage. This module
 //! intentionally represents only the process-main identity, the detached
-//! metadata-Theap identity needed before `_mi_meta_zalloc`, its selected
-//! lock-free metadata-page equality query, and the two counters directly
-//! required by `mi_tld_create`/`mi_tld_free`: the relaxed total-thread
-//! sequence and the relaxed current-thread count. It is not a Rust layout
-//! claim for `mi_subproc_t`: `theap_meta` is a source admission and read-only
-//! comparison field, not the C lock/layout or normal C backing route. It
-//! supplies no subprocess list, heap, arena, statistics, or public
+//! metadata-Theap identity needed before `_mi_meta_zalloc`, the source-owned
+//! direct-allocation lock beside that identity, its selected lock-free
+//! metadata-page equality query, and the two counters directly required by
+//! `mi_tld_create`/`mi_tld_free`: the relaxed total-thread sequence and the
+//! relaxed current-thread count. It is not a Rust layout claim for
+//! `mi_subproc_t`: `theap_meta` and `theap_meta_lock` are one-way
+//! identity/private-futex capabilities, not C byte-layout or normal C backing
+//! routes. It supplies no subprocess list, heap, arena, statistics, or public
 //! subprocess API.
 //!
 //! A [`ThreadRegistrationTicket`] is the old result of the source relaxed
@@ -41,6 +42,9 @@ use core::mem::{MaybeUninit, size_of};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
+use crabc_core::Result as CoreResult;
+
+use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::types::{LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, ThreadSequence};
 
 const MAIN_TLD_COLD: u8 = 0;
@@ -96,6 +100,15 @@ pub(crate) struct MainSubprocess {
     /// image fail closed. It grants neither dereference authority nor a
     /// general subprocess-Theap API.
     theap_meta: AtomicPtr<Theap>,
+    /// Rust's bounded private-futex representation of source
+    /// `subproc->theap_meta_lock`.
+    ///
+    /// It serializes only the selected direct allocation phase from
+    /// `_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, and `_mi_meta_rezalloc`.
+    /// `MetaAllocator` retains its separate outer lock for its Rust-only
+    /// process-lifetime backing slots and bootstrap state. This is neither a
+    /// `mi_subproc_t` byte-layout claim nor pthread-mutex equivalence.
+    theap_meta_lock: PrivateLock,
     /// Rust-side selection of the source sequence-zero TLD branch.
     ///
     /// This does not replace either source counter. It only prevents a
@@ -106,8 +119,9 @@ pub(crate) struct MainSubprocess {
     main_tld: UnsafeCell<MainStaticTldSlot>,
 }
 
-// SAFETY: the counters and one-way metadata-Theap identity are atomic. The
-// sole UnsafeCell is initialized only by the unique sequence-zero ticket,
+// SAFETY: the counters and one-way metadata-Theap identity are atomic; the
+// private metadata lock serializes only its bounded direct-allocation callers.
+// The sole UnsafeCell is initialized only by the unique sequence-zero ticket,
 // then reached exclusively through its `!Send` TLD owner; it is never reused
 // after retirement.
 unsafe impl Sync for MainSubprocess {}
@@ -118,6 +132,7 @@ impl MainSubprocess {
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
             theap_meta: AtomicPtr::new(core::ptr::null_mut()),
+            theap_meta_lock: PrivateLock::new(),
             bootstrap_selection: AtomicU8::new(BOOTSTRAP_OPEN),
             main_tld_state: AtomicU8::new(MAIN_TLD_COLD),
             main_tld: UnsafeCell::new(MainStaticTldSlot::new()),
@@ -315,6 +330,38 @@ impl MainSubprocess {
     #[inline]
     pub(crate) fn matches_published_detached_metadata_theap(&self, theap: NonNull<Theap>) -> bool {
         core::ptr::eq(self.theap_meta.load(Ordering::Acquire), theap.as_ptr())
+    }
+
+    /// Acquires the bounded Rust representation of source
+    /// `subproc->theap_meta_lock`.
+    ///
+    /// Production callers must first prove the existing `theap_meta` identity
+    /// admission. Only `MetaAllocator`'s selected direct allocation phase may
+    /// retain this guard; it releases the guard before `_mi_meta_rezalloc`'s
+    /// Rust copy and exact-owner free work. The source Malloc branch of
+    /// `_mi_meta_free` does not take this lock, so Rust's separate backing
+    /// lock remains responsible for its private allocator mutation.
+    #[inline]
+    pub(crate) fn lock_metadata_theap(&self) -> CoreResult<PrivateLockGuard<'_>> {
+        self.theap_meta_lock.lock()
+    }
+
+    /// Test-only observation of a selected direct metadata caller waiting on
+    /// this source-owned lock. It grants neither lock ownership nor a Theap
+    /// capability.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_metadata_theap_lock_is_contended(&self) -> bool {
+        self.theap_meta_lock.test_is_contended()
+    }
+
+    /// Holds the selected source-owned metadata lock for one ordering test.
+    /// This is test-only and grants no metadata allocation or Theap
+    /// capability.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_hold_metadata_theap_lock(&self) -> CoreResult<PrivateLockGuard<'_>> {
+        self.lock_metadata_theap()
     }
 
     /// Implements the selected read-only `_mi_meta_is_meta_page` predicate.

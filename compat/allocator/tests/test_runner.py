@@ -2283,6 +2283,15 @@ class ContractTests(unittest.TestCase):
                         "without_backing"
                     ),
                 },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "bound-subprocess-theap-meta-lock-direct-allocation-phase",
+                    "kind": "rust-unit",
+                    "target": (
+                        "meta::tests::bound_subprocess_theap_meta_lock_"
+                        "serializes_direct_allocation_phase"
+                    ),
+                },
             ],
         )
         bitmaps = next(component for component in summary["components"] if component["id"] == "bitmaps")

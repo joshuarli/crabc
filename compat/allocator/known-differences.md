@@ -297,7 +297,8 @@ assertion-invalid input, not C/Rust invalid-input parity.
   and `src/options.c:161-162` (the bounded detached metadata-Theap image,
   first-head random/cookie transition, and normal option image),
   `src/libc.c:115-140` (`_mi_atomic_once_enter` and
-  `_mi_atomic_once_release`), and `src/subproc.c:29-46,95-101`; represented by
+  `_mi_atomic_once_release`), `src/subproc.c:29-70,84-101,141-148,249-251`,
+  and `include/mimalloc/atomic.h:446-472`; represented by
   `process_init::ProcessMainInitializationStorage`, `once::AllocatorOnce`,
   `main_theap::MainStaticHeapFoundation`,
   `meta::MetaAllocator::prepare_for_main_subprocess`,
@@ -306,7 +307,7 @@ assertion-invalid input, not C/Rust invalid-input parity.
   `types::Theap::{set_detached_main_metadata_static_memid,bind_exclusive_detached}`,
   `random::TheapRandomImage::{initialize,next}`,
   `process_page_map::ProcessPageMapStorage`, and
-  `subproc::{MainStaticBootstrapSelection,MainSubprocess::publish_detached_metadata_theap,MainSubprocess::matches_published_detached_metadata_theap,MainSubprocess::is_metadata_page}`.
+  `subproc::{MainStaticBootstrapSelection,MainSubprocess::publish_detached_metadata_theap,MainSubprocess::matches_published_detached_metadata_theap,MainSubprocess::is_metadata_page,MainSubprocess::lock_metadata_theap}`.
 - **Category:** crate-private source-order startup boundary. It has no C ABI
   surface or valid allocation-trace differential entry.
 - **Difference:** the Rust coordinator proves the central source order—static
@@ -331,8 +332,8 @@ assertion-invalid input, not C/Rust invalid-input parity.
   After the selected Rust image is fully bound, `MetaAllocator` makes one
   Release-CAS publication of its exact address through a private
   `MainSubprocess` atomic; COLD direct `zalloc`, aligned `zalloc`, and
-  `rezalloc(None)` reject with `TheapMetaUnpublished` before the metadata lock,
-  mapping, or capability creation, while a collision or mismatched image fails
+  `rezalloc(None)` reject with `TheapMetaUnpublished` before either metadata
+  lock, mapping, or capability creation, while a collision or mismatched image fails
   closed. `MainSubprocess::is_metadata_page(Option<&Page>)` separately maps
   `src/subproc.c:_mi_meta_is_meta_page`: `None` models a null C page pointer,
   and a caller-readable page with a null or foreign `theap` field returns
@@ -340,10 +341,21 @@ assertion-invalid input, not C/Rust invalid-input parity.
   one Acquire-loaded raw-pointer comparison and neither enters a metadata or
   subprocess lock nor forms backing, lends a detached session, or dereferences
   the Theap. Its Release/Acquire slot is a Rust safety representation, not C
-  field-memory-order parity. This maps only the source identity/publication
-  role and selected raw equality predicate, not the actual `mi_subproc_t` byte layout,
-  `theap_meta_lock`, a dereference-capable subprocess API, Page lifetime or
-  abandonment, actual main-Heap linkage, or general Theap API. It does not
+  field-memory-order parity. After that same identity preflight, selected
+  direct `zalloc`, aligned `zalloc`, and `rezalloc`'s replacement-allocation
+  phase (with `None` delegating to selected `zalloc`) hold
+  `MainSubprocess::lock_metadata_theap` inside the
+  Rust backing lock and same-thread marker. `MetaEntry::drop` releases that
+  source-shaped guard before rezalloc copy/free, while exact-owner Malloc free
+  retains the backing lock only. This maps the source identity/publication
+  role, selected raw equality predicate, and one selected direct-lock role;
+  it is not actual `mi_subproc_t` byte layout or pthread-lock semantics from
+  `include/mimalloc/atomic.h:446-472`, a dereference-capable subprocess API,
+  Page lifetime or abandonment, actual main-Heap linkage, or general Theap
+  API. It excludes the other
+  `theap_meta_lock` uses at `src/free.c:744-778` and `src/init.c:524-530`,
+  plus its source init/done lifecycle at `src/subproc.c:141-148,249-251`. It
+  does not
   claim the rest of `_mi_theap_init`, mutable option/OS processing, TLD/Heap
   list relations or locking, guarded initialization/statistics, or random-split
   parity. A first valid prepared Rust metadata request forms a private
@@ -387,6 +399,11 @@ assertion-invalid input, not C/Rust invalid-input parity.
   have no private backing, then proves null-page, null-field, foreign, and
   exact-identity results without changing either entry count, map state, or
   allocation audit.
+  `meta::tests::bound_subprocess_theap_meta_lock_serializes_direct_allocation_phase`
+  holds the selected subprocess lock before first direct demand and proves
+  BOUND/no-backing/no-capability preservation until release; it separately
+  covers aligned allocation, rezalloc copy preservation, and exact-owner
+  Malloc free outside that source lock.
   `process_main_once_blocks_a_distinct_racer_until_release_and_refuses_reentry`,
   `process_main_once_blocks_a_terminal_ready_observer_until_once_release`, and
   `process_main_once_wakes_a_distinct_racer_with_retained_after_failure` prove
