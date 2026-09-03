@@ -2130,6 +2130,17 @@ mod tests {
         let zero_count = AtomicUsize::new(0);
         assert_eq!(os_numa_node_count_with_raw(&zero_count, || 0), 1);
 
+        let initially_empty_single_node = AtomicUsize::new(0);
+        assert_eq!(
+            os_numa_node_with_raw(
+                &initially_empty_single_node,
+                || 0,
+                || panic!("a slow-path count normalized to one must not probe a current node"),
+            ),
+            0,
+        );
+        assert_eq!(initially_empty_single_node.load(Ordering::Relaxed), 1);
+
         let multi_node = AtomicUsize::new(5);
         assert_eq!(
             os_numa_node_with_raw(
