@@ -248,8 +248,17 @@ impl ExclusiveTheapBootstrap {
         if let TheapOwner::Live(thread_id) = owner {
             state.tld.attach_bootstrap_exclusive(thread_id);
         } else if let Some(subprocess) = detached_subprocess {
+            // Preserve src/init.c:184-193's detached-TLD sequence: form
+            // only its kind-only static memid predecessor, then run the
+            // detached mi_tld_init fields before binding the later Heap.
+            // Neither TLD step registers a live thread or changes either
+            // subprocess counter.
+            if !state.tld.prepare_detached_static_memid()
+                || !state.tld.initialize_detached_after_static_memid(subprocess)
+            {
+                return Err(BootstrapError::InvalidThreadState);
+            }
             state.heap.bind_main_subprocess(subprocess);
-            state.tld.attach_detached_main_subprocess(subprocess);
         }
         let bound = match owner {
             TheapOwner::Live(_) => state

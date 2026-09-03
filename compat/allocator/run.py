@@ -187,6 +187,9 @@ M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
 M2_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-v3.5.0.json"
 M2_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "m2-memory-substrate-latest.json"
 M2_MEMORY_SUBSTRATE_CARGO_TARGET = ARTIFACT_ROOT / "m2-memory-substrate/cargo-target"
+M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "m2-memory-substrate/detached-tld-static-preimage-trace"
+)
 M2_PAGE_MAP_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m2-memory-substrate/page-map-trace"
 M2_BITMAP_ABANDONED_CLAIM_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/bitmap-abandoned-claim-trace"
@@ -267,6 +270,53 @@ M2_MEMORY_SUBSTRATE_COMPONENT_IDS = (
 M2_MEMORY_SUBSTRATE_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M2_MEMORY_SUBSTRATE_EXCLUSION_DISPOSITIONS = frozenset(
     {"deferred-to-m3", "deferred-to-m8", "outside-m2"}
+)
+# This direct C/Rust record covers only src/init.c's detached static-preimage
+# substep: the original MI_MEMID_STATIC image, its kind-only memid
+# predecessor, then file-static mi_tld_init's detached writes. It uses only
+# address-independent field relations: no mi_tld_t/mi_subproc_t byte layout,
+# raw pointer, or pthread lock representation is a comparable value.
+M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS = (
+    "m2.initialization.detached_tld.pre.thread_id_detached",
+    "m2.initialization.detached_tld.pre.thread_sequence_zero",
+    "m2.initialization.detached_tld.pre.numa_node_zero",
+    "m2.initialization.detached_tld.pre.subprocess_null",
+    "m2.initialization.detached_tld.pre.theap_head_null",
+    "m2.initialization.detached_tld.pre.lock_roundtrip",
+    "m2.initialization.detached_tld.pre.recurse_false",
+    "m2.initialization.detached_tld.pre.threadpool_false",
+    "m2.initialization.detached_tld.pre.memid_static",
+    "m2.initialization.detached_tld.pre.memid_base_null",
+    "m2.initialization.detached_tld.pre.memid_size_zero",
+    "m2.initialization.detached_tld.pre.memid_pinned",
+    "m2.initialization.detached_tld.pre.memid_committed",
+    "m2.initialization.detached_tld.pre.memid_zero_false",
+    "m2.initialization.detached_tld.pre.total_thread_count_zero",
+    "m2.initialization.detached_tld.pre.live_thread_count_zero",
+    "m2.initialization.detached_tld.predecessor.memid_static",
+    "m2.initialization.detached_tld.predecessor.memid_base_null",
+    "m2.initialization.detached_tld.predecessor.memid_size_zero",
+    "m2.initialization.detached_tld.predecessor.memid_unpinned",
+    "m2.initialization.detached_tld.predecessor.memid_uncommitted",
+    "m2.initialization.detached_tld.predecessor.memid_zero_false",
+    "m2.initialization.detached_tld.post.thread_id_detached",
+    "m2.initialization.detached_tld.post.thread_sequence_zero",
+    "m2.initialization.detached_tld.post.numa_node_minus_one",
+    "m2.initialization.detached_tld.post.subprocess_matches_input",
+    "m2.initialization.detached_tld.post.theap_head_null",
+    "m2.initialization.detached_tld.post.lock_roundtrip",
+    "m2.initialization.detached_tld.post.recurse_false",
+    "m2.initialization.detached_tld.post.threadpool_false",
+    "m2.initialization.detached_tld.post.memid_static",
+    "m2.initialization.detached_tld.post.memid_base_null",
+    "m2.initialization.detached_tld.post.memid_size_zero",
+    "m2.initialization.detached_tld.post.memid_unpinned",
+    "m2.initialization.detached_tld.post.memid_uncommitted",
+    "m2.initialization.detached_tld.post.memid_zero_false",
+    "m2.initialization.detached_tld.post.total_thread_count_zero",
+    "m2.initialization.detached_tld.post.total_thread_count_unchanged",
+    "m2.initialization.detached_tld.post.live_thread_count_zero",
+    "m2.initialization.detached_tld.post.live_thread_count_unchanged",
 )
 M2_PAGE_MAP_TRACE_KEYS = (
     "m2.page_map.control.page_size",
@@ -1116,6 +1166,17 @@ M1_COMPILER_TLS_ORACLE_SOURCES = tuple(
 # normal, including `threadlocal.c`; omitting only `init.c` keeps every C
 # definition singular.
 M1_COMPILER_TLS_SAME_TLD_TRACE_ORACLE_SOURCES = tuple(
+    item for item in ORACLE_SOURCES if item != "src/init.c"
+)
+
+# This detached-TLD producer includes `src/init.c` directly solely to call
+# file-static `mi_tld_init` on a fresh source-shaped local image. Keep the
+# ordinary list otherwise complete and omit only init.c so the direct source
+# body has exactly one definition. The build also defines
+# MI_PRIM_HAS_PROCESS_ATTACH=1: unlike a normal mimalloc artifact, this
+# isolated preimage must not let prim.c's constructor mutate state before
+# main observes it.
+M2_DETACHED_TLD_STATIC_PREIMAGE_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/init.c"
 )
 
@@ -3035,6 +3096,177 @@ int main(void) {
   U("m2.page_map.cold.null_lookup_returns_null", null_lookup_returns_null);
   U("m2.page_map.cold.cold_lookup_route_unavailable", false);
   puts("CRABC_MI_M2_PAGE_MAP_COLD_INIT_TRACE_END");
+  return 0;
+}
+"""
+
+
+# This fixture includes pinned `src/init.c` only so it can directly invoke its
+# file-static `mi_tld_init` body. It deliberately constructs the source-shaped
+# detached static image locally rather than calling mi_heap_main_init_once,
+# mi_process_init, mi_tld_create, or any Theap/Heap/TLS lifecycle. The exact
+# line-192 memid predecessor is visible as its own trace checkpoint. Both
+# source thread counters belong to a fresh zero-initialized address-only
+# `mi_subproc_t` fixture valid only for this detached helper and must remain
+# zero: the branch does not register a live thread or initialize a process
+# main subprocess.
+# `MI_PRIM_HAS_PROCESS_ATTACH=1` belongs to the build command so prim.c cannot
+# run its normal automatic process constructor before main.
+M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+
+// The normal source list omits init.c, preserving one-definition linkage while
+// exposing only this translation unit's file-static mi_tld_init body.
+#include "init.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+static bool m2_lock_roundtrip(mi_lock_t* lock) {
+  if (!mi_lock_try_acquire(lock)) return false;
+  mi_lock_release(lock);
+  if (!mi_lock_try_acquire(lock)) return false;
+  mi_lock_release(lock);
+  return true;
+}
+
+static bool m2_memid_static(mi_memid_t memid) {
+  return memid.memkind == MI_MEM_STATIC;
+}
+
+static bool m2_memid_base_null(mi_memid_t memid) {
+  return memid.mem.os.base == NULL;
+}
+
+static bool m2_memid_size_zero(mi_memid_t memid) {
+  return memid.mem.os.size == 0;
+}
+
+int main(void) {
+  mi_tld_t tld = {
+    MI_THREADID_DETACHED,
+    0,
+    0,
+    NULL,
+    NULL,
+    MI_LOCK_INITIALIZER,
+    false,
+    false,
+    MI_MEMID_STATIC,
+  };
+  mi_subproc_t subproc = mi_init_struct_zero;
+
+  const size_t pre_total_thread_count =
+      mi_atomic_load_relaxed(&subproc.thread_total_count);
+  const size_t pre_live_thread_count =
+      mi_atomic_load_relaxed(&subproc.thread_count);
+  const bool pre_thread_id_detached = (tld.thread_id == MI_THREADID_DETACHED);
+  const bool pre_thread_sequence_zero = (tld.thread_seq == 0);
+  const bool pre_numa_node_zero = (tld.numa_node == 0);
+  const bool pre_subprocess_null = (tld.subproc == NULL);
+  const bool pre_theap_head_null = (tld.theaps == NULL);
+  const bool pre_lock_roundtrip = m2_lock_roundtrip(&tld.theaps_lock);
+  const bool pre_recurse_false = !tld.recurse;
+  const bool pre_threadpool_false = !tld.is_in_threadpool;
+  const mi_memid_t pre_memid = tld.memid;
+
+  // This is exactly src/init.c:192's predecessor, separated from the private
+  // helper call below so the helper cannot silently receive the old static
+  // initializer flags.
+  tld.memid = _mi_memid_create(MI_MEM_STATIC);
+  const mi_memid_t predecessor_memid = tld.memid;
+
+  // This invokes the file-static helper that src/init.c calls at :193, but
+  // deliberately supplies a fresh zero-initialized address-only fixture valid
+  // only for this detached helper rather than `_mi_subproc_main_init()`'s
+  // process identity. The detached branch accepts tseq zero but must not use
+  // it to register a live thread.
+  mi_tld_init(&tld, 0, &subproc);
+
+  const size_t post_total_thread_count =
+      mi_atomic_load_relaxed(&subproc.thread_total_count);
+  const size_t post_live_thread_count =
+      mi_atomic_load_relaxed(&subproc.thread_count);
+  const bool post_thread_id_detached = (tld.thread_id == MI_THREADID_DETACHED);
+  const bool post_thread_sequence_zero = (tld.thread_seq == 0);
+  const bool post_numa_node_minus_one = (tld.numa_node == -1);
+  const bool post_subprocess_matches_input = (tld.subproc == &subproc);
+  const bool post_theap_head_null = (tld.theaps == NULL);
+  const bool post_lock_roundtrip = m2_lock_roundtrip(&tld.theaps_lock);
+  const bool post_recurse_false = !tld.recurse;
+  const bool post_threadpool_false = !tld.is_in_threadpool;
+
+  const bool all_relations =
+      pre_total_thread_count == 0 && pre_live_thread_count == 0 &&
+      pre_thread_id_detached && pre_thread_sequence_zero && pre_numa_node_zero &&
+      pre_subprocess_null && pre_theap_head_null && pre_lock_roundtrip &&
+      pre_recurse_false && pre_threadpool_false &&
+      m2_memid_static(pre_memid) && m2_memid_base_null(pre_memid) &&
+      m2_memid_size_zero(pre_memid) && pre_memid.is_pinned &&
+      pre_memid.initially_committed && !pre_memid.initially_zero &&
+      m2_memid_static(predecessor_memid) &&
+      m2_memid_base_null(predecessor_memid) &&
+      m2_memid_size_zero(predecessor_memid) &&
+      !predecessor_memid.is_pinned && !predecessor_memid.initially_committed &&
+      !predecessor_memid.initially_zero &&
+      post_thread_id_detached && post_thread_sequence_zero &&
+      post_numa_node_minus_one && post_subprocess_matches_input &&
+      post_theap_head_null && post_lock_roundtrip && post_recurse_false &&
+      post_threadpool_false && m2_memid_static(tld.memid) &&
+      m2_memid_base_null(tld.memid) && m2_memid_size_zero(tld.memid) &&
+      !tld.memid.is_pinned && !tld.memid.initially_committed &&
+      !tld.memid.initially_zero && post_total_thread_count == 0 &&
+      post_live_thread_count == 0 &&
+      post_total_thread_count == pre_total_thread_count &&
+      post_live_thread_count == pre_live_thread_count;
+  if (!all_relations) return 10;
+
+  puts("CRABC_MI_M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_BEGIN");
+  U("m2.initialization.detached_tld.pre.thread_id_detached", pre_thread_id_detached);
+  U("m2.initialization.detached_tld.pre.thread_sequence_zero", pre_thread_sequence_zero);
+  U("m2.initialization.detached_tld.pre.numa_node_zero", pre_numa_node_zero);
+  U("m2.initialization.detached_tld.pre.subprocess_null", pre_subprocess_null);
+  U("m2.initialization.detached_tld.pre.theap_head_null", pre_theap_head_null);
+  U("m2.initialization.detached_tld.pre.lock_roundtrip", pre_lock_roundtrip);
+  U("m2.initialization.detached_tld.pre.recurse_false", pre_recurse_false);
+  U("m2.initialization.detached_tld.pre.threadpool_false", pre_threadpool_false);
+  U("m2.initialization.detached_tld.pre.memid_static", m2_memid_static(pre_memid));
+  U("m2.initialization.detached_tld.pre.memid_base_null", m2_memid_base_null(pre_memid));
+  U("m2.initialization.detached_tld.pre.memid_size_zero", m2_memid_size_zero(pre_memid));
+  U("m2.initialization.detached_tld.pre.memid_pinned", pre_memid.is_pinned);
+  U("m2.initialization.detached_tld.pre.memid_committed", pre_memid.initially_committed);
+  U("m2.initialization.detached_tld.pre.memid_zero_false", !pre_memid.initially_zero);
+  U("m2.initialization.detached_tld.pre.total_thread_count_zero", pre_total_thread_count == 0);
+  U("m2.initialization.detached_tld.pre.live_thread_count_zero", pre_live_thread_count == 0);
+  U("m2.initialization.detached_tld.predecessor.memid_static", m2_memid_static(predecessor_memid));
+  U("m2.initialization.detached_tld.predecessor.memid_base_null", m2_memid_base_null(predecessor_memid));
+  U("m2.initialization.detached_tld.predecessor.memid_size_zero", m2_memid_size_zero(predecessor_memid));
+  U("m2.initialization.detached_tld.predecessor.memid_unpinned", !predecessor_memid.is_pinned);
+  U("m2.initialization.detached_tld.predecessor.memid_uncommitted", !predecessor_memid.initially_committed);
+  U("m2.initialization.detached_tld.predecessor.memid_zero_false", !predecessor_memid.initially_zero);
+  U("m2.initialization.detached_tld.post.thread_id_detached", post_thread_id_detached);
+  U("m2.initialization.detached_tld.post.thread_sequence_zero", post_thread_sequence_zero);
+  U("m2.initialization.detached_tld.post.numa_node_minus_one", post_numa_node_minus_one);
+  U("m2.initialization.detached_tld.post.subprocess_matches_input", post_subprocess_matches_input);
+  U("m2.initialization.detached_tld.post.theap_head_null", post_theap_head_null);
+  U("m2.initialization.detached_tld.post.lock_roundtrip", post_lock_roundtrip);
+  U("m2.initialization.detached_tld.post.recurse_false", post_recurse_false);
+  U("m2.initialization.detached_tld.post.threadpool_false", post_threadpool_false);
+  U("m2.initialization.detached_tld.post.memid_static", m2_memid_static(tld.memid));
+  U("m2.initialization.detached_tld.post.memid_base_null", m2_memid_base_null(tld.memid));
+  U("m2.initialization.detached_tld.post.memid_size_zero", m2_memid_size_zero(tld.memid));
+  U("m2.initialization.detached_tld.post.memid_unpinned", !tld.memid.is_pinned);
+  U("m2.initialization.detached_tld.post.memid_uncommitted", !tld.memid.initially_committed);
+  U("m2.initialization.detached_tld.post.memid_zero_false", !tld.memid.initially_zero);
+  U("m2.initialization.detached_tld.post.total_thread_count_zero", post_total_thread_count == 0);
+  U("m2.initialization.detached_tld.post.total_thread_count_unchanged", post_total_thread_count == pre_total_thread_count);
+  U("m2.initialization.detached_tld.post.live_thread_count_zero", post_live_thread_count == 0);
+  U("m2.initialization.detached_tld.post.live_thread_count_unchanged", post_live_thread_count == pre_live_thread_count);
+  puts("CRABC_MI_M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_END");
   return 0;
 }
 """
@@ -6525,6 +6757,7 @@ def validate_m2_memory_substrate_contract(
                 not in {
                     "rust-unit",
                     "rust-page-map-success-trace",
+                    "c-rust-detached-tld-static-preimage-differential",
                     "c-rust-bitmap-abandoned-claim-differential",
                     "c-rust-bitmap-clear-range-differential",
                     "c-rust-bitmap-rangesn-differential",
@@ -6649,6 +6882,78 @@ def m2_memory_substrate_check_command(
     command.extend(("--locked", "--lib", str(check["target"])))
     command.extend(("--", f"--test-threads={execution['test_threads']}", "--nocapture"))
     return command
+
+
+def run_m2_detached_tld_static_preimage_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the exact detached static-preimage `mi_tld_init` substep."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-detached-tld-static-preimage-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_detached_tld_static_preimage_trace(
+            compiler,
+            source,
+            M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "types::tests::emit_m2_detached_tld_static_preimage_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 detached-TLD static-preimage trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_detached_tld_static_preimage_trace(rust_output, source="Rust")
+    validate_m2_detached_tld_static_preimage_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 detached-TLD static-preimage trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_detached_tld_static_preimage_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "one direct pinned-C/Rust detached-TLD static-preimage substep: a fresh source-shaped "
+            "MI_MEMID_STATIC image receives only src/init.c:192's kind-only static-memid predecessor, "
+            "then direct file-static src/init.c:236-250 mi_tld_init writes its subprocess, null Theap "
+            "head, fresh lock, and detached NUMA sentinel. The address-free record checks preserved "
+            "static fields/provenance, pointer identity only as a relation, lock acquire/release behavior, "
+            "and both zero source counters before and after. Its subprocess is a fresh zero-initialized "
+            "address-only fixture valid only for this helper, not _mi_subproc_main_init() or main-subprocess "
+            "initialization. It does not establish general mi_tld_init or mi_tld_create, the normal branch, "
+            "generic/later TLDs, Heap/Theap/list/TLS/root publication, "
+            "options or NUMA policy, pthread lock ABI/layout, shutdown/free, races, or allocator integration."
+        ),
+        "status": comparison["status"],
+    }
 
 
 def run_m2_bitmap_abandoned_claim_differential(
@@ -7214,6 +7519,26 @@ def run_m2_memory_substrate_checks(
     records: list[dict[str, Any]] = []
     for component in summary["components"]:
         for check in component["checks"]:
+            if check["kind"] == "c-rust-detached-tld-static-preimage-differential":
+                differential = run_m2_detached_tld_static_preimage_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
             if check["kind"] == "c-rust-bitmap-abandoned-claim-differential":
                 differential = run_m2_bitmap_abandoned_claim_differential(
                     pin,
@@ -12360,6 +12685,77 @@ def parse_m1_compiler_tls_trace(output: str) -> dict[str, int]:
     )
 
 
+def parse_m2_detached_tld_static_preimage_trace(
+    output: str, *, source: str
+) -> dict[str, int]:
+    """Parse the fixed detached `mi_tld_init` static-preimage record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_BEGIN",
+        end="CRABC_MI_M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_END",
+        description=f"{source} M2 detached-TLD static-preimage trace",
+    )
+    if set(trace) != set(M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS):
+        missing = sorted(set(M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 detached-TLD static-preimage trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_detached_tld_static_preimage_trace(
+    trace: Mapping[str, int], *, source: str
+) -> None:
+    """Require every selected detached preimage and postcondition relation."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown M2 detached-TLD static-preimage trace source: {source}")
+    if set(trace) != set(M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS):
+        raise HarnessError(
+            f"{source} M2 detached-TLD static-preimage trace keys differ from the fixed contract"
+        )
+    for key in M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} M2 detached-TLD static-preimage trace field is not an integer: {key}"
+            )
+        if trace[key] != 1:
+            raise HarnessError(
+                f"{source} M2 detached-TLD static-preimage trace contains an unmet relation: {key}"
+            )
+
+
+def compare_m2_detached_tld_static_preimage_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require exact parity for the selected detached helper boundary."""
+
+    validate_m2_detached_tld_static_preimage_trace(c_trace, source="pinned C")
+    validate_m2_detached_tld_static_preimage_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 detached-TLD static-preimage trace differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS),
+        "status": "matched",
+    }
+
+
 def parse_m2_page_map_trace(output: str, *, source: str) -> dict[str, int]:
     """Parse the fixed address-free selected PageMap lifecycle record."""
 
@@ -14279,6 +14675,65 @@ def build_m1_raw_primitive_trace(
                 "src/os.c",
                 "src/prim/prim.c",
                 "src/prim/unix/prim.c",
+            ),
+        ),
+    }
+
+
+def build_m2_detached_tld_static_preimage_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the direct detached `mi_tld_init` static-preimage C producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-detached-tld-static-preimage-trace-probe.c"
+    trace_binary = profile_dir / "m2-detached-tld-static-preimage-trace-probe"
+    trace_source.write_text(M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        # This source-only preimage record must not run prim.c's ordinary
+        # automatic process constructor before main reaches its local image.
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in M2_DETACHED_TLD_STATIC_PREIMAGE_ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 detached-TLD static-preimage trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 detached-TLD static-preimage trace execution")
+    record = parse_m2_detached_tld_static_preimage_trace(
+        str(run["stdout"]), source="pinned C"
+    )
+    validate_m2_detached_tld_static_preimage_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc.h",
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/types.h",
+                "src/init.c",
+                "src/prim/prim.c",
             ),
         ),
     }

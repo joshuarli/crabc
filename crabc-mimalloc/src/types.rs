@@ -11,10 +11,11 @@
 // `include/mimalloc/types.h:618-680` (the heap prefix),
 // `include/mimalloc/types.h:690-701` (complete source-ordered TLD fields),
 // `include/mimalloc/types.h:608-758`
-// (arena-page and arena metadata layouts), `src/init.c:15-145,195-198` (the
-// empty-page, direct-page table, all 75 default queues, detached TLD, and
-// empty-theap initializers, and main-Heap `memid` / Release identity / heap
-// initialization order), `src/theap.c:228-306,357-369,414-449` (dynamic
+// (arena-page and arena metadata layouts), `src/init.c:15-145,184-193,
+// 195-198,236-250` (the empty-page, direct-page table, all 75 default queues,
+// detached TLD and empty-theap initializers, detached TLD's kind-only memid
+// predecessor / detached helper order, and main-Heap `memid` / Release
+// identity / heap initialization order), `src/theap.c:228-306,357-369,414-449` (dynamic
 // Theap initialization, canonical cached reference pair, and list detach),
 // `src/arena.c:674-723,870-1037,1240-1282` (per-heap arena-pages
 // acquisition/publication and fresh/release page metadata
@@ -1330,9 +1331,13 @@ impl ThreadLocalData {
 
     /// Returns whether this bounded TLD names a subprocess but no theap list.
     ///
-    /// This is the precise checkpoint after `mi_tld_init`: its source
-    /// subprocess pointer and live-count lease exist, but theap allocation,
-    /// list attachment, and compiler-TLS publication are deliberately absent.
+    /// This is a shape predicate shared by two intentionally distinct source
+    /// checkpoints. The detached `src/init.c:236-250` branch names its main
+    /// subprocess without changing either thread counter; a non-detached TLD
+    /// reaches the same no-Theap shape only after its separate registration
+    /// path has acquired a live-count lease. Theap allocation, list
+    /// attachment, and compiler-TLS publication are deliberately absent from
+    /// both observations.
     #[inline]
     pub(crate) const fn is_subprocess_attached_no_theap(&self) -> bool {
         !self.subprocess.is_null() && self.theaps.is_null()
@@ -1512,26 +1517,90 @@ impl ThreadLocalData {
         self.thread_id = thread_id.get();
     }
 
-    /// Initializes the source detached metadata-TLD portion after the bounded
-    /// main subprocess identity exists.
+    /// Applies only `mi_heap_main_init_once`'s detached-TLD `memid` predecessor.
     ///
-    /// This is the `mi_heap_main_init_once`/`mi_tld_init` detached setup: it
-    /// first replaces the initial `MI_MEMID_STATIC` image with
-    /// `_mi_memid_create(MI_MEM_STATIC)`, then names the same main subprocess
-    /// as the process heap and metadata theap, retains sequence zero, and
-    /// stores the source detached NUMA sentinel. It is not a live thread
-    /// registration and therefore does not affect either counter.
+    /// Pinned `src/init.c:184-193` first replaces the exact
+    /// `mi_tld_detached` `MI_MEMID_STATIC` image with
+    /// `_mi_memid_create(MI_MEM_STATIC)`, then calls file-static
+    /// `mi_tld_init`. Keeping this write separate makes the following helper
+    /// a direct representation of the detached `mi_tld_init` body rather
+    /// than a broader complete-image replacement.
+    ///
+    /// Returns `false` without mutation unless `self` is the selected
+    /// detached static preimage. It never names a subprocess, changes a
+    /// counter, resets the lock, or adjusts a TLD field other than `memid`.
+    #[must_use = "a refused detached static-memid predecessor leaves the source image unchanged"]
     #[inline]
-    pub(crate) fn attach_detached_main_subprocess(&mut self, subprocess: &'static MainSubprocess) {
-        debug_assert_eq!(self.thread_id, THREAD_ID_DETACHED);
-        self.thread_seq = 0;
-        self.numa_node = -1;
+    pub(crate) fn prepare_detached_static_memid(&mut self) -> bool {
+        if !self.matches_detached_static_preimage() {
+            return false;
+        }
+        self.memid = MemoryId::static_kind_only();
+        true
+    }
+
+    /// Applies only the detached branch of pinned `mi_tld_init`.
+    ///
+    /// This is source-ordered `src/init.c:236-250` after
+    /// [`Self::prepare_detached_static_memid`]: write the subprocess, clear
+    /// the Theap head, reset its private lock, then write the detached
+    /// `numa_node = -1` sentinel. It intentionally does not rewrite the
+    /// static predecessor's `memid`, sequence, recursion, or thread-pool
+    /// fields, and it does not register a live thread or change either source
+    /// counter. The normal `mi_tld_init` branch and `mi_tld_create` remain
+    /// separate lifecycle boundaries.
+    ///
+    /// Returns `false` without mutation unless `self` still has the exact
+    /// detached static image after the predecessor step.
+    #[must_use = "a refused detached mi_tld_init step leaves the source image unchanged"]
+    #[inline]
+    pub(crate) fn initialize_detached_after_static_memid(
+        &mut self,
+        subprocess: &'static MainSubprocess,
+    ) -> bool {
+        if !self.matches_detached_static_memid_preimage() {
+            return false;
+        }
         self.subprocess = subprocess.as_ptr();
         self.theaps = null_mut();
         self.theaps_lock = PrivateLock::new();
-        self.recurse = false;
-        self.is_in_threadpool = false;
-        self.memid = MemoryId::static_kind_only();
+        self.numa_node = -1;
+        true
+    }
+
+    #[inline]
+    fn matches_detached_static_preimage(&self) -> bool {
+        self.matches_detached_static_fields()
+            && self.matches_zero_static_memid(true, true)
+    }
+
+    #[inline]
+    fn matches_detached_static_memid_preimage(&self) -> bool {
+        self.matches_detached_static_fields()
+            && self.matches_zero_static_memid(false, false)
+    }
+
+    #[inline]
+    fn matches_detached_static_fields(&self) -> bool {
+        self.thread_id == THREAD_ID_DETACHED
+            && self.thread_seq == 0
+            && self.numa_node == 0
+            && self.subprocess.is_null()
+            && self.theaps.is_null()
+            && !self.recurse
+            && !self.is_in_threadpool
+    }
+
+    #[inline]
+    fn matches_zero_static_memid(&self, pinned: bool, committed: bool) -> bool {
+        let Some(memory) = self.memid.static_memory() else {
+            return false;
+        };
+        self.memid.is_pinned() == pinned
+            && self.memid.initially_committed() == committed
+            && !self.memid.initially_zero()
+            && memory.base.is_null()
+            && memory.size == 0
     }
 
     /// Initializes the complete subprocess-attached/no-theap result of the
@@ -6197,7 +6266,8 @@ mod tests {
         // the main subprocess. Do not preserve the initializer flags across
         // that source transition.
         let mut attached_detached = ThreadLocalData::detached();
-        attached_detached.attach_detached_main_subprocess(MainSubprocess::global());
+        assert!(attached_detached.prepare_detached_static_memid());
+        assert!(attached_detached.initialize_detached_after_static_memid(MainSubprocess::global()));
         assert_eq!(attached_detached.memid.kind(), MemoryKind::Static);
         assert!(!attached_detached.memid.is_pinned());
         assert!(!attached_detached.memid.initially_committed());
@@ -6215,6 +6285,322 @@ mod tests {
         assert!(!kind_only.is_pinned());
         assert!(!kind_only.initially_committed());
         assert!(!kind_only.initially_zero());
+    }
+
+    #[test]
+    fn detached_static_preimage_steps_refuse_out_of_order_without_mutation() {
+        fn selected_fields(
+            tld: &ThreadLocalData,
+        ) -> (
+            ThreadId,
+            usize,
+            i32,
+            *mut MainSubprocess,
+            *mut Theap,
+            bool,
+            bool,
+            MemoryKind,
+            bool,
+            bool,
+            bool,
+        ) {
+            (
+                tld.thread_id,
+                tld.thread_seq,
+                tld.numa_node,
+                tld.subprocess,
+                tld.theaps,
+                tld.recurse,
+                tld.is_in_threadpool,
+                tld.memid.kind(),
+                tld.memid.is_pinned(),
+                tld.memid.initially_committed(),
+                tld.memid.initially_zero(),
+            )
+        }
+
+        let subprocess = MainSubprocess::test_static_owner();
+        let mut tld = ThreadLocalData::detached();
+        let static_preimage = selected_fields(&tld);
+        assert!(
+            !tld.initialize_detached_after_static_memid(subprocess),
+            "the helper must not absorb src/init.c:192's separate predecessor"
+        );
+        assert_eq!(selected_fields(&tld), static_preimage);
+        assert!(tld.test_theaps_lock_starts_and_restores_unlocked());
+
+        assert!(tld.prepare_detached_static_memid());
+        let kind_only_preimage = selected_fields(&tld);
+        assert!(
+            !tld.prepare_detached_static_memid(),
+            "the predecessor accepts only MI_MEMID_STATIC, not its own result"
+        );
+        assert_eq!(selected_fields(&tld), kind_only_preimage);
+        assert!(tld.test_theaps_lock_starts_and_restores_unlocked());
+
+        assert!(tld.initialize_detached_after_static_memid(subprocess));
+        let initialized = selected_fields(&tld);
+        assert!(
+            !tld.initialize_detached_after_static_memid(subprocess),
+            "the detached helper accepts only its source-order predecessor"
+        );
+        assert!(!tld.prepare_detached_static_memid());
+        assert_eq!(selected_fields(&tld), initialized);
+        assert!(tld.test_theaps_lock_starts_and_restores_unlocked());
+        assert_eq!(subprocess.total_thread_count(), 0);
+        assert_eq!(subprocess.live_thread_count(), 0);
+    }
+
+    #[test]
+    fn emit_m2_detached_tld_static_preimage_c_rust_trace() {
+        // This is deliberately the exact detached source slice, not the
+        // broader bootstrap/Theap lifecycle. It starts with src/init.c's
+        // static `mi_tld_detached` image, applies only its line-192 memid
+        // predecessor, then applies only the file-static mi_tld_init
+        // detached branch. Its zeroed test-local subprocess is an
+        // address-only fixture valid only for this helper; it is not
+        // `_mi_subproc_main_init()` or the complete line-193 caller. Both
+        // counters begin at zero so the trace can prove that this branch
+        // never registers a live thread.
+        fn memory_id_trace(memid: MemoryId) -> (bool, bool, bool, bool, bool, bool) {
+            let static_memory = memid
+                .static_memory()
+                .expect("the selected detached trace has static provenance");
+            (
+                memid.kind() == MemoryKind::Static,
+                static_memory.base.is_null(),
+                static_memory.size == 0,
+                memid.is_pinned(),
+                memid.initially_committed(),
+                !memid.initially_zero(),
+            )
+        }
+
+        macro_rules! record {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+
+        let subprocess = MainSubprocess::test_static_owner();
+        let mut tld = ThreadLocalData::detached();
+        let pre_memid = memory_id_trace(tld.memid);
+        let pre_total_thread_count = subprocess.total_thread_count();
+        let pre_live_thread_count = subprocess.live_thread_count();
+        let pre_thread_id_detached = tld.thread_id == THREAD_ID_DETACHED;
+        let pre_thread_sequence_zero = tld.thread_seq == 0;
+        let pre_numa_node_zero = tld.numa_node == 0;
+        let pre_subprocess_null = tld.subprocess.is_null();
+        let pre_theap_head_null = tld.theaps.is_null();
+        let pre_lock_roundtrip = tld.test_theaps_lock_starts_and_restores_unlocked();
+        let pre_recurse_false = !tld.recurse;
+        let pre_threadpool_false = !tld.is_in_threadpool;
+
+        assert!(pre_thread_id_detached);
+        assert!(pre_thread_sequence_zero);
+        assert!(pre_numa_node_zero);
+        assert!(pre_subprocess_null);
+        assert!(pre_theap_head_null);
+        assert!(pre_lock_roundtrip);
+        assert!(pre_recurse_false);
+        assert!(pre_threadpool_false);
+        assert_eq!(pre_memid, (true, true, true, true, true, true));
+        assert_eq!(pre_total_thread_count, 0);
+        assert_eq!(pre_live_thread_count, 0);
+
+        assert!(tld.prepare_detached_static_memid());
+        let predecessor_memid = memory_id_trace(tld.memid);
+        assert_eq!(predecessor_memid, (true, true, true, false, false, true));
+
+        assert!(tld.initialize_detached_after_static_memid(subprocess));
+        let post_memid = memory_id_trace(tld.memid);
+        let post_total_thread_count = subprocess.total_thread_count();
+        let post_live_thread_count = subprocess.live_thread_count();
+        let post_thread_id_detached = tld.thread_id == THREAD_ID_DETACHED;
+        let post_thread_sequence_zero = tld.thread_seq == 0;
+        let post_numa_node_minus_one = tld.numa_node == -1;
+        let post_subprocess_matches_input = core::ptr::eq(tld.subprocess, subprocess.as_ptr());
+        let post_theap_head_null = tld.theaps.is_null();
+        let post_lock_roundtrip = tld.test_theaps_lock_starts_and_restores_unlocked();
+        let post_recurse_false = !tld.recurse;
+        let post_threadpool_false = !tld.is_in_threadpool;
+
+        assert!(post_thread_id_detached);
+        assert!(post_thread_sequence_zero);
+        assert!(post_numa_node_minus_one);
+        assert!(post_subprocess_matches_input);
+        assert!(post_theap_head_null);
+        assert!(post_lock_roundtrip);
+        assert!(post_recurse_false);
+        assert!(post_threadpool_false);
+        assert_eq!(post_memid, predecessor_memid);
+        assert_eq!(post_total_thread_count, 0);
+        assert_eq!(post_live_thread_count, 0);
+        assert_eq!(post_total_thread_count, pre_total_thread_count);
+        assert_eq!(post_live_thread_count, pre_live_thread_count);
+
+        std::println!("CRABC_MI_M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_BEGIN");
+        record!(
+            "m2.initialization.detached_tld.pre.thread_id_detached",
+            pre_thread_id_detached
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.thread_sequence_zero",
+            pre_thread_sequence_zero
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.numa_node_zero",
+            pre_numa_node_zero
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.subprocess_null",
+            pre_subprocess_null
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.theap_head_null",
+            pre_theap_head_null
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.lock_roundtrip",
+            pre_lock_roundtrip
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.recurse_false",
+            pre_recurse_false
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.threadpool_false",
+            pre_threadpool_false
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.memid_static",
+            pre_memid.0
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.memid_base_null",
+            pre_memid.1
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.memid_size_zero",
+            pre_memid.2
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.memid_pinned",
+            pre_memid.3
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.memid_committed",
+            pre_memid.4
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.memid_zero_false",
+            pre_memid.5
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.total_thread_count_zero",
+            pre_total_thread_count == 0
+        );
+        record!(
+            "m2.initialization.detached_tld.pre.live_thread_count_zero",
+            pre_live_thread_count == 0
+        );
+        record!(
+            "m2.initialization.detached_tld.predecessor.memid_static",
+            predecessor_memid.0
+        );
+        record!(
+            "m2.initialization.detached_tld.predecessor.memid_base_null",
+            predecessor_memid.1
+        );
+        record!(
+            "m2.initialization.detached_tld.predecessor.memid_size_zero",
+            predecessor_memid.2
+        );
+        record!(
+            "m2.initialization.detached_tld.predecessor.memid_unpinned",
+            !predecessor_memid.3
+        );
+        record!(
+            "m2.initialization.detached_tld.predecessor.memid_uncommitted",
+            !predecessor_memid.4
+        );
+        record!(
+            "m2.initialization.detached_tld.predecessor.memid_zero_false",
+            predecessor_memid.5
+        );
+        record!(
+            "m2.initialization.detached_tld.post.thread_id_detached",
+            post_thread_id_detached
+        );
+        record!(
+            "m2.initialization.detached_tld.post.thread_sequence_zero",
+            post_thread_sequence_zero
+        );
+        record!(
+            "m2.initialization.detached_tld.post.numa_node_minus_one",
+            post_numa_node_minus_one
+        );
+        record!(
+            "m2.initialization.detached_tld.post.subprocess_matches_input",
+            post_subprocess_matches_input
+        );
+        record!(
+            "m2.initialization.detached_tld.post.theap_head_null",
+            post_theap_head_null
+        );
+        record!(
+            "m2.initialization.detached_tld.post.lock_roundtrip",
+            post_lock_roundtrip
+        );
+        record!(
+            "m2.initialization.detached_tld.post.recurse_false",
+            post_recurse_false
+        );
+        record!(
+            "m2.initialization.detached_tld.post.threadpool_false",
+            post_threadpool_false
+        );
+        record!(
+            "m2.initialization.detached_tld.post.memid_static",
+            post_memid.0
+        );
+        record!(
+            "m2.initialization.detached_tld.post.memid_base_null",
+            post_memid.1
+        );
+        record!(
+            "m2.initialization.detached_tld.post.memid_size_zero",
+            post_memid.2
+        );
+        record!(
+            "m2.initialization.detached_tld.post.memid_unpinned",
+            !post_memid.3
+        );
+        record!(
+            "m2.initialization.detached_tld.post.memid_uncommitted",
+            !post_memid.4
+        );
+        record!(
+            "m2.initialization.detached_tld.post.memid_zero_false",
+            post_memid.5
+        );
+        record!(
+            "m2.initialization.detached_tld.post.total_thread_count_zero",
+            post_total_thread_count == 0
+        );
+        record!(
+            "m2.initialization.detached_tld.post.total_thread_count_unchanged",
+            post_total_thread_count == pre_total_thread_count
+        );
+        record!(
+            "m2.initialization.detached_tld.post.live_thread_count_zero",
+            post_live_thread_count == 0
+        );
+        record!(
+            "m2.initialization.detached_tld.post.live_thread_count_unchanged",
+            post_live_thread_count == pre_live_thread_count
+        );
+        std::println!("CRABC_MI_M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_END");
     }
 
     #[test]
@@ -6342,7 +6728,8 @@ mod tests {
         let mut nonempty_heap = Heap::bootstrap_empty();
         nonempty_heap.bind_main_subprocess(subprocess);
         let mut nonempty_tld = ThreadLocalData::detached();
-        nonempty_tld.attach_detached_main_subprocess(subprocess);
+        assert!(nonempty_tld.prepare_detached_static_memid());
+        assert!(nonempty_tld.initialize_detached_after_static_memid(subprocess));
         assert!(nonempty_tld.is_subprocess_attached_no_theap());
         let mut existing_head = Theap::empty();
         let existing_head = core::ptr::from_mut(&mut existing_head);
@@ -6362,7 +6749,8 @@ mod tests {
         let mut mismatched_heap = Heap::bootstrap_empty();
         mismatched_heap.bind_main_subprocess(foreign_subprocess);
         let mut empty_tld = ThreadLocalData::detached();
-        empty_tld.attach_detached_main_subprocess(subprocess);
+        assert!(empty_tld.prepare_detached_static_memid());
+        assert!(empty_tld.initialize_detached_after_static_memid(subprocess));
         assert!(empty_tld.is_subprocess_attached_no_theap());
         let mut mismatched_candidate = Theap::empty();
 
@@ -6379,7 +6767,8 @@ mod tests {
         let mut threadpool_heap = Heap::bootstrap_empty();
         threadpool_heap.bind_main_subprocess(subprocess);
         let mut threadpool_tld = ThreadLocalData::detached();
-        threadpool_tld.attach_detached_main_subprocess(subprocess);
+        assert!(threadpool_tld.prepare_detached_static_memid());
+        assert!(threadpool_tld.initialize_detached_after_static_memid(subprocess));
         threadpool_tld.is_in_threadpool = true;
         let mut threadpool_candidate = Theap::empty();
 

@@ -2110,7 +2110,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            61,
+            62,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2593,11 +2593,25 @@ class ContractTests(unittest.TestCase):
                         "main_theap::tests::"
                         "ticket_zero_static_tld_uses_fixed_numa_wrapper_after_static_memid"
                     ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "c-rust-detached-tld-static-preimage-differential",
+                    "kind": "c-rust-detached-tld-static-preimage-differential",
+                    "target": "types::tests::emit_m2_detached_tld_static_preimage_c_rust_trace",
                 }
             ],
         )
         self.assertEqual(initialization["completion_status"], "partial")
         self.assertTrue(initialization["remaining_conditions"])
+        self.assertTrue(
+            any(
+                "detached-TLD record" in nonclaim
+                and "main-subprocess initialization" in nonclaim
+                and "general `mi_tld_init` or `mi_tld_create`" in nonclaim
+                for nonclaim in summary["milestone"]["nonclaims"]
+            )
+        )
         fault_injection = next(
             component for component in summary["components"] if component["id"] == "fault-injection"
         )
@@ -2893,6 +2907,36 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.page_map.cold.init_body_attempt_count"] = 2
         with self.assertRaisesRegex(RUNNER.HarnessError, "replayed"):
             RUNNER.compare_m2_page_map_cold_init_trace(c_trace, rust_trace)
+
+    @staticmethod
+    def _m2_detached_tld_static_preimage_trace() -> dict[str, int]:
+        return {key: 1 for key in RUNNER.M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS}
+
+    def test_m2_detached_tld_static_preimage_trace_requires_every_selected_relation(self) -> None:
+        c_trace = self._m2_detached_tld_static_preimage_trace()
+        output = "CRABC_MI_M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_BEGIN\n"
+        output += "\n".join(f"{key}={value}" for key, value in c_trace.items())
+        output += "\nCRABC_MI_M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_END\n"
+        parsed_c = RUNNER.parse_m2_detached_tld_static_preimage_trace(
+            output, source="pinned C"
+        )
+        RUNNER.validate_m2_detached_tld_static_preimage_trace(parsed_c, source="pinned C")
+        rust_trace = self._m2_detached_tld_static_preimage_trace()
+        RUNNER.validate_m2_detached_tld_static_preimage_trace(rust_trace, source="Rust")
+        comparison = RUNNER.compare_m2_detached_tld_static_preimage_trace(parsed_c, rust_trace)
+
+        self.assertEqual(comparison["status"], "matched")
+        self.assertEqual(
+            comparison["compared_value_count"],
+            len(RUNNER.M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_KEYS),
+        )
+
+    def test_m2_detached_tld_static_preimage_trace_rejects_a_live_counter_mutation(self) -> None:
+        c_trace = self._m2_detached_tld_static_preimage_trace()
+        rust_trace = self._m2_detached_tld_static_preimage_trace()
+        rust_trace["m2.initialization.detached_tld.post.live_thread_count_zero"] = 0
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
+            RUNNER.compare_m2_detached_tld_static_preimage_trace(c_trace, rust_trace)
 
     @staticmethod
     def _m2_bitmap_abandoned_claim_trace() -> dict[str, int]:

@@ -311,7 +311,7 @@ assertion-invalid input, not C/Rust invalid-input parity.
 
 ### `CRABC-MI-BOUNDED-PROCESS-MAIN-INITIALIZATION` — accepted incomplete process lifecycle
 
-- **Upstream/Rust:** `src/init.c:151-214,236-250,305-360,536-592`, including
+- **Upstream/Rust:** `src/init.c:108-118,151-214,236-250,305-360,536-592`, including
   `src/init.c:196-198`'s static-main-Heap kind-only `memid` -> Release
   `heap_main` -> `_mi_heap_init` order, and `src/heap.c:102-126`'s remaining
   Heap initialization,
@@ -326,13 +326,15 @@ assertion-invalid input, not C/Rust invalid-input parity.
   `main_theap::MainStaticHeapFoundation`,
   `meta::MetaAllocator::prepare_for_main_subprocess`,
   `bootstrap::ExclusiveTheapBootstrap::bind_detached_for_main_subprocess`,
-  `types::ThreadLocalData::{is_subprocess_attached_no_theap,is_in_threadpool}`,
+  `types::ThreadLocalData::{prepare_detached_static_memid,initialize_detached_after_static_memid,is_subprocess_attached_no_theap,is_in_threadpool}`,
   `types::Theap::{set_detached_main_metadata_static_memid,bind_exclusive_detached}`,
   `random::TheapRandomImage::{initialize,next}`,
   `process_page_map::ProcessPageMapStorage`, and
   `subproc::{MainStaticBootstrapSelection,MainSubprocess::begin_main_heap_publication,MainSubprocess::publish_main_heap_identity,MainSubprocess::finish_main_heap_publication,MainSubprocess::ready_main_heap_identity,MainSubprocess::publish_detached_metadata_theap,MainSubprocess::matches_published_detached_metadata_theap,MainSubprocess::is_metadata_page,MainSubprocess::lock_metadata_theap}`.
 - **Category:** crate-private source-order startup boundary. It has no C ABI
-  surface or valid allocation-trace differential entry.
+  surface. One separately bounded direct C/Rust detached-TLD static-preimage
+  trace is field-relational evidence only, not an allocation trace or a
+  process-initialization equivalence claim.
 - **Difference:** the Rust coordinator proves the central source order—static
   Heap, static detached metadata-image binding without backing, one-way
   detached-Theap identity admission publication, global PageMap, then
@@ -352,6 +354,13 @@ assertion-invalid input, not C/Rust invalid-input parity.
   non-ready. This is intentionally narrower than C's dereference-capable
   `_mi_subproc_heap_main`: `ready_main_heap_identity` never produces a Heap
   reference or general linkage capability.
+  Separately, the direct trace starts from only `src/init.c:108-118`'s
+  detached static image, applies only `:192`'s kind-only static-memid
+  predecessor, then invokes only file-static `:236-250` with a fresh
+  zero-initialized address-only subprocess fixture valid only for that helper.
+  It compares the selected address-independent
+  pre/post fields and proves both source counters stay zero; it does not call
+  `_mi_subproc_main_init()` or establish the complete `:193` caller.
   For only its bounded same-subprocess, empty-head, non-threadpool input, it
   preserves those kind-only provenance fields plus the frozen normal
   `page_reclaim_on_free = 0` result (`allow_page_reclaim = true`), initializes
@@ -408,6 +417,14 @@ assertion-invalid input, not C/Rust invalid-input parity.
   retained rather than replaying a partial static image. C's static empty
   PageMap root remains absent.
 - **Evidence:**
+  `types::tests::emit_m2_detached_tld_static_preimage_c_rust_trace` and the
+  paired `./scripts/dev.sh allocator-m2` pinned-C fixture compare the exact
+  detached preimage, separate kind-only memid predecessor, and detached
+  `mi_tld_init` writes: detached identity/sequence, `numa_node = -1`,
+  subprocess identity relation, null head, lock acquire/release behavior,
+  static-memory flags, and unchanged zero total/live counters. They do not
+  initialize a main subprocess, form a Heap/Theap/list/TLS/root, model the
+  normal branch, or compare pthread-lock bytes.
   `bootstrap::tests::detached_binding_initializes_the_static_image_before_issuing_its_one_session`
   proves the selected pre-demand detached metadata-Theap kind-only static
   provenance (including zero union), frozen normal enabled page-reclaim image,
@@ -733,8 +750,9 @@ assertion-invalid input, not C/Rust invalid-input parity.
 - **Decision/removal:** accepted for this one no-option topology wrapper. It
   does not close VM primitives or establish option override, diagnostics,
   topology-change handling, first-fill race policy, arena placement,
-  field-by-field `mi_tld_create`/`mi_tld_init` order, detached or generic/later
-  TLD callers, allocator integration, or complete NUMA behavior.
+  field-by-field normal `mi_tld_create`/`mi_tld_init` order, generic/later TLD
+  callers, allocator integration, or complete NUMA behavior. The separate
+  detached static-preimage trace does not broaden this ticket-zero caller.
 
 ### `CRABC-MI-ORDINARY-BITMAP-HIGHEST-SET-STALE-CHUNKMAP` — accepted checked observer boundary
 

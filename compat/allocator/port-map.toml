@@ -2214,12 +2214,27 @@ name = "ticket-zero-static-tld-fixed-numa-wrapper-caller"
 source_region = "mimalloc v3.5.0 src/init.c:236-250 non-detached mi_tld_init `tld->numa_node = _mi_os_numa_node()`, reached through the static first-TLD branch of mi_tld_create at 253-272 after static memid formation; paired fixed wrapper at src/os.c:860-898"
 rust_module = "crabc_mimalloc::main_theap, crabc_mimalloc::subproc, and crabc_mimalloc::os"
 rust_item = "MainStaticTheapAttachment::begin_after_heap_foundation -> private begin_after_heap_foundation_with_numa_source -> ThreadRegistrationTicket::initialize_and_activate_first_main_tld_with_numa_source -> MainSubprocess::initialize_main_tld_with_numa_source -> os_numa_node"
-intentional_difference = "This maps one selected ticket-zero static-TLD caller only. After ticket issue, Rust forms the concrete static MemoryId, synchronously observes the fixed no-option wrapper, then writes and Release-publishes one complete TLD image before default/fast root publication. The test-only injected local-cache source proves 8 modulo 3, zero/oversized single-node normalization without a current-node probe, static provenance, ticket/live counts, and root ordering without changing production policy or global topology state. It does not claim C's literal individual-field mi_tld_create/mi_tld_init order, detached `numa_node = -1`, generic/later TLD callers, arena placement, options/diagnostics, topology/fill-race policy, a C/Rust differential, or allocator integration."
+intentional_difference = "This maps one selected ticket-zero static-TLD caller only. After ticket issue, Rust forms the concrete static MemoryId, synchronously observes the fixed no-option wrapper, then writes and Release-publishes one complete TLD image before default/fast root publication. The test-only injected local-cache source proves 8 modulo 3, zero/oversized single-node normalization without a current-node probe, static provenance, ticket/live counts, and root ordering without changing production policy or global topology state. It does not claim C's literal individual-field normal mi_tld_create/mi_tld_init order, generic/later TLD callers, arena placement, options/diagnostics, topology/fill-race policy, normal-branch C/Rust differential parity, or allocator integration. The separate direct detached-static-preimage item below owns only the detached helper boundary."
 tests = ["crabc-mimalloc/src/main_theap.rs", "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/os.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true
 differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/init.c"
+name = "detached-tld-static-preimage-init"
+source_region = "mimalloc v3.5.0 src/init.c:108-118 detached mi_tld_t static preimage, :184-193 static memid predecessor and direct mi_tld_init call shape, and :236-250 detached mi_tld_init writes"
+rust_module = "crabc_mimalloc::types and crabc_mimalloc::bootstrap"
+rust_item = "ThreadLocalData::{detached,prepare_detached_static_memid,initialize_detached_after_static_memid}; ExclusiveTheapBootstrap::bind_owner; and types::tests::emit_m2_detached_tld_static_preimage_c_rust_trace"
+intentional_difference = "The C producer constructs a fresh zero-initialized address-only mi_subproc_t fixture valid only for this detached helper rather than calling _mi_subproc_main_init(), so this is a direct detached helper boundary and counter non-registration record, not complete line-193 caller or process initialization parity. It compares only address-independent detached pre/post fields: detached thread identity, zero sequence, numa_node = -1, subprocess identity relation, null Theap head, lock acquire/release behavior, recurse/threadpool flags, zero-union static memid kind/flags, and unchanged zero total/live counters. Rust PrivateLock is compared only by acquire/release behavior, never pthread_mutex_t bytes. This does not establish general mi_tld_init/mi_tld_create, the normal branch, generic/later TLDs, Heap/Theap/list/TLS/root publication, options/NUMA policy, mi_subproc_t or pthread-lock ABI/layout, shutdown/free, races, or allocator integration."
+tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/bootstrap.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
