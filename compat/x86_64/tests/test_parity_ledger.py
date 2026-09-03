@@ -3580,8 +3580,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 613,
-                "mismatch": 667,
+                "matched": 620,
+                "mismatch": 660,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4719,8 +4719,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "2,894 same-identity source-form differences across 482 rows",
-            "91 form-only rows",
+            "2,887 same-identity source-form differences across 475 rows",
+            "84 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -4771,7 +4771,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "667 current comparable prototype or named source-form mismatch rows",
+            "660 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",

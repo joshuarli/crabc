@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "9bd257b76fe74ce35c8f7d40ef482123869054a0b4d73cd8f959f7de0ffe728e",
+    "callable_inventory_sha256": "c3a889fec6797ab1a5272fb2d7162d1ba8a8e4a3b84832584de473a18bd1eb08",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -17211,23 +17211,16 @@
           "typedef": 39,
           "variable": 2
         },
-        "sha256": "d5fdd0222c2b11ff0f2d11573ec15dd56352b1c205aa6fa2f11eaf11c88a6bb0"
+        "sha256": "b9c62791454d48e272af30ade99a1aa88b4f62884a269d037eb9630ec47350ce"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:17:5),ifa_data:void *}",
-            "kind": "record",
-            "name": "ifaddrs",
-            "reference_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:18:2),ifa_data:void *}"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 851,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 852,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -17256,23 +17249,16 @@
           "typedef": 38,
           "variable": 2
         },
-        "sha256": "9fb92a468f544feef27c9867846985582adb9eea7d49bc2ba0354b255835996a"
+        "sha256": "fe5d339171eb97afa118cc06b35878b35084104f3970e381d1582b148b7353ee"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:17:5),ifa_data:void *}",
-            "kind": "record",
-            "name": "ifaddrs",
-            "reference_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:18:2),ifa_data:void *}"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 849,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 850,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -17301,23 +17287,16 @@
           "typedef": 39,
           "variable": 2
         },
-        "sha256": "b5831c76585c49c37490f50dd5d910f0982bb94cafbd2fcf9a93ecaad854b823"
+        "sha256": "0f66a11aa012f4c491b30e1a853942f3bc0d8241bc161496fed21255d3e172c4"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:17:5),ifa_data:void *}",
-            "kind": "record",
-            "name": "ifaddrs",
-            "reference_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:18:2),ifa_data:void *}"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 825,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 826,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -17346,23 +17325,16 @@
           "typedef": 39,
           "variable": 2
         },
-        "sha256": "b5831c76585c49c37490f50dd5d910f0982bb94cafbd2fcf9a93ecaad854b823"
+        "sha256": "0f66a11aa012f4c491b30e1a853942f3bc0d8241bc161496fed21255d3e172c4"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:17:5),ifa_data:void *}",
-            "kind": "record",
-            "name": "ifaddrs",
-            "reference_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:18:2),ifa_data:void *}"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 825,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 826,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -17391,23 +17363,16 @@
           "typedef": 39,
           "variable": 2
         },
-        "sha256": "b5831c76585c49c37490f50dd5d910f0982bb94cafbd2fcf9a93ecaad854b823"
+        "sha256": "0f66a11aa012f4c491b30e1a853942f3bc0d8241bc161496fed21255d3e172c4"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:17:5),ifa_data:void *}",
-            "kind": "record",
-            "name": "ifaddrs",
-            "reference_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:18:2),ifa_data:void *}"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 825,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 826,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -17436,23 +17401,16 @@
           "typedef": 39,
           "variable": 2
         },
-        "sha256": "7a459d79eea3bdc038f7fed81ac5b7326e80e40394b80b2cddddda042fd642f0"
+        "sha256": "a1509816d6b02df888ec3613e1a9e93355cf0f384499609bd87c0f75a9c1d32d"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:17:5),ifa_data:void *}",
-            "kind": "record",
-            "name": "ifaddrs",
-            "reference_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:18:2),ifa_data:void *}"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 846,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 847,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -17481,23 +17439,16 @@
           "typedef": 38,
           "variable": 2
         },
-        "sha256": "9fb92a468f544feef27c9867846985582adb9eea7d49bc2ba0354b255835996a"
+        "sha256": "fe5d339171eb97afa118cc06b35878b35084104f3970e381d1582b148b7353ee"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:17:5),ifa_data:void *}",
-            "kind": "record",
-            "name": "ifaddrs",
-            "reference_signature": "struct{ifa_next:struct ifaddrs *,ifa_name:char *,ifa_flags:unsigned int,ifa_addr:struct sockaddr *,ifa_netmask:struct sockaddr *,ifa_ifu:union (unnamed at public/ifaddrs.h:18:2),ifa_data:void *}"
-          }
-        ],
-        "incompatible_count": 1,
-        "matched_count": 849,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 850,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -190285,23 +190236,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 613,
-      "mismatch": 667,
+      "matched": 620,
+      "mismatch": 660,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "667 comparable header/profile rows have prototype or named declaration-form differences",
+      "660 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
       "candidate_only_count": 16351,
-      "incompatible_count": 2894,
+      "incompatible_count": 2887,
       "reference_only_count": 8877
     },
-    "mismatch_row_count": 667,
+    "mismatch_row_count": 660,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337

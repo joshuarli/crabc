@@ -795,6 +795,50 @@ class HeaderAbiMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(profiles), 7)
 
+    def test_ifaddrs_header_preserves_musl_x86_source_coordinates(self) -> None:
+        """Keep the direct interface record's selected source form exact.
+
+        The anonymous union in struct ifaddrs is a named declaration-form
+        fact. Musl's direct features.h request fixes its source coordinate as
+        well as the selected feature context; moving that request or reshaping
+        the record would silently recreate source-form debt in every C/C++
+        profile. This remains header evidence only, not an interface discovery
+        provider or runtime claim.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+
+        for profile in profiles:
+            row = rows[("ifaddrs.h", profile)]
+            self.assertEqual(row["candidate_status"], "ok")
+            self.assertEqual(row["reference_status"], "ok")
+            self.assertEqual(
+                row["comparison"],
+                "matched",
+                f"ifaddrs.h:{profile} must retain musl's direct record source form",
+            )
+            difference = row["difference"]
+            self.assertEqual(difference["candidate_only"], [])
+            self.assertEqual(difference["candidate_only_count"], 0)
+            self.assertEqual(difference["incompatible"], [])
+            self.assertEqual(difference["incompatible_count"], 0)
+            self.assertEqual(difference["reference_only"], [])
+            self.assertEqual(difference["reference_only_count"], 0)
+
+        self.assertEqual(len(profiles), 7)
+
     def test_signal_wait_aio_poll_headers_preserve_musl_x86_ownership(self) -> None:
         """Keep the signal/process-control declaration spine source-faithful.
 
