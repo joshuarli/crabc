@@ -100,7 +100,7 @@ assert_header_provenance() {
             *) fail "unknown header tree: $tree" ;;
         esac
     done < <(sed -n -E 's/^[. ]+ (\/[^[:space:]]+).*$/\1/p' "$trace")
-    for header in pthread.h threads.h sched.h signal.h time.h bits/alltypes.h; do
+    for header in pthread.h threads.h sched.h signal.h time.h bits/alltypes.h bits/signal.h; do
         grep -Fq "$root/$header" "$trace" ||
             fail "$label did not preprocess $root/$header"
     done

@@ -135,7 +135,7 @@ if ! "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -D_XOPEN_SOURCE=700 \
     sed -n '1,160p' "$header_trace" >&2
     fail "project siginterrupt header contract drifted"
 fi
-for header in signal.h features.h bits/alltypes.h; do
+for header in signal.h features.h bits/alltypes.h bits/signal.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "C probe did not use the project <$header>"
 done

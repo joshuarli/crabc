@@ -41,9 +41,11 @@ header_trace="$work_dir/header-trace"
 # intentional: this slice makes no claim about a crabc C runtime implementation.
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -H -fsyntax-only "$c_probe" \
     >/dev/null 2>"$header_trace"
-grep -Fq "$ROOT_DIR/include/poll.h" "$header_trace" || {
-    fail "C probe did not use the project <poll.h>"
-}
+for header in poll.h features.h bits/poll.h; do
+    grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || {
+        fail "C probe did not use the project <$header>"
+    }
+done
 "$ORACLE_CC" -std=c++17 -x c++ -I "$ROOT_DIR/include" -fsyntax-only "$cxx_probe"
 
 printf 'x86 pinned-musl C/C++ <poll.h> ABI: PASS\n'

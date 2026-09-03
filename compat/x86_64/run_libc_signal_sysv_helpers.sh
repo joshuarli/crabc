@@ -105,7 +105,7 @@ cd "$ROOT_DIR"
     -I "$ROOT_DIR/include" -E -H compat/x86_64/libc_signal_sysv_helpers_probe.c \
     >/dev/null 2>"$header_trace"
 for header in errno.h signal.h stddef.h stdint.h sys/syscall.h bits/alltypes.h \
-    bits/syscall.h; do
+    bits/signal.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project <$header>"
 done

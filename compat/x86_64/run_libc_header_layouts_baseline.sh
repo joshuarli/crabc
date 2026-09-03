@@ -159,7 +159,7 @@ readonly START_SHIM="compat/x86_64/libc_header_layouts_baseline_start.S"
 readonly -a PROJECT_HEADERS=(
     errno.h fcntl.h netinet/in.h poll.h signal.h sys/mman.h sys/resource.h
     sys/select.h sys/socket.h sys/stat.h sys/sysinfo.h sys/utsname.h termios.h
-    time.h unistd.h
+    time.h unistd.h bits/signal.h bits/poll.h
 )
 readonly -a CXX_FLAGS=(
     -std=c++17 -x c++ -D_GNU_SOURCE -ffreestanding -fno-exceptions -fno-rtti

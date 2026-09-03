@@ -95,7 +95,7 @@ cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_timerfd_probe.c >/dev/null 2>"$header_trace"
 for header in errno.h fcntl.h poll.h stddef.h stdint.h sys/syscall.h sys/timerfd.h \
-    time.h unistd.h bits/alltypes.h bits/syscall.h; do
+    time.h unistd.h bits/alltypes.h bits/poll.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || fail "fixture omitted project $header"
 done
 

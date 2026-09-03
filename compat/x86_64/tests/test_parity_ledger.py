@@ -3431,14 +3431,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 595,
-                "mismatch": 685,
+                "matched": 630,
+                "mismatch": 650,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 36979, "reference_only": 13314},
+            {"candidate_only": 22468, "reference_only": 12123},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3458,8 +3458,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 516,
-                "mismatch": 764,
+                "matched": 527,
+                "mismatch": 753,
                 "oracle-not-applicable": 1,
             },
         )
@@ -3469,11 +3469,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             disposition["command"],
             "./scripts/dev-x86_64.sh header-callable-disposition",
         )
-        self.assertEqual(disposition["candidate_external_callable_count"], 1527)
+        self.assertEqual(disposition["candidate_external_callable_count"], 1526)
         self.assertEqual(disposition["default_static_callable_count"], 1113)
         self.assertEqual(disposition["verified_feature_callable_count"], 47)
         self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 367)
+        self.assertEqual(disposition["unprovided_callable_count"], 366)
         self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
         self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
@@ -3488,12 +3488,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             provider_audit["command"],
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
-        self.assertEqual(provider_audit["candidate_external_callable_count"], 1527)
+        self.assertEqual(provider_audit["candidate_external_callable_count"], 1526)
         self.assertEqual(provider_audit["default_static_callable_count"], 1113)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 367)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 366)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -4592,13 +4592,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "685 current comparable declaration-or-macro identity mismatch rows",
-            "595 matched identity rows",
+            "650 current comparable declaration-or-macro identity mismatch rows",
+            "630 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "4,617 same-identity source-form differences across 577 rows",
-            "79 form-only rows",
+            "3,481 same-identity source-form differences across 557 rows",
+            "103 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -4649,7 +4649,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "764 current comparable prototype or named source-form mismatch rows",
+            "753 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",
@@ -30937,6 +30937,79 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.family(data, "facade.direct")["aarch64_gates"] = ["invented-gate"]
         with self.assertRaisesRegex(ledger.LedgerError, "unknown AArch64 gates"):
             ledger.validate_ledger(data)
+
+    def test_signal_header_trace_owners_follow_direct_fixture_includes(self) -> None:
+        records = self.verified_records(self.data())
+        required_leaf = {
+            "static-c-signal-control",
+            "static-c-signal-legacy-aliases",
+            "static-c-sysv-signal-helpers",
+            "static-c-child-reaping",
+            "static-c-wait-extensions",
+            "static-c-immediate-termination",
+            "static-c-posix-exit",
+            "static-c-signal-altstack",
+            "static-c-signalfd",
+            "static-c-process-signal-execution",
+            "static-c-clock-nanosleep",
+            "static-c-nanosleep",
+            "static-c-usleep",
+            "static-c-sleep",
+            "static-c-readiness-signal-waits",
+            "static-c-event-descriptors",
+            "static-c-siginterrupt",
+            "static-c-thrd-sleep",
+        }
+        for artifact_id in required_leaf:
+            owners = records[artifact_id]["source_owners"]
+            assert isinstance(owners, list)
+            self.assertIn("include/bits/signal.h", owners, artifact_id)
+
+        for artifact_id in ("static-c-descriptor-pipeline", "static-c-readiness-signal-waits", "static-c-timerfd"):
+            owners = records[artifact_id]["source_owners"]
+            assert isinstance(owners, list)
+            self.assertIn("include/bits/poll.h", owners, artifact_id)
+
+        for artifact_id in (
+            "static-c-sysv-signal-helpers",
+            "static-c-signalfd",
+            "static-c-clock-nanosleep",
+            "static-c-nanosleep",
+            "static-c-sleep",
+            "static-c-thrd-sleep",
+        ):
+            owners = records[artifact_id]["source_owners"]
+            assert isinstance(owners, list)
+            self.assertNotIn("include/sys/types.h", owners, artifact_id)
+
+        for artifact_id in (
+            "static-c-child-reaping",
+            "static-c-wait-extensions",
+            "static-c-immediate-termination",
+            "static-c-posix-exit",
+            "static-c-process-signal-execution",
+            "static-c-descriptor-pipeline",
+            "static-c-readiness-signal-waits",
+            "static-c-event-descriptors",
+        ):
+            owners = records[artifact_id]["source_owners"]
+            assert isinstance(owners, list)
+            self.assertIn("include/sys/types.h", owners, artifact_id)
+
+    def test_epoll_and_signalfd_header_owners_do_not_import_signal_header(self) -> None:
+        records = self.verified_records(self.data())
+        event = records["static-c-event-descriptors"]
+        owners = event["source_owners"]
+        assert isinstance(owners, list)
+        # The direct sys/epoll.h/sys/signalfd.h matrices request sigset_t from
+        # bits/alltypes.h; signal.h remains owned only by fixtures that include
+        # it explicitly.
+        self.assertIn("include/sys/epoll.h", owners)
+        self.assertIn("include/sys/types.h", owners)
+
+        signalfd = records["static-c-signalfd"]["source_owners"]
+        assert isinstance(signalfd, list)
+        self.assertIn("include/sys/signalfd.h", signalfd)
 
 
 if __name__ == "__main__":

@@ -87,7 +87,7 @@ errno_disassembly="$work_dir/errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_bootstrap_primitives_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h fenv.h setjmp.h bits/setjmp.h signal.h string.h strings.h sys/mman.h \
+for header in errno.h fenv.h setjmp.h bits/setjmp.h features.h signal.h bits/alltypes.h bits/signal.h string.h strings.h sys/mman.h \
     sys/syscall.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use the project $header header"

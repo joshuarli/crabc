@@ -386,23 +386,23 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 516,
-        "mismatch": 764,
+        "matched": 527,
+        "mismatch": 753,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "764 comparable header/profile rows have prototype or named declaration-form differences",
+        "753 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 36979,
-        "incompatible_count": 4617,
-        "reference_only_count": 13314,
+        "candidate_only_count": 22468,
+        "incompatible_count": 3481,
+        "reference_only_count": 12123,
     },
-    "mismatch_row_count": 764,
+    "mismatch_row_count": 753,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -417,32 +417,32 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 36979,
+    "candidate_only_identity_count": 22468,
     "candidate_only_identity_kind_counts": {
-        "function": 2462,
-        "macro": 25105,
-        "record": 657,
-        "typedef": 8667,
-        "variable": 88,
+        "function": 1200,
+        "macro": 15372,
+        "record": 364,
+        "typedef": 5476,
+        "variable": 56,
     },
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 595,
-        "mismatch": 685,
+        "matched": 630,
+        "mismatch": 650,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "685 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "650 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 282050,
-    "mismatch_row_count": 685,
-    "oracle_not_applicable_candidate_fact_count": 304,
+    "matched_identity_count": 283241,
+    "mismatch_row_count": 650,
+    "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
     "pinned_row_count": 1281,
@@ -450,25 +450,25 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 13314,
+    "reference_only_identity_count": 12123,
     "reference_only_identity_kind_counts": {
         "enum": 3,
         "function": 317,
-        "macro": 12347,
-        "record": 198,
-        "typedef": 440,
+        "macro": 11261,
+        "record": 141,
+        "typedef": 392,
         "variable": 9,
     },
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 516,
-        "mismatch": 764,
+        "matched": 527,
+        "mismatch": 753,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 4617,
-    "source_form_difference_row_count": 577,
-    "source_form_only_difference_row_count": 79,
+    "source_form_difference_count": 3481,
+    "source_form_difference_row_count": 557,
+    "source_form_only_difference_row_count": 103,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -2671,24 +2671,24 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 5183,
+            "candidate_only_callable_count": 3073,
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 980,
-                "mismatch": 300,
+                "matched": 1028,
+                "mismatch": 252,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "300 comparable pinned header/profile rows have callable visibility differences",
+                "252 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
             "matched_callable_count": 34103,
-            "mismatch_row_count": 300,
-            "oracle_not_applicable_candidate_visible_callable_count": 39,
+            "mismatch_row_count": 252,
+            "oracle_not_applicable_candidate_visible_callable_count": 21,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
             "pinned_row_count": 1281,
@@ -3191,12 +3191,12 @@ def validate_header_layout_foundation_manifest(
             "state": "partial-verified",
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
-            "candidate_external_callable_count": 1527,
+            "candidate_external_callable_count": 1526,
             "default_static_callable_count": 1113,
             "verified_feature_callable_count": 47,
             "verified_feature_profile_count": 21,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 367,
+            "unprovided_callable_count": 366,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3257,11 +3257,11 @@ def validate_header_layout_foundation_manifest(
             "command": EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND,
             "contract": "compat/x86_64/header_callable_disposition.toml",
             "report": "compat/x86_64/header_callable_disposition.json",
-            "candidate_external_callable_count": 1527,
+            "candidate_external_callable_count": 1526,
             "default_static_callable_count": 1113,
             "verified_feature_callable_count": 47,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 367,
+            "unprovided_callable_count": 366,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
             "missing_reference_declaration_routing_complete": True,
@@ -3277,7 +3277,7 @@ def validate_header_layout_foundation_manifest(
     description = callable_disposition["description"]
     require(
         isinstance(description, str)
-        and "all 1,527 selected external callable names" in description
+        and "all 1,526 selected external callable names" in description
         and "zero current missing pinned-musl declaration names" in description
         and "archive extraction" in description
         and "final C ABI provider/archive closure" in description
@@ -6186,13 +6186,13 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "685 current comparable declaration-or-macro identity mismatch rows",
-        "595 matched identity rows",
+        "650 current comparable declaration-or-macro identity mismatch rows",
+        "630 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "4,617 same-identity source-form differences across 577 rows",
-        "79 form-only rows",
+        "3,481 same-identity source-form differences across 557 rows",
+        "103 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"declaration/macro visibility artifact description omits {phrase}")
@@ -6260,7 +6260,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "300 current comparable callable name/class mismatch rows",
+        "252 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6307,10 +6307,10 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     assert isinstance(description, str)
     for phrase in (
         "still-planned `libc.headers-layouts`",
-        "all 1,527 current names",
+        "all 1,526 current names",
         "1,113 default-static",
         "47 verified feature-provider",
-        "367 exact deferred-owner records",
+        "366 exact deferred-owner records",
         "zero current pinned-musl missing declaration records",
         "not declaration parity",
         "does not perform archive extraction",
@@ -6351,7 +6351,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "367 deferred providers" in scope
+        and "366 deferred providers" in scope
         and "zero missing reference declaration names" in scope
         and "not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
@@ -6373,13 +6373,13 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     require(
         dict(summary)
         == {
-            "candidate_external_callable_count": 1527,
+            "candidate_external_callable_count": 1526,
             "declared_unverified_feature_callable_count": 0,
             "default_static_callable_count": 1113,
             "deferred_resolution_counts": {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
-                "oracle-declared-no-provider": 8,
+                "oracle-declared-no-provider": 7,
                 "planned-provider": 351,
                 "policy-decision-required": 6,
             },
@@ -6392,7 +6392,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 367,
+            "unprovided_callable_count": 366,
             "verified_feature_callable_count": 47,
         },
         "header callable disposition summary drifted",
@@ -6459,7 +6459,7 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "367-name unprovided complement",
+        "366-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -6558,7 +6558,7 @@ def require_all_header_prototype_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "764 current comparable prototype or named source-form mismatch rows",
+        "753 current comparable prototype or named source-form mismatch rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",
@@ -15929,8 +15929,8 @@ def require_static_thrd_sleep_artifact(family: Mapping[str, Any]) -> None:
         "include/errno.h",
         "include/features.h",
         "include/signal.h",
+        "include/bits/signal.h",
         "include/sys/syscall.h",
-        "include/sys/types.h",
         "include/threads.h",
         "include/time.h",
         "compat/x86_64/pthread_c11_header_abi_probe.c",
@@ -24394,9 +24394,9 @@ def require_sysv_signal_helpers_artifact(family: Mapping[str, Any]) -> None:
         "include/errno.h",
         "include/features.h",
         "include/signal.h",
+        "include/bits/signal.h",
         "include/stddef.h",
         "include/stdint.h",
-        "include/sys/types.h",
         "include/sys/syscall.h",
         "include/bits/alltypes.h",
         "include/bits/syscall.h",
@@ -31732,6 +31732,7 @@ def require_signalfd_artifact(family: Mapping[str, Any]) -> None:
         "include/errno.h",
         "include/fcntl.h",
         "include/signal.h",
+        "include/bits/signal.h",
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/signalfd.h",
@@ -75937,6 +75938,55 @@ def validate_static_product_contract(
     }
 
 
+def require_signal_header_trace_ownership(family: Mapping[str, Any]) -> None:
+    """Keep signal/wait/AIO/poll source ownership tied to direct include traces."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    records = {entry["id"]: entry for entry in artifacts}
+    # The pthread-owned static-c-thrd-sleep artifact has the same signal leaf,
+    # but its exact owners are guarded by require_static_thrd_sleep_artifact.
+    signal_ids = (
+        "static-c-signal-control",
+        "static-c-signal-legacy-aliases",
+        "static-c-sysv-signal-helpers",
+        "static-c-child-reaping",
+        "static-c-wait-extensions",
+        "static-c-immediate-termination",
+        "static-c-posix-exit",
+        "static-c-signal-altstack",
+        "static-c-signalfd",
+        "static-c-process-signal-execution",
+        "static-c-clock-nanosleep",
+        "static-c-nanosleep",
+        "static-c-usleep",
+        "static-c-sleep",
+        "static-c-readiness-signal-waits",
+        "static-c-event-descriptors",
+        "static-c-siginterrupt",
+    )
+    for artifact_id in signal_ids:
+        owners = set(nonempty_strings(records[artifact_id].get("source_owners"), f"{artifact_id}.source_owners"))
+        require("include/bits/signal.h" in owners, f"{artifact_id} must own include/bits/signal.h")
+    for artifact_id in ("static-c-descriptor-pipeline", "static-c-readiness-signal-waits", "static-c-timerfd"):
+        owners = set(nonempty_strings(records[artifact_id].get("source_owners"), f"{artifact_id}.source_owners"))
+        require("include/bits/poll.h" in owners, f"{artifact_id} must own include/bits/poll.h")
+    for artifact_id in (
+        "static-c-sysv-signal-helpers",
+        "static-c-signalfd",
+        "static-c-clock-nanosleep",
+        "static-c-nanosleep",
+        "static-c-sleep",
+    ):
+        owners = set(nonempty_strings(records[artifact_id].get("source_owners"), f"{artifact_id}.source_owners"))
+        require("include/sys/types.h" not in owners, f"{artifact_id} must not own transitive include/sys/types.h")
+    for runner in ("run_epoll_header_abi.sh", "run_signalfd_header_abi.sh"):
+        runner_text = (ROOT / "compat" / "x86_64" / runner).read_text(encoding="utf-8")
+        require("signal.h" not in runner_text, f"{runner} must not require transitive signal.h")
+
+
 def validate_ledger(
     data: Mapping[str, Any],
     *,
@@ -76441,6 +76491,7 @@ def validate_ledger(
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_usleep_artifact(by_id["libc.posix-runtime"])
     require_sleep_artifact(by_id["libc.posix-runtime"])
+    require_signal_header_trace_ownership(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_lchmod_unsupported_slice(by_id["libc.posix-runtime"])
     require_mkfifo_artifact(by_id["libc.posix-runtime"])

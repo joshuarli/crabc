@@ -738,6 +738,171 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             "network-owned header rows must not regress behind the completed source closure",
         )
 
+    def test_signal_wait_aio_poll_headers_preserve_musl_x86_ownership(self) -> None:
+        """Keep the signal/process-control declaration spine source-faithful.
+
+        These direct consumers must request only their own musl types and use
+        the private x86 ``bits/signal.h``/``bits/poll.h`` leaves rather than
+        inheriting the legacy ``sys/types.h`` umbrella.  The one C11-strict
+        ``aio.h`` reference limitation remains explicit: pinned musl embeds an
+        incomplete ``struct sigevent`` there, while the candidate closure still
+        has to compile the direct consumer.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        headers = ("signal.h", "sys/wait.h", "aio.h", "poll.h")
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+
+        signal_form_debt = frozenset({"sigaction", "sigevent"})
+        signal_form_debt_with_fpstate = signal_form_debt | {"_fpstate"}
+        resource_form_debt = frozenset(
+            {
+                "RUSAGE_CHILDREN",
+                "TIMESPEC_TO_TIMEVAL",
+                "TIMEVAL_TO_TIMESPEC",
+                "timeradd",
+                "timerclear",
+                "timerisset",
+                "timersub",
+            }
+        )
+        bsd_resource_form_debt = resource_form_debt - {
+            "TIMESPEC_TO_TIMEVAL",
+            "TIMEVAL_TO_TIMESPEC",
+        }
+        time_form_debt = frozenset(
+            {
+                "asctime_r",
+                "clock_getres",
+                "clock_gettime",
+                "clock_nanosleep",
+                "clock_settime",
+                "gmtime_r",
+                "localtime_r",
+                "strftime",
+                "strftime_l",
+                "strptime",
+                "timer_create",
+                "timer_settime",
+            }
+        )
+        posix_time_form_debt = time_form_debt - {"strptime"}
+        signal_profiles_with_fpstate = frozenset(
+            {"c11-bsd", "c11-gnu", "cxx17-gnu", "cxx17-strict"}
+        )
+        signal_profiles_without_fpstate = frozenset(
+            {"c11-posix-2008", "c11-xopen-700"}
+        )
+
+        expected_incompatible = {
+            **{
+                ("signal.h", profile): signal_form_debt_with_fpstate
+                for profile in signal_profiles_with_fpstate
+            },
+            **{
+                ("signal.h", profile): signal_form_debt
+                for profile in signal_profiles_without_fpstate
+            },
+            **{
+                ("sys/wait.h", profile): signal_form_debt_with_fpstate
+                | resource_form_debt
+                for profile in {"c11-gnu", "cxx17-gnu", "cxx17-strict"}
+            },
+            (
+                "sys/wait.h",
+                "c11-bsd",
+            ): signal_form_debt_with_fpstate | bsd_resource_form_debt,
+            **{
+                ("sys/wait.h", profile): signal_form_debt
+                for profile in signal_profiles_without_fpstate
+            },
+            **{
+                ("aio.h", profile): signal_form_debt_with_fpstate
+                | time_form_debt
+                for profile in signal_profiles_with_fpstate
+            },
+            **{
+                ("aio.h", "c11-posix-2008"): signal_form_debt
+                | posix_time_form_debt,
+                ("aio.h", "c11-xopen-700"): signal_form_debt
+                | time_form_debt,
+            },
+        }
+        aio_candidate_only = frozenset({"_TIMEVAL_DEFINED"})
+
+        matched = 0
+        mismatched = 0
+        for header in headers:
+            for profile in profiles:
+                row = rows[(header, profile)]
+                self.assertEqual(row["candidate_status"], "ok")
+                if (header, profile) == ("aio.h", "c11-strict"):
+                    self.assertEqual(row["comparison"], "oracle-not-applicable")
+                    self.assertEqual(row["reference_status"], "oracle-not-applicable")
+                    continue
+
+                expected_incompatible_names = expected_incompatible.get(
+                    (header, profile), frozenset()
+                )
+                expected_candidate_only_names = (
+                    aio_candidate_only if header == "aio.h" else frozenset()
+                )
+                comparison = (
+                    "mismatch"
+                    if expected_incompatible_names or expected_candidate_only_names
+                    else "matched"
+                )
+                self.assertEqual(
+                    row["comparison"],
+                    comparison,
+                    f"{header}:{profile} must retain only its reviewed form debt",
+                )
+                self.assertEqual(row["reference_status"], "ok")
+                difference = row["difference"]
+                self.assertEqual(
+                    {fact["name"] for fact in difference["candidate_only"]},
+                    expected_candidate_only_names,
+                    f"{header}:{profile} candidate-only declaration owners",
+                )
+                self.assertEqual(
+                    {fact["name"] for fact in difference["incompatible"]},
+                    expected_incompatible_names,
+                    f"{header}:{profile} source-form debt",
+                )
+                self.assertEqual(
+                    difference["reference_only"],
+                    [],
+                    f"{header}:{profile} must not lose a musl declaration",
+                )
+                self.assertEqual(
+                    difference["candidate_only_count"],
+                    len(expected_candidate_only_names),
+                )
+                self.assertEqual(
+                    difference["incompatible_count"],
+                    len(expected_incompatible_names),
+                )
+                self.assertEqual(difference["reference_only_count"], 0)
+                if comparison == "matched":
+                    matched += 1
+                else:
+                    mismatched += 1
+
+        self.assertEqual(len(headers) * len(profiles), 28)
+        self.assertEqual(matched, 9)
+        self.assertEqual(mismatched, 18)
+
     def test_stdio_wchar_and_monetary_declarations_match_musl_forms(self) -> None:
         """Header visibility must not promote deferred stream or locale providers."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

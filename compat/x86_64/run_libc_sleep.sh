@@ -80,8 +80,8 @@ errno_disassembly="$work_dir/errno-disassembly"; sleep_disassembly="$work_dir/fi
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -I "$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_sleep_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h signal.h unistd.h features.h sys/types.h sys/syscall.h \
-    bits/alltypes.h bits/syscall.h; do
+for header in errno.h signal.h unistd.h features.h sys/syscall.h \
+    bits/alltypes.h bits/signal.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done

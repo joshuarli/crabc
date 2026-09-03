@@ -126,8 +126,8 @@ patched_musl_symbols="$work_dir/patched-musl-libc-symbols"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -I"$ROOT_DIR/include" -E -H \
     tests/fixtures/allocator_observability_test.c >/dev/null 2>"$header_trace"
-for header in errno.h malloc.h pthread.h stdint.h stdlib.h sys/wait.h \
-    unistd.h bits/alltypes.h; do
+for header in errno.h malloc.h pthread.h stdint.h stdlib.h sys/wait.h features.h signal.h \
+    unistd.h bits/alltypes.h bits/signal.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use project $header"
 done

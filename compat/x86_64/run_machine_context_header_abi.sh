@@ -207,7 +207,7 @@ check_trace() {
         fail "$profile $tree trace escaped its declared header roots"
     for header in elf.h sys/auxv.h bits/hwcap.h sys/ptrace.h bits/ptrace.h \
         sys/reg.h bits/reg.h sys/user.h bits/user.h sys/procfs.h sys/ucontext.h \
-        ucontext.h signal.h; do
+        ucontext.h features.h signal.h bits/alltypes.h bits/signal.h; do
         trace_has_header "$trace" "$root" "$header" ||
             fail "$profile $tree trace omitted ${root}/$header"
     done

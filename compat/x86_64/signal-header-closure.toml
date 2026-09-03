@@ -1,0 +1,39 @@
+# Linux/x86-64 signal/process-wait/AIO/poll public-header closure work package.
+schema = "crabc.x86_64-signal-header-closure/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+
+[work_package]
+target_family = "libc.headers-layouts"
+target_obligations = ["signal-header-closure", "selected-header-declaration-forms"]
+blocker = "The x86 signal, wait, AIO, and poll public headers retain the shared type-header ownership and broad declaration leakage of their legacy bodies instead of musl's direct alltypes requests, private bits signal/poll leaves, and profile gates."
+prerequisites = ["oracle.musl-toolchain", "libc.errno-tls", "libc.headers-layouts callable declaration inventory"]
+dependent_work = ["libc.headers-layouts family aggregate", "libc.posix-runtime signal and wait consumers", "libc.pthread-tls signal ownership", "owned static and dynamic sysroot header closure"]
+baseline_contract = "Pinned musl 1.2.6 x86-64 public header source, Linux 5.10 UAPI inputs, System V AMD64 LP64 ABI, and the frozen AArch64 header baseline."
+source_owners = [
+  "compat/x86_64/signal-header-closure.toml",
+  "compat/x86_64/tests/test_header_abi_matrix.py",
+  "compat/x86_64/header_abi_matrix.py",
+  "compat/x86_64/header_declaration_macro_visibility_matrix.py",
+  "compat/x86_64/header_callable_visibility_matrix.py",
+  "include/signal.h",
+  "include/bits/signal.h",
+  "include/sys/wait.h",
+  "include/aio.h",
+  "include/poll.h",
+  "include/bits/poll.h",
+  "include/sys/epoll.h",
+  "include/sys/signalfd.h",
+]
+focused_evidence_command = "./scripts/dev-x86_64.sh header-abi-matrix"
+family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
+product_command = "./scripts/dev-x86_64.sh campaign-static"
+negative_scope = "This x86-only package restores selected public header declarations, layouts, macros, include ownership, and C/C++ feature visibility. It does not select signal, wait, AIO, or poll archive providers; signal delivery or process-control behavior; libc.so; CRT; loader; sysroot completion; family promotion; or public x86 support."
+expected_transition = "The 27 comparable direct signal/wait/AIO/poll header-profile records retain only their exact ratcheted inherited/source-location declaration-form differences: signal frame records, GNU/BSD wait resource macros, and AIO's pre-existing time-header forms. The seven direct poll.h rows match pinned musl. Companion direct sys/epoll.h and sys/signalfd.h rows retain musl-owned sigset_t requests rather than inheriting signal.h. aio.h:c11-strict remains the explicit pinned-musl oracle-not-applicable row because musl embeds incomplete struct sigevent without a POSIX or GNU feature request; the candidate's existing closure rule still requires that direct inclusion to compile. libc.headers-layouts remains planned until its complete declaration/layout/provider aggregate is satisfied; no capability, product, promotion, or public-support state changes here."
+evidence = [
+  "pinned-musl/project direct C11/C++17 all-profile declaration-form matrix",
+  "signal context, wait-extension, aio_error, poll, epoll, and signalfd direct ABI regressions",
+  "28-row direct signal/wait/AIO/poll difference-origin regression",
+  "header declaration/macro and callable-visibility matrix regeneration",
+]

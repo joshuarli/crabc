@@ -57,7 +57,7 @@ if ! "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
     sed -n '1,160p' "$header_trace" >&2
     fail "project C child-reaping header contract drifted"
 fi
-for header in sys/wait.h sys/types.h signal.h features.h; do
+for header in sys/wait.h signal.h features.h bits/alltypes.h bits/signal.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || {
         fail "C probe did not use the project <$header>"
     }

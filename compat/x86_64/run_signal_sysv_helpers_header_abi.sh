@@ -139,7 +139,7 @@ assert_xopen800_header_divergence
     -DCRABC_EXPECT_SYSV_SIGNAL_HELPERS -I "$ROOT_DIR/include" -H \
     -fsyntax-only "$C_PROBE" >/dev/null 2>"$header_trace" ||
     fail "project SysV signal helper C header contract drifted"
-for header in signal.h features.h bits/alltypes.h; do
+for header in signal.h features.h bits/alltypes.h bits/signal.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "C probe did not use project <$header>"
 done

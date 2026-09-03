@@ -46,6 +46,11 @@ header_trace="$work_dir/header-trace"
 grep -Fq "$ROOT_DIR/include/signal.h" "$header_trace" || {
     fail "GNU probe did not use the project signal header"
 }
+for header in features.h bits/alltypes.h bits/signal.h; do
+    grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || {
+        fail "GNU probe did not use the project <$header>"
+    }
+done
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -fsyntax-only "$posix_probe"
 
 # Pinned musl exposes sigisemptyset, sigandset, and sigorset only in its GNU

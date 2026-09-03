@@ -37,16 +37,16 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         DISPOSITION.validate_checked_report(report, contract)
 
         summary = report["summary"]
-        self.assertEqual(summary["candidate_external_callable_count"], 1527)
+        self.assertEqual(summary["candidate_external_callable_count"], 1526)
         self.assertEqual(summary["default_static_callable_count"], 1113)
         self.assertEqual(summary["verified_feature_callable_count"], 47)
-        self.assertEqual(summary["unprovided_callable_count"], 367)
+        self.assertEqual(summary["unprovided_callable_count"], 366)
         self.assertEqual(
             summary["deferred_resolution_counts"],
             {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
-                "oracle-declared-no-provider": 8,
+                "oracle-declared-no-provider": 7,
                 "planned-provider": 351,
                 "policy-decision-required": 6,
             },
@@ -107,7 +107,7 @@ class HeaderCallableDispositionTests(unittest.TestCase):
             "seqbuf_dump",
             deferred["x86-header-callable-consumer-supplied-v1"]["members"],
         )
-        self.assertIn(
+        self.assertNotIn(
             "tgkill",
             deferred["x86-header-callable-oracle-no-provider-v1"]["members"],
         )

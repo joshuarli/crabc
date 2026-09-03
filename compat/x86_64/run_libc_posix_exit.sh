@@ -68,7 +68,7 @@ dynamic="$work_dir/candidate-dynamic"; relocs="$work_dir/candidate-relocations";
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_posix_exit_probe.c >/dev/null 2>"$trace"
-for header in unistd.h signal.h sys/types.h sys/wait.h sys/syscall.h bits/syscall.h features.h; do
+for header in unistd.h signal.h bits/signal.h sys/types.h sys/wait.h sys/syscall.h bits/syscall.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" \
         || fail "fixture did not use the project $header header"
 done

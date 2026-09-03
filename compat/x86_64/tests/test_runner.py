@@ -37101,6 +37101,37 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         next_arm = dispatcher.index("campaign-family)", campaign_status)
         self.assertNotIn("ensure_image", dispatcher[campaign_status:next_arm])
 
+    def test_signal_wait_aio_poll_runner_traces_match_direct_header_ownership(self) -> None:
+        traces = {
+            "run_signal_header_abi.sh": ("bits/signal.h", None),
+            "run_child_reaping_header_abi.sh": ("bits/signal.h", "sys/types.h"),
+            "run_wait_extensions_header_abi.sh": ("bits/signal.h", "sys/types.h"),
+            "run_aio_error_header_abi.sh": ("bits/signal.h", "sys/types.h"),
+            "run_libc_aio_error.sh": ("bits/signal.h", "sys/types.h"),
+            "run_poll_header_abi.sh": ("bits/poll.h", "sys/types.h"),
+            "run_libc_sleep.sh": ("bits/signal.h", "sys/types.h"),
+            "run_libc_nanosleep.sh": ("bits/signal.h", "sys/types.h"),
+            "run_libc_clock_nanosleep.sh": ("bits/signal.h", "sys/types.h"),
+            "run_libc_thrd_sleep.sh": ("bits/signal.h", "sys/types.h"),
+        }
+        for name, (required_leaf, obsolete_type) in traces.items():
+            text = (ROOT / "compat" / "x86_64" / name).read_text(encoding="utf-8")
+            self.assertIn(required_leaf, text, name)
+            if obsolete_type is not None and name in {
+                "run_aio_error_header_abi.sh",
+                "run_libc_aio_error.sh",
+                "run_libc_sleep.sh",
+                "run_libc_nanosleep.sh",
+                "run_libc_clock_nanosleep.sh",
+                "run_libc_thrd_sleep.sh",
+            }:
+                self.assertNotIn(obsolete_type, text, name)
+
+    def test_epoll_and_signalfd_direct_header_runners_do_not_require_signal_header(self) -> None:
+        for name in ("run_epoll_header_abi.sh", "run_signalfd_header_abi.sh"):
+            text = (ROOT / "compat" / "x86_64" / name).read_text(encoding="utf-8")
+            self.assertNotIn("signal.h", text, name)
+
     def test_routine_c_abi_matrix_dispatches_checked_registry_natively(self) -> None:
         dispatcher = RUNNER.read_text(encoding="utf-8")
 

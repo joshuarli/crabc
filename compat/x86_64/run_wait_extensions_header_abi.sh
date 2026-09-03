@@ -87,8 +87,8 @@ done
     sed -n '1,160p' "$header_trace" >&2
     fail "project GNU C wait-extension header contract drifted"
 }
-for header in features.h sys/wait.h sys/resource.h sys/time.h sys/types.h \
-    bits/alltypes.h; do
+for header in features.h sys/wait.h signal.h sys/resource.h sys/time.h \
+    bits/alltypes.h bits/signal.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "GNU C probe did not use the project <$header>"
 done

@@ -73,7 +73,7 @@ done
     -DCRABC_EXPECT_PSIGNAL \
     -I "$ROOT_DIR/include" -H -fsyntax-only "$C_PROBE" \
     >/dev/null 2>"$header_trace"
-for header in signal.h features.h bits/alltypes.h; do
+for header in signal.h features.h bits/alltypes.h bits/signal.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "C probe did not use project <$header>"
 done

@@ -130,8 +130,8 @@ mkdir "$reference_work" "$candidate_work"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_event_descriptors_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h fcntl.h signal.h stdint.h sys/epoll.h sys/eventfd.h \
-    sys/inotify.h sys/prctl.h sys/syscall.h sys/types.h unistd.h bits/alltypes.h \
+for header in errno.h fcntl.h features.h signal.h stdint.h sys/epoll.h sys/eventfd.h \
+    sys/inotify.h sys/prctl.h sys/syscall.h sys/types.h unistd.h bits/alltypes.h bits/signal.h \
     bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
