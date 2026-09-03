@@ -11,9 +11,10 @@
 // `include/mimalloc/types.h:618-680` (the heap prefix),
 // `include/mimalloc/types.h:690-701` (complete source-ordered TLD fields),
 // `include/mimalloc/types.h:608-758`
-// (arena-page and arena metadata layouts), `src/init.c:15-145` (the
+// (arena-page and arena metadata layouts), `src/init.c:15-145,195-198` (the
 // empty-page, direct-page table, all 75 default queues, detached TLD, and
-// empty-theap initializers), `src/theap.c:228-306,357-369,414-449` (dynamic
+// empty-theap initializers, and main-Heap `memid` / Release identity / heap
+// initialization order), `src/theap.c:228-306,357-369,414-449` (dynamic
 // Theap initialization, canonical cached reference pair, and list detach),
 // `src/arena.c:674-723,870-1037,1240-1282` (per-heap arena-pages
 // acquisition/publication and fresh/release page metadata
@@ -203,6 +204,54 @@ impl Heap {
         }
     }
 
+    /// Records just the kind-only `memid_static` image that pinned
+    /// `mi_heap_main_init_once` assigns at `src/init.c:196` before its
+    /// Release publication of `subproc->heap_main` at line 197.
+    ///
+    /// This is deliberately narrower than `_mi_heap_init`: it neither binds
+    /// a subprocess nor initializes a Heap field, lock, list, arena, or
+    /// thread-local key.  The exclusive mutable borrow prevents safe aliases,
+    /// while the observable bootstrap checks reject an obvious reused Heap
+    /// image without changing it.  The process-static foundation alone owns
+    /// the matching later `initialize_main_static_after_kind_only_memid`.
+    #[must_use = "a refused main-Heap memid preparation must retain the source-static transition"]
+    #[inline]
+    pub(crate) fn prepare_main_static_kind_only_memid(&mut self) -> bool {
+        if !self.is_uninitialized_main_static_image()
+            || self.memid.kind() != MemoryKind::None
+            || self.memid.is_pinned()
+            || self.memid.initially_committed()
+            || self.memid.initially_zero()
+        {
+            return false;
+        }
+        self.memid = MemoryId::static_kind_only();
+        true
+    }
+
+    /// Completes the bounded `_mi_heap_init` shape after
+    /// [`Self::prepare_main_static_kind_only_memid`] has established the
+    /// source `memid_static` image and the owner has Release-published the
+    /// opaque main-Heap identity.
+    ///
+    /// A non-kind-only or reused image is refused without mutation.  This
+    /// method intentionally has no pointer-returning companion: Heap access
+    /// remains owned by the enclosing process-static attachment capability.
+    #[must_use = "a refused main-Heap field initialization must retain the source-static transition"]
+    #[inline]
+    pub(crate) fn initialize_main_static_after_kind_only_memid(
+        &mut self,
+        subprocess: &'static MainSubprocess,
+    ) -> bool {
+        if !self.is_uninitialized_main_static_image()
+            || !self.has_kind_only_static_memid()
+        {
+            return false;
+        }
+        self.initialize_main_static_fields(subprocess);
+        true
+    }
+
     /// Initializes the statically allocated main heap fields used before the
     /// future heap/subprocess list and arena lifecycle exists.
     ///
@@ -219,6 +268,12 @@ impl Heap {
     ) {
         debug_assert!(self.subprocess.is_null());
         debug_assert!(self.theaps.is_null());
+        self.memid = memid;
+        self.initialize_main_static_fields(subprocess);
+    }
+
+    #[inline]
+    fn initialize_main_static_fields(&mut self, subprocess: &'static MainSubprocess) {
         self.subprocess = subprocess.as_ptr();
         // `mi_atomic_increment_relaxed` returns the previous source count;
         // the one process-static main heap observes its initial value zero.
@@ -236,7 +291,39 @@ impl Heap {
         self.os_abandoned_pages_lock = PrivateLock::new();
         self.arena_pages = [const { AtomicPtr::new(null_mut()) }; MAX_ARENAS];
         self.arena_pages_lock = PrivateLock::new();
-        self.memid = memid;
+    }
+
+    #[inline]
+    fn is_uninitialized_main_static_image(&self) -> bool {
+        self.subprocess.is_null()
+            && self.heap_seq == 0
+            && self.next.is_null()
+            && self.prev.is_null()
+            && self.theap_slot == 0
+            && self.exclusive_arena.is_null()
+            && self.numa_node == 0
+            && self.theaps.is_null()
+            && self
+                .abandoned_count
+                .iter()
+                .all(|count| count.load(Ordering::Relaxed) == 0)
+            && self.os_abandoned_pages.is_null()
+            && self
+                .arena_pages
+                .iter()
+                .all(|pages| pages.load(Ordering::Relaxed).is_null())
+    }
+
+    #[inline]
+    fn has_kind_only_static_memid(&self) -> bool {
+        let Some(memory) = self.memid.static_memory() else {
+            return false;
+        };
+        !self.memid.is_pinned()
+            && !self.memid.initially_committed()
+            && !self.memid.initially_zero()
+            && memory.base.is_null()
+            && memory.size == 0
     }
 
     /// Initializes a caller-pinned first-class heap image for one regular

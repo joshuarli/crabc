@@ -8,9 +8,10 @@
 // (`mi_process_subproc_main`, `_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`,
 // `_mi_meta_rezalloc`, and `_mi_meta_is_meta_page`), `include/mimalloc/types.h:651-680`
 // (the bounded `mi_subproc_t` fields), `include/mimalloc/types.h:690-701`
-// (`mi_tld_t`), and `src/init.c:155-157,184-205,236-282`
-// (`mi_process_tld_main`, the detached metadata-Theap publication,
-// `mi_tld_create`, and `mi_tld_free`).
+// (`mi_tld_t`), and `src/init.c:155-157,184-208,216-229,236-282`
+// (`mi_process_tld_main`, the main-Heap `memid` / Release identity /
+// `_mi_heap_init` order, the detached metadata-Theap publication,
+// `_mi_subproc_heap_main`, `mi_tld_create`, and `mi_tld_free`).
 
 //! Bounded main-subprocess thread-registration ownership.
 //!
@@ -23,8 +24,10 @@
 //! relaxed current-thread count. It is not a Rust layout claim for
 //! `mi_subproc_t`: `theap_meta` and `theap_meta_lock` are one-way
 //! identity/private-futex capabilities, not C byte-layout or normal C backing
-//! routes. It supplies no subprocess list, heap, arena, statistics, or public
-//! subprocess API.
+//! routes. It supplies no subprocess list, heap projection, arena, statistics,
+//! or public subprocess API. Its main-Heap slot retains only the canonical
+//! static identity publication from `mi_subproc_t::heap_main`; it is never a
+//! Rust heap accessor.
 //!
 //! A [`ThreadRegistrationTicket`] is the old result of the source relaxed
 //! `thread_total_count` increment. Tickets are consumed even when a later
@@ -45,7 +48,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 use crabc_core::Result as CoreResult;
 
 use crate::lock::{PrivateLock, PrivateLockGuard};
-use crate::types::{LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, ThreadSequence};
+use crate::types::{Heap, LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, ThreadSequence};
 
 const MAIN_TLD_COLD: u8 = 0;
 const MAIN_TLD_CLAIMED: u8 = 1;
@@ -63,6 +66,19 @@ const BOOTSTRAP_STATIC_TICKET_ISSUED: u8 = 2;
 const BOOTSTRAP_STATIC_READY: u8 = 3;
 const BOOTSTRAP_GENERIC_READY: u8 = 4;
 const BOOTSTRAP_RETAINED: u8 = 5;
+
+// `src/init.c:196` assigns the kind-only static memory ID, line 197
+// Release-stores `mi_process_heap_main` in `subproc->heap_main`, and line 198
+// runs `_mi_heap_init`. The C once envelope keeps callers from treating that
+// early pointer as generally usable. Rust first reserves a pointer-free
+// `RESERVED` state so a rejected stale owner cannot mutate a candidate Heap
+// image; it Release-stores the identity and then makes it `PUBLISHING` only
+// after the line-196 memid transition. A finished foundation alone makes that
+// identity ready for comparison.
+const MAIN_HEAP_ABSENT: u8 = 0;
+const MAIN_HEAP_RESERVED: u8 = 1;
+const MAIN_HEAP_PUBLISHING: u8 = 2;
+const MAIN_HEAP_READY: u8 = 3;
 
 /// Cache-aligned backing for source-static `mi_process_tld_main`.
 ///
@@ -90,6 +106,20 @@ impl MainStaticTldSlot {
 pub(crate) struct MainSubprocess {
     thread_count: AtomicUsize,
     thread_total_count: AtomicUsize,
+    /// The one source `subproc->heap_main` identity selected for this
+    /// process-main subprocess.
+    ///
+    /// The pointer is never projected as `&Heap` or `&mut Heap`.  It exists
+    /// solely so the source-static foundation can publish and later compare
+    /// its address-stable canonical Heap slot without creating a general
+    /// subprocess heap API.
+    main_heap: AtomicPtr<Heap>,
+    /// Rust's ready boundary around the source pointer publication above.
+    /// `RESERVED` admits the one-way process owner before it can mutate a
+    /// candidate Heap; `PUBLISHING` preserves C's store-before-initialize
+    /// order while preventing an acquire lookup from treating that early
+    /// identity as a usable ready result.
+    main_heap_state: AtomicU8,
     /// The one source `subproc->theap_meta` identity selected during process
     /// initialization.
     ///
@@ -126,11 +156,97 @@ pub(crate) struct MainSubprocess {
 // after retirement.
 unsafe impl Sync for MainSubprocess {}
 
+/// The bounded visibility of the source process-main Heap identity.
+///
+/// This is an identity-state observation only. It does not expose a Heap
+/// reference, allocation authority, or a replacement for source process-once
+/// policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainHeapPublicationState {
+    Absent,
+    /// An owner has acquired the one-way transition but has not yet recorded
+    /// a Heap identity. No pointer is observable through this state.
+    Reserved,
+    Publishing,
+    Ready,
+    /// An invalid atomic image is retained rather than being normalized or
+    /// overwritten by a later initializer.
+    Retained,
+}
+
+/// Why an acquire-only main-Heap identity lookup did not produce a ready
+/// opaque identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainHeapReadyLookupError {
+    Absent,
+    Reserved,
+    Publishing,
+    Retained,
+}
+
+/// A refused source main-Heap identity transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainHeapPublicationError {
+    Reserved,
+    Publishing,
+    AlreadyReady,
+    ForeignSubprocess,
+    StalePublication,
+}
+
+/// An opaque exact identity for the initialized canonical source main Heap.
+///
+/// It intentionally provides equality comparison only. In particular, this
+/// type exposes neither a raw-pointer getter nor a Heap reference, so it
+/// cannot become a general Rust equivalent of `_mi_subproc_heap_main`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MainHeapReadyIdentity {
+    heap: NonNull<Heap>,
+}
+
+impl MainHeapReadyIdentity {
+    /// Checks an internally held candidate against this opaque source-main
+    /// identity without granting dereference authority for either pointer.
+    #[inline]
+    pub(crate) fn matches(self, heap: NonNull<Heap>) -> bool {
+        core::ptr::eq(self.heap.as_ptr(), heap.as_ptr())
+    }
+}
+
+/// The pointer-free, current-thread-only `Absent -> Reserved` admission for
+/// one source main-Heap transition.
+///
+/// The owner must record `src/init.c:196`'s kind-only `memid` before consuming
+/// this token through `publish_main_heap_identity` for line 197's Release
+/// pointer store. Dropping it deliberately leaves the process image
+/// `Reserved`: Rust must not silently reopen a source-static Heap transition.
+#[must_use = "a reserved source main-Heap transition must publish or retain the process image"]
+pub(crate) struct MainHeapPublicationReservation<'subprocess> {
+    subprocess: &'subprocess MainSubprocess,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+/// The pointer-bearing `Publishing -> Ready` portion of one source main-Heap
+/// transition.
+///
+/// Dropping an unfinished token deliberately leaves the process image in
+/// `Publishing`: Rust must not silently reopen or overwrite the
+/// Release-published source-static Heap identity.
+#[must_use = "a published source main-Heap identity must become ready or retain the process image"]
+pub(crate) struct MainHeapPublication<'subprocess> {
+    subprocess: &'subprocess MainSubprocess,
+    heap: NonNull<Heap>,
+    completed: bool,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
 impl MainSubprocess {
     pub(crate) const fn new() -> Self {
         Self {
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
+            main_heap: AtomicPtr::new(core::ptr::null_mut()),
+            main_heap_state: AtomicU8::new(MAIN_HEAP_ABSENT),
             theap_meta: AtomicPtr::new(core::ptr::null_mut()),
             theap_meta_lock: PrivateLock::new(),
             bootstrap_selection: AtomicU8::new(BOOTSTRAP_OPEN),
@@ -295,6 +411,176 @@ impl MainSubprocess {
     #[inline]
     pub(crate) const fn as_ptr(&self) -> *mut Self {
         core::ptr::from_ref(self).cast_mut()
+    }
+
+    /// Observes whether the canonical source main-Heap identity is absent,
+    /// pointer-free Reserved, being published, or ready. It never returns a
+    /// Heap pointer.
+    #[inline]
+    pub(crate) fn main_heap_publication_state(&self) -> MainHeapPublicationState {
+        match self.main_heap_state.load(Ordering::Acquire) {
+            MAIN_HEAP_ABSENT => MainHeapPublicationState::Absent,
+            MAIN_HEAP_RESERVED => MainHeapPublicationState::Reserved,
+            MAIN_HEAP_PUBLISHING => MainHeapPublicationState::Publishing,
+            MAIN_HEAP_READY => MainHeapPublicationState::Ready,
+            _ => MainHeapPublicationState::Retained,
+        }
+    }
+
+    /// Acquire-loads the ready source main-Heap identity without exposing a
+    /// dereferenceable Heap capability.
+    #[inline]
+    pub(crate) fn ready_main_heap_identity(
+        &self,
+    ) -> Result<MainHeapReadyIdentity, MainHeapReadyLookupError> {
+        match self.main_heap_publication_state() {
+            MainHeapPublicationState::Absent => Err(MainHeapReadyLookupError::Absent),
+            MainHeapPublicationState::Reserved => Err(MainHeapReadyLookupError::Reserved),
+            MainHeapPublicationState::Publishing => Err(MainHeapReadyLookupError::Publishing),
+            MainHeapPublicationState::Retained => Err(MainHeapReadyLookupError::Retained),
+            MainHeapPublicationState::Ready => {
+                let heap = NonNull::new(self.main_heap.load(Ordering::Acquire))
+                    .ok_or(MainHeapReadyLookupError::Retained)?;
+                Ok(MainHeapReadyIdentity { heap })
+            }
+        }
+    }
+
+    /// Checks whether `heap` is exactly the ready canonical source main-Heap
+    /// image. This is comparison-only and grants no Heap projection.
+    #[inline]
+    pub(crate) fn matches_ready_main_heap(&self, heap: NonNull<Heap>) -> bool {
+        match self.ready_main_heap_identity() {
+            Ok(identity) => identity.matches(heap),
+            Err(_) => false,
+        }
+    }
+
+    /// Reserves this subprocess's one `Absent -> Reserved` main-Heap
+    /// transition before the source-adjacent Heap image writes occur.
+    ///
+    /// The reservation deliberately has no pointer yet. This lets a stale
+    /// owner fail before it can alter a candidate static Heap, while a valid
+    /// owner can still preserve the pinned `src/init.c:196` -> `197` order by
+    /// recording the kind-only static `memid` before calling
+    /// [`Self::publish_main_heap_identity`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must own this exact subprocess's selected source-main
+    /// initialization branch and either complete or deliberately retain it.
+    /// Dropping the returned reservation leaves `Reserved` permanently set,
+    /// so an arbitrary internal caller must not use this as a probe or retry
+    /// mechanism.
+    #[inline]
+    pub(crate) unsafe fn begin_main_heap_publication(
+        &self,
+    ) -> Result<MainHeapPublicationReservation<'_>, MainHeapPublicationError> {
+        match self.main_heap_state.compare_exchange(
+            MAIN_HEAP_ABSENT,
+            MAIN_HEAP_RESERVED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(MainHeapPublicationReservation {
+                subprocess: self,
+                _not_send_or_sync: PhantomData,
+            }),
+            Err(MAIN_HEAP_RESERVED) => Err(MainHeapPublicationError::Reserved),
+            Err(MAIN_HEAP_PUBLISHING) => Err(MainHeapPublicationError::Publishing),
+            Err(MAIN_HEAP_READY) => Err(MainHeapPublicationError::AlreadyReady),
+            Err(_) => Err(MainHeapPublicationError::StalePublication),
+        }
+    }
+
+    /// Release-publishes the canonical source main-Heap identity after its
+    /// kind-only static memory ID has been recorded, but before the owner
+    /// completes `_mi_heap_init`'s remaining Heap fields.
+    ///
+    /// This is exactly the `src/init.c:196` -> `197` boundary. The returned
+    /// pointer-bearing token is `Publishing`; callers must not expose a ready
+    /// lookup until `finish_main_heap_publication` follows complete
+    /// `Heap::initialize_main_static_after_kind_only_memid` work.
+    ///
+    /// # Safety
+    ///
+    /// `reservation` must be the one current transition for this exact
+    /// subprocess. `heap` must name its final process-static
+    /// `mi_process_heap_main` analogue, whose address remains valid for the
+    /// process lifetime. Its kind-only `MemoryId::static_kind_only()` image
+    /// must already be installed, and the caller must exclusively own the
+    /// remaining initialization transition. This method never dereferences
+    /// `heap`, and it provides no Heap projection; an incorrect identity
+    /// would nevertheless permanently bind the subprocess to a foreign or
+    /// stale static slot.
+    #[inline]
+    pub(crate) unsafe fn publish_main_heap_identity(
+        &self,
+        reservation: MainHeapPublicationReservation<'_>,
+        heap: NonNull<Heap>,
+    ) -> Result<MainHeapPublication<'_>, MainHeapPublicationError> {
+        if !core::ptr::eq(reservation.subprocess.as_ptr(), self.as_ptr()) {
+            return Err(MainHeapPublicationError::ForeignSubprocess);
+        }
+        if self.main_heap_state.load(Ordering::Acquire) != MAIN_HEAP_RESERVED
+            || !self.main_heap.load(Ordering::Acquire).is_null()
+        {
+            return Err(MainHeapPublicationError::StalePublication);
+        }
+        // Pinned `src/init.c:197` is the first pointer publication. Keep the
+        // Rust-only state in Reserved until this Release store has made the
+        // kind-only line-196 Heap image visible; no ready lookup can project
+        // either state as a Heap reference.
+        self.main_heap.store(heap.as_ptr(), Ordering::Release);
+        self.main_heap_state
+            .store(MAIN_HEAP_PUBLISHING, Ordering::Release);
+        Ok(MainHeapPublication {
+            subprocess: self,
+            heap,
+            completed: false,
+            _not_send_or_sync: PhantomData,
+        })
+    }
+
+    /// Marks a previously published source main-Heap identity ready after its
+    /// full static initialization completes.
+    ///
+    /// # Safety
+    ///
+    /// The token must have come from this exact subprocess, and its Heap must
+    /// be completely initialized in its final static slot before this call.
+    /// The resulting identity remains comparison-only, but a premature ready
+    /// mark would falsely report the source `heap_main` image as initialized.
+    #[inline]
+    pub(crate) unsafe fn finish_main_heap_publication(
+        &self,
+        publication: &mut MainHeapPublication<'_>,
+    ) -> Result<MainHeapReadyIdentity, MainHeapPublicationError> {
+        if publication.completed {
+            return Err(MainHeapPublicationError::StalePublication);
+        }
+        if !core::ptr::eq(publication.subprocess.as_ptr(), self.as_ptr()) {
+            return Err(MainHeapPublicationError::ForeignSubprocess);
+        }
+        let heap = publication.heap;
+        if !core::ptr::eq(
+            self.main_heap.load(Ordering::Acquire),
+            heap.as_ptr(),
+        ) {
+            return Err(MainHeapPublicationError::StalePublication);
+        }
+        match self.main_heap_state.compare_exchange(
+            MAIN_HEAP_PUBLISHING,
+            MAIN_HEAP_READY,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                publication.completed = true;
+                Ok(MainHeapReadyIdentity { heap })
+            }
+            Err(_) => Err(MainHeapPublicationError::StalePublication),
+        }
     }
 
     /// Release-publishes this process's one static detached metadata-Theap
@@ -536,6 +822,19 @@ impl MainStaticBootstrapSelection {
     #[inline]
     pub(crate) fn commit_heap_foundation(&mut self) {
         self.heap_foundation_committed = true;
+    }
+
+    /// Retains the selected static branch after it has irreversibly reserved
+    /// the source main-Heap transition but before a complete foundation
+    /// exists. This is deliberately not `commit_heap_foundation`: no caller
+    /// may issue ticket zero from this failed image, yet Drop must not reopen
+    /// the selector while `heap_main` remains Reserved or Publishing.
+    #[inline]
+    pub(crate) fn retain_after_main_heap_reservation(&mut self) {
+        self.subprocess
+            .bootstrap_selection
+            .store(BOOTSTRAP_RETAINED, Ordering::Release);
+        self.completed = true;
     }
 
     /// Consumes source sequence zero only after the static Heap foundation
@@ -890,5 +1189,186 @@ mod tests {
             .issue_generic_thread_ticket()
             .expect("a pre-foundation selection failure leaves the subprocess cold");
         assert_eq!(generic.sequence().get(), 0);
+    }
+
+    #[test]
+    fn main_heap_reservation_retains_static_selection_before_foundation_commit() {
+        let main = MainSubprocess::test_static_owner();
+        let mut selection = main
+            .reserve_static_bootstrap()
+            .expect("the cold subprocess selects its static branch");
+
+        // SAFETY: this test owns the selected branch and deliberately keeps
+        // its incomplete source main-Heap transition retained.
+        let reservation = unsafe { main.begin_main_heap_publication() }
+            .expect("the selected branch reserves its only main-Heap transition");
+        drop(reservation);
+        selection.retain_after_main_heap_reservation();
+        drop(selection);
+
+        assert_eq!(
+            main.main_heap_publication_state(),
+            MainHeapPublicationState::Reserved
+        );
+        assert!(matches!(
+            unsafe { main.begin_main_heap_publication() },
+            Err(MainHeapPublicationError::Reserved)
+        ));
+        assert!(matches!(
+            main.issue_generic_thread_ticket(),
+            Err(GenericThreadTicketError::BootstrapRetained)
+        ));
+        assert_eq!(main.total_thread_count(), 0);
+    }
+
+    #[test]
+    fn main_heap_identity_publication_is_one_way_and_owner_bound() {
+        let main = MainSubprocess::test_static_owner();
+        let foreign = MainSubprocess::test_static_owner();
+        let heap = std::boxed::Box::leak(std::boxed::Box::new(Heap::bootstrap_empty()));
+
+        assert_eq!(
+            main.main_heap_publication_state(),
+            MainHeapPublicationState::Absent
+        );
+        assert_eq!(
+            main.ready_main_heap_identity(),
+            Err(MainHeapReadyLookupError::Absent)
+        );
+
+        // SAFETY: this test owns the selected source-main transition and
+        // keeps the process image retained if it does not complete it.
+        let reservation = unsafe { main.begin_main_heap_publication() }
+            .expect("the cold source subprocess admits its canonical heap transition");
+        assert_eq!(
+            main.main_heap_publication_state(),
+            MainHeapPublicationState::Reserved
+        );
+        assert_eq!(
+            main.ready_main_heap_identity(),
+            Err(MainHeapReadyLookupError::Reserved)
+        );
+        assert!(
+            heap.prepare_main_static_kind_only_memid(),
+            "the final bootstrap Heap accepts only source kind-only provenance"
+        );
+        let prepared_fields = heap.test_main_static_fields();
+        assert_eq!(prepared_fields.memid.kind(), crate::types::MemoryKind::Static);
+        let prepared_memory = prepared_fields
+            .memid
+            .static_memory()
+            .expect("kind-only static provenance selects the static union");
+        assert!(prepared_memory.base.is_null());
+        assert_eq!(prepared_memory.size, 0);
+        assert!(!prepared_fields.memid.is_pinned());
+        assert!(!prepared_fields.memid.initially_committed());
+        assert!(!prepared_fields.memid.initially_zero());
+        assert_eq!(prepared_fields.heap_seq, 0);
+        assert_eq!(prepared_fields.theap_slot, 0);
+
+        let heap_identity = NonNull::from(&mut *heap);
+        // SAFETY: this leaked test slot represents a process-lifetime static
+        // address, already has line-196 kind-only provenance, and remains
+        // exclusive until its remaining source initialization completes.
+        let mut publication = unsafe {
+            main.publish_main_heap_identity(reservation, heap_identity)
+        }
+        .expect("the reserved subprocess releases its exact canonical Heap identity");
+        assert_eq!(
+            main.main_heap_publication_state(),
+            MainHeapPublicationState::Publishing
+        );
+        assert_eq!(
+            main.ready_main_heap_identity(),
+            Err(MainHeapReadyLookupError::Publishing)
+        );
+
+        // SAFETY: the foreign-owner call is intentionally invalid only at
+        // the identity boundary; it cannot dereference either heap slot.
+        assert_eq!(
+            unsafe { foreign.finish_main_heap_publication(&mut publication) },
+            Err(MainHeapPublicationError::ForeignSubprocess)
+        );
+        assert_eq!(
+            foreign.main_heap_publication_state(),
+            MainHeapPublicationState::Absent,
+            "a foreign completion cannot claim or overwrite its own slot"
+        );
+        assert_eq!(
+            main.main_heap_publication_state(),
+            MainHeapPublicationState::Publishing,
+            "a foreign completion cannot change the source publication"
+        );
+
+        assert!(
+            heap.initialize_main_static_after_kind_only_memid(main),
+            "the remaining source heap initializer preserves prepared provenance"
+        );
+        // SAFETY: the leaked static test image is initialized before the
+        // ready identity becomes visible.
+        let ready = unsafe { main.finish_main_heap_publication(&mut publication) }
+            .expect("the owning subprocess completes its publication");
+        assert!(ready.matches(heap_identity));
+        assert_eq!(
+            main.main_heap_publication_state(),
+            MainHeapPublicationState::Ready
+        );
+        assert_eq!(
+            main.ready_main_heap_identity(),
+            Ok(ready),
+            "an Acquire lookup retains the exact ready identity"
+        );
+
+        // SAFETY: this is a deliberately stale completion token. It owns no
+        // dereference capability and must not alter the ready publication.
+        assert_eq!(
+            unsafe { main.finish_main_heap_publication(&mut publication) },
+            Err(MainHeapPublicationError::StalePublication)
+        );
+        // SAFETY: a second reservation must not overwrite the already-ready
+        // source identity.
+        assert!(matches!(
+            unsafe { main.begin_main_heap_publication() },
+            Err(MainHeapPublicationError::AlreadyReady)
+        ));
+        assert_eq!(main.ready_main_heap_identity(), Ok(ready));
+    }
+
+    #[test]
+    fn dropping_unfinished_main_heap_publication_retains_publishing() {
+        let main = MainSubprocess::test_static_owner();
+        let heap = std::boxed::Box::leak(std::boxed::Box::new(Heap::bootstrap_empty()));
+
+        // SAFETY: this test exclusively owns the selected main-Heap branch
+        // and deliberately verifies its retained incomplete outcome.
+        let reservation = unsafe { main.begin_main_heap_publication() }
+            .expect("the cold subprocess reserves its only main-Heap transition");
+        assert!(heap.prepare_main_static_kind_only_memid());
+        let heap_identity = NonNull::from(&mut *heap);
+        // SAFETY: the leaked process-lifetime test slot has the required
+        // kind-only memid before its exact identity is Release-published.
+        let publication = unsafe { main.publish_main_heap_identity(reservation, heap_identity) }
+            .expect("the reserved subprocess publishes the exact test identity");
+        drop(publication);
+
+        assert_eq!(
+            main.main_heap_publication_state(),
+            MainHeapPublicationState::Publishing,
+            "dropping a pointer-bearing publication cannot reopen or erase it"
+        );
+        assert_eq!(
+            main.ready_main_heap_identity(),
+            Err(MainHeapReadyLookupError::Publishing),
+            "an unfinished published identity never becomes a ready Heap capability"
+        );
+        // SAFETY: this is deliberately a second source-main admission attempt
+        // after the original token was dropped retained.
+        assert!(
+            matches!(
+                unsafe { main.begin_main_heap_publication() },
+                Err(MainHeapPublicationError::Publishing)
+            ),
+            "a retained publication rejects a second owner without mutation"
+        );
     }
 }

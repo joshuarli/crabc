@@ -4,8 +4,9 @@
 // `LICENSE` at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/init.c:151-157,305-360,377-421`
-// (including `mi_thread_theaps_done`) and `src/init.c:448-481`
+// Source map: pinned mimalloc v3.5.0 `src/init.c:151-157,184-198,305-360,377-421`
+// (including the `mi_process_heap_main.memid` -> Release `heap_main` ->
+// `_mi_heap_init` ordering and `mi_thread_theaps_done`) and `src/init.c:448-481`
 // (`_mi_thread_done` root/teardown call order), `src/theap.c:228-306,414-449`
 // (including `_mi_tld_detach_theaps`), `src/heap.c:37-42,103-126`,
 // `src/threadlocal.c:205-214`, and `include/mimalloc/types.h:560-639,690-701`.
@@ -47,9 +48,9 @@ use crate::owned_tls_key_registry::{
     OwnedThreadLocalKeyError, OwnedThreadLocalKeyLease, OwnedThreadLocalKeyRegistry,
 };
 use crate::subproc::{
-    MainStaticBootstrapSelection, MainStaticBootstrapSelectionError,
-    MainStaticTldError, MainStaticThreadLocalData, MainSubprocess,
-    ThreadRegistrationLease,
+    MainHeapPublicationError, MainStaticBootstrapSelection,
+    MainStaticBootstrapSelectionError, MainStaticTldError,
+    MainStaticThreadLocalData, MainSubprocess, ThreadRegistrationLease,
 };
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::MemoryConfig;
@@ -114,11 +115,15 @@ impl MainStaticTheapSlot {
 /// Address-stable state for the one process-static main heap/theap pair.
 ///
 /// Its two independently cache-aligned image fields are slots within this one
-/// Rust process-static owner, rather than separate Rust/source statics. The
-/// atomic state first publishes the static Heap alone, then admits the unique
-/// non-Send ticket-zero thread attachment. This preserves the source order in
-/// which `mi_heap_main_init_once` precedes `_mi_page_map_init` and only then
-/// `_mi_thread_init_with_heap` projects the static TLD/Theap images.
+/// Rust process-static owner, rather than separate Rust/source statics. During
+/// its private `HEAP_INITIALIZING` phase, the matching `MainSubprocess` first
+/// reserves the Rust-only pointer-free state, then the Heap records kind-only
+/// static provenance, then the subprocess Release-publishes only the
+/// canonical Heap identity. After the remaining Heap fields initialize, both
+/// owners reach their ready states before this storage admits the unique
+/// non-Send ticket-zero thread attachment. This preserves the source
+/// `src/init.c:196` -> `197` -> `198` order before `_mi_page_map_init` and
+/// only then `_mi_thread_init_with_heap` projects the static TLD/Theap images.
 pub(crate) struct MainStaticAttachmentStorage {
     state: AtomicU8,
     heap: MainStaticHeapSlot,
@@ -196,6 +201,25 @@ impl MainStaticAttachmentStorage {
             })
     }
 
+    /// Reopens the storage only when the subprocess refused the main-Heap
+    /// reservation before this claim changed its Heap image. A stale source
+    /// identity admission is therefore a non-mutating pre-foundation result
+    /// rather than a reason to retain a fresh static slot in
+    /// `HEAP_INITIALIZING`.
+    #[inline]
+    fn release_unstarted_heap_foundation_claim(&self) {
+        let released = self
+            .state
+            .compare_exchange(
+                HEAP_INITIALIZING,
+                COLD,
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .is_ok();
+        debug_assert!(released, "only an untouched foundation claim may reopen COLD");
+    }
+
     #[inline]
     fn claim_ready_heap_for_initial_thread(&self) -> Result<(), MainStaticTheapError> {
         self.state
@@ -229,6 +253,21 @@ impl MainStaticAttachmentStorage {
     #[inline]
     fn state_is_heap_ready(&self) -> bool {
         self.state.load(Ordering::Acquire) == HEAP_READY
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_state_is_cold(&self) -> bool {
+        self.state.load(Ordering::Acquire) == COLD
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_heap_memory_id(&self) -> MemoryId {
+        // SAFETY: focused tests call this only while the static slot is COLD
+        // or while their one foundation owner serializes the image; it creates
+        // no mutable Heap projection.
+        unsafe { (&*self.heap.image.get()).test_main_static_fields().memid }
     }
 
     #[inline]
@@ -320,6 +359,13 @@ impl MainStaticAttachmentStorage {
 pub(crate) enum MainStaticHeapFoundationError {
     /// The selected static bootstrap belongs to another subprocess identity.
     SubprocessMismatch,
+    /// The selected static slot was not the untouched bootstrap image needed
+    /// for the bounded source `memid_static` preparation or remaining
+    /// `_mi_heap_init` fields.
+    HeapPreparation,
+    /// The canonical source `subproc->heap_main` identity could not enter its
+    /// bounded absent -> reserved -> publishing -> ready transition.
+    MainHeapPublication(MainHeapPublicationError),
     Initializing,
     AlreadyInitialized,
     TornDown,
@@ -344,6 +390,35 @@ impl MainStaticHeapFoundation {
         subprocess: &'static MainSubprocess,
         selection: &mut MainStaticBootstrapSelection,
     ) -> Result<Self, MainStaticHeapFoundationError> {
+        Self::initialize_with_publishing_observer(storage, subprocess, selection, |_| {})
+    }
+
+    /// Test-only observation of the source-order interval after the canonical
+    /// static Heap receives its kind-only `memid` and `subproc->heap_main` is
+    /// Release-published, but before `_mi_heap_init` initializes its remaining
+    /// fields.
+    #[cfg(test)]
+    fn initialize_with_test_publishing_observer<F>(
+        storage: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        selection: &mut MainStaticBootstrapSelection,
+        observer: F,
+    ) -> Result<Self, MainStaticHeapFoundationError>
+    where
+        F: FnOnce(&Heap),
+    {
+        Self::initialize_with_publishing_observer(storage, subprocess, selection, observer)
+    }
+
+    fn initialize_with_publishing_observer<F>(
+        storage: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        selection: &mut MainStaticBootstrapSelection,
+        observer: F,
+    ) -> Result<Self, MainStaticHeapFoundationError>
+    where
+        F: FnOnce(&Heap),
+    {
         if !core::ptr::eq(selection.subprocess().as_ptr(), subprocess.as_ptr()) {
             return Err(MainStaticHeapFoundationError::SubprocessMismatch);
         }
@@ -351,10 +426,53 @@ impl MainStaticHeapFoundation {
         // SAFETY: the successful state transition grants the sole mutable
         // projection of the final static Heap before any root or TLD exists.
         let heap = unsafe { storage.heap_mut_for_foundation() };
-        // `mi_heap_main_init_once` uses `_mi_memid_create(MI_MEM_STATIC)`,
-        // not `_mi_memid_create_static`: source heap provenance is kind-only
-        // with a zero union/flags.
-        heap.initialize_main_static(subprocess, MemoryId::static_kind_only());
+        // Reserve the one-way subprocess state before touching `heap`: a
+        // rejected stale identity must leave this fresh static slot unchanged
+        // so it can return to COLD. The reservation itself stores no Heap
+        // pointer and keeps the source selector terminal on every later error.
+        let reservation = match unsafe { subprocess.begin_main_heap_publication() } {
+            Ok(publication) => publication,
+            Err(error) => {
+                storage.release_unstarted_heap_foundation_claim();
+                return Err(MainStaticHeapFoundationError::MainHeapPublication(error));
+            }
+        };
+        if !heap.prepare_main_static_kind_only_memid() {
+            selection.retain_after_main_heap_reservation();
+            storage.mark_poisoned();
+            return Err(MainStaticHeapFoundationError::HeapPreparation);
+        }
+        // SAFETY: `storage` owns this final process-static Heap slot, which
+        // now has exactly `src/init.c:196`'s kind-only static memory ID. The
+        // matching selected bootstrap keeps this subprocess's source-main
+        // branch exclusive until it either completes or retains.
+        let mut publication = match unsafe {
+            subprocess.publish_main_heap_identity(reservation, NonNull::from(&mut *heap))
+        } {
+            Ok(publication) => publication,
+            Err(error) => {
+                selection.retain_after_main_heap_reservation();
+                storage.mark_poisoned();
+                return Err(MainStaticHeapFoundationError::MainHeapPublication(error));
+            }
+        };
+        // This is deliberately after kind-only memid preparation but before
+        // the remaining Heap initialization: it mirrors `src/init.c:196-198`
+        // while the opaque subprocess lookup still reports only Publishing.
+        observer(&*heap);
+        if !heap.initialize_main_static_after_kind_only_memid(subprocess) {
+            selection.retain_after_main_heap_reservation();
+            storage.mark_poisoned();
+            return Err(MainStaticHeapFoundationError::HeapPreparation);
+        }
+        // SAFETY: the exact process-static slot above is now fully
+        // initialized and remains address-stable for the process lifetime.
+        // The ready transition returns only an opaque comparison identity.
+        if let Err(error) = unsafe { subprocess.finish_main_heap_publication(&mut publication) } {
+            selection.retain_after_main_heap_reservation();
+            storage.mark_poisoned();
+            return Err(MainStaticHeapFoundationError::MainHeapPublication(error));
+        }
         storage.mark_heap_ready();
         selection.commit_heap_foundation();
         Ok(Self { storage, subprocess })
@@ -3071,6 +3189,117 @@ mod tests {
         })
         .join()
         .expect("heap-foundation test thread completes");
+    }
+
+    #[test]
+    fn static_heap_foundation_makes_the_canonical_main_heap_identity_ready_last() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let foreign = MainSubprocess::test_static_owner();
+            let mut selection = subprocess
+                .reserve_static_bootstrap()
+                .expect("the cold subprocess selects the static source branch");
+
+            assert_eq!(
+                subprocess.main_heap_publication_state(),
+                crate::subproc::MainHeapPublicationState::Absent
+            );
+            assert!(
+                matches!(
+                    MainStaticHeapFoundation::initialize(storage, foreign, &mut selection),
+                    Err(MainStaticHeapFoundationError::SubprocessMismatch)
+                ),
+                "a foreign subprocess fails before the static slot or selected branch changes"
+            );
+            assert!(storage.test_state_is_cold());
+            assert_eq!(
+                subprocess.ready_main_heap_identity(),
+                Err(crate::subproc::MainHeapReadyLookupError::Absent)
+            );
+            assert_eq!(
+                foreign.ready_main_heap_identity(),
+                Err(crate::subproc::MainHeapReadyLookupError::Absent)
+            );
+            let foundation = MainStaticHeapFoundation::initialize_with_test_publishing_observer(
+                storage,
+                subprocess,
+                &mut selection,
+                |heap| {
+                    assert_eq!(
+                        subprocess.main_heap_publication_state(),
+                        crate::subproc::MainHeapPublicationState::Publishing,
+                        "the source pointer is visible only as an unusable publishing identity"
+                    );
+                    assert_eq!(
+                        subprocess.ready_main_heap_identity(),
+                        Err(crate::subproc::MainHeapReadyLookupError::Publishing)
+                    );
+                    let fields = heap.test_main_static_fields();
+                    assert_eq!(
+                        fields.memid.kind(),
+                        MemoryKind::Static,
+                        "the source assigns kind-only static provenance before publishing heap_main"
+                    );
+                    let static_memory = fields
+                        .memid
+                        .static_memory()
+                        .expect("kind-only source provenance selects the static union");
+                    assert!(static_memory.base.is_null());
+                    assert_eq!(static_memory.size, 0);
+                    assert!(!fields.memid.is_pinned());
+                    assert!(!fields.memid.initially_committed());
+                    assert!(!fields.memid.initially_zero());
+                    assert_eq!(fields.heap_seq, 0);
+                    assert_eq!(fields.theap_slot, 0);
+                    assert_eq!(fields.numa_node, 0);
+                    assert!(fields.theaps_empty);
+                    assert_eq!(subprocess.total_thread_count(), 0);
+                    assert_eq!(subprocess.live_thread_count(), 0);
+                },
+            )
+            .expect("the final static Heap slot publishes for this exact subprocess");
+
+            assert!(foundation.test_heap_is_initialized());
+            let canonical_heap = NonNull::new(storage.heap.image.get())
+                .expect("the process-static Heap slot has a fixed address");
+            let ready = subprocess
+                .ready_main_heap_identity()
+                .expect("the canonical main Heap identity becomes ready after initialization");
+            assert!(ready.matches(canonical_heap));
+            assert!(subprocess.matches_ready_main_heap(canonical_heap));
+            assert_eq!(
+                subprocess.ready_main_heap_identity(),
+                Ok(ready),
+                "repeated ready lookup is the same opaque exact identity"
+            );
+
+            let stale_storage = MainStaticAttachmentStorage::test_static_owner();
+            assert!(
+                matches!(
+                    MainStaticHeapFoundation::initialize(
+                        stale_storage,
+                        subprocess,
+                        &mut selection,
+                    ),
+                    Err(MainStaticHeapFoundationError::MainHeapPublication(
+                        crate::subproc::MainHeapPublicationError::AlreadyReady
+                    ))
+                ),
+                "a stale second static slot cannot replace the canonical identity"
+            );
+            assert!(
+                stale_storage.test_state_is_cold(),
+                "the rejected stale slot remains reusable rather than retaining initialization"
+            );
+            assert_eq!(
+                stale_storage.test_heap_memory_id().kind(),
+                MemoryKind::None,
+                "a rejected stale admission returns COLD without changing its Heap memid"
+            );
+            assert!(subprocess.matches_ready_main_heap(canonical_heap));
+        })
+        .join()
+        .expect("main-heap publication test thread completes");
     }
 
     #[test]
