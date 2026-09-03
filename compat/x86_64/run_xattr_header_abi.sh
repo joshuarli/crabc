@@ -193,6 +193,12 @@ check_trace() {
     fi
     trace_has_header "$trace" "$root" sys/xattr.h ||
         fail "$profile $tree trace omitted ${root}/sys/xattr.h"
+    trace_has_header "$trace" "$root" bits/alltypes.h ||
+        fail "$profile $tree trace omitted ${root}/bits/alltypes.h"
+    if [ "$tree" = candidate ] &&
+        trace_has_header "$trace" "$PROJECT_INCLUDE" sys/types.h; then
+        fail "$profile candidate xattr header closure retained broad project sys/types.h"
+    fi
 }
 
 check_cxx_symbols() {

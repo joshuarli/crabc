@@ -3553,14 +3553,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 727,
-                "mismatch": 553,
+                "matched": 734,
+                "mismatch": 546,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 15145, "reference_only": 8758},
+            {"candidate_only": 14060, "reference_only": 8751},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3580,8 +3580,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 649,
-                "mismatch": 631,
+                "matched": 656,
+                "mismatch": 624,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4714,8 +4714,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "553 current comparable declaration-or-macro identity mismatch rows",
-            "727 matched identity rows",
+            "546 current comparable declaration-or-macro identity mismatch rows",
+            "734 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
@@ -4737,6 +4737,32 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ledger.LedgerError, "dedicated native command"):
             ledger.validate_ledger(changed)
+
+    def test_all_header_callable_visibility_is_a_reviewable_non_abi_artifact(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 14
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "all-header-callable-feature-visibility"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh header-callable-visibility-matrix"},
+        )
+        for phrase in (
+            "still-planned `libc.headers-layouts`",
+            "1,337-row direct-public-include C11/C++17 matrix",
+            "184 current comparable callable name/class mismatch rows",
+            "one current oracle-not-applicable `aio.h` row",
+            "56 project-only header/profile rows",
+            "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
 
     def test_all_header_prototype_layout_matrix_is_a_reviewable_non_abi_artifact(self) -> None:
         data = self.data()
@@ -4771,7 +4797,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "631 current comparable prototype or named source-form mismatch rows",
+            "624 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",
