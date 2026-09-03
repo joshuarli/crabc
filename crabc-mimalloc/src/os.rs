@@ -1751,11 +1751,11 @@ fn os_numa_node_count_with_raw(
 /// Returns the fixed allocator-facing current NUMA node.
 ///
 /// This maps pinned `src/os.c:_mi_os_numa_node` and its private
-/// `mi_os_numa_node_get` helper without options, diagnostics, arena placement,
-/// or a caller integration. It keeps the raw [`numa_node`] observation intact
-/// for the M1 trace and applies the source's cached-single-node shortcut,
-/// strict `INT_MAX` current-node boundary, and modulo normalization only here.
-#[allow(dead_code)]
+/// `mi_os_numa_node_get` helper without options, diagnostics, or arena
+/// placement. It keeps the raw [`numa_node`] observation intact for the M1
+/// trace; the selected static ticket-zero caller consumes this wrapper and its
+/// cached-single-node shortcut, strict `INT_MAX` current-node boundary, and
+/// modulo normalization.
 #[inline]
 pub(crate) fn os_numa_node() -> usize {
     os_numa_node_with_raw(&OS_NUMA_NODE_COUNT, numa_node_count, numa_node)
@@ -1789,6 +1789,21 @@ fn os_numa_node_with_raw(
         current %= count;
     }
     current
+}
+
+/// Test-only local-cache entry for an integration witness.
+///
+/// Production callers always use [`os_numa_node`] and its process cache. This
+/// adapter lets the selected static-TLD regression exercise source-shaped raw
+/// inputs without resetting or polluting that global topology state.
+#[cfg(test)]
+#[inline]
+pub(crate) fn test_os_numa_node_with_raw(
+    cache: &AtomicUsize,
+    raw_count: impl FnMut() -> usize,
+    raw_current: impl FnMut() -> usize,
+) -> usize {
+    os_numa_node_with_raw(cache, raw_count, raw_current)
 }
 
 /// Yields the calling task through Linux's direct scheduler primitive.

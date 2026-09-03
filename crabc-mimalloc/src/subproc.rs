@@ -706,11 +706,26 @@ impl MainSubprocess {
         std::boxed::Box::leak(std::boxed::Box::new(Self::new()))
     }
 
-    fn initialize_main_tld(
+    /// Observes the test-only state between static-provenance formation and
+    /// complete image publication without exposing the partial TLD image.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_main_tld_is_claimed(&self) -> bool {
+        self.main_tld_state.load(Ordering::Acquire) == MAIN_TLD_CLAIMED
+    }
+
+    /// Initializes the static TLD image after its concrete static provenance
+    /// exists, but before the complete image is written and published.
+    ///
+    /// The source's `mi_tld_create` constructs `MI_MEM_STATIC` provenance
+    /// before `mi_tld_init` obtains the live NUMA node. Rust installs its TLD
+    /// as one unobservable complete image rather than replaying C's individual
+    /// field writes, so this preserves only that bounded observation point.
+    fn initialize_main_tld_with_numa_source(
         &'static self,
         sequence: ThreadSequence,
         thread: LiveThreadId,
-        numa_node: i32,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
     ) -> Result<MainStaticThreadLocalData, MainStaticTldError> {
         if sequence.get() != 0 {
             return Err(MainStaticTldError::NotFirstTicket);
@@ -730,6 +745,7 @@ impl MainSubprocess {
 
         let tld = self.main_tld_ptr();
         let memid = MemoryId::static_allocation(tld.cast(), size_of::<ThreadLocalData>());
+        let numa_node = numa_node_source(memid);
         // SAFETY: sequence zero is unique for this process-main identity and
         // the state transition above grants the only mutable initialization
         // authority over this final static slot. This writes the complete
@@ -996,9 +1012,24 @@ impl ThreadRegistrationTicket {
         thread: LiveThreadId,
         numa_node: i32,
     ) -> Result<(MainStaticThreadLocalData, ThreadRegistrationLease), MainStaticTldError> {
+        self.initialize_and_activate_first_main_tld_with_numa_source(thread, move |_| numa_node)
+    }
+
+    /// Initializes ticket zero from a private NUMA source after static
+    /// provenance is available and before the final TLD image is published.
+    ///
+    /// The source is invoked synchronously and is never retained as allocator
+    /// policy or caller-configurable state. The existing numeric entry point
+    /// remains the raw-input route used by generic/later TLD construction.
+    #[inline]
+    pub(crate) fn initialize_and_activate_first_main_tld_with_numa_source(
+        self,
+        thread: LiveThreadId,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
+    ) -> Result<(MainStaticThreadLocalData, ThreadRegistrationLease), MainStaticTldError> {
         let mut storage = self
             .subprocess
-            .initialize_main_tld(self.sequence, thread, numa_node)?;
+            .initialize_main_tld_with_numa_source(self.sequence, thread, numa_node_source)?;
         debug_assert!(storage
             .current_mut()
             .matches_subprocess_attached_no_theap_lifecycle(

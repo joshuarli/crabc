@@ -729,8 +729,6 @@ impl MainStaticTheapAttachment {
         if !roots_are_pristine_for_main_static_attachment() {
             return Err(MainStaticTheapError::RootsNotPristine);
         }
-        i32::try_from(crate::os::numa_node())
-            .map_err(|_| MainStaticTheapError::InvalidCurrentThread)?;
         Ok(())
     }
 
@@ -772,7 +770,36 @@ impl MainStaticTheapAttachment {
     /// aliases to the static images.
     pub(crate) unsafe fn begin_after_heap_foundation(
         foundation: MainStaticHeapFoundation,
+        selection: MainStaticBootstrapSelection,
+    ) -> Result<Self, MainStaticTheapError> {
+        // SAFETY: this forwards the unchanged caller-owned source foundation
+        // and ticket-zero selector to the shared attachment transition.
+        unsafe {
+            Self::begin_after_heap_foundation_with_numa_source(
+                foundation,
+                selection,
+                |_| {
+                    let numa_node = crate::os::os_numa_node();
+                    // The fixed `_mi_os_numa_node` wrapper returns strictly
+                    // below `INT_MAX`: a cached one-node result is zero, and
+                    // every multi-node result is reduced below its accepted
+                    // `INT_MAX` count. Preserve that source invariant rather
+                    // than introducing a post-ticket fallible Rust path.
+                    debug_assert!(numa_node < i32::MAX as usize);
+                    numa_node as i32
+                },
+            )
+        }
+    }
+
+    /// Shares the selected static attachment with a synchronous private NUMA
+    /// source. It carries the source into `MainSubprocess` unchanged so that
+    /// static `MemoryId` formation precedes the observation; it never stores
+    /// a callback or creates a configurable allocator policy.
+    unsafe fn begin_after_heap_foundation_with_numa_source(
+        foundation: MainStaticHeapFoundation,
         mut selection: MainStaticBootstrapSelection,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
     ) -> Result<Self, MainStaticTheapError> {
         if !foundation.matches_selection(&selection) {
             return Err(MainStaticTheapError::BootstrapSelection(
@@ -783,8 +810,6 @@ impl MainStaticTheapAttachment {
         let storage = foundation.storage();
         let subprocess = foundation.subprocess();
         let thread = current_thread_identity().ok_or(MainStaticTheapError::InvalidCurrentThread)?;
-        let numa = i32::try_from(crate::os::numa_node())
-            .map_err(|_| MainStaticTheapError::InvalidCurrentThread)?;
         storage.claim_ready_heap_for_initial_thread()?;
 
         let ticket = selection.issue_first_ticket().map_err(|error| {
@@ -797,7 +822,7 @@ impl MainStaticTheapAttachment {
             }
         })?;
         let (mut tld, registration) = ticket
-            .initialize_and_activate_first_main_tld(thread, numa)
+            .initialize_and_activate_first_main_tld_with_numa_source(thread, numa_node_source)
             .map_err(|error| {
                 storage.mark_poisoned();
                 MainStaticTheapError::MainStaticTld(error)
@@ -3010,10 +3035,12 @@ mod tests {
     };
     use crate::meta::MetaAllocator;
     use crate::owned_tls_key_registry::OwnedThreadLocalKeyRegistry;
-    use crate::os::{MemoryConfig, PageSize, fault, numa_node};
+    use crate::os::{MemoryConfig, PageSize, fault};
     use crate::tld::ThreadLocalDataOwner;
     use crate::types::{HeapTheapListError, MemoryKind};
+    use core::mem::size_of;
     use core::pin::Pin;
+    use core::sync::atomic::{AtomicUsize, Ordering};
     use std::boxed::Box;
     use std::thread;
 
@@ -3321,7 +3348,10 @@ mod tests {
                 let tld = owner.tld().expect("main TLD remains current");
                 assert_eq!(tld.thread_id(), identity.get());
                 assert_eq!(tld.thread_sequence().get(), 0);
-                assert_eq!(tld.numa_node(), i32::try_from(numa_node()).unwrap());
+                assert!(
+                    (0..i32::MAX).contains(&tld.numa_node()),
+                    "the fixed OS NUMA wrapper supplies a source-range node",
+                );
                 assert_eq!(tld.memory_id().kind(), MemoryKind::Static);
                 assert!(tld.memory_id().is_pinned());
             }
@@ -3381,6 +3411,115 @@ mod tests {
         })
         .join()
         .expect("static attachment test thread completes");
+    }
+
+    #[test]
+    fn ticket_zero_static_tld_uses_fixed_numa_wrapper_after_static_memid() {
+        fn attach_with_raw_numa(raw_count: usize, expected_numa: i32) {
+            thread::spawn(move || {
+                let (storage, subprocess) = fixture();
+                let mut selection = subprocess
+                    .reserve_static_bootstrap()
+                    .expect("the cold subprocess selects the static source branch");
+                let foundation = MainStaticHeapFoundation::initialize(
+                    storage,
+                    subprocess,
+                    &mut selection,
+                )
+                .expect("the static Heap foundation precedes the selected TLD");
+                let cache = AtomicUsize::new(0);
+                let raw_count_calls = AtomicUsize::new(0);
+                let raw_current_calls = AtomicUsize::new(0);
+                let fault = fault::install(fault::Plan::at(
+                    fault::Point::Cpu,
+                    1,
+                    crabc_core::Errno::NOMEM,
+                ));
+
+                let mut owner = unsafe {
+                    MainStaticTheapAttachment::begin_after_heap_foundation_with_numa_source(
+                        foundation,
+                        selection,
+                        |memid| {
+                            assert_eq!(memid.kind(), MemoryKind::Static);
+                            assert!(memid.is_pinned());
+                            assert!(memid.initially_committed());
+                            assert!(!memid.initially_zero());
+                            let static_memory = memid
+                                .static_memory()
+                                .expect("the selected TLD source forms static provenance first");
+                            assert!(!static_memory.base.is_null());
+                            assert_eq!(static_memory.size, size_of::<ThreadLocalData>());
+                            assert!(
+                                subprocess.test_main_tld_is_claimed(),
+                                "the static slot remains unobservable until its complete image publishes",
+                            );
+                            assert_eq!(
+                                subprocess.total_thread_count(),
+                                1,
+                                "the source ticket is issued before the NUMA observation",
+                            );
+                            assert_eq!(
+                                subprocess.live_thread_count(),
+                                0,
+                                "the complete TLD image is not published while NUMA is observed",
+                            );
+                            assert!(
+                                roots_are_pristine_for_main_static_attachment(),
+                                "the source observation precedes default and fast-root publication",
+                            );
+                            crate::os::test_os_numa_node_with_raw(
+                                &cache,
+                                || {
+                                    raw_count_calls.fetch_add(1, Ordering::Relaxed);
+                                    raw_count
+                                },
+                                || {
+                                    raw_current_calls.fetch_add(1, Ordering::Relaxed);
+                                    if raw_count == 3 {
+                                        8
+                                    } else {
+                                        panic!("a normalized single-node count must not probe the current node")
+                                    }
+                                },
+                            ) as i32
+                        },
+                    )
+                }
+                .expect("the selected static attachment accepts the fixed NUMA result");
+
+                assert_eq!(
+                    owner.tld().expect("the static TLD remains current").numa_node(),
+                    expected_numa,
+                );
+                assert_eq!(raw_count_calls.load(Ordering::Relaxed), 1);
+                assert_eq!(
+                    raw_current_calls.load(Ordering::Relaxed),
+                    if raw_count == 3 { 1 } else { 0 },
+                );
+                assert_eq!(
+                    cache.load(Ordering::Acquire),
+                    if raw_count == 3 { 3 } else { 1 },
+                );
+                assert_eq!(subprocess.total_thread_count(), 1);
+                assert_eq!(subprocess.live_thread_count(), 1);
+                owner
+                    .teardown()
+                    .expect("the isolated static attachment tears down normally");
+                assert!(roots_are_pristine_for_main_static_attachment());
+                assert_eq!(
+                    fault.observed(),
+                    0,
+                    "the injected local wrapper leaves no raw CPU probe outside its closures",
+                );
+            })
+            .join()
+            .expect("the isolated static NUMA attachment test completes");
+        }
+
+        attach_with_raw_numa(3, 2);
+        attach_with_raw_numa(0, 0);
+        attach_with_raw_numa(i32::MAX as usize + 1, 0);
     }
 
     #[test]
