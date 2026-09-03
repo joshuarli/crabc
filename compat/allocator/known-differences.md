@@ -633,23 +633,38 @@ assertion-invalid input, not C/Rust invalid-input parity.
 ### `CRABC-MI-LINUX-REUSE-NOOP` — accepted private VM-substrate safety boundary
 
 - **Upstream/Rust:** pinned `src/os.c:643-653` and
-  `src/prim/unix/prim.c:536-542`, represented by `os::Mapping::reuse` and
-  `ReuseOutcome::NoOp`.
-- **Category:** Linux/AArch64 private M2 reuse primitive. It has no public C
-  ABI effect and is not a C/Rust differential.
+  `src/prim/unix/prim.c:536-542`, represented by `os::Mapping::reuse`,
+  `os::reuse_arena_range`, and `ReuseOutcome::NoOp`; the sole selected caller
+  is pinned `src/arena.c:266-307` `mi_arena_try_alloc_at`.
+- **Category:** Linux/AArch64 private M2 reuse primitive plus one non-owning
+  external-arena caller. It has no public C ABI effect and is not a C/Rust
+  differential.
 - **Difference:** after the source's conservative page normalization, Linux
   `_mi_prim_reuse` returns success without a VM operation. Rust represents that
   complete contained-range outcome explicitly as `NoOp`; an empty conservative
   range returns `None`, while invalid or closed `Mapping` input returns typed
   `EINVAL` before a VM edge. C's void wrapper assumes a valid raw mapping, so
   the checked errors are a Rust safety strengthening rather than error parity.
+  Separately, after the selected arena binned free claim succeeds and the
+  ordinary committed bitmap reports its exact span fully set,
+  `ArenaView::try_claim_suitable_slices` invokes `reuse_arena_range` before
+  `MemoryId::initially_committed`. That helper accepts a prevalidated aligned
+  span, neither a `Mapping` nor a release capability, and therefore leaves the
+  external backing owner unchanged.
 - **Evidence:**
   `os::tests::reuse_is_a_contained_range_noop_on_linux` proves the empty and
-  complete range outcomes, no fault seam use, unchanged mapping provenance,
-  continued page access, and invalid/closed-input rejection.
-- **Decision/removal:** accepted for this isolated Linux primitive. It does
-  not add an allocator caller, Apple `MADV_FREE_REUSE`, hints, huge pages,
-  NUMA/options policy, statistics, diagnostics, or reuse integration.
+  complete Mapping-range outcomes, no fault seam use, unchanged mapping
+  provenance, continued page access, and invalid/closed-input rejection.
+  `arena::tests::fully_committed_arena_claim_invokes_linux_reuse_for_its_exact_span`
+  observes one matching exact two-slice reuse call. The source-mapped call
+  site, rather than the witness, establishes that this call precedes the
+  claimed `MemoryId`'s initially-committed write.
+- **Decision/removal:** accepted for this isolated Linux primitive and one
+  source-ordered caller. It does not establish partial/fresh commit behavior,
+  another caller, reuse search/policy, Apple `MADV_FREE_REUSE`, hints, huge
+  pages, NUMA/options policy, statistics, diagnostics, a syscall or
+  fault-injection edge, reuse-state mutation, Mapping transfer, late failure,
+  C/Rust error parity, or allocator integration.
 
 ### `CRABC-MI-ORDINARY-BITMAP-HIGHEST-SET-STALE-CHUNKMAP` — accepted checked observer boundary
 

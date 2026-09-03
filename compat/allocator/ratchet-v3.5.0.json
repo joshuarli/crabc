@@ -9,21 +9,21 @@
   "configuration_profile_count": 5,
   "format": 1,
   "m1_foundations_contract_sha256": "73044a9fa746b17002a5c2f73123234a1c4d5a88d090dd8cba8030c3746dbe19",
-  "m2_memory_substrate_contract_sha256": "4ed8b5ed3b6acfd45c0a74642dce81fe9b0838ee45448b68cabf965b60e24ccc",
+  "m2_memory_substrate_contract_sha256": "7425ecdf59effc2cd9040e91a56458c851cff104855bbcfcdff5e1a63f43373c",
   "native_shadow_stress_contract_sha256": "cdef617f743ccd7c26283a3ce22ce17c43d6ae79b3873ac400a54fb1749139c8",
   "native_shadow_stress_fixture_count": 1,
   "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
   "port_map_counts": {
     "differential_verified": 37,
     "exported": 4,
-    "implemented": 179,
-    "item_count": 175,
+    "implemented": 180,
+    "item_count": 176,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 179
+    "unit_verified": 180
   },
-  "port_map_sha256": "14a2559d1b645d70bb9c6b353432b98a5bb87bd9299ce07e5a01941e90a79655",
+  "port_map_sha256": "d6193f76785715b207e1e1638b9bc7818fd90857faae0a86f586da659f857638",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_atomic_do_once-callsite-disposition-ledger": [
       "implemented",
@@ -170,6 +170,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:_mi_arenas_page_alloc-kind-selection": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:all-committed-external-arena-claim-linux-reuse-caller": [
       "implemented",
       "unit_verified"
     ],

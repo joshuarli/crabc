@@ -2110,7 +2110,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(len(component["checks"]) for component in summary["components"]),
-            53,
+            54,
         )
         vm_primitives = next(
             component for component in summary["components"] if component["id"] == "vm-primitives"
@@ -2651,6 +2651,15 @@ class ContractTests(unittest.TestCase):
                     "target": (
                         "single_thread::tests::forced_unpinned_arena_decommit_failure_"
                         "consumes_source_purge_work"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "arena-fully-committed-claim-linux-reuse-caller",
+                    "kind": "rust-unit",
+                    "target": (
+                        "arena::tests::fully_committed_arena_claim_invokes_linux_reuse_"
+                        "for_its_exact_span"
                     ),
                 },
             ],
