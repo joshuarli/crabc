@@ -602,6 +602,142 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                         f"{header}:{profile} {field} shared type-owner facts",
                     )
 
+    def test_network_resolver_headers_preserve_their_owned_musl_x86_closure(self) -> None:
+        """Keep the shared x86 network/resolver include graph source-faithful.
+
+        These direct consumers share the ``stdint``/socket/IPv4-IPv6 spine.
+        Local ABI compatibility is not enough: each must retain musl's selected
+        feature visibility, record forms, macro spellings, and C/C++ declarations.
+
+        The all-header ABI matrix reports every declaration inherited by a direct
+        include. Three resolver roots therefore still expose the independently
+        owned ``stddef.h`` form debt, and ``netinet/icmp6.h`` exposes the
+        independently owned ``string.h``/``strings.h`` form debt. Those are
+        named here rather than hidden: a new network-owned difference, including
+        an ``in6_addr``, ``ip6_hdr``, or ``__res_state`` source-form regression,
+        must fail this slice immediately.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        headers = (
+            "stdint.h",
+            "inttypes.h",
+            "sys/socket.h",
+            "arpa/inet.h",
+            "arpa/nameser.h",
+            "arpa/nameser_compat.h",
+            "netdb.h",
+            "resolv.h",
+            "netinet/in.h",
+            "netinet/ip.h",
+            "netinet/ip6.h",
+            "netinet/ip_icmp.h",
+            "netinet/igmp.h",
+            "netinet/icmp6.h",
+        )
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+        external_transitive_names = {
+            "arpa/nameser.h": frozenset(
+                {
+                    "NULL",
+                    "_CRABC_STDDEF_H",
+                    "_STDDEF_H",
+                    "__DEFINED_max_align_t",
+                    "__NEED_max_align_t",
+                    "__NEED_ptrdiff_t",
+                    "__NEED_size_t",
+                    "__NEED_wchar_t",
+                }
+            ),
+            "arpa/nameser_compat.h": frozenset(
+                {
+                    "NULL",
+                    "_CRABC_STDDEF_H",
+                    "_STDDEF_H",
+                    "__DEFINED_max_align_t",
+                    "__NEED_max_align_t",
+                    "__NEED_ptrdiff_t",
+                    "__NEED_size_t",
+                    "__NEED_wchar_t",
+                }
+            ),
+            "resolv.h": frozenset(
+                {
+                    "NULL",
+                    "_CRABC_STDDEF_H",
+                    "_STDDEF_H",
+                    "__DEFINED_max_align_t",
+                    "__NEED_max_align_t",
+                    "__NEED_ptrdiff_t",
+                }
+            ),
+            "netinet/icmp6.h": frozenset(
+                {
+                    "_STRINGS_H",
+                    "bcmp",
+                    "bcopy",
+                    "bzero",
+                    "ffs",
+                    "ffsl",
+                    "ffsll",
+                    "index",
+                    "memcpy",
+                    "mempcpy",
+                    "rindex",
+                    "strcasecmp",
+                    "strcasecmp_l",
+                    "strncasecmp",
+                    "strncasecmp_l",
+                    "strtok",
+                    "strxfrm",
+                    "strxfrm_l",
+                }
+            ),
+        }
+
+        matched = 0
+        for header in headers:
+            for profile in profiles:
+                row = rows[(header, profile)]
+                if row["comparison"] == "matched":
+                    matched += 1
+                    continue
+
+                self.assertEqual(
+                    row["comparison"],
+                    "mismatch",
+                    f"{header}:{profile} has an unexpected matrix state",
+                )
+                difference = row["difference"]
+                difference_names = {
+                    fact["name"]
+                    for key in ("candidate_only", "incompatible", "reference_only")
+                    for fact in difference[key]
+                }
+                self.assertTrue(
+                    difference_names <= external_transitive_names.get(header, frozenset()),
+                    f"{header}:{profile} leaked a network/resolver-owned difference: "
+                    f"{sorted(difference_names)}",
+                )
+
+        self.assertEqual(len(headers) * len(profiles), 98)
+        self.assertGreaterEqual(
+            matched,
+            71,
+            "network-owned header rows must not regress behind the completed source closure",
+        )
+
     def test_stdio_wchar_and_monetary_declarations_match_musl_forms(self) -> None:
         """Header visibility must not promote deferred stream or locale providers."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

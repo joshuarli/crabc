@@ -102,11 +102,14 @@ errno_disassembly="$work_dir/errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_socket_transport_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h fcntl.h netinet/in.h arpa/inet.h sys/socket.h sys/types.h \
+for header in errno.h fcntl.h netinet/in.h sys/socket.h sys/types.h \
     sys/syscall.h bits/fcntl.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use the project $header header"
 done
+if grep -Fq "$ROOT_DIR/include/arpa/inet.h" "$header_trace"; then
+    fail "fixture unexpectedly used the project arpa/inet.h header"
+fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_socket_transport_probe.c \

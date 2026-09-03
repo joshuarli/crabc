@@ -1744,7 +1744,7 @@ behavior, family promotion, or public x86 support.
 `header-abi-matrix` adds a separate checked Clang-derived 1,337-row report for
 function source declaration forms and emitted linkage spellings plus named
 typedefs, record shapes, enum values, variables, and macro replacement forms.
-Its current 905 comparable red source-form rows, one
+Its current 764 comparable red source-form rows, one
 `aio.h:c11-strict` oracle-not-applicable row, and 56 project-only rows are
 evidence to review—not parity waivers or ABI classifications. It excludes byte
 layouts, anonymous declarations, inline behavior, archive linkage, runtime,
@@ -1753,11 +1753,11 @@ family promotion, and public x86 support.
 `header-declaration-macro-visibility-matrix` derives a checked identity report
 from that same refreshed compiler collection, rather than collecting another
 header cross-product. It compares only named `(kind, name)` declaration and
-macro visibility across all 1,337 rows: 835 current identity-mismatch rows,
-445 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
+macro visibility across all 1,337 rows: 685 current identity-mismatch rows,
+595 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
 and 56 project-only rows retain checked candidate fact summaries and digests.
-Its 21,877 same-identity source-form
-differences across 738 rows—including 70 form-only rows—remain separately
+Its 4,617 same-identity source-form
+differences across 577 rows—including 79 form-only rows—remain separately
 accounted and are not an ABI-equality claim. This is generic feature-visibility
 evidence only; declaration-form equality, layouts, linkage, runtime, family
 promotion, and public x86 support remain outside it.
@@ -2324,6 +2324,13 @@ walking and expansion, immutable nameserver flag-accessor data, caller-owned
 establish archive linkage, resolver state, `/etc/resolv.conf` parsing, DNS
 packet I/O, sockets, netdb, installed-header completion, family promotion, or
 public x86 support.
+
+Its strict C project-header trace is also a pinned-musl x86 ownership contract:
+`resolv.h` reaches `stdint.h`, `bits/alltypes.h`, and `bits/stdint.h`;
+`arpa/nameser.h` reaches `stddef.h`; and `netinet/in.h` reaches `features.h`,
+`inttypes.h`, `sys/socket.h`, and `bits/socket.h`. The trace explicitly rejects
+`sys/types.h`; that header remains owned by other header-layout gates, not this
+declaration-only nameserver route.
 
 `quota-header-abi` is the seven-profile project-first/pinned-musl C/C++
 compile-only `<sys/quota.h>` gate for the full pinned-musl quota header:

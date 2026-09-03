@@ -1017,6 +1017,35 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
 
+    def test_nameser_strict_c_trace_stays_on_musls_x86_header_closure(self) -> None:
+        """Reject the former non-musl sys/types path from the strict resolv trace."""
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        for header in (
+            "resolv.h",
+            "stdint.h",
+            "bits/alltypes.h",
+            "bits/stdint.h",
+            "arpa/nameser.h",
+            "stddef.h",
+            "netinet/in.h",
+            "features.h",
+            "inttypes.h",
+            "sys/socket.h",
+            "bits/socket.h",
+        ):
+            self.assertIn(f'    "{header}"', runner)
+        self.assertIn('    "sys/types.h"', runner)
+        self.assertIn(
+            'fail "strict C probe unexpectedly used project <$header>"', runner
+        )
+        self.assertIn(
+            "strict C trace project header closure diverges from pinned musl",
+            runner,
+        )
+
     def test_libintl_format_argument_annotation_stays_transient_and_header_only(self) -> None:
         """Keep musl's gettext format propagation annotation out of runtime scope."""
         header = (ROOT / "include" / "libintl.h").read_text(encoding="utf-8")
@@ -14177,6 +14206,48 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-network-byte-order)", dispatcher)
 
+    def test_network_resolver_runner_traces_reject_obsolete_transitive_headers(
+        self,
+    ) -> None:
+        direct_rejections = {
+            "run_libc_network_byte_order.sh": "sys/types.h",
+            "run_libc_inet_address.sh": "sys/types.h",
+            "run_libc_inet_classful.sh": "sys/types.h",
+            "run_libc_inet_netof.sh": "sys/types.h",
+            "run_libc_inet_network.sh": "sys/types.h",
+            "run_libc_inet_ntoa.sh": "sys/types.h",
+            "run_libc_socket_transport.sh": "arpa/inet.h",
+            "run_libc_dn_skipname.sh": "sys/types.h",
+            "run_libc_dn_expand.sh": "sys/types.h",
+            "run_libc_ns_get16.sh": "sys/types.h",
+            "run_libc_ns_get32.sh": "sys/types.h",
+            "run_libc_ns_put16.sh": "sys/types.h",
+            "run_libc_ns_put32.sh": "sys/types.h",
+            "run_libc_ns_skiprr.sh": "sys/types.h",
+            "run_libc_nameser_wire_aggregate.sh": "sys/types.h",
+            "run_libc_nameser_message_parser.sh": "sys/types.h",
+        }
+        runner_root = ROOT / "compat" / "x86_64"
+        for runner_name, header in direct_rejections.items():
+            runner = (runner_root / runner_name).read_text(encoding="utf-8")
+            self.assertIn(
+                f'if grep -Fq "$ROOT_DIR/include/{header}" "$header_trace"; then',
+                runner,
+                runner_name,
+            )
+
+        for runner_name in (
+            "run_libc_in6addr_any.sh",
+            "run_libc_in6addr_loopback.sh",
+            "run_libc_numeric_netdb.sh",
+        ):
+            runner = (runner_root / runner_name).read_text(encoding="utf-8")
+            self.assertIn("for header in arpa/inet.h sys/types.h; do", runner)
+            self.assertIn(
+                'if grep -Fq "$ROOT_DIR/include/$header" "$header_trace"; then',
+                runner,
+            )
+
     def test_libc_static_c_abi_in6addr_any_artifact_stays_private(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -14809,7 +14880,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "check_cxx_c_linkage",
             "nm --undefined-only",
             "_Z.*dn_skipname",
-            "resolv.h arpa/nameser.h netinet/in.h",
+            "STRICT_C_PROJECT_HEADERS",
             "DNS packet I/O",
             "netdb",
         ):
@@ -14949,7 +15020,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "check_cxx_c_linkage",
             "nm --undefined-only",
             "_Z.*dn_expand",
-            "resolv.h arpa/nameser.h netinet/in.h",
+            "STRICT_C_PROJECT_HEADERS",
             "DNS packet I/O",
             "netdb",
         ):
@@ -15229,7 +15300,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "check_cxx_c_linkage",
             "nm --undefined-only",
             "_Z.*ns_get16",
-            "resolv.h arpa/nameser.h netinet/in.h",
+            "STRICT_C_PROJECT_HEADERS",
             "DNS packet I/O",
             "netdb",
         ):
@@ -15359,7 +15430,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "check_cxx_c_linkage",
             "nm --undefined-only",
             "_Z.*ns_get32",
-            "resolv.h arpa/nameser.h netinet/in.h",
+            "STRICT_C_PROJECT_HEADERS",
             "DNS packet I/O",
             "netdb",
         ):
@@ -15491,7 +15562,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "check_cxx_c_linkage",
             "nm --undefined-only",
             "_Z.*ns_put16",
-            "resolv.h arpa/nameser.h netinet/in.h",
+            "STRICT_C_PROJECT_HEADERS",
             "DNS packet I/O",
             "netdb",
         ):
@@ -35394,7 +35465,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "check_cxx_c_linkage",
             "nm --undefined-only",
             "_Z.*ns_put32",
-            "resolv.h arpa/nameser.h netinet/in.h",
+            "STRICT_C_PROJECT_HEADERS",
             "DNS packet I/O",
             "netdb",
         ):

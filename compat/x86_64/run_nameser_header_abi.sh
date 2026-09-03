@@ -48,7 +48,7 @@ check_cxx_c_linkage() {
 
 require_native_linux_x86_64
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
-for tool in grep mktemp nm uname; do
+for tool in diff grep mktemp nm sed sort uname; do
     command -v "$tool" >/dev/null 2>&1 || fail "requires $tool"
 done
 
@@ -59,9 +59,31 @@ readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/nameser_header_abi_probe.cpp"
 [ -f "$C_PROBE" ] || fail "missing C selected-nameserver header ABI probe"
 [ -f "$CXX_PROBE" ] || fail "missing C++ selected-nameserver header ABI probe"
 
+# Pinned musl's strict x86 <resolv.h> graph reaches integer and socket types
+# directly. Keep this source-owned closure exact: <sys/types.h> belongs to
+# other header-layout gates but is not part of this nameserver declaration path.
+readonly STRICT_C_PROJECT_HEADERS=(
+    "resolv.h"
+    "stdint.h"
+    "bits/alltypes.h"
+    "bits/stdint.h"
+    "arpa/nameser.h"
+    "stddef.h"
+    "netinet/in.h"
+    "features.h"
+    "inttypes.h"
+    "sys/socket.h"
+    "bits/socket.h"
+)
+readonly STRICT_C_FORBIDDEN_HEADERS=(
+    "sys/types.h"
+)
+
 work_dir="$(mktemp -d /tmp/crabc-x86-64-nameser-header.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 header_trace="$work_dir/project-header-trace"
+strict_trace_expected="$work_dir/strict-project-header-closure.expected"
+strict_trace_observed="$work_dir/strict-project-header-closure.observed"
 compile_profile() {
     local name="$1"
     shift
@@ -111,13 +133,22 @@ compile_cxx_profile cxx17-strict -U_GNU_SOURCE -U_BSD_SOURCE
 
 # Project headers must be first and self-contained. The runtime checks above
 # exercise only header macros; no crabc resolver archive or state is linked.
+# The strict trace is pinned to musl's x86 header ownership rather than merely
+# checking that a historical subset of project headers happened to appear.
 "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE -D__STRICT_ANSI__ \
     -I "$ROOT_DIR/include" -H -fsyntax-only "$C_PROBE" \
     >/dev/null 2>"$header_trace"
-for header in resolv.h arpa/nameser.h netinet/in.h stddef.h stdint.h \
-    sys/socket.h sys/types.h bits/alltypes.h; do
-    grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
-        fail "C probe did not use project <$header>"
+for header in "${STRICT_C_FORBIDDEN_HEADERS[@]}"; do
+    if grep -Fq "$ROOT_DIR/include/$header" "$header_trace"; then
+        fail "strict C probe unexpectedly used project <$header>"
+    fi
 done
+printf '%s\n' "${STRICT_C_PROJECT_HEADERS[@]}" | sort >"$strict_trace_expected"
+grep -F "$ROOT_DIR/include/" "$header_trace" |
+    sed "s|.*$ROOT_DIR/include/||" |
+    sort -u >"$strict_trace_observed"
+if ! diff -u "$strict_trace_expected" "$strict_trace_observed" >&2; then
+    fail "strict C trace project header closure diverges from pinned musl"
+fi
 
 printf 'x86 pinned-musl/project C/C++ <resolv.h> selected nameserver ABI: PASS\n'

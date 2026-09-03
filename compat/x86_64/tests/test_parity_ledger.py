@@ -3003,6 +3003,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "exact unconditional `ns_t_qt_p`/`ns_t_mrr_p`/`ns_t_rr_p`/`ns_t_udp_p`/`ns_t_xfr_p`",
             "`NS_NXT_BIT_SET`/`NS_NXT_BIT_CLEAR`/`NS_NXT_BIT_ISSET`",
             "record-classification macros",
+            "strict C project-header trace exactly owns",
+            "`bits/stdint.h`",
+            "`bits/socket.h`",
+            "rejects `sys/types.h`",
             "resolver state",
             "DNS packet I/O",
             "archive linkage",
@@ -3014,11 +3018,100 @@ class X86ParityLedgerTests(unittest.TestCase):
 
         ledger.require_nameser_header_evidence(headers_layouts)
 
+        for owner in (
+            "include/resolv.h",
+            "include/stdint.h",
+            "include/bits/alltypes.h",
+            "include/bits/stdint.h",
+            "include/arpa/nameser.h",
+            "include/stddef.h",
+            "include/netinet/in.h",
+            "include/features.h",
+            "include/inttypes.h",
+            "include/sys/socket.h",
+            "include/bits/socket.h",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_headers_layouts = self.family(changed, "libc.headers-layouts")
+        changed_headers_layouts["source_owners"].remove("include/bits/socket.h")
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "nameser-header-abi source owners omit include/bits/socket.h",
+        ):
+            ledger.require_nameser_header_evidence(changed_headers_layouts)
+
         evidence["scope"] = "header completion"
         with self.assertRaisesRegex(
             ledger.LedgerError, "nameser-header-abi evidence must retain"
         ):
             ledger.require_nameser_header_evidence(headers_layouts)
+
+    def test_nameser_header_evidence_rejects_strict_trace_runner_drift(self) -> None:
+        """The ledger must validate the runner's exact musl-owned trace."""
+        headers_layouts = self.family(self.data(), "libc.headers-layouts")
+        trace_headers = tuple(
+            header.removeprefix("include/")
+            for header in ledger.EXPECTED_NAMESER_STRICT_C_TRACE_HEADERS
+        )
+
+        def write_runner(
+            root: Path,
+            headers: tuple[str, ...],
+            forbidden: tuple[str, ...],
+        ) -> None:
+            runner = root / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+            runner.parent.mkdir(parents=True, exist_ok=True)
+            runner.write_text(
+                "readonly STRICT_C_PROJECT_HEADERS=(\n"
+                + "".join(f'    "{header}"\n' for header in headers)
+                + ")\nreadonly STRICT_C_FORBIDDEN_HEADERS=(\n"
+                + "".join(f'    "{header}"\n' for header in forbidden)
+                + ")\n"
+                + 'fail "strict C probe unexpectedly used project <$header>"\n'
+                + 'fail "strict C trace project header closure diverges from pinned musl"\n',
+                encoding="utf-8",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(ledger, "ROOT", root):
+                write_runner(root, trace_headers[:-1], ("sys/types.h",))
+                with self.assertRaisesRegex(
+                    ledger.LedgerError,
+                    "strict C nameser project-header trace drifted",
+                ):
+                    ledger.require_nameser_header_evidence(headers_layouts)
+
+                write_runner(root, trace_headers, ())
+                with self.assertRaisesRegex(
+                    ledger.LedgerError,
+                    "strict C nameser forbidden-header trace drifted",
+                ):
+                    ledger.require_nameser_header_evidence(headers_layouts)
+
+                write_runner(
+                    root,
+                    trace_headers + ("sys/types.h",),
+                    ("sys/types.h",),
+                )
+                with self.assertRaisesRegex(
+                    ledger.LedgerError,
+                    "strict C nameser project-header trace drifted",
+                ):
+                    ledger.require_nameser_header_evidence(headers_layouts)
+
+                write_runner(
+                    root,
+                    trace_headers,
+                    ("sys/types.h", "unexpected.h"),
+                )
+                with self.assertRaisesRegex(
+                    ledger.LedgerError,
+                    "strict C nameser forbidden-header trace drifted",
+                ):
+                    ledger.require_nameser_header_evidence(headers_layouts)
 
     def test_complete_quota_header_gate_stays_header_only(self) -> None:
         data = self.data()
@@ -3338,14 +3431,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 445,
-                "mismatch": 835,
+                "matched": 595,
+                "mismatch": 685,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 49306, "reference_only": 72356},
+            {"candidate_only": 36979, "reference_only": 13314},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3365,8 +3458,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 375,
-                "mismatch": 905,
+                "matched": 516,
+                "mismatch": 764,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4499,13 +4592,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "835 current comparable declaration-or-macro identity mismatch rows",
-            "445 matched identity rows",
+            "685 current comparable declaration-or-macro identity mismatch rows",
+            "595 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "21,877 same-identity source-form differences across 738 rows",
-            "70 form-only rows",
+            "4,617 same-identity source-form differences across 577 rows",
+            "79 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -4556,7 +4649,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "905 current comparable prototype or named source-form mismatch rows",
+            "764 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",
@@ -11431,7 +11524,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/socket_transport.rs",
             "include/fcntl.h",
             "include/bits/fcntl.h",
-            "include/arpa/inet.h",
             "include/netinet/in.h",
             "include/sys/socket.h",
             "compat/x86_64/socket_header_abi_probe.c",
@@ -25939,6 +26031,30 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, source_mapping)
 
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        self.assertIn("`bits/alltypes.h`", headers[0])
+        self.assertIn("never `sys/types.h`", headers[0])
+        ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-network-byte-order"
+        )
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        headers[0] = headers[0].replace(
+            "never `sys/types.h`", "with a project type header"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "direct C header proof"
+        ):
+            ledger.validate_ledger(data)
+
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
         assert isinstance(artifacts, list)
@@ -25968,6 +26084,56 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError, "isolated runtime regression"
         ):
             ledger.validate_ledger(data)
+
+    def test_network_resolver_trace_owners_exclude_obsolete_transitive_headers(
+        self,
+    ) -> None:
+        records = self.verified_records(self.data())
+        excluded_owners = {
+            "static-c-network-byte-order": ("include/sys/types.h",),
+            "static-c-in6addr-any": (
+                "include/arpa/inet.h",
+                "include/sys/types.h",
+            ),
+            "static-c-in6addr-loopback": (
+                "include/arpa/inet.h",
+                "include/sys/types.h",
+            ),
+            "static-c-socket-transport": ("include/arpa/inet.h",),
+            "static-c-inet-address-codecs": ("include/sys/types.h",),
+            "static-c-inet-ntoa-scratch": ("include/sys/types.h",),
+            "static-c-inet-classful": ("include/sys/types.h",),
+            "static-c-inet-netof": ("include/sys/types.h",),
+            "static-c-inet-network": ("include/sys/types.h",),
+            "static-c-numeric-netdb": (
+                "include/arpa/inet.h",
+                "include/sys/types.h",
+            ),
+            "static-c-dn-skipname": ("include/sys/types.h",),
+            "static-c-dn-expand": ("include/sys/types.h",),
+            "static-c-ns-flagdata": ("include/sys/types.h",),
+            "static-c-ns-get16": ("include/sys/types.h",),
+            "static-c-ns-get32": ("include/sys/types.h",),
+            "static-c-ns-put16": ("include/sys/types.h",),
+            "static-c-ns-put32": ("include/sys/types.h",),
+            "static-c-ns-skiprr": ("include/sys/types.h",),
+            "static-c-nameser-wire-aggregate": ("include/sys/types.h",),
+            "static-c-nameser-message-parser": ("include/sys/types.h",),
+            "static-c-res-init": ("include/sys/types.h",),
+            "static-c-protocol-database": ("include/sys/types.h",),
+        }
+        for artifact_id, owners in excluded_owners.items():
+            source_owners = records[artifact_id]["source_owners"]
+            assert isinstance(source_owners, list)
+            for owner in owners:
+                self.assertNotIn(owner, source_owners, artifact_id)
+
+        provider = ledger.load_toml(
+            ROOT / "compat" / "x86_64" / "nameser-message-parser-provider.toml"
+        )
+        work_package = provider["work_package"]
+        assert isinstance(work_package, dict)
+        self.assertNotIn("include/sys/types.h", work_package["source_owners"])
 
     def test_in6addr_any_artifact_keeps_its_private_data_boundary(self) -> None:
         data = self.data()

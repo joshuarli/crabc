@@ -154,10 +154,15 @@ grep -Eq '00000000[[:space:]]+00000000[[:space:]]+00000000[[:space:]]+00000000' 
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_in6addr_loopback_probe.c >/dev/null 2>"$header_trace"
-for header in netinet/in.h arpa/inet.h stddef.h stdint.h sys/socket.h sys/types.h \
+for header in netinet/in.h stddef.h stdint.h sys/socket.h \
     bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
+done
+for header in arpa/inet.h sys/types.h; do
+    if grep -Fq "$ROOT_DIR/include/$header" "$header_trace"; then
+        fail "fixture unexpectedly used the project $header header"
+    fi
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \

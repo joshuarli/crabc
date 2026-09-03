@@ -13,6 +13,7 @@ extern "C" {
 #define MAXDFLSRCH 3
 #define MAXDNSRCH 6
 #define LOCALDOMAINPARTS 2
+
 #define RES_TIMEOUT 5
 #define MAXRESOLVSORT 10
 #define RES_MAXNDOTS 15
@@ -37,7 +38,7 @@ typedef struct __res_state {
     unsigned nsort:4;
     unsigned ipv6_unavail:1;
     unsigned unused:23;
-    struct {
+	struct {
         struct in_addr addr;
         uint32_t mask;
     } sort_list[MAXRESOLVSORT];
@@ -46,9 +47,9 @@ typedef struct __res_state {
     int res_h_errno;
     int _vcsock;
     unsigned _flags;
-    union {
-        char pad[52];
-        struct {
+	union {
+		char pad[52];
+		struct {
             uint16_t nscount;
             uint16_t nsmap[MAXNS];
             int nssocks[MAXNS];
@@ -63,6 +64,14 @@ typedef struct __res_state {
 #define __RES 19960801
 #ifndef _PATH_RESCONF
 #define _PATH_RESCONF "/etc/resolv.conf"
+#endif
+
+#if defined(__x86_64__)
+struct res_sym {
+    int number;
+    char *name;
+    char *humanname;
+};
 #endif
 
 #define RES_F_VC 0x00000001
@@ -121,6 +130,10 @@ int res_search(const char *, int, int, unsigned char *, int);
 int res_mkquery(int, const char *, int, int, const unsigned char *, int, const unsigned char *, unsigned char *, int);
 int res_send(const unsigned char *, int, unsigned char *, int);
 int dn_comp(const char *, unsigned char *, int, unsigned char **, unsigned char **);
+#if defined(__x86_64__)
+int dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int);
+int dn_skipname(const unsigned char *, const unsigned char *);
+#endif
 
 #ifdef __cplusplus
 }

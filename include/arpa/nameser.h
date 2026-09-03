@@ -116,18 +116,126 @@ typedef enum __ns_rcode {
     ns_r_badtime = 18
 } ns_rcode;
 
+#if defined(__x86_64__)
+typedef enum __ns_update_operation {
+    ns_uop_delete = 0,
+    ns_uop_add = 1,
+    ns_uop_max = 2
+} ns_update_operation;
+
+struct ns_tsig_key {
+    char name[NS_MAXDNAME], alg[NS_MAXDNAME];
+    unsigned char *data;
+    int len;
+};
+typedef struct ns_tsig_key ns_tsig_key;
+
+struct ns_tcp_tsig_state {
+    int counter;
+    struct dst_key *key;
+    void *ctx;
+    unsigned char sig[NS_PACKETSZ];
+    int siglen;
+};
+typedef struct ns_tcp_tsig_state ns_tcp_tsig_state;
+
+#define NS_TSIG_FUDGE 300
+#define NS_TSIG_TCP_COUNT 100
+#define NS_TSIG_ALG_HMAC_MD5 "HMAC-MD5.SIG-ALG.REG.INT"
+#define NS_TSIG_ERROR_NO_TSIG -10
+#define NS_TSIG_ERROR_NO_SPACE -11
+#define NS_TSIG_ERROR_FORMERR -12
+#endif
+
 typedef enum __ns_type {
     ns_t_invalid = 0,
     ns_t_a = 1,
     ns_t_ns = 2,
+#if defined(__x86_64__)
+    ns_t_md = 3,
+    ns_t_mf = 4,
+#endif
     ns_t_cname = 5,
     ns_t_soa = 6,
+#if defined(__x86_64__)
+    ns_t_mb = 7,
+    ns_t_mg = 8,
+    ns_t_mr = 9,
+    ns_t_null = 10,
+    ns_t_wks = 11,
+#endif
     ns_t_ptr = 12,
+#if defined(__x86_64__)
+    ns_t_hinfo = 13,
+    ns_t_minfo = 14,
+#endif
     ns_t_mx = 15,
     ns_t_txt = 16,
+#if defined(__x86_64__)
+    ns_t_rp = 17,
+    ns_t_afsdb = 18,
+    ns_t_x25 = 19,
+    ns_t_isdn = 20,
+    ns_t_rt = 21,
+    ns_t_nsap = 22,
+    ns_t_nsap_ptr = 23,
+    ns_t_sig = 24,
+    ns_t_key = 25,
+    ns_t_px = 26,
+    ns_t_gpos = 27,
+#endif
     ns_t_aaaa = 28,
+#if defined(__x86_64__)
+    ns_t_loc = 29,
+    ns_t_nxt = 30,
+    ns_t_eid = 31,
+    ns_t_nimloc = 32,
+#endif
     ns_t_srv = 33,
+#if defined(__x86_64__)
+    ns_t_atma = 34,
+    ns_t_naptr = 35,
+    ns_t_kx = 36,
+    ns_t_cert = 37,
+    ns_t_a6 = 38,
+    ns_t_dname = 39,
+    ns_t_sink = 40,
+#endif
     ns_t_opt = 41,
+#if defined(__x86_64__)
+    ns_t_apl = 42,
+    ns_t_ds = 43,
+    ns_t_sshfp = 44,
+    ns_t_ipseckey = 45,
+    ns_t_rrsig = 46,
+    ns_t_nsec = 47,
+    ns_t_dnskey = 48,
+    ns_t_dhcid = 49,
+    ns_t_nsec3 = 50,
+    ns_t_nsec3param = 51,
+    ns_t_tlsa = 52,
+    ns_t_smimea = 53,
+    ns_t_hip = 55,
+    ns_t_ninfo = 56,
+    ns_t_rkey = 57,
+    ns_t_talink = 58,
+    ns_t_cds = 59,
+    ns_t_cdnskey = 60,
+    ns_t_openpgpkey = 61,
+    ns_t_csync = 62,
+    ns_t_spf = 99,
+    ns_t_uinfo = 100,
+    ns_t_uid = 101,
+    ns_t_gid = 102,
+    ns_t_unspec = 103,
+    ns_t_nid = 104,
+    ns_t_l32 = 105,
+    ns_t_l64 = 106,
+    ns_t_lp = 107,
+    ns_t_eui48 = 108,
+    ns_t_eui64 = 109,
+    ns_t_tkey = 249,
+#endif
     ns_t_tsig = 250,
     ns_t_ixfr = 251,
     ns_t_axfr = 252,
@@ -135,6 +243,13 @@ typedef enum __ns_type {
     ns_t_maila = 254,
     ns_t_any = 255,
     ns_t_zxfr = 256,
+#if defined(__x86_64__)
+    ns_t_uri = 256,
+    ns_t_caa = 257,
+    ns_t_avc = 258,
+    ns_t_ta = 32768,
+    ns_t_dlv = 32769,
+#endif
     ns_t_max = 65536
 } ns_type;
 
@@ -149,6 +264,9 @@ typedef enum __ns_type {
 typedef enum __ns_class {
     ns_c_invalid = 0,
     ns_c_in = 1,
+#if defined(__x86_64__)
+    ns_c_2 = 2,
+#endif
     ns_c_chaos = 3,
     ns_c_hs = 4,
     ns_c_none = 254,
@@ -156,18 +274,103 @@ typedef enum __ns_class {
     ns_c_max = 65536
 } ns_class;
 
+#if defined(__x86_64__)
+typedef enum __ns_key_types {
+    ns_kt_rsa = 1,
+    ns_kt_dh  = 2,
+    ns_kt_dsa = 3,
+    ns_kt_private = 254
+} ns_key_types;
+
+typedef enum __ns_cert_types {
+    cert_t_pkix = 1,
+    cert_t_spki = 2,
+    cert_t_pgp  = 3,
+    cert_t_url  = 253,
+    cert_t_oid  = 254
+} ns_cert_types;
+
+#define NS_KEY_TYPEMASK 0xC000
+#define NS_KEY_TYPE_AUTH_CONF 0x0000
+#define NS_KEY_TYPE_CONF_ONLY 0x8000
+#define NS_KEY_TYPE_AUTH_ONLY 0x4000
+#define NS_KEY_TYPE_NO_KEY 0xC000
+#define NS_KEY_NO_AUTH 0x8000
+#define NS_KEY_NO_CONF 0x4000
+#define NS_KEY_RESERVED2 0x2000
+#define NS_KEY_EXTENDED_FLAGS 0x1000
+#define NS_KEY_RESERVED4 0x0800
+#define NS_KEY_RESERVED5 0x0400
+#define NS_KEY_NAME_TYPE 0x0300
+#define NS_KEY_NAME_USER 0x0000
+#define NS_KEY_NAME_ENTITY 0x0200
+#define NS_KEY_NAME_ZONE 0x0100
+#define NS_KEY_NAME_RESERVED 0x0300
+#define NS_KEY_RESERVED8 0x0080
+#define NS_KEY_RESERVED9 0x0040
+#define NS_KEY_RESERVED10 0x0020
+#define NS_KEY_RESERVED11 0x0010
+#define NS_KEY_SIGNATORYMASK 0x000F
+#define NS_KEY_RESERVED_BITMASK ( NS_KEY_RESERVED2 | \
+                                  NS_KEY_RESERVED4 | \
+                                  NS_KEY_RESERVED5 | \
+                                  NS_KEY_RESERVED8 | \
+                                  NS_KEY_RESERVED9 | \
+                                  NS_KEY_RESERVED10 | \
+                                  NS_KEY_RESERVED11 )
+#define NS_KEY_RESERVED_BITMASK2 0xFFFF
+#define NS_ALG_MD5RSA 1
+#define NS_ALG_DH 2
+#define NS_ALG_DSA 3
+#define NS_ALG_DSS NS_ALG_DSA
+#define NS_ALG_EXPIRE_ONLY 253
+#define NS_ALG_PRIVATE_OID 254
+#define NS_KEY_PROT_TLS 1
+#define NS_KEY_PROT_EMAIL 2
+#define NS_KEY_PROT_DNSSEC 3
+#define NS_KEY_PROT_IPSEC 4
+#define NS_KEY_PROT_ANY 255
+#define NS_MD5RSA_MIN_BITS 512
+#define NS_MD5RSA_MAX_BITS 4096
+#define NS_MD5RSA_MAX_BYTES ((NS_MD5RSA_MAX_BITS+7/8)*2+3)
+#define NS_MD5RSA_MAX_BASE64 (((NS_MD5RSA_MAX_BYTES+2)/3)*4)
+#define NS_MD5RSA_MIN_SIZE ((NS_MD5RSA_MIN_BITS+7)/8)
+#define NS_MD5RSA_MAX_SIZE ((NS_MD5RSA_MAX_BITS+7)/8)
+#define NS_DSA_SIG_SIZE 41
+#define NS_DSA_MIN_SIZE 213
+#define NS_DSA_MAX_BYTES 405
+#define NS_SIG_TYPE 0
+#define NS_SIG_ALG 2
+#define NS_SIG_LABELS 3
+#define NS_SIG_OTTL 4
+#define NS_SIG_EXPIR 8
+#define NS_SIG_SIGNED 12
+#define NS_SIG_FOOT 16
+#define NS_SIG_SIGNER 18
+#define NS_NXT_MAX 127
+#endif
+
+#if defined(__x86_64__)
+#define NS_GET16(s, cp) (void)((s) = ns_get16(((cp)+=2)-2))
+#define NS_GET32(l, cp) (void)((l) = ns_get32(((cp)+=4)-4))
+#define NS_PUT16(s, cp) ns_put16((s), ((cp)+=2)-2)
+#define NS_PUT32(l, cp) ns_put32((l), ((cp)+=4)-4)
+#else
 #define NS_GET16(s, cp) (void)((s) = ns_get16(((cp) += 2) - 2))
 #define NS_GET32(l, cp) (void)((l) = ns_get32(((cp) += 4) - 4))
 #define NS_PUT16(s, cp) ns_put16((s), ((cp) += 2) - 2)
 #define NS_PUT32(l, cp) ns_put32((l), ((cp) += 4) - 4)
+#endif
 
 unsigned ns_get16(const unsigned char *);
 unsigned long ns_get32(const unsigned char *);
 void ns_put16(unsigned, unsigned char *);
 void ns_put32(unsigned long, unsigned char *);
 
+#if !defined(__x86_64__)
 int dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int);
 int dn_skipname(const unsigned char *, const unsigned char *);
+#endif
 int ns_initparse(const unsigned char *, int, ns_msg *);
 int ns_parserr(ns_msg *, ns_sect, int, ns_rr *);
 int ns_skiprr(const unsigned char *, const unsigned char *, ns_sect, int);
@@ -193,8 +396,13 @@ int ns_name_uncompress(const unsigned char *, const unsigned char *, const unsig
 #define S_PREREQ ns_s_pr
 #define S_UPDATE ns_s_ud
 #define S_ADDT ns_s_ar
+#if defined(__x86_64__)
+#define DELETE ns_uop_delete
+#define ADD ns_uop_add
+#else
 #define DELETE 0
 #define ADD 1
+#endif
 #define QUERY ns_o_query
 #define IQUERY ns_o_iquery
 #define STATUS ns_o_status
@@ -214,15 +422,100 @@ int ns_name_uncompress(const unsigned char *, const unsigned char *, const unsig
 
 #define T_A ns_t_a
 #define T_NS ns_t_ns
+#if defined(__x86_64__)
+#define T_MD ns_t_md
+#define T_MF ns_t_mf
+#endif
 #define T_CNAME ns_t_cname
 #define T_SOA ns_t_soa
+#if defined(__x86_64__)
+#define T_MB ns_t_mb
+#define T_MG ns_t_mg
+#define T_MR ns_t_mr
+#define T_NULL ns_t_null
+#define T_WKS ns_t_wks
+#endif
 #define T_PTR ns_t_ptr
+#if defined(__x86_64__)
+#define T_HINFO ns_t_hinfo
+#define T_MINFO ns_t_minfo
+#endif
 #define T_MX ns_t_mx
 #define T_TXT ns_t_txt
+#if defined(__x86_64__)
+#define T_RP ns_t_rp
+#define T_AFSDB ns_t_afsdb
+#define T_X25 ns_t_x25
+#define T_ISDN ns_t_isdn
+#define T_RT ns_t_rt
+#define T_NSAP ns_t_nsap
+#define T_NSAP_PTR ns_t_nsap_ptr
+#define T_SIG ns_t_sig
+#define T_KEY ns_t_key
+#define T_PX ns_t_px
+#define T_GPOS ns_t_gpos
+#endif
 #define T_AAAA ns_t_aaaa
+#if defined(__x86_64__)
+#define T_LOC ns_t_loc
+#define T_NXT ns_t_nxt
+#define T_EID ns_t_eid
+#define T_NIMLOC ns_t_nimloc
+#endif
 #define T_SRV ns_t_srv
+#if defined(__x86_64__)
+#define T_ATMA ns_t_atma
+#define T_NAPTR ns_t_naptr
+#define T_A6 ns_t_a6
+#define T_DNAME ns_t_dname
+#define T_DS ns_t_ds
+#define T_SSHFP ns_t_sshfp
+#define T_IPSECKEY ns_t_ipseckey
+#define T_RRSIG ns_t_rrsig
+#define T_NSEC ns_t_nsec
+#define T_DNSKEY ns_t_dnskey
+#define T_DHCID ns_t_dhcid
+#define T_NSEC3 ns_t_nsec3
+#define T_NSEC3PARAM ns_t_nsec3param
+#define T_TLSA ns_t_tlsa
+#define T_SMIMEA ns_t_smimea
+#define T_HIP ns_t_hip
+#define T_NINFO ns_t_ninfo
+#define T_RKEY ns_t_rkey
+#define T_TALINK ns_t_talink
+#define T_CDS ns_t_cds
+#define T_CDNSKEY ns_t_cdnskey
+#define T_OPENPGPKEY ns_t_openpgpkey
+#define T_CSYNC ns_t_csync
+#define T_SPF ns_t_spf
+#define T_UINFO ns_t_uinfo
+#define T_UID ns_t_uid
+#define T_GID ns_t_gid
+#define T_UNSPEC ns_t_unspec
+#define T_NID ns_t_nid
+#define T_L32 ns_t_l32
+#define T_L64 ns_t_l64
+#define T_LP ns_t_lp
+#define T_EUI48 ns_t_eui48
+#define T_EUI64 ns_t_eui64
+#define T_TKEY ns_t_tkey
+#endif
+#if !defined(__x86_64__)
 #define T_OPT ns_t_opt
+#endif
 #define T_ANY ns_t_any
+#if defined(__x86_64__)
+#define T_TSIG ns_t_tsig
+#define T_IXFR ns_t_ixfr
+#define T_AXFR ns_t_axfr
+#define T_MAILB ns_t_mailb
+#define T_MAILA ns_t_maila
+#define T_URI ns_t_uri
+#define T_CAA ns_t_caa
+#define T_AVC ns_t_avc
+#define T_TA ns_t_ta
+#define T_DLV ns_t_dlv
+#endif
 #define C_IN ns_c_in
 #define C_CHAOS ns_c_chaos
 #define C_HS ns_c_hs

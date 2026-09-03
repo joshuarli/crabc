@@ -150,10 +150,13 @@ fi
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_dn_expand_probe.c >/dev/null 2>"$header_trace"
 for header in resolv.h arpa/nameser.h netinet/in.h stddef.h stdint.h \
-    sys/socket.h sys/types.h bits/alltypes.h; do
+    sys/socket.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "project-header fixture did not include <$header>"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "project-header fixture unexpectedly included <sys/types.h>"
+fi
 
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_dn_expand_probe.c \

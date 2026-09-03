@@ -13075,7 +13075,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "_Z.*ns_get16",
         "_Z.*ns_get32",
         "_Z.*ns_put16",
-        "resolv.h arpa/nameser.h netinet/in.h",
+        "STRICT_C_PROJECT_HEADERS",
+        "STRICT_C_FORBIDDEN_HEADERS",
         "DNS packet I/O",
         "netdb",
     ):

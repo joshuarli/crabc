@@ -134,10 +134,13 @@ fi
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_ns_get32_probe.c >/dev/null 2>"$header_trace"
 for header in resolv.h arpa/nameser.h netinet/in.h stddef.h stdint.h \
-    sys/socket.h sys/types.h bits/alltypes.h; do
+    sys/socket.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "fixture unexpectedly used the project sys/types.h header"
+fi
 
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_ns_get32_probe.c \

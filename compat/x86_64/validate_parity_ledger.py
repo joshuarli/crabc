@@ -386,23 +386,23 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 375,
-        "mismatch": 905,
+        "matched": 516,
+        "mismatch": 764,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "905 comparable header/profile rows have prototype or named declaration-form differences",
+        "764 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 49306,
-        "incompatible_count": 21877,
-        "reference_only_count": 72356,
+        "candidate_only_count": 36979,
+        "incompatible_count": 4617,
+        "reference_only_count": 13314,
     },
-    "mismatch_row_count": 905,
+    "mismatch_row_count": 764,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -417,58 +417,58 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 49306,
+    "candidate_only_identity_count": 36979,
     "candidate_only_identity_kind_counts": {
-        "function": 3876,
-        "macro": 32554,
-        "record": 808,
-        "typedef": 11973,
-        "variable": 95,
+        "function": 2462,
+        "macro": 25105,
+        "record": 657,
+        "typedef": 8667,
+        "variable": 88,
     },
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 445,
-        "mismatch": 835,
+        "matched": 595,
+        "mismatch": 685,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "835 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "685 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 223008,
-    "mismatch_row_count": 835,
+    "matched_identity_count": 282050,
+    "mismatch_row_count": 685,
     "oracle_not_applicable_candidate_fact_count": 304,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
     "pinned_row_count": 1281,
     "profile_count": 7,
-    "project_only_candidate_fact_count": 1964,
+    "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 72356,
+    "reference_only_identity_count": 13314,
     "reference_only_identity_kind_counts": {
-        "enum": 66,
-        "function": 891,
-        "macro": 69849,
-        "record": 827,
-        "typedef": 686,
-        "variable": 37,
+        "enum": 3,
+        "function": 317,
+        "macro": 12347,
+        "record": 198,
+        "typedef": 440,
+        "variable": 9,
     },
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 375,
-        "mismatch": 905,
+        "matched": 516,
+        "mismatch": 764,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 21877,
-    "source_form_difference_row_count": 738,
-    "source_form_only_difference_row_count": 70,
+    "source_form_difference_count": 4617,
+    "source_form_difference_row_count": 577,
+    "source_form_only_difference_row_count": 79,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -1218,6 +1218,23 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/run_dirent_header_abi.sh",
     ),
 }
+
+# The <resolv.h> direct probe remains the only manifest header root. Its strict
+# C include trace separately owns this pinned-musl x86 closure; sys/types.h is
+# intentionally absent because other header-layout gates own that path.
+EXPECTED_NAMESER_STRICT_C_TRACE_HEADERS = (
+    "include/resolv.h",
+    "include/stdint.h",
+    "include/bits/alltypes.h",
+    "include/bits/stdint.h",
+    "include/arpa/nameser.h",
+    "include/stddef.h",
+    "include/netinet/in.h",
+    "include/features.h",
+    "include/inttypes.h",
+    "include/sys/socket.h",
+    "include/bits/socket.h",
+)
 
 EXPECTED_FAMILIES = (
     "oracle.musl-toolchain",
@@ -2654,32 +2671,32 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 7922,
+            "candidate_only_callable_count": 5183,
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 805,
-                "mismatch": 475,
+                "matched": 980,
+                "mismatch": 300,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "475 comparable pinned header/profile rows have callable visibility differences",
+                "300 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
-            "matched_callable_count": 33310,
-            "mismatch_row_count": 475,
+            "matched_callable_count": 34103,
+            "mismatch_row_count": 300,
             "oracle_not_applicable_candidate_visible_callable_count": 39,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
             "pinned_row_count": 1281,
             "profile_count": 7,
-            "project_only_callable_count": 414,
+            "project_only_callable_count": 407,
             "project_only_header_count": 8,
             "project_only_row_count": 56,
-            "reference_only_callable_count": 1382,
+            "reference_only_callable_count": 589,
             "row_count": 1337,
         },
         "callable visibility matrix finite baseline drifted",
@@ -6169,13 +6186,13 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "835 current comparable declaration-or-macro identity mismatch rows",
-        "445 matched identity rows",
+        "685 current comparable declaration-or-macro identity mismatch rows",
+        "595 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "21,877 same-identity source-form differences across 738 rows",
-        "70 form-only rows",
+        "4,617 same-identity source-form differences across 577 rows",
+        "79 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"declaration/macro visibility artifact description omits {phrase}")
@@ -6243,7 +6260,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "475 current comparable callable name/class mismatch rows",
+        "300 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6541,7 +6558,7 @@ def require_all_header_prototype_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "905 current comparable prototype or named source-form mismatch rows",
+        "764 current comparable prototype or named source-form mismatch rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",
@@ -7674,6 +7691,10 @@ def require_nameser_header_evidence(family: Mapping[str, Any]) -> None:
                 "exact unconditional `ns_t_qt_p`/`ns_t_mrr_p`/`ns_t_rr_p`/`ns_t_udp_p`/`ns_t_xfr_p`",
                 "`NS_NXT_BIT_SET`/`NS_NXT_BIT_CLEAR`/`NS_NXT_BIT_ISSET`",
                 "record-classification macros",
+                "strict C project-header trace exactly owns",
+                "`bits/stdint.h`",
+                "`bits/socket.h`",
+                "rejects `sys/types.h`",
                 "caller-owned DNS wire-name span",
                 "caller-owned 16-bit wire-read",
                 "caller-owned 32-bit wire-read",
@@ -7700,18 +7721,61 @@ def require_nameser_header_evidence(family: Mapping[str, Any]) -> None:
         "compat/x86_64/nameser_header_abi_probe.c",
         "compat/x86_64/nameser_header_abi_probe.cpp",
         "compat/x86_64/run_nameser_header_abi.sh",
-        "include/resolv.h",
-        "include/arpa/nameser.h",
-        "include/netinet/in.h",
-        "include/stddef.h",
-        "include/stdint.h",
-        "include/sys/socket.h",
-        "include/sys/types.h",
-        "include/bits/alltypes.h",
+        *EXPECTED_NAMESER_STRICT_C_TRACE_HEADERS,
     ):
         require(
             owner in owners,
             f"libc.headers-layouts nameser-header-abi source owners omit {owner}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+    ).read_text(encoding="utf-8")
+
+    def read_readonly_trace_array(name: str) -> tuple[str, ...]:
+        """Read this runner's declarative quoted array without evaluating shell."""
+        match = re.search(
+            rf"(?m)^readonly {re.escape(name)}=\(\n"
+            r'(?P<body>(?:[ \t]+"[^"\n]+"[ \t]*\n)*)'
+            r"^\)$",
+            runner,
+        )
+        require(
+            match is not None,
+            f"nameser header runner has malformed {name} declaration",
+        )
+        assert match is not None
+        return tuple(
+            re.findall(r'(?m)^[ \t]+"([^"\n]+)"[ \t]*$', match.group("body"))
+        )
+
+    expected_project_headers = tuple(
+        header.removeprefix("include/")
+        for header in EXPECTED_NAMESER_STRICT_C_TRACE_HEADERS
+    )
+    observed_project_headers = read_readonly_trace_array(
+        "STRICT_C_PROJECT_HEADERS"
+    )
+    require(
+        observed_project_headers == expected_project_headers,
+        "strict C nameser project-header trace drifted: "
+        f"expected {expected_project_headers}, observed {observed_project_headers}",
+    )
+    observed_forbidden_headers = read_readonly_trace_array(
+        "STRICT_C_FORBIDDEN_HEADERS"
+    )
+    require(
+        observed_forbidden_headers == ("sys/types.h",),
+        "strict C nameser forbidden-header trace drifted: "
+        f"observed {observed_forbidden_headers}",
+    )
+    for snippet in (
+        'fail "strict C probe unexpectedly used project <$header>"',
+        "strict C trace project header closure diverges from pinned musl",
+    ):
+        require(
+            snippet in runner,
+            f"nameser header runner omits strict C trace assertion {snippet}",
         )
 
 
@@ -36808,7 +36872,6 @@ def require_network_byte_order_artifact(family: Mapping[str, Any]) -> None:
         "include/arpa/inet.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/libc_network_byte_order_probe.c",
@@ -36882,8 +36945,8 @@ def require_network_byte_order_artifact(family: Mapping[str, Any]) -> None:
             "<arpa/inet.h>" in item
             and "`stdint.h`" in item
             and "`sys/socket.h`" in item
-            and "`sys/types.h`" in item
             and "`bits/alltypes.h`" in item
+            and "never `sys/types.h`" in item
             and "function-pointer declarations" in item
             and "C declaration and scalar-layout proof" in item
             and "resolver behavior" in item
@@ -37091,12 +37154,10 @@ def require_in6addr_any_artifact(family: Mapping[str, Any]) -> None:
         "libc/src/lib.rs",
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/in6addr_any.rs",
-        "include/arpa/inet.h",
         "include/netinet/in.h",
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/socket_header_abi_probe.c",
         "compat/x86_64/socket_header_abi_probe.cpp",
@@ -37463,12 +37524,10 @@ def require_in6addr_loopback_artifact(family: Mapping[str, Any]) -> None:
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/in6addr_any.rs",
         "libc/src/c_abi/x86_64/in6addr_loopback.rs",
-        "include/arpa/inet.h",
         "include/netinet/in.h",
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/socket_header_abi_probe.c",
         "compat/x86_64/socket_header_abi_probe.cpp",
@@ -41609,7 +41668,6 @@ def require_inet_address_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/inet_address_header_abi_probe.c",
         "compat/x86_64/inet_address_header_abi_probe.cpp",
@@ -41884,7 +41942,6 @@ def require_inet_ntoa_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/inet_address_header_abi_probe.c",
         "compat/x86_64/inet_address_header_abi_probe.cpp",
@@ -42239,7 +42296,6 @@ def require_inet_classful_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/inet_address_header_abi_probe.c",
         "compat/x86_64/inet_address_header_abi_probe.cpp",
@@ -46728,7 +46784,6 @@ def require_protocol_database_artifact(family: Mapping[str, Any]) -> None:
         "include/bits/alltypes.h",
         "include/stddef.h",
         "include/stdint.h",
-        "include/sys/types.h",
         "include/sys/socket.h",
         "include/netdb.h",
         "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
@@ -47520,7 +47575,6 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/nameser_header_abi_probe.c",
         "compat/x86_64/nameser_header_abi_probe.cpp",
@@ -47737,7 +47791,7 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
         "check_cxx_c_linkage",
         "nm --undefined-only",
         "_Z.*dn_skipname",
-        "resolv.h arpa/nameser.h netinet/in.h",
+        "STRICT_C_PROJECT_HEADERS",
         "DNS packet I/O",
         "netdb",
     ):
@@ -47861,7 +47915,6 @@ def require_dn_expand_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/nameser_header_abi_probe.c",
         "compat/x86_64/nameser_header_abi_probe.cpp",
@@ -48099,7 +48152,7 @@ def require_dn_expand_artifact(family: Mapping[str, Any]) -> None:
         "check_cxx_c_linkage",
         "nm --undefined-only",
         "_Z.*dn_expand",
-        "resolv.h arpa/nameser.h netinet/in.h",
+        "STRICT_C_PROJECT_HEADERS",
         "DNS packet I/O",
         "netdb",
     ):
@@ -48232,7 +48285,6 @@ def require_ns_flagdata_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/nameser_header_abi_probe.c",
         "compat/x86_64/nameser_header_abi_probe.cpp",
@@ -48603,7 +48655,6 @@ def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/nameser_header_abi_probe.c",
         "compat/x86_64/nameser_header_abi_probe.cpp",
@@ -48826,7 +48877,7 @@ def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
         "check_cxx_c_linkage",
         "nm --undefined-only",
         "_Z.*ns_get16",
-        "resolv.h arpa/nameser.h netinet/in.h",
+        "STRICT_C_PROJECT_HEADERS",
         "DNS packet I/O",
         "netdb",
     ):
@@ -48944,7 +48995,6 @@ def require_ns_get32_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/nameser_header_abi_probe.c",
         "compat/x86_64/nameser_header_abi_probe.cpp",
@@ -49170,7 +49220,7 @@ def require_ns_get32_artifact(family: Mapping[str, Any]) -> None:
         "check_cxx_c_linkage",
         "nm --undefined-only",
         "_Z.*ns_get32",
-        "resolv.h arpa/nameser.h netinet/in.h",
+        "STRICT_C_PROJECT_HEADERS",
         "DNS packet I/O",
         "netdb",
     ):
@@ -49291,7 +49341,6 @@ def require_ns_put16_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/nameser_header_abi_probe.c",
         "compat/x86_64/nameser_header_abi_probe.cpp",
@@ -49522,7 +49571,7 @@ def require_ns_put16_artifact(family: Mapping[str, Any]) -> None:
         "check_cxx_c_linkage",
         "nm --undefined-only",
         "_Z.*ns_put16",
-        "resolv.h arpa/nameser.h netinet/in.h",
+        "STRICT_C_PROJECT_HEADERS",
         "DNS packet I/O",
         "netdb",
     ):
@@ -72797,7 +72846,6 @@ def require_inet_netof_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/inet_address_header_abi_probe.c",
         "compat/x86_64/inet_address_header_abi_probe.cpp",
@@ -73160,7 +73208,6 @@ def require_inet_network_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/inet_address_header_abi_probe.c",
         "compat/x86_64/inet_address_header_abi_probe.cpp",
@@ -73513,7 +73560,6 @@ def require_ns_put32_artifact(family: Mapping[str, Any]) -> None:
         "include/stddef.h",
         "include/stdint.h",
         "include/sys/socket.h",
-        "include/sys/types.h",
         "include/bits/alltypes.h",
         "compat/x86_64/nameser_header_abi_probe.c",
         "compat/x86_64/nameser_header_abi_probe.cpp",
@@ -73740,7 +73786,7 @@ def require_ns_put32_artifact(family: Mapping[str, Any]) -> None:
         "check_cxx_c_linkage",
         "nm --undefined-only",
         "_Z.*ns_put32",
-        "resolv.h arpa/nameser.h netinet/in.h",
+        "STRICT_C_PROJECT_HEADERS",
         "DNS packet I/O",
         "netdb",
     ):
