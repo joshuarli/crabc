@@ -2575,6 +2575,49 @@ mod tests {
         true
     }
 
+    /// Records the source callback's decommit request. Returning true from
+    /// the `commit = false` arm is the pinned `_mi_os_purge_ex` contract for
+    /// an external callback which says that its range needs recommit before a
+    /// future committed claim.
+    struct RecommitPurgeScript {
+        false_calls: std::sync::atomic::AtomicUsize,
+        false_start: std::sync::atomic::AtomicUsize,
+        false_size: std::sync::atomic::AtomicUsize,
+    }
+
+    impl RecommitPurgeScript {
+        fn new() -> Self {
+            Self {
+                false_calls: std::sync::atomic::AtomicUsize::new(0),
+                false_start: std::sync::atomic::AtomicUsize::new(0),
+                false_size: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    unsafe extern "C" fn recommit_after_purge(
+        commit: bool,
+        start: *mut u8,
+        size: usize,
+        _is_zero: *mut bool,
+        user_argument: *mut c_void,
+    ) -> bool {
+        let script = unsafe { &*user_argument.cast::<RecommitPurgeScript>() };
+        if !commit {
+            script
+                .false_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            script
+                .false_start
+                .store(start.addr(), std::sync::atomic::Ordering::Relaxed);
+            script
+                .false_size
+                .store(size, std::sync::atomic::Ordering::Relaxed);
+            return true;
+        }
+        true
+    }
+
     #[test]
     fn metadata_sizing_reserves_exact_source_slices_and_bitmap_headers() {
         assert_eq!(size_of::<Page>(), 128);
@@ -3363,6 +3406,96 @@ mod tests {
         assert_eq!(purge.is_set_range(slice_index, 1), Some(true));
         assert_eq!(free.is_set_range(slice_index, 1), Some(true));
         assert!(view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire) > 0);
+    }
+
+    #[test]
+    fn external_purge_callback_recommit_clears_committed_bits_for_a_later_uncommitted_claim() {
+        // Pinned `src/arena.c:2254-2282` marks the selected range committed
+        // before `_mi_os_purge_ex`. Its custom callback arm in
+        // `src/os.c:655-680` returns the callback boolean as
+        // `needs_recommit`, so a true `commit = false` result must clear the
+        // exact committed range before the source returns it to `slices_free`.
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let script = RecommitPurgeScript::new();
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                Some(CommitHook::new(
+                    recommit_after_purge,
+                    (&script as *const RecommitPurgeScript).cast_mut().cast(),
+                )),
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let slice_index = view.arena().info_slices;
+        let slice_count = 2;
+        let start = view
+            .slice_start(slice_index)
+            .expect("the first usable external slice has an exact source address");
+        let size = invariants::size_of_slices(slice_count)
+            .expect("the selected source slice span has a checked size");
+
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), slice_count, true, 0)
+            .expect("the initially committed exact external span is claimable");
+        assert!(claim.memory_id().initially_committed());
+        assert!(claim.release());
+
+        let free = unsafe { view.slices_free() }.unwrap();
+        let committed = unsafe { view.slices_committed() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(committed.is_set_range(slice_index, slice_count), Some(true));
+        assert_eq!(purge.is_set_range(slice_index, slice_count), Some(true));
+
+        assert!(view.collect_scheduled_purge(PageSize::new(4096).unwrap(), true));
+        assert_eq!(
+            script
+                .false_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the forced source purge invokes the external callback exactly once"
+        );
+        assert_eq!(
+            script
+                .false_start
+                .load(std::sync::atomic::Ordering::Relaxed),
+            start.addr(),
+            "the callback receives the selected source span start"
+        );
+        assert_eq!(
+            script
+                .false_size
+                .load(std::sync::atomic::Ordering::Relaxed),
+            size,
+            "the callback receives the selected source span size"
+        );
+        assert_eq!(committed.is_clear_range(slice_index, slice_count), Some(true));
+        assert_eq!(free.is_set_range(slice_index, slice_count), Some(true));
+        assert_eq!(purge.is_clear_range(slice_index, slice_count), Some(true));
+        assert_eq!(
+            view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
+            0,
+            "the forced collection consumes its selected purge work"
+        );
+
+        let uncommitted = view
+            .try_claim_suitable_slices(ArenaId::none(), slice_count, false, 0)
+            .expect("the purged external span is returned to the free bitmap");
+        assert!(
+            !uncommitted.memory_id().initially_committed(),
+            "the callback's needs-recommit result clears the later uncommitted observation"
+        );
+        assert!(uncommitted.release());
     }
 
     #[test]
