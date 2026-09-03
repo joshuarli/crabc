@@ -612,6 +612,52 @@ assertion-invalid input, not C/Rust invalid-input parity.
   VM primitives or cover hints, huge pages, NUMA, options, statistics,
   arbitrary memory-kind dispatch, or a source runtime caller.
 
+### `CRABC-MI-LINUX-REUSE-NOOP` — accepted private VM-substrate safety boundary
+
+- **Upstream/Rust:** pinned `src/os.c:643-653` and
+  `src/prim/unix/prim.c:536-542`, represented by `os::Mapping::reuse` and
+  `ReuseOutcome::NoOp`.
+- **Category:** Linux/AArch64 private M2 reuse primitive. It has no public C
+  ABI effect and is not a C/Rust differential.
+- **Difference:** after the source's conservative page normalization, Linux
+  `_mi_prim_reuse` returns success without a VM operation. Rust represents that
+  complete contained-range outcome explicitly as `NoOp`; an empty conservative
+  range returns `None`, while invalid or closed `Mapping` input returns typed
+  `EINVAL` before a VM edge. C's void wrapper assumes a valid raw mapping, so
+  the checked errors are a Rust safety strengthening rather than error parity.
+- **Evidence:**
+  `os::tests::reuse_is_a_contained_range_noop_on_linux` proves the empty and
+  complete range outcomes, no fault seam use, unchanged mapping provenance,
+  continued page access, and invalid/closed-input rejection.
+- **Decision/removal:** accepted for this isolated Linux primitive. It does
+  not add an allocator caller, Apple `MADV_FREE_REUSE`, hints, huge pages,
+  NUMA/options policy, statistics, diagnostics, or reuse integration.
+
+### `CRABC-MI-ORDINARY-BITMAP-HIGHEST-SET-STALE-CHUNKMAP` — accepted checked observer boundary
+
+- **Upstream/Rust:** pinned `src/bitmap.c:1383-1403` `mi_bitmap_bsr`, with
+  its `src/bitmap.h:205-208` result contract, represented by
+  `bitmap::BitmapView::highest_set_relaxed`.
+- **Category:** private ordinary-bitmap M2 observer. It has no public C ABI
+  effect and is not a C/Rust differential.
+- **Difference:** Rust retains the descending Relaxed chunk-map/data scan and
+  scans every lower chunk below a high map bit, so an in-layout stale high
+  entry cannot hide a lower live bit. C asserts that every selected map bit is
+  in its trailing layout; Rust caps the final field scan at the initialized
+  chunk count instead of deriving the assertion-invalid pointer. The observer
+  does not mutate either bitmap image.
+- **Evidence:**
+  `bitmap::tests::bitmap_highest_set_scan_skips_a_stale_high_chunk_and_preserves_the_map`
+  constructs a three-chunk image, leaves a stale high in-layout map bit, and
+  proves the lower bit wins while the map is retained. The separate
+  `bitmap::tests::bitmap_highest_set_caps_an_out_of_layout_chunkmap_bit`
+  writes an out-of-layout high map bit and proves the checked scan remains
+  bounded, returns the lower live bit, and retains that invalid map entry.
+- **Decision/removal:** accepted for this checked read-only slice. It does
+  not establish C bsr differential parity, binned bitmaps, visitor/popcount
+  behavior, flexible-image allocation ownership, Heap/Page/Arena integration,
+  statistics, races, or allocator routing.
+
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 
 - **Upstream/Rust:** `src/arena.c:341-406,525-569,1573-1611,1676-1791,1794-1912`,

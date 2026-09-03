@@ -2767,6 +2767,31 @@ mod tests {
     }
 
     #[test]
+    fn bitmap_highest_set_caps_an_out_of_layout_chunkmap_bit() {
+        let layout = BitmapLayout::for_bit_count(BCHUNK_BITS * 3).unwrap();
+        let mut storage = BitmapTestStorage::uninit();
+        let bitmap = unsafe {
+            BitmapView::initialize(
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(bitmap.set_range(7, 1), Some(RunTransition::all_clear(0)));
+        // Pinned C asserts that this map bit names a dynamic trailing chunk.
+        // The checked view must cap the reverse scan to its three initialized
+        // chunks, still find the lower live bit, and leave the conservative
+        // map untouched.
+        word_or_relaxed(bitmap.chunkmap().field(0), 1usize << (BFIELD_BITS - 1));
+        let before = word_load_relaxed(bitmap.chunkmap().field(0));
+        assert_eq!(bitmap.highest_set_relaxed(), Some(7));
+        assert_eq!(word_load_relaxed(bitmap.chunkmap().field(0)), before);
+    }
+
+    #[test]
     fn clear_set_range_visitor_uses_source_field_snapshots_and_retains_the_conservative_map() {
         extern crate std;
 

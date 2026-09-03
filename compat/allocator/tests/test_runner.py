@@ -2216,6 +2216,12 @@ class ContractTests(unittest.TestCase):
                     "kind": "rust-unit",
                     "target": "os::tests::normal_os_allocation_preserves_a_failed_aligned_map_owner",
                 },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "linux-os-reuse-contained-range-noop",
+                    "kind": "rust-unit",
+                    "target": "os::tests::reuse_is_a_contained_range_noop_on_linux",
+                },
             ],
         )
         self.assertEqual(vm_primitives["completion_status"], "partial")
@@ -2351,7 +2357,16 @@ class ContractTests(unittest.TestCase):
                     "id": "c-rust-bitmap-set-differential",
                     "kind": "c-rust-bitmap-set-differential",
                     "target": "bitmap::tests::emit_m2_bitmap_forall_set_c_rust_trace",
-                }
+                },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "bitmap-highest-set-relaxed-stale-high-chunkmap",
+                    "kind": "rust-unit",
+                    "target": (
+                        "bitmap::tests::bitmap_highest_set_scan_skips_a_stale_high_chunk_"
+                        "and_preserves_the_map"
+                    ),
+                },
             ],
         )
         self.assertEqual(bitmaps["completion_status"], "partial")
