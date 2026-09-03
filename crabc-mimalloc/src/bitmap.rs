@@ -16,8 +16,9 @@
 // arithmetic, atomic set/clear, rollback, set-run selection, scalar relaxed
 // chunk observations, caller-owned bitmap initialization, range operations,
 // and conservative chunkmap maintenance), `src/bitmap.c:109-129,920-928,
-// 1024-1042,1297-1380,1425-1432` (the abandoned-page single-bit claim
-// visitor, its conservative-map repair, and clear-once-set reader quiescence),
+// 1024-1042,1297-1403,1425-1432` (the abandoned-page single-bit claim
+// visitor, its conservative-map repair, reverse set-bit observation, and
+// clear-once-set reader quiescence),
 // `src/bitmap.c:1437-1460` (the selected scalar read-only set-bit visitor),
 // `src/bitmap.c:1462-1521` (the selected scalar clear-range visitor and its
 // default `rangesn` dispatch), plus `src/bitmap.c:1583-1784,1794-1997`
@@ -1495,6 +1496,46 @@ impl<'storage> BitmapView<'storage> {
         self.is_clear_range(0, self.max_bits()).unwrap_or(false)
     }
 
+    /// Port of `mi_bitmap_bsr`: find the highest set data bit through the
+    /// conservative chunk map without changing either image.
+    ///
+    /// The source reads one chunk-map field in descending order, derives its
+    /// highest set map bit, and then scans every lower chunk in that field
+    /// from high to low. This deliberately tolerates a stale but still
+    /// in-layout high chunk-map entry: a lower live data chunk can still win.
+    /// Both the map and data reads are Relaxed, so the answer is only the
+    /// source-shaped per-field observation, not a concurrent snapshot.
+    ///
+    /// Pinned C asserts that every selected map bit is within its dynamic
+    /// trailing layout. The checked Rust view caps that final scan to its
+    /// initialized chunk count, preserving all valid-image traversal while
+    /// refusing to derive an out-of-bounds chunk from a stale invalid map bit.
+    pub(crate) fn highest_set_relaxed(&self) -> Option<usize> {
+        let chunk_count = self.chunk_count();
+        let chunkmap_field_count = (chunk_count + BFIELD_BITS - 1) / BFIELD_BITS;
+        for chunkmap_field_index in (0..chunkmap_field_count).rev() {
+            let chunkmap_entry =
+                word_load_relaxed(self.chunkmap().field(chunkmap_field_index));
+            let Some(highest_map_bit) = bsr(chunkmap_entry) else {
+                continue;
+            };
+
+            let chunk_base = chunkmap_field_index * BFIELD_BITS;
+            let valid_chunk_count = core::cmp::min(
+                chunk_count.saturating_sub(chunk_base),
+                BFIELD_BITS,
+            );
+            let scan_count = core::cmp::min(highest_map_bit + 1, valid_chunk_count);
+            for chunk_offset in (0..scan_count).rev() {
+                let chunk_index = chunk_base + chunk_offset;
+                if let Some(chunk_bit) = self.chunk(chunk_index).highest_set_relaxed() {
+                    return Some(chunk_index * BCHUNK_BITS + chunk_bit);
+                }
+            }
+        }
+        None
+    }
+
     /// Finds and atomically claims the lowest available bit through ordinary
     /// `mi_bitmap_find(..., tseq = 0, n = 1)` traversal.
     ///
@@ -2606,6 +2647,39 @@ mod tests {
         assert!(bitmap.chunkmap().is_set_run(0, 2));
         assert_eq!(bitmap.clear_range(0, BCHUNK_BITS * 2), Some(true));
         assert!(bitmap.is_all_clear());
+    }
+
+    #[test]
+    fn bitmap_highest_set_scan_skips_a_stale_high_chunk_and_preserves_the_map() {
+        let layout = BitmapLayout::for_bit_count(BCHUNK_BITS * 3).unwrap();
+        let mut storage = BitmapTestStorage::uninit();
+        let bitmap = unsafe {
+            BitmapView::initialize(
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(bitmap.highest_set_relaxed(), None);
+        assert_eq!(bitmap.set_range(7, 1), Some(RunTransition::all_clear(0)));
+        let high = BCHUNK_BITS * 2 + BFIELD_BITS + 9;
+        assert_eq!(bitmap.set_range(high, 1), Some(RunTransition::all_clear(0)));
+        assert_eq!(bitmap.highest_set_relaxed(), Some(high));
+
+        // `_mi_bitmap_forall_setc_ranges` can leave this conservative-map
+        // shape. Direct data clearing isolates `mi_bitmap_bsr`'s stale-high
+        // scan without making this test another visitor route.
+        assert!(bitmap
+            .chunk(2)
+            .clear_run(BFIELD_BITS + 9, 1)
+            .unwrap()
+            .all_transitioned());
+        assert!(bitmap.chunkmap().is_set_run(2, 1));
+        assert_eq!(bitmap.highest_set_relaxed(), Some(7));
+        assert!(bitmap.chunkmap().is_set_run(2, 1));
     }
 
     #[test]
