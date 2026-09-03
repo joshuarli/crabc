@@ -43,8 +43,13 @@ class SysTimeDirectHeaderAbiTests(unittest.TestCase):
                 "CRABC_SYS_TIME_REQUIRE_GNU_BSD",
                 "futimesat",
                 "timerisset",
+                "return selected + (",
+                "timeradd(&first, &second, &result),",
+                "timersub(&second, &first, &result),",
                 "CRABC_SYS_TIME_REQUIRE_GNU",
                 "TIMEVAL_TO_TIMESPEC",
+                "TIMEVAL_TO_TIMESPEC(&timeval_value, &timespec_value),",
+                "TIMESPEC_TO_TIMEVAL(&timeval_value, &timespec_value),",
                 "CRABC_SYS_TIME_REQUIRE_GNU_BSD_HIDDEN",
                 "CRABC_SYS_TIME_REQUIRE_GNU_HIDDEN",
             ):

@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "93ab66f9e82d77a4563b595c9ded13fab7c96ab54f2918038b73269beb1f8344",
+    "callable_inventory_sha256": "9bd257b76fe74ce35c8f7d40ef482123869054a0b4d73cd8f959f7de0ffe728e",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -18568,7 +18568,7 @@
           "record": 8,
           "typedef": 60
         },
-        "sha256": "41ebfa08966816faf4e437aa945434ebb28ff15843829db3179003754a290b67"
+        "sha256": "e7af6f27c2139c141264d852ea6bc48de91e3825a43ceb5118f3ea4d68dacb79"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -18712,12 +18712,12 @@
           {
             "kind": "macro",
             "name": "TIMESPEC_TO_TIMEVAL",
-            "signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
           },
           {
             "kind": "macro",
             "name": "TIMEVAL_TO_TIMESPEC",
-            "signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "kind": "macro",
@@ -19272,12 +19272,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -19287,12 +19287,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -19642,7 +19642,7 @@
           "record": 7,
           "typedef": 60
         },
-        "sha256": "fd0966a138ce4708f27c62eff689558f90c0cce2dbb6ab1a83c16ce94a5a07ce"
+        "sha256": "67c4af2dc74fb70b51ebfc2ed8072fd6fb36364354ae2a893ea6c6e949509499"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -19786,12 +19786,12 @@
           {
             "kind": "macro",
             "name": "TIMESPEC_TO_TIMEVAL",
-            "signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
           },
           {
             "kind": "macro",
             "name": "TIMEVAL_TO_TIMESPEC",
-            "signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "kind": "macro",
@@ -20346,12 +20346,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -20361,12 +20361,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -22718,7 +22718,7 @@
           "record": 8,
           "typedef": 60
         },
-        "sha256": "952c11a47b2770b66486ce3bd8be600faf6c03e7b727449976097c9f70f6e452"
+        "sha256": "c565700583a1285fc97a5fe728504151d3d476660b87490c3ff112dc47fb2614"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -23412,12 +23412,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -23427,12 +23427,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -23782,7 +23782,7 @@
           "record": 7,
           "typedef": 60
         },
-        "sha256": "fd0966a138ce4708f27c62eff689558f90c0cce2dbb6ab1a83c16ce94a5a07ce"
+        "sha256": "67c4af2dc74fb70b51ebfc2ed8072fd6fb36364354ae2a893ea6c6e949509499"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -23926,12 +23926,12 @@
           {
             "kind": "macro",
             "name": "TIMESPEC_TO_TIMEVAL",
-            "signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
           },
           {
             "kind": "macro",
             "name": "TIMEVAL_TO_TIMESPEC",
-            "signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "kind": "macro",
@@ -24486,12 +24486,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -24501,12 +24501,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -115099,7 +115099,7 @@
           "record": 7,
           "typedef": 12
         },
-        "sha256": "e486e80f575d7f1a6f2fed40b882c395f555f290ab9042836be4d87e8a9e18ab"
+        "sha256": "2e5ac1c28fcda60ac616fd1be893ed1a05d3e04ae3aa6977f0ea13d7dc97eec8"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -115136,18 +115136,6 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "candidate_signature": "function-like:(x,i,operation) ((x)[(i) / 8] operation (1 << (i) % 8))",
@@ -115196,34 +115184,10 @@
             "kind": "macro",
             "name": "setbit",
             "reference_signature": "function-like:(x,i) __bitop(x,i,|=)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 18,
-        "matched_count": 249,
+        "incompatible_count": 12,
+        "matched_count": 255,
         "reference_only": [
           {
             "kind": "macro",
@@ -115291,7 +115255,7 @@
           "record": 7,
           "typedef": 12
         },
-        "sha256": "8703ca195e46234d2491ea09a853072c2c7394c9dbd30993f3f872fa8e445f25"
+        "sha256": "a59595726715730af2bf0a2c653ad7066acbd9852fd9ccd582c08bbf549c9118"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -115328,18 +115292,6 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "candidate_signature": "function-like:(x,i,operation) ((x)[(i) / 8] operation (1 << (i) % 8))",
@@ -115388,34 +115340,10 @@
             "kind": "macro",
             "name": "setbit",
             "reference_signature": "function-like:(x,i) __bitop(x,i,|=)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 18,
-        "matched_count": 249,
+        "incompatible_count": 12,
+        "matched_count": 255,
         "reference_only": [
           {
             "kind": "macro",
@@ -116096,7 +116024,7 @@
           "record": 7,
           "typedef": 11
         },
-        "sha256": "22c8382943529d43489558e9ae42fec1a46af831eb502a51582d5c282af7e8f3"
+        "sha256": "fe2d2529dc2895465788b0abb88929c982445b09b6ed9d1ccdc72e72b52f0b69"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -116181,34 +116109,10 @@
             "kind": "macro",
             "name": "setbit",
             "reference_signature": "function-like:(x,i) __bitop(x,i,|=)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 16,
-        "matched_count": 244,
+        "incompatible_count": 12,
+        "matched_count": 248,
         "reference_only": [
           {
             "kind": "macro",
@@ -116276,7 +116180,7 @@
           "record": 7,
           "typedef": 12
         },
-        "sha256": "8703ca195e46234d2491ea09a853072c2c7394c9dbd30993f3f872fa8e445f25"
+        "sha256": "a59595726715730af2bf0a2c653ad7066acbd9852fd9ccd582c08bbf549c9118"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -116313,18 +116217,6 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "candidate_signature": "function-like:(x,i,operation) ((x)[(i) / 8] operation (1 << (i) % 8))",
@@ -116373,34 +116265,10 @@
             "kind": "macro",
             "name": "setbit",
             "reference_signature": "function-like:(x,i) __bitop(x,i,|=)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 18,
-        "matched_count": 249,
+        "incompatible_count": 12,
+        "matched_count": 255,
         "reference_only": [
           {
             "kind": "macro",
@@ -117239,7 +117107,7 @@
           "typedef": 90,
           "variable": 6
         },
-        "sha256": "66cc547bb8159a274b39fa86f81282a175a4c523131a6eb4c4b8593355c8791e"
+        "sha256": "9b0b62eccb83d5a36f676edd7a1818944ed2a3b0000f5c07ab17204f3e114500"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -117258,46 +117126,10 @@
             "kind": "macro",
             "name": "LONG_MAX",
             "reference_signature": "object-like: __LONG_MAX"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 7,
-        "matched_count": 838,
+        "incompatible_count": 1,
+        "matched_count": 844,
         "reference_only": [
           {
             "kind": "macro",
@@ -117362,7 +117194,7 @@
           "typedef": 90,
           "variable": 6
         },
-        "sha256": "9fb5a7df2e1176059609197a66c327f153c5f6c03c57fdd3aa99f4bdafb0e59c"
+        "sha256": "8a7a3d9e8db6bac2bbead1b9fa57e7cf58e666531b63dfa41ebc4007e443c760"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -117381,46 +117213,10 @@
             "kind": "macro",
             "name": "LONG_MAX",
             "reference_signature": "object-like: __LONG_MAX"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 7,
-        "matched_count": 837,
+        "incompatible_count": 1,
+        "matched_count": 843,
         "reference_only": [
           {
             "kind": "macro",
@@ -117891,7 +117687,7 @@
           "typedef": 90,
           "variable": 5
         },
-        "sha256": "c8ef3dd367caea002b3f4d9e74e496413f49f3d6bd7c056d2939cb38781fbbe2"
+        "sha256": "ca94226de36b86ea67bec2170eaa541f7081020765f3272c8bab531225eec7d9"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -117910,34 +117706,10 @@
             "kind": "macro",
             "name": "LONG_MAX",
             "reference_signature": "object-like: __LONG_MAX"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 5,
-        "matched_count": 827,
+        "incompatible_count": 1,
+        "matched_count": 831,
         "reference_only": [
           {
             "kind": "macro",
@@ -118002,7 +117774,7 @@
           "typedef": 90,
           "variable": 6
         },
-        "sha256": "9fb5a7df2e1176059609197a66c327f153c5f6c03c57fdd3aa99f4bdafb0e59c"
+        "sha256": "8a7a3d9e8db6bac2bbead1b9fa57e7cf58e666531b63dfa41ebc4007e443c760"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -118021,46 +117793,10 @@
             "kind": "macro",
             "name": "LONG_MAX",
             "reference_signature": "object-like: __LONG_MAX"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 7,
-        "matched_count": 837,
+        "incompatible_count": 1,
+        "matched_count": 843,
         "reference_only": [
           {
             "kind": "macro",
@@ -126510,7 +126246,7 @@
           "record": 7,
           "typedef": 9
         },
-        "sha256": "dde8b59c5962ee03d91091383c8a26a6c999e4e9281d51bfd8adba1d9e33b27b"
+        "sha256": "ce6b669d051d86a697c1ae9f29a1020cff63066fef89f773ff1d3afa0d0d5c48"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -126523,46 +126259,10 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 7,
-        "matched_count": 100,
+        "incompatible_count": 1,
+        "matched_count": 106,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -126589,7 +126289,7 @@
           "record": 7,
           "typedef": 9
         },
-        "sha256": "7726bfbb9978c55e1530e4616af1e7908c29fdb03c0242eb91fde11365750dbe"
+        "sha256": "cb2b3c8eb63ff8d1f65227d444044efb21a26f1a038b235e86dbb2a710587a8c"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -126602,46 +126302,10 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 7,
-        "matched_count": 100,
+        "incompatible_count": 1,
+        "matched_count": 106,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -126797,7 +126461,7 @@
           "record": 7,
           "typedef": 8
         },
-        "sha256": "dcca72f29a1f18d7a1652546347a9b7193f3bcffbda21a4229ecc809697e5259"
+        "sha256": "8ae3f91c9cbb88b7f2e173beefb6bba1e415060bbfc20f2b7129e401ce16a14f"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -126810,34 +126474,10 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 5,
-        "matched_count": 95,
+        "incompatible_count": 1,
+        "matched_count": 99,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -126864,7 +126504,7 @@
           "record": 7,
           "typedef": 9
         },
-        "sha256": "7726bfbb9978c55e1530e4616af1e7908c29fdb03c0242eb91fde11365750dbe"
+        "sha256": "cb2b3c8eb63ff8d1f65227d444044efb21a26f1a038b235e86dbb2a710587a8c"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -126877,46 +126517,10 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           }
         ],
-        "incompatible_count": 7,
-        "matched_count": 100,
+        "incompatible_count": 1,
+        "matched_count": 106,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -142133,53 +141737,16 @@
           "record": 5,
           "typedef": 6
         },
-        "sha256": "dbd40ab168d7ee48d996420cfd5bfb40898bac0536632fecb8adb8e4feedb9d6"
+        "sha256": "32fea1864b8f6bd707e6a972de87f672b733fecd1f86d5c22e2f04b1f2a548c4"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          }
-        ],
-        "incompatible_count": 6,
-        "matched_count": 55,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 61,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -142206,53 +141773,16 @@
           "record": 5,
           "typedef": 6
         },
-        "sha256": "42ad6b9cfff62abc14b80c282e826d6bd599b303185513b0c6f44c7f15e2538c"
+        "sha256": "674ddcba4243853c941194f9cac1c69ac569293a5d087882ac0aac68219cc933"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          }
-        ],
-        "incompatible_count": 6,
-        "matched_count": 55,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 61,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -142387,41 +141917,16 @@
           "record": 5,
           "typedef": 6
         },
-        "sha256": "04c9d624abf4ddae02987487b2b56a7e06a032c7afc3545eda184f43ba676c95"
+        "sha256": "b66ece41757ceb27aed4f9c8a2e5af550c8c8712307f44218e7f2cf1f9594396"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 55,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 59,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -142448,53 +141953,16 @@
           "record": 5,
           "typedef": 6
         },
-        "sha256": "42ad6b9cfff62abc14b80c282e826d6bd599b303185513b0c6f44c7f15e2538c"
+        "sha256": "674ddcba4243853c941194f9cac1c69ac569293a5d087882ac0aac68219cc933"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          }
-        ],
-        "incompatible_count": 6,
-        "matched_count": 55,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 61,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -149785,7 +149253,7 @@
           "record": 8,
           "typedef": 60
         },
-        "sha256": "d28b3e94089fb5dd60133ec3667a7a49db9aaa21fdd563176ff4d07ef3bff835"
+        "sha256": "43b0dd979cabaf1cd3a8af5ace877b92de7cccd884d542b9272ffec18b180676"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -150603,46 +150071,9 @@
           }
         ],
         "candidate_only_count": 162,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          }
-        ],
-        "incompatible_count": 6,
-        "matched_count": 112,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 118,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -150669,7 +150100,7 @@
           "record": 7,
           "typedef": 60
         },
-        "sha256": "3e1078b6d6298ed7c55d05a0534956d39a35a2f09e82278eef0a67fa457f7a9f"
+        "sha256": "0f9f5e2d29009aee09b232bef304cf55d09268127e6d280b7ce8352bca7f64f2"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -151482,46 +150913,9 @@
           }
         ],
         "candidate_only_count": 161,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          }
-        ],
-        "incompatible_count": 6,
-        "matched_count": 112,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 118,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -153084,7 +152478,7 @@
           "record": 8,
           "typedef": 60
         },
-        "sha256": "f32f45b6da7884f4ab3c1cd8b341836f4db681176814d6c0c96242b2dfde0475"
+        "sha256": "de66dffc59f4df52552fad4f437bf885c17d9a040c080584e3aad5cf6a9356e1"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -153902,34 +153296,9 @@
           }
         ],
         "candidate_only_count": 162,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 112,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 116,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -153956,7 +153325,7 @@
           "record": 7,
           "typedef": 60
         },
-        "sha256": "3e1078b6d6298ed7c55d05a0534956d39a35a2f09e82278eef0a67fa457f7a9f"
+        "sha256": "0f9f5e2d29009aee09b232bef304cf55d09268127e6d280b7ce8352bca7f64f2"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -154769,46 +154138,9 @@
           }
         ],
         "candidate_only_count": 161,
-        "incompatible": [
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          }
-        ],
-        "incompatible_count": 6,
-        "matched_count": 112,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 118,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -163066,7 +162398,7 @@
           "record": 15,
           "typedef": 24
         },
-        "sha256": "c86df9a3083166dda35ffe2ef7bc7639798ae3347939734073ae338456993805"
+        "sha256": "d372924c95a12ff7db45c6ec3aba6f787994565338053d0ff586b8a5d1059673"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -163079,42 +162411,6 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "candidate_signature": "struct{cwd:unsigned short,swd:unsigned short,ftw:unsigned short,fop:unsigned short,rip:unsigned long long,rdp:unsigned long long,mxcsr:unsigned int,mxcr_mask:unsigned int,_st:struct (unnamed at public/bits/signal.h:65:2)[8],_xmm:struct (unnamed at public/bits/signal.h:68:2)[16],padding:unsigned int[24]}",
@@ -163135,8 +162431,8 @@
             "reference_signature": "struct{sigev_value:union sigval,sigev_signo:int,sigev_notify:int,__sev_fields:union (unnamed at public/signal.h:188:2)}"
           }
         ],
-        "incompatible_count": 10,
-        "matched_count": 357,
+        "incompatible_count": 4,
+        "matched_count": 363,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -163163,7 +162459,7 @@
           "record": 14,
           "typedef": 24
         },
-        "sha256": "a464b9ff63e71241f0afcdcaa98b201b9acb4c282ef3f5dde25349dcc74f3b93"
+        "sha256": "299642f9bcbe3d8618697395119340496daddc3e1e2864fa3e0e295e24526cdc"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -163176,42 +162472,6 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "candidate_signature": "struct{cwd:unsigned short,swd:unsigned short,ftw:unsigned short,fop:unsigned short,rip:unsigned long long,rdp:unsigned long long,mxcsr:unsigned int,mxcr_mask:unsigned int,_st:struct (unnamed at public/bits/signal.h:65:2)[8],_xmm:struct (unnamed at public/bits/signal.h:68:2)[16],padding:unsigned int[24]}",
@@ -163232,8 +162492,8 @@
             "reference_signature": "struct{sigev_value:union sigval,sigev_signo:int,sigev_notify:int,__sev_fields:union (unnamed at public/signal.h:188:2)}"
           }
         ],
-        "incompatible_count": 10,
-        "matched_count": 356,
+        "incompatible_count": 4,
+        "matched_count": 362,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -163392,7 +162652,7 @@
           "record": 15,
           "typedef": 23
         },
-        "sha256": "262719a33a0caaa8df552e7a54f581100accdf0dbd94d86d73f31bab68bf0ea2"
+        "sha256": "9eafe69ce49a683636607ed075aded7bacf325192766e94dbf231410316c0336"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -163405,30 +162665,6 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "candidate_signature": "struct{cwd:unsigned short,swd:unsigned short,ftw:unsigned short,fop:unsigned short,rip:unsigned long long,rdp:unsigned long long,mxcsr:unsigned int,mxcr_mask:unsigned int,_st:struct (unnamed at public/bits/signal.h:65:2)[8],_xmm:struct (unnamed at public/bits/signal.h:68:2)[16],padding:unsigned int[24]}",
@@ -163449,8 +162685,8 @@
             "reference_signature": "struct{sigev_value:union sigval,sigev_signo:int,sigev_notify:int,__sev_fields:union (unnamed at public/signal.h:188:2)}"
           }
         ],
-        "incompatible_count": 8,
-        "matched_count": 324,
+        "incompatible_count": 4,
+        "matched_count": 328,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -163477,7 +162713,7 @@
           "record": 14,
           "typedef": 24
         },
-        "sha256": "a464b9ff63e71241f0afcdcaa98b201b9acb4c282ef3f5dde25349dcc74f3b93"
+        "sha256": "299642f9bcbe3d8618697395119340496daddc3e1e2864fa3e0e295e24526cdc"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -163490,42 +162726,6 @@
             "kind": "macro",
             "name": "RUSAGE_CHILDREN",
             "reference_signature": "object-like: (-1)"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "candidate_signature": "struct{cwd:unsigned short,swd:unsigned short,ftw:unsigned short,fop:unsigned short,rip:unsigned long long,rdp:unsigned long long,mxcsr:unsigned int,mxcr_mask:unsigned int,_st:struct (unnamed at public/bits/signal.h:65:2)[8],_xmm:struct (unnamed at public/bits/signal.h:68:2)[16],padding:unsigned int[24]}",
@@ -163546,8 +162746,8 @@
             "reference_signature": "struct{sigev_value:union sigval,sigev_signo:int,sigev_notify:int,__sev_fields:union (unnamed at public/signal.h:188:2)}"
           }
         ],
-        "incompatible_count": 10,
-        "matched_count": 356,
+        "incompatible_count": 4,
+        "matched_count": 362,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -175230,7 +174430,7 @@
           "record": 8,
           "typedef": 60
         },
-        "sha256": "c306c2b2bc1636d15065ff86bfa568fc435e936a72cc849dda0a4260c5df1eae"
+        "sha256": "97ab7ee724116dd36143d89c3a05793349eff0a74a0536d1ebaeb7dc2317cb5f"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -175374,12 +174574,12 @@
           {
             "kind": "macro",
             "name": "TIMESPEC_TO_TIMEVAL",
-            "signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
           },
           {
             "kind": "macro",
             "name": "TIMEVAL_TO_TIMESPEC",
-            "signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "kind": "macro",
@@ -175929,12 +175129,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -175944,12 +175144,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -176299,7 +175499,7 @@
           "record": 7,
           "typedef": 60
         },
-        "sha256": "254ca01df0e3976e384e532b9749188eb5daf7a330b20c34d3d98c0b30f42eb9"
+        "sha256": "2423fb18cd4c7894d82102d1ac10ae9be041e41f7b323d8075027cbd9852cfca"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -176443,12 +175643,12 @@
           {
             "kind": "macro",
             "name": "TIMESPEC_TO_TIMEVAL",
-            "signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
           },
           {
             "kind": "macro",
             "name": "TIMEVAL_TO_TIMESPEC",
-            "signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "kind": "macro",
@@ -176998,12 +176198,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -177013,12 +176213,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -179355,7 +178555,7 @@
           "record": 8,
           "typedef": 60
         },
-        "sha256": "1668c00539e91d526ea38496c379958c25686f358fd4839295dce99407450ac2"
+        "sha256": "6b13452df513b6d668d03782ffdb21719ba0fc2e7e3add64bbc50416e88ab47f"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -180044,12 +179244,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -180059,12 +179259,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -180414,7 +179614,7 @@
           "record": 7,
           "typedef": 60
         },
-        "sha256": "254ca01df0e3976e384e532b9749188eb5daf7a330b20c34d3d98c0b30f42eb9"
+        "sha256": "2423fb18cd4c7894d82102d1ac10ae9be041e41f7b323d8075027cbd9852cfca"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -180558,12 +179758,12 @@
           {
             "kind": "macro",
             "name": "TIMESPEC_TO_TIMEVAL",
-            "signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
           },
           {
             "kind": "macro",
             "name": "TIMEVAL_TO_TIMESPEC",
-            "signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "kind": "macro",
@@ -181113,12 +180313,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -181128,12 +180328,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -181478,7 +180678,7 @@
           "record": 7,
           "typedef": 60
         },
-        "sha256": "d91ccdae54b6a08da798bbe6cd3d2eab1d0b6c643b9aaf7d317f68f1957d68fb"
+        "sha256": "91f48f186f5e9cc834ae9854c61a826f2dbca187a6a6f5ce2a6b5a22ca6f2a87"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -181622,12 +180822,12 @@
           {
             "kind": "macro",
             "name": "TIMESPEC_TO_TIMEVAL",
-            "signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
           },
           {
             "kind": "macro",
             "name": "TIMEVAL_TO_TIMESPEC",
-            "signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "kind": "macro",
@@ -182177,12 +181377,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -182192,12 +181392,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -182547,7 +181747,7 @@
           "record": 6,
           "typedef": 60
         },
-        "sha256": "4a861f8e040620f9ff0630c49903a18dbf54ff1d834651b2c4ef80d64f8e3b50"
+        "sha256": "2e614b5bc0cdc81ec0351afbfc3d5d43c339aaecf154dd0c80fb1bfb21f2d0a5"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -182691,12 +181891,12 @@
           {
             "kind": "macro",
             "name": "TIMESPEC_TO_TIMEVAL",
-            "signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
           },
           {
             "kind": "macro",
             "name": "TIMEVAL_TO_TIMESPEC",
-            "signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "kind": "macro",
@@ -183246,12 +182446,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -183261,12 +182461,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -185603,7 +184803,7 @@
           "record": 7,
           "typedef": 60
         },
-        "sha256": "e6874ceffd500029fdd1fbaca96d3ee83d02c3b78cf30b988938bf3d8e7c70fe"
+        "sha256": "88d3b2888ea7577260b7a15a3125b61c8b8ed337d829468eedc14662698df1f0"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -186292,12 +185492,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -186307,12 +185507,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -186662,7 +185862,7 @@
           "record": 6,
           "typedef": 60
         },
-        "sha256": "4a861f8e040620f9ff0630c49903a18dbf54ff1d834651b2c4ef80d64f8e3b50"
+        "sha256": "2e614b5bc0cdc81ec0351afbfc3d5d43c339aaecf154dd0c80fb1bfb21f2d0a5"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -186806,12 +186006,12 @@
           {
             "kind": "macro",
             "name": "TIMESPEC_TO_TIMEVAL",
-            "signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
           },
           {
             "kind": "macro",
             "name": "TIMEVAL_TO_TIMESPEC",
-            "signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)"
+            "signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
           },
           {
             "kind": "macro",
@@ -187361,12 +186561,12 @@
           {
             "kind": "macro",
             "name": "timeradd",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
           },
           {
             "kind": "macro",
             "name": "timerclear",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)"
+            "signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
           },
           {
             "kind": "macro",
@@ -187376,12 +186576,12 @@
           {
             "kind": "macro",
             "name": "timerisset",
-            "signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)"
+            "signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
           },
           {
             "kind": "macro",
             "name": "timersub",
-            "signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)"
+            "signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
           },
           {
             "kind": "record",
@@ -188648,7 +187848,7 @@
           "record": 15,
           "typedef": 24
         },
-        "sha256": "ff66f7c87fc61524b61df0a452fc1945aa99835213d3159599e8990544841208"
+        "sha256": "edd5af2f452acf7221dbf7c7a24721e99627b9d22f16d84fa9df8290580cd99c"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -188669,42 +187869,6 @@
             "reference_signature": "object-like: (-1)"
           },
           {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          },
-          {
             "candidate_signature": "struct{cwd:unsigned short,swd:unsigned short,ftw:unsigned short,fop:unsigned short,rip:unsigned long long,rdp:unsigned long long,mxcsr:unsigned int,mxcr_mask:unsigned int,_st:struct (unnamed at public/bits/signal.h:65:2)[8],_xmm:struct (unnamed at public/bits/signal.h:68:2)[16],padding:unsigned int[24]}",
             "kind": "record",
             "name": "_fpstate",
@@ -188723,8 +187887,8 @@
             "reference_signature": "struct{sigev_value:union sigval,sigev_signo:int,sigev_notify:int,__sev_fields:union (unnamed at public/signal.h:188:2)}"
           }
         ],
-        "incompatible_count": 10,
-        "matched_count": 357,
+        "incompatible_count": 4,
+        "matched_count": 363,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -188751,7 +187915,7 @@
           "record": 14,
           "typedef": 24
         },
-        "sha256": "97df7f7384a4bae5f49c10045f262bf20232c7f86f35f94aa089ac1cd5209ae0"
+        "sha256": "164c4e3871d020f9126124b4ba9469af9d042539f5300d9581b7088d45011ff0"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -188772,42 +187936,6 @@
             "reference_signature": "object-like: (-1)"
           },
           {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          },
-          {
             "candidate_signature": "struct{cwd:unsigned short,swd:unsigned short,ftw:unsigned short,fop:unsigned short,rip:unsigned long long,rdp:unsigned long long,mxcsr:unsigned int,mxcr_mask:unsigned int,_st:struct (unnamed at public/bits/signal.h:65:2)[8],_xmm:struct (unnamed at public/bits/signal.h:68:2)[16],padding:unsigned int[24]}",
             "kind": "record",
             "name": "_fpstate",
@@ -188826,8 +187954,8 @@
             "reference_signature": "struct{sigev_value:union sigval,sigev_signo:int,sigev_notify:int,__sev_fields:union (unnamed at public/signal.h:188:2)}"
           }
         ],
-        "incompatible_count": 10,
-        "matched_count": 356,
+        "incompatible_count": 4,
+        "matched_count": 362,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -189004,7 +188132,7 @@
           "record": 15,
           "typedef": 23
         },
-        "sha256": "412eb022d8c21a40c4f722cdb27d882ddcec7de91495f5205ea5beb90d88ba82"
+        "sha256": "0482aa019b477c082f5503e42e2aa1590f88acef533ae194686f6cc1d0cee4e5"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -189025,30 +188153,6 @@
             "reference_signature": "object-like: (-1)"
           },
           {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          },
-          {
             "candidate_signature": "struct{cwd:unsigned short,swd:unsigned short,ftw:unsigned short,fop:unsigned short,rip:unsigned long long,rdp:unsigned long long,mxcsr:unsigned int,mxcr_mask:unsigned int,_st:struct (unnamed at public/bits/signal.h:65:2)[8],_xmm:struct (unnamed at public/bits/signal.h:68:2)[16],padding:unsigned int[24]}",
             "kind": "record",
             "name": "_fpstate",
@@ -189067,8 +188171,8 @@
             "reference_signature": "struct{sigev_value:union sigval,sigev_signo:int,sigev_notify:int,__sev_fields:union (unnamed at public/signal.h:188:2)}"
           }
         ],
-        "incompatible_count": 8,
-        "matched_count": 324,
+        "incompatible_count": 4,
+        "matched_count": 328,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -189095,7 +188199,7 @@
           "record": 14,
           "typedef": 24
         },
-        "sha256": "97df7f7384a4bae5f49c10045f262bf20232c7f86f35f94aa089ac1cd5209ae0"
+        "sha256": "164c4e3871d020f9126124b4ba9469af9d042539f5300d9581b7088d45011ff0"
       },
       "candidate_status": "ok",
       "comparison": "mismatch",
@@ -189116,42 +188220,6 @@
             "reference_signature": "object-like: (-1)"
           },
           {
-            "candidate_signature": "function-like:(tv,ts) do { (tv)->tv_sec = (ts)->tv_sec; (tv)->tv_usec = (ts)->tv_nsec / 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMESPEC_TO_TIMEVAL",
-            "reference_signature": "function-like:(tv,ts) ( (tv)->tv_sec = (ts)->tv_sec, (tv)->tv_usec = (ts)->tv_nsec / 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(tv,ts) do { (ts)->tv_sec = (tv)->tv_sec; (ts)->tv_nsec = (tv)->tv_usec * 1000; } while (0)",
-            "kind": "macro",
-            "name": "TIMEVAL_TO_TIMESPEC",
-            "reference_signature": "function-like:(tv,ts) ( (ts)->tv_sec = (tv)->tv_sec, (ts)->tv_nsec = (tv)->tv_usec * 1000, (void)0 )"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec + (t)->tv_sec; (v)->tv_usec = (s)->tv_usec + (t)->tv_usec; if ((v)->tv_usec >= 1000000) { (v)->tv_sec++; (v)->tv_usec -= 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timeradd",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec + (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec + (t)->tv_usec) >= 1000000 && ((a)->tv_usec -= 1000000, (a)->tv_sec++) )"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec = (tvp)->tv_usec = 0)",
-            "kind": "macro",
-            "name": "timerclear",
-            "reference_signature": "function-like:(t) ((t)->tv_sec = (t)->tv_usec = 0)"
-          },
-          {
-            "candidate_signature": "function-like:(tvp) ((tvp)->tv_sec || (tvp)->tv_usec)",
-            "kind": "macro",
-            "name": "timerisset",
-            "reference_signature": "function-like:(t) ((t)->tv_sec || (t)->tv_usec)"
-          },
-          {
-            "candidate_signature": "function-like:(s,t,v) do { (v)->tv_sec = (s)->tv_sec - (t)->tv_sec; (v)->tv_usec = (s)->tv_usec - (t)->tv_usec; if ((v)->tv_usec < 0) { (v)->tv_sec--; (v)->tv_usec += 1000000; } } while (0)",
-            "kind": "macro",
-            "name": "timersub",
-            "reference_signature": "function-like:(s,t,a) (void) ( (a)->tv_sec = (s)->tv_sec - (t)->tv_sec, ((a)->tv_usec = (s)->tv_usec - (t)->tv_usec) < 0 && ((a)->tv_usec += 1000000, (a)->tv_sec--) )"
-          },
-          {
             "candidate_signature": "struct{cwd:unsigned short,swd:unsigned short,ftw:unsigned short,fop:unsigned short,rip:unsigned long long,rdp:unsigned long long,mxcsr:unsigned int,mxcr_mask:unsigned int,_st:struct (unnamed at public/bits/signal.h:65:2)[8],_xmm:struct (unnamed at public/bits/signal.h:68:2)[16],padding:unsigned int[24]}",
             "kind": "record",
             "name": "_fpstate",
@@ -189170,8 +188238,8 @@
             "reference_signature": "struct{sigev_value:union sigval,sigev_signo:int,sigev_notify:int,__sev_fields:union (unnamed at public/signal.h:188:2)}"
           }
         ],
-        "incompatible_count": 10,
-        "matched_count": 356,
+        "incompatible_count": 4,
+        "matched_count": 362,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -191217,23 +190285,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 609,
-      "mismatch": 671,
+      "matched": 613,
+      "mismatch": 667,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "671 comparable header/profile rows have prototype or named declaration-form differences",
+      "667 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
       "candidate_only_count": 16351,
-      "incompatible_count": 3048,
+      "incompatible_count": 2894,
       "reference_only_count": 8877
     },
-    "mismatch_row_count": 671,
+    "mismatch_row_count": 667,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337

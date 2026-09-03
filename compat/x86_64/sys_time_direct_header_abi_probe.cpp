@@ -83,10 +83,13 @@ static int exercise_gnu_bsd_timer_macros()
     struct timeval result;
     int selected = timerisset(&first) + timercmp(&first, &second, <);
 
-    timerclear(&result);
-    timeradd(&first, &second, &result);
-    timersub(&second, &first, &result);
-    return selected + static_cast<int>(result.tv_usec);
+    /* Musl deliberately exposes these as comma expressions, not statements. */
+    return selected + (
+        timerclear(&result),
+        timeradd(&first, &second, &result),
+        timersub(&second, &first, &result),
+        static_cast<int>(result.tv_usec)
+    );
 }
 #endif
 
@@ -96,9 +99,11 @@ static long exercise_gnu_time_conversion_macros()
     struct timeval timeval_value = { 1, 2 };
     struct timespec timespec_value;
 
-    TIMEVAL_TO_TIMESPEC(&timeval_value, &timespec_value);
-    TIMESPEC_TO_TIMEVAL(&timeval_value, &timespec_value);
-    return timeval_value.tv_usec + timespec_value.tv_nsec;
+    return (
+        TIMEVAL_TO_TIMESPEC(&timeval_value, &timespec_value),
+        TIMESPEC_TO_TIMEVAL(&timeval_value, &timespec_value),
+        timeval_value.tv_usec + timespec_value.tv_nsec
+    );
 }
 #endif
 
