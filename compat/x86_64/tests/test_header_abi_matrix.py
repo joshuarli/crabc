@@ -489,6 +489,27 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                         f"{header}:{profile} {field} statx declaration/layout facts",
                     )
 
+    def test_wordexp_declarations_keep_cxx_c_linkage_without_claiming_a_provider(self) -> None:
+        """C++ consumers must retain musl's unmangled wordexp declarations."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        names = {"wordexp", "wordfree"}
+
+        for profile in ("cxx17-gnu", "cxx17-strict"):
+            difference = rows[("wordexp.h", profile)]["difference"]
+            for field in ("candidate_only", "incompatible", "reference_only"):
+                facts = [
+                    fact for fact in difference[field] if fact.get("name") in names
+                ]
+                self.assertEqual(
+                    facts,
+                    [],
+                    f"wordexp.h:{profile} {field} C linkage facts",
+                )
+
     def test_stdio_wchar_and_monetary_declarations_match_musl_forms(self) -> None:
         """Header visibility must not promote deferred stream or locale providers."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

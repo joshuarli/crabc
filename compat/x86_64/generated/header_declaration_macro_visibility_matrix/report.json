@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "65dcf02c0f3249281f88bed7ae41feabde94ecf8bc94d89606eb85fc3edf55c4"
+    "source_abi_report_sha256": "4c4ca2a44f394c0af0e9769e614a85a53e059bdba35608ebadd4909421c14280"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -530308,7 +530308,7 @@
           "macro": 24,
           "typedef": 2
         },
-        "sha256": "1adcf009041a38e8dc10cca86766fc4a25c19682763fa091b0a89d966847d861"
+        "sha256": "a49395a21792d11b23336985433aa2ec09ee75f1f7afde262e2f5b1e3c7b8016"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -530327,8 +530327,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 2,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -530458,7 +530458,7 @@
           "macro": 24,
           "typedef": 2
         },
-        "sha256": "1adcf009041a38e8dc10cca86766fc4a25c19682763fa091b0a89d966847d861"
+        "sha256": "a49395a21792d11b23336985433aa2ec09ee75f1f7afde262e2f5b1e3c7b8016"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -530477,8 +530477,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 2,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     }
   ],
   "schema": "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v1",
@@ -530541,13 +530541,13 @@
     "row_count": 1337,
     "source_form_comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 314,
-      "mismatch": 966,
+      "matched": 316,
+      "mismatch": 964,
       "oracle-not-applicable": 1
     },
-    "source_form_difference_count": 22147,
-    "source_form_difference_row_count": 756,
-    "source_form_only_difference_row_count": 53
+    "source_form_difference_count": 22143,
+    "source_form_difference_row_count": 754,
+    "source_form_only_difference_row_count": 51
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {

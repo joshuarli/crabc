@@ -1,6 +1,10 @@
 #ifndef _WORDEXP_H
 #define _WORDEXP_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <features.h>
 #define __NEED_size_t
 #include <bits/alltypes.h>
@@ -26,5 +30,9 @@ typedef struct {
 
 int wordexp(const char *__restrict, wordexp_t *__restrict, int);
 void wordfree(wordexp_t *);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
