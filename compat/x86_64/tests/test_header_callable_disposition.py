@@ -37,17 +37,17 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         DISPOSITION.validate_checked_report(report, contract)
 
         summary = report["summary"]
-        self.assertEqual(summary["candidate_external_callable_count"], 1526)
+        self.assertEqual(summary["candidate_external_callable_count"], 1527)
         self.assertEqual(summary["default_static_callable_count"], 1113)
         self.assertEqual(summary["verified_feature_callable_count"], 47)
-        self.assertEqual(summary["unprovided_callable_count"], 366)
+        self.assertEqual(summary["unprovided_callable_count"], 367)
         self.assertEqual(
             summary["deferred_resolution_counts"],
             {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 8,
-                "planned-provider": 350,
+                "planned-provider": 351,
                 "policy-decision-required": 6,
             },
         )
@@ -56,13 +56,28 @@ class HeaderCallableDispositionTests(unittest.TestCase):
             summary["unprovided_callable_count"],
         )
         self.assertEqual(summary["undispositioned_candidate_callable_count"], 0)
-        self.assertEqual(summary["missing_reference_declaration_name_count"], 1)
-        self.assertEqual(summary["missing_reference_declaration_record_count"], 3)
+        self.assertEqual(summary["missing_reference_declaration_name_count"], 0)
+        self.assertEqual(summary["missing_reference_declaration_record_count"], 0)
         self.assertEqual(summary["undispositioned_missing_reference_name_count"], 0)
         self.assertTrue(summary["missing_reference_declaration_routing_complete"])
         self.assertTrue(summary["header_ownership_routing_complete"])
         self.assertFalse(summary["header_declaration_parity_complete"])
         self.assertFalse(summary["final_provider_archive_closure_complete"])
+
+    def test_statx_is_a_planned_provider_after_its_header_declaration_closes(self) -> None:
+        contract = DISPOSITION.load_contract()
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+
+        self.assertEqual(contract.missing_reference_declaration_groups, ())
+        self.assertEqual(report["missing_reference_declaration_groups"], [])
+        deferred = {
+            row["id"]: row
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+        }
+        posix_runtime = deferred["x86-cabi-posix-runtime-missing-v1"]
+        self.assertEqual(posix_runtime["resolution"], "planned-provider")
+        self.assertIn("statx", posix_runtime["members"])
+        self.assertNotIn("statx", report["primary_disposition"]["default_static"]["members"])
 
     def test_structural_and_policy_dispositions_stay_distinct_from_provider_claims(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

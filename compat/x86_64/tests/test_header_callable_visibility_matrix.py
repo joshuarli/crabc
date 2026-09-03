@@ -244,6 +244,22 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                 },
             )
 
+    def test_statx_has_no_remaining_gnu_callable_visibility_gap(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in report["rows"]
+        }
+        for header in ("sys/stat.h", "ftw.h"):
+            for profile in ("c11-gnu", "cxx17-gnu", "cxx17-strict"):
+                row = rows[(header, profile)]
+                for field in ("candidate_only", "reference_only"):
+                    self.assertNotIn(
+                        {"classification": "external", "name": "statx"},
+                        row[field],
+                        f"{header}:{profile} retains a statx visibility gap",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "210a6c9ea15e23544cf5dfe6740f14dc7983000bd37672614b7abb53aa986b25"
+    "source_abi_report_sha256": "65dcf02c0f3249281f88bed7ae41feabde94ecf8bc94d89606eb85fc3edf55c4"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -45069,15 +45069,15 @@
     },
     {
       "candidate": {
-        "count": 202,
+        "count": 246,
         "kind_counts": {
-          "function": 50,
-          "macro": 104,
-          "record": 8,
-          "typedef": 36,
+          "function": 51,
+          "macro": 141,
+          "record": 10,
+          "typedef": 40,
           "variable": 4
         },
-        "sha256": "edaabd7ffafadd8649706fd5f1b87fed1bda50755ddc9b98b8ae9f7a52930b6c"
+        "sha256": "e348eb1b7dc11111af4665c2efaa74492ad703cd3343bbf5695f7b1426e009c9"
       },
       "candidate_only": [
         {
@@ -45504,7 +45504,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_identity_count": 97,
+      "matched_identity_count": 141,
       "profile": "c11-gnu",
       "reference": {
         "count": 162,
@@ -45517,126 +45517,6 @@
         "sha256": "b1923aa3a482eff3bd5f98be2f5884bc707310a141b024ca9dc1a7f2ab54d166"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "statx"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ALL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_APPEND"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_AUTOMOUNT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_COMPRESSED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_DAX"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_ENCRYPTED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_IMMUTABLE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_MOUNT_ROOT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_NODUMP"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_VERITY"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_WRITE_ATOMIC"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BASIC_STATS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BLOCKS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_CTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_DIOALIGN"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_GID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_INO"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID_UNIQUE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MODE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_NLINK"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SIZE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SUBVOL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_TYPE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_UID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_WRITE_ATOMIC"
-        },
         {
           "kind": "macro",
           "name": "S_IEXEC"
@@ -45671,10 +45551,6 @@
         },
         {
           "kind": "macro",
-          "name": "__DEFINED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__DEFINED_mode_t"
         },
         {
@@ -45688,18 +45564,6 @@
         {
           "kind": "macro",
           "name": "__DEFINED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint64_t"
         },
         {
           "kind": "macro",
@@ -45723,10 +45587,6 @@
         },
         {
           "kind": "macro",
-          "name": "__NEED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -45740,42 +45600,6 @@
         {
           "kind": "macro",
           "name": "__NEED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint64_t"
-        },
-        {
-          "kind": "record",
-          "name": "statx"
-        },
-        {
-          "kind": "record",
-          "name": "statx_timestamp"
-        },
-        {
-          "kind": "typedef",
-          "name": "int64_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint16_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint32_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint64_t"
         }
       ],
       "reference_status": "ok",
@@ -45784,15 +45608,15 @@
     },
     {
       "candidate": {
-        "count": 201,
+        "count": 245,
         "kind_counts": {
-          "function": 50,
-          "macro": 104,
-          "record": 7,
-          "typedef": 36,
+          "function": 51,
+          "macro": 141,
+          "record": 9,
+          "typedef": 40,
           "variable": 4
         },
-        "sha256": "6dc41eddee186792b2576f4abb9ac3b6aef73696f3d0eebcb4eb7ebf90781939"
+        "sha256": "578ddc90b7d59f366ffcb2e30355c9ff66b0fcf6b31db18aa6d1863b901aeb52"
       },
       "candidate_only": [
         {
@@ -46215,7 +46039,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_identity_count": 97,
+      "matched_identity_count": 141,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 162,
@@ -46228,126 +46052,6 @@
         "sha256": "b54ad96a6549274e5767ac45c7e526dc2c805537394e01c8264b77af1f4d8db5"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "statx"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ALL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_APPEND"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_AUTOMOUNT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_COMPRESSED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_DAX"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_ENCRYPTED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_IMMUTABLE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_MOUNT_ROOT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_NODUMP"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_VERITY"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_WRITE_ATOMIC"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BASIC_STATS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BLOCKS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_CTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_DIOALIGN"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_GID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_INO"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID_UNIQUE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MODE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_NLINK"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SIZE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SUBVOL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_TYPE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_UID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_WRITE_ATOMIC"
-        },
         {
           "kind": "macro",
           "name": "S_IEXEC"
@@ -46382,10 +46086,6 @@
         },
         {
           "kind": "macro",
-          "name": "__DEFINED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__DEFINED_mode_t"
         },
         {
@@ -46399,18 +46099,6 @@
         {
           "kind": "macro",
           "name": "__DEFINED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint64_t"
         },
         {
           "kind": "macro",
@@ -46434,10 +46122,6 @@
         },
         {
           "kind": "macro",
-          "name": "__NEED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -46451,42 +46135,6 @@
         {
           "kind": "macro",
           "name": "__NEED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint64_t"
-        },
-        {
-          "kind": "record",
-          "name": "statx"
-        },
-        {
-          "kind": "record",
-          "name": "statx_timestamp"
-        },
-        {
-          "kind": "typedef",
-          "name": "int64_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint16_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint32_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint64_t"
         }
       ],
       "reference_status": "ok",
@@ -48378,15 +48026,15 @@
     },
     {
       "candidate": {
-        "count": 201,
+        "count": 245,
         "kind_counts": {
-          "function": 50,
-          "macro": 104,
-          "record": 7,
-          "typedef": 36,
+          "function": 51,
+          "macro": 141,
+          "record": 9,
+          "typedef": 40,
           "variable": 4
         },
-        "sha256": "6dc41eddee186792b2576f4abb9ac3b6aef73696f3d0eebcb4eb7ebf90781939"
+        "sha256": "578ddc90b7d59f366ffcb2e30355c9ff66b0fcf6b31db18aa6d1863b901aeb52"
       },
       "candidate_only": [
         {
@@ -48809,7 +48457,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_identity_count": 97,
+      "matched_identity_count": 141,
       "profile": "cxx17-strict",
       "reference": {
         "count": 162,
@@ -48822,126 +48470,6 @@
         "sha256": "b54ad96a6549274e5767ac45c7e526dc2c805537394e01c8264b77af1f4d8db5"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "statx"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ALL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_APPEND"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_AUTOMOUNT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_COMPRESSED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_DAX"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_ENCRYPTED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_IMMUTABLE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_MOUNT_ROOT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_NODUMP"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_VERITY"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_WRITE_ATOMIC"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BASIC_STATS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BLOCKS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_CTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_DIOALIGN"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_GID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_INO"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID_UNIQUE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MODE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_NLINK"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SIZE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SUBVOL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_TYPE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_UID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_WRITE_ATOMIC"
-        },
         {
           "kind": "macro",
           "name": "S_IEXEC"
@@ -48976,10 +48504,6 @@
         },
         {
           "kind": "macro",
-          "name": "__DEFINED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__DEFINED_mode_t"
         },
         {
@@ -48993,18 +48517,6 @@
         {
           "kind": "macro",
           "name": "__DEFINED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint64_t"
         },
         {
           "kind": "macro",
@@ -49028,10 +48540,6 @@
         },
         {
           "kind": "macro",
-          "name": "__NEED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -49045,42 +48553,6 @@
         {
           "kind": "macro",
           "name": "__NEED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint64_t"
-        },
-        {
-          "kind": "record",
-          "name": "statx"
-        },
-        {
-          "kind": "record",
-          "name": "statx_timestamp"
-        },
-        {
-          "kind": "typedef",
-          "name": "int64_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint16_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint32_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint64_t"
         }
       ],
       "reference_status": "ok",
@@ -466579,15 +466051,15 @@
     },
     {
       "candidate": {
-        "count": 187,
+        "count": 231,
         "kind_counts": {
-          "function": 48,
-          "macro": 92,
-          "record": 7,
-          "typedef": 36,
+          "function": 49,
+          "macro": 129,
+          "record": 9,
+          "typedef": 40,
           "variable": 4
         },
-        "sha256": "856789c8e1371fc832c384a6f1d5bc96dc67d069d5dcc837d14ce888f8d27b62"
+        "sha256": "eef5b09ac819b76b21c91e5c833def90769de48543fe0e95e728f6ae09041c80"
       },
       "candidate_only": [
         {
@@ -467014,7 +466486,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/stat.h",
-      "matched_identity_count": 82,
+      "matched_identity_count": 126,
       "profile": "c11-gnu",
       "reference": {
         "count": 147,
@@ -467027,126 +466499,6 @@
         "sha256": "c06d5ab29d4c16d99a2004fc4c183ecb2fab8c3179b1c18da3957a0fc7c7b8f7"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "statx"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ALL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_APPEND"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_AUTOMOUNT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_COMPRESSED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_DAX"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_ENCRYPTED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_IMMUTABLE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_MOUNT_ROOT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_NODUMP"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_VERITY"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_WRITE_ATOMIC"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BASIC_STATS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BLOCKS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_CTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_DIOALIGN"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_GID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_INO"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID_UNIQUE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MODE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_NLINK"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SIZE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SUBVOL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_TYPE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_UID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_WRITE_ATOMIC"
-        },
         {
           "kind": "macro",
           "name": "S_IEXEC"
@@ -467181,10 +466533,6 @@
         },
         {
           "kind": "macro",
-          "name": "__DEFINED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__DEFINED_mode_t"
         },
         {
@@ -467198,18 +466546,6 @@
         {
           "kind": "macro",
           "name": "__DEFINED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint64_t"
         },
         {
           "kind": "macro",
@@ -467233,10 +466569,6 @@
         },
         {
           "kind": "macro",
-          "name": "__NEED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -467250,42 +466582,6 @@
         {
           "kind": "macro",
           "name": "__NEED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint64_t"
-        },
-        {
-          "kind": "record",
-          "name": "statx"
-        },
-        {
-          "kind": "record",
-          "name": "statx_timestamp"
-        },
-        {
-          "kind": "typedef",
-          "name": "int64_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint16_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint32_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint64_t"
         }
       ],
       "reference_status": "ok",
@@ -467294,15 +466590,15 @@
     },
     {
       "candidate": {
-        "count": 186,
+        "count": 230,
         "kind_counts": {
-          "function": 48,
-          "macro": 92,
-          "record": 6,
-          "typedef": 36,
+          "function": 49,
+          "macro": 129,
+          "record": 8,
+          "typedef": 40,
           "variable": 4
         },
-        "sha256": "763ca920047b7fdd8b2d221a6b77cf5060ec31abb4cbcf5fbd348d5d2919e3e4"
+        "sha256": "acd19f4b85a7ab19fe71063d13f9d615a4ebae4f3003f8f348b1b0ac63788b89"
       },
       "candidate_only": [
         {
@@ -467725,7 +467021,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/stat.h",
-      "matched_identity_count": 82,
+      "matched_identity_count": 126,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 147,
@@ -467738,126 +467034,6 @@
         "sha256": "c97cea35b8b42a71d35caee4e330985fe890ded2ae6cb8aa63b9e1ae6708daca"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "statx"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ALL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_APPEND"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_AUTOMOUNT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_COMPRESSED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_DAX"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_ENCRYPTED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_IMMUTABLE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_MOUNT_ROOT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_NODUMP"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_VERITY"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_WRITE_ATOMIC"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BASIC_STATS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BLOCKS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_CTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_DIOALIGN"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_GID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_INO"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID_UNIQUE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MODE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_NLINK"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SIZE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SUBVOL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_TYPE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_UID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_WRITE_ATOMIC"
-        },
         {
           "kind": "macro",
           "name": "S_IEXEC"
@@ -467892,10 +467068,6 @@
         },
         {
           "kind": "macro",
-          "name": "__DEFINED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__DEFINED_mode_t"
         },
         {
@@ -467909,18 +467081,6 @@
         {
           "kind": "macro",
           "name": "__DEFINED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint64_t"
         },
         {
           "kind": "macro",
@@ -467944,10 +467104,6 @@
         },
         {
           "kind": "macro",
-          "name": "__NEED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -467961,42 +467117,6 @@
         {
           "kind": "macro",
           "name": "__NEED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint64_t"
-        },
-        {
-          "kind": "record",
-          "name": "statx"
-        },
-        {
-          "kind": "record",
-          "name": "statx_timestamp"
-        },
-        {
-          "kind": "typedef",
-          "name": "int64_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint16_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint32_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint64_t"
         }
       ],
       "reference_status": "ok",
@@ -469888,15 +469008,15 @@
     },
     {
       "candidate": {
-        "count": 186,
+        "count": 230,
         "kind_counts": {
-          "function": 48,
-          "macro": 92,
-          "record": 6,
-          "typedef": 36,
+          "function": 49,
+          "macro": 129,
+          "record": 8,
+          "typedef": 40,
           "variable": 4
         },
-        "sha256": "763ca920047b7fdd8b2d221a6b77cf5060ec31abb4cbcf5fbd348d5d2919e3e4"
+        "sha256": "acd19f4b85a7ab19fe71063d13f9d615a4ebae4f3003f8f348b1b0ac63788b89"
       },
       "candidate_only": [
         {
@@ -470319,7 +469439,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/stat.h",
-      "matched_identity_count": 82,
+      "matched_identity_count": 126,
       "profile": "cxx17-strict",
       "reference": {
         "count": 147,
@@ -470332,126 +469452,6 @@
         "sha256": "c97cea35b8b42a71d35caee4e330985fe890ded2ae6cb8aa63b9e1ae6708daca"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "statx"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ALL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_APPEND"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_AUTOMOUNT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_COMPRESSED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_DAX"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_ENCRYPTED"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_IMMUTABLE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_MOUNT_ROOT"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_NODUMP"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_VERITY"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_ATTR_WRITE_ATOMIC"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BASIC_STATS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BLOCKS"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_BTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_CTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_DIOALIGN"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_GID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_INO"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MNT_ID_UNIQUE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MODE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_MTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_NLINK"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SIZE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_SUBVOL"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_TYPE"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_UID"
-        },
-        {
-          "kind": "macro",
-          "name": "STATX_WRITE_ATOMIC"
-        },
         {
           "kind": "macro",
           "name": "S_IEXEC"
@@ -470486,10 +469486,6 @@
         },
         {
           "kind": "macro",
-          "name": "__DEFINED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__DEFINED_mode_t"
         },
         {
@@ -470503,18 +469499,6 @@
         {
           "kind": "macro",
           "name": "__DEFINED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__DEFINED_uint64_t"
         },
         {
           "kind": "macro",
@@ -470538,10 +469522,6 @@
         },
         {
           "kind": "macro",
-          "name": "__NEED_int64_t"
-        },
-        {
-          "kind": "macro",
           "name": "__NEED_mode_t"
         },
         {
@@ -470555,42 +469535,6 @@
         {
           "kind": "macro",
           "name": "__NEED_uid_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint16_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint32_t"
-        },
-        {
-          "kind": "macro",
-          "name": "__NEED_uint64_t"
-        },
-        {
-          "kind": "record",
-          "name": "statx"
-        },
-        {
-          "kind": "record",
-          "name": "statx_timestamp"
-        },
-        {
-          "kind": "typedef",
-          "name": "int64_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint16_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint32_t"
-        },
-        {
-          "kind": "typedef",
-          "name": "uint64_t"
         }
       ],
       "reference_status": "ok",
@@ -531575,7 +530519,7 @@
       "56 project-only header/profile rows remain pending C ABI policy",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
-    "matched_identity_count": 210598,
+    "matched_identity_count": 210862,
     "mismatch_row_count": 913,
     "oracle_not_applicable_candidate_fact_count": 243,
     "oracle_not_applicable_row_count": 1,
@@ -531585,13 +530529,13 @@
     "project_only_candidate_fact_count": 1964,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 84766,
+    "reference_only_identity_count": 84502,
     "reference_only_identity_kind_counts": {
       "enum": 66,
-      "function": 1089,
-      "macro": 81105,
-      "record": 921,
-      "typedef": 1548,
+      "function": 1083,
+      "macro": 80883,
+      "record": 909,
+      "typedef": 1524,
       "variable": 37
     },
     "row_count": 1337,

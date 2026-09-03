@@ -29,12 +29,36 @@ cxx_probe="$ROOT_DIR/compat/x86_64/stat_header_abi_probe.cpp"
 work_dir="$(mktemp -d /tmp/crabc-x86-64-stat-header.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 header_trace="$work_dir/header-trace"
+oracle_cxx="$work_dir/oracle-stat-header-cxx.o"
+project_cxx="$work_dir/project-stat-header-cxx.o"
+oracle_gnu_cxx="$work_dir/oracle-stat-header-gnu-cxx.o"
+project_gnu_cxx="$work_dir/project-stat-header-gnu-cxx.o"
+
+check_statx_c_linkage() {
+    local object="$1"
+    local label="$2"
+    local undefined
+
+    undefined="$(nm --undefined-only "$object" | awk '{print $NF}')"
+    printf '%s\n' "$undefined" | grep -Fxq statx ||
+        fail "$label C++ object lacks an unmangled statx reference"
+    if printf '%s\n' "$undefined" | grep -Eq '^_Z.*statx'; then
+        fail "$label C++ object retains a mangled statx reference"
+    fi
+}
 
 "$ORACLE_CC" -std=c11 -fsyntax-only "$c_probe"
-"$ORACLE_CC" -std=c++17 -x c++ -fsyntax-only "$cxx_probe"
+"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -fsyntax-only "$c_probe"
+"$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -fsyntax-only "$c_probe"
+"$ORACLE_CC" -std=c11 -D_BSD_SOURCE=1 -fsyntax-only "$c_probe"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE=1 -fsyntax-only "$c_probe"
+"$ORACLE_CC" -std=c++17 -x c++ -c "$cxx_probe" -o "$oracle_cxx"
+"$ORACLE_CC" -std=c++17 -D_GNU_SOURCE=1 -x c++ -c "$cxx_probe" \
+    -o "$oracle_gnu_cxx"
 # `-H` makes project-header provenance observable: the candidate assertions
 # must not accidentally resolve to the pinned musl header they are measuring.
-"$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -H -fsyntax-only "$c_probe" \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE=1 -I "$ROOT_DIR/include" -H \
+    -fsyntax-only "$c_probe" \
     >/dev/null 2>"$header_trace"
 grep -Fq "$ROOT_DIR/include/sys/stat.h" "$header_trace" || {
     fail "C probe did not use the project sys/stat.h"
@@ -42,6 +66,20 @@ grep -Fq "$ROOT_DIR/include/sys/stat.h" "$header_trace" || {
 grep -Fq "$ROOT_DIR/include/bits/stat.h" "$header_trace" || {
     fail "C probe did not use the project x86 bits/stat.h"
 }
-"$ORACLE_CC" -std=c++17 -x c++ -I "$ROOT_DIR/include" -fsyntax-only "$cxx_probe"
+"$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -fsyntax-only "$c_probe"
+"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -I "$ROOT_DIR/include" \
+    -fsyntax-only "$c_probe"
+"$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -I "$ROOT_DIR/include" \
+    -fsyntax-only "$c_probe"
+"$ORACLE_CC" -std=c11 -D_BSD_SOURCE=1 -I "$ROOT_DIR/include" \
+    -fsyntax-only "$c_probe"
+"$ORACLE_CC" -std=c++17 -x c++ -I "$ROOT_DIR/include" -c "$cxx_probe" \
+    -o "$project_cxx"
+"$ORACLE_CC" -std=c++17 -D_GNU_SOURCE=1 -x c++ -I "$ROOT_DIR/include" \
+    -c "$cxx_probe" -o "$project_gnu_cxx"
+
+for object in "$oracle_cxx" "$oracle_gnu_cxx" "$project_cxx" "$project_gnu_cxx"; do
+    check_statx_c_linkage "$object" "$(basename "$object")"
+done
 
 printf 'x86 pinned-musl C/C++ <sys/stat.h> ABI: PASS\n'

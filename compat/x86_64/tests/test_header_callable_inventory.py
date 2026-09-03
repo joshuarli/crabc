@@ -190,7 +190,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertFalse(report["summary"]["complete"])
         self.assertEqual(
             set(report["summary"]["callable_classification_counts"]),
-            {"external", "inline", "macro", "missing"},
+            {"external", "inline", "macro"},
         )
         complement = report["static_export_complement"]["members"]
         self.assertEqual(complement, sorted(complement))
@@ -1295,6 +1295,63 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                         and record.get("profile") == profile
                     )
                     self.assertEqual(candidate_type, reference_type)
+
+    def test_statx_matches_the_gnu_and_effective_cxx_header_profiles_without_a_provider(self) -> None:
+        """The GNU declaration/layout slice must not imply an archive owner."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        profiles = {"c11-gnu", "cxx17-gnu", "cxx17-strict"}
+        callables = report["callables"]
+        assert isinstance(callables, list)
+
+        for tree in ("candidate", "reference"):
+            rows = [
+                row
+                for row in callables
+                if row.get("tree") == tree
+                and row.get("classification") == "external"
+                and row.get("name") == "statx"
+            ]
+            self.assertEqual({row["profile"] for row in rows}, profiles)
+            self.assertTrue(
+                all(
+                    row.get("declaring_header") == "ftw.h"
+                    and row.get("visible_from_headers") == ["ftw.h", "sys/stat.h"]
+                    for row in rows
+                )
+            )
+
+        missing = [
+            row
+            for row in callables
+            if row.get("classification") == "missing" and row.get("name") == "statx"
+        ]
+        self.assertEqual(missing, [])
+
+        candidate_types = {
+            row["profile"]: row["type"]
+            for row in callables
+            if row.get("tree") == "candidate"
+            and row.get("classification") == "external"
+            and row.get("name") == "statx"
+        }
+        reference_types = {
+            row["profile"]: row["type"]
+            for row in callables
+            if row.get("tree") == "reference"
+            and row.get("classification") == "external"
+            and row.get("name") == "statx"
+        }
+        self.assertEqual(candidate_types, reference_types)
+        self.assertEqual(
+            candidate_types["c11-gnu"],
+            "int (int, const char *restrict, int, unsigned int, struct statx *restrict)",
+        )
+
+        partition = report["callable_provider_partition"]
+        self.assertIn("statx", partition["unprovided"]["members"])
+        self.assertNotIn("statx", partition["default_static"]["members"])
 
     @unittest.skipUnless(all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm")), "requires native binutils and C compiler")
     def test_audit_uses_ordinary_archive_extraction_and_reports_finite_complement(self) -> None:

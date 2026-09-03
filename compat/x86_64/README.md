@@ -107,7 +107,9 @@ The separate `statx-reference` gate verifies the private
 `filesystem.extended-metadata` slice: direct `statx=332` metadata copied from
 a private 256-byte Linux 5.10 record, including `AT_EMPTY_PATH` only in its
 statx-specific flag vocabulary and direct `ENOSYS` rather than musl fallback.
-It too remains Rust-only evidence, not public x86 runtime support.
+Its runtime evidence remains Rust-only; the separate GNU `sys/stat.h`
+declaration/layout check still does not select a C `statx` provider or public
+x86 runtime support.
 The separate `cwd-canonicalize-reference` gate verifies the private
 `filesystem.canonicalize` and `filesystem.cwd-mutation` slice: a bounded,
 byte-preserving physical pathname result through direct `openat`/`readlinkat`/
@@ -1714,16 +1716,16 @@ archive, runtime, installed-header, family-promotion, or public-x86 evidence.
 The wider candidate visibility for those `aio.h` rows remains a tracked parity
 question rather than being silently treated as equivalent. The static-export
 list is only an input to the default archive linkage audit. The checked
-`header-callable-disposition` report now routes all 1,526 current selected
-external callables through current selected provider assignments or exact deferred owners, while
-separately retaining 3 missing pinned-musl declaration records across one
-name. That closes accounting only: missing declarations remain header-parity
+`header-callable-disposition` report now routes all 1,527 current selected
+external callables through current selected provider assignments or exact deferred owners,
+with zero current missing pinned-musl declaration records. That closes
+accounting only: the independent declaration/macro matrix remains header-parity
 work, and `libc.c-abi-compat` retains final provider selection, ordinary
 archive extraction, behavior, and C-ABI closure.
 
 `header-callable-disposition` regenerates the compiler-derived callable
 inventory, then checks that its 1,113 default-static, 47 verified
-feature-provider, and 366 deferred names form one exact primary partition.
+feature-provider, and 367 deferred names form one exact primary partition.
 Its deferred groups distinguish planned semantic providers from compiler
 builtins, consumer-supplied callbacks, oracle-declared no-provider names, and
 project-only atomic policy. It neither performs archive extraction nor claims
@@ -1735,7 +1737,7 @@ to ordinarily extract the 1,113 current default-static and 47 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 366-name unprovided complement remains explicit:
+selection and behavior. Its 367-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 
@@ -1848,9 +1850,10 @@ named `nlink_t`, `blksize_t`, `pthread_t`, and layout declarations; it does
 not select a pthread implementation or `crabc-libc`.
 
 `stat-header-abi` compiles project and pinned-musl C/C++ `<sys/stat.h>`
-declarations, including the x86-64 144-byte `struct stat` layout and selected
-mode/timestamp contracts. It is source-only header evidence; it does not
-provide filesystem behavior or select `crabc-libc`.
+declarations, including the x86-64 144-byte `struct stat` layout, selected
+mode/timestamp contracts, GNU `statx` macros and record layouts, and unmangled
+C++ `statx` linkage. It is source-only header evidence: it provides no C
+`statx` provider or filesystem behavior and does not select `crabc-libc`.
 
 `ctype-header-abi` compiles project-first and pinned-musl C/C++ `<ctype.h>`
 declarations for the fixed-C-locale boundary. The fourteen ordinary
@@ -3266,9 +3269,11 @@ not turn that flag into a general x86 `*at` facility. The raw Rust boundary is
 stateless and preserves `ENOSYS`; unlike pinned musl's C wrapper, it does not
 fall back to `fstatat`. When the raw C syscall reports `ENOSYS`, the fixture
 records its explicit `raw=ENOSYS-musl-fallback` branch instead of claiming
-raw/musl equality. It does not select general `AT_EMPTY_PATH`, the separately
-evidenced canonicalization/CWD-mutation slice, file-handle APIs, C `struct
-statx`/`sys/stat.h`/errno TLS, or public x86 support.
+raw/musl equality. The separately tracked GNU `sys/stat.h` declaration/layout
+remains header evidence only: `statx` has no C runtime provider, errno/TLS, or
+musl-fallback claim. The Rust slice does not select general `AT_EMPTY_PATH`,
+the separately evidenced canonicalization/CWD-mutation slice, file-handle
+APIs, or public x86 support.
 
 `cwd-canonicalize-reference` is the private x86 filesystem-context vertical
 slice. Its fixed `PATH_MAX=4096` workspace canonicalizer produces an absolute,

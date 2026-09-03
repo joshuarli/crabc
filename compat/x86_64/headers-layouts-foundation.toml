@@ -89,12 +89,12 @@ id = "selected-header-callable-provider-linkage-audit"
 state = "partial-verified"
 owner = "libc.headers-layouts"
 command = "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
-candidate_external_callable_count = 1526
+candidate_external_callable_count = 1527
 default_static_callable_count = 1113
 verified_feature_callable_count = 47
 verified_feature_profile_count = 21
 declared_unverified_feature_callable_count = 0
-unprovided_callable_count = 366
+unprovided_callable_count = 367
 topology_only_profile_count = 1
 ordinary_archive_extraction = true
 uses_whole_archive = false
@@ -110,20 +110,20 @@ owner = "libc.headers-layouts"
 command = "./scripts/dev-x86_64.sh header-callable-disposition"
 contract = "compat/x86_64/header_callable_disposition.toml"
 report = "compat/x86_64/header_callable_disposition.json"
-candidate_external_callable_count = 1526
+candidate_external_callable_count = 1527
 default_static_callable_count = 1113
 verified_feature_callable_count = 47
 declared_unverified_feature_callable_count = 0
-unprovided_callable_count = 366
-missing_reference_declaration_name_count = 1
-missing_reference_declaration_record_count = 3
+unprovided_callable_count = 367
+missing_reference_declaration_name_count = 0
+missing_reference_declaration_record_count = 0
 missing_reference_declaration_routing_complete = true
 header_ownership_routing_complete = true
 header_declaration_parity_complete = false
 final_provider_archive_closure_complete = false
 family_promotion = false
 public_support = false
-description = "The checked compiler-derived disposition routes all 1,526 selected external callable names through current default or verified-feature provider assignments, exact planned semantic owners, compiler-builtin, consumer-supplied, oracle-declared-no-provider, or explicit atomic-policy records. It separately records the one pinned-musl declaration name currently missing from project headers, so a routing pass does not imply declaration parity. It excludes archive extraction, runtime semantics, final C ABI provider/archive closure, header-family promotion, and public x86 support."
+description = "The checked compiler-derived disposition routes all 1,527 selected external callable names through current default or verified-feature provider assignments, exact planned semantic owners, compiler-builtin, consumer-supplied, oracle-declared-no-provider, or explicit atomic-policy records. The zero current missing pinned-musl declaration names do not make this routing pass declaration parity. It excludes archive extraction, runtime semantics, final C ABI provider/archive closure, header-family promotion, and public x86 support."
 
 [selected_header_install_projection]
 id = "x86-selected-header-install-projection"
@@ -1338,7 +1338,7 @@ pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
 comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 367, mismatch = 913, oracle-not-applicable = 1 }
-identity_difference_counts = { candidate_only = 37595, reference_only = 84766 }
+identity_difference_counts = { candidate_only = 37595, reference_only = 84502 }
 source_form_difference_count = 22147
 source_form_difference_row_count = 756
 source_form_only_difference_row_count = 53
@@ -1373,7 +1373,7 @@ pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
 comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 314, mismatch = 966, oracle-not-applicable = 1 }
-mismatch_fact_counts = { candidate_only_count = 37595, incompatible_count = 22147, reference_only_count = 84766 }
+mismatch_fact_counts = { candidate_only_count = 37595, incompatible_count = 22147, reference_only_count = 84502 }
 scope = "Compiler-derived direct-public-include source declaration forms: function signatures with emitted linkage spellings, named typedefs, named record shapes, enum values, variables, and macro replacement forms across all seven C11/C++17 profiles. It records red source-form differences and one pinned-musl C11 strict aio.h oracle-not-applicable row, but does not classify raw spelling differences as ABI differences or prove record byte layouts, anonymous declarations, archive linkage, runtime behavior, family promotion, or public support."
 
 [[language_profile]]
@@ -1810,7 +1810,7 @@ state = "partial-verified"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
 evidence = ["generated-header-callable-disposition"]
-description = "The checked all-header disposition routes every declared external callable through a current selected provider assignment or an exact named deferred owner, and records missing pinned-musl declarations separately. It does not complete archive extraction, runtime linkage, declaration parity, or final C ABI closure."
+description = "The checked all-header disposition routes every declared external callable through a current selected provider assignment or an exact named deferred owner, and records any missing pinned-musl declarations separately. It does not complete archive extraction, runtime linkage, declaration parity, or final C ABI closure."
 
 [[abi_facet]]
 id = "legacy-direct-layout-inputs"
@@ -1845,7 +1845,7 @@ description = "The current crate-owned static export ratchet is an input to, not
 [[linkage_owner]]
 id = "header-callable-disposition"
 state = "partial-verified"
-scope = "every selected external callable has a current selected provider assignment or an exact named deferred owner, while each missing pinned-musl declaration has a separate exact record"
+scope = "every selected external callable has a current selected provider assignment or an exact named deferred owner, while every missing pinned-musl declaration, if any, has a separate exact record"
 family = "libc.headers-layouts"
 evidence = ["generated-header-callable-disposition"]
 description = "The checked disposition completes header ownership routing only. `libc.c-abi-compat` still owns provider selection, ordinary archive extraction, behavior, and final callable-provider closure."

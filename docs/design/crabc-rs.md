@@ -128,10 +128,11 @@ Its dedicated flag vocabulary admits `AT_EMPTY_PATH` only for `statx`; it does
 not widen other `*at` APIs. The reserved request bit rejects before entry and
 future requested bits are masked to the known record layout. This is a direct,
 stateless syscall boundary: an `ENOSYS` result remains an `ENOSYS` result,
-rather than reproducing musl's `fstatat` compatibility fallback. C
-`struct statx`/`sys/stat.h` ABI, general `AT_EMPTY_PATH`, the separately
-selected canonicalization/CWD-mutation boundary, file-handle APIs, errno state,
-and public x86 support remain out of scope.
+rather than reproducing musl's `fstatat` compatibility fallback. The separate
+GNU `sys/stat.h` declaration/layout evidence exposes no C `statx` provider,
+errno state, or fallback behavior. General `AT_EMPTY_PATH`, the separately
+selected canonicalization/CWD-mutation boundary, file-handle APIs, and public
+x86 support remain out of scope.
 
 The same private x86 lane separately selects `filesystem.canonicalize` and
 `filesystem.cwd-mutation` through `fs_x86_64.rs` and `process_x86_64.rs`.

@@ -1,22 +1,12 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "23635ab43a6d87d46f805b86c9f882c2f991eb8596ff99cddb3b97a9b97b6c23",
-    "candidate_external_callable_sha256": "7fb9fc34369f0d4125cdcd260dcb7157e6a76fcde149b7ed995148f65332f64a",
-    "parity_ledger_sha256": "c88bf226d16d57cee106b0ad0d6fe07bcb95f739509972ead326c496a6158b03",
+    "callable_inventory_sha256": "4a1f83707b5a21a4096f65a7dd859bb4c7b1899badbb526610d73bbbb03c16d4",
+    "candidate_external_callable_sha256": "b15325d4fc5fd7dcaccba06f48545946da667d4734311659e47ceba305603601",
+    "parity_ledger_sha256": "501fc4a7f2a9da7a94c66fc2f6bf6145a3fc6da5023ded7fbf62fd0905a57787",
     "static_c_abi_exports_sha256": "ba6d5107f5db1176812a9eae768519b086b7b41c7942aa81afd2cd63366bc312"
   },
-  "missing_reference_declaration_groups": [
-    {
-      "id": "x86-header-missing-statx-v1",
-      "members": [
-        "statx"
-      ],
-      "resolution": "candidate-declaration-missing",
-      "semantic_family": "libc.posix-runtime",
-      "source_oracle": "Pinned musl 1.2.6 sys/stat.h declaration inventory"
-    }
-  ],
+  "missing_reference_declaration_groups": [],
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
   "primary_disposition": {
@@ -1438,6 +1428,7 @@
           "shm_unlink",
           "srand",
           "srandom",
+          "statx",
           "swapoff",
           "swapon",
           "symlinkat",
@@ -1770,26 +1761,26 @@
     "runtime_semantics": false
   },
   "summary": {
-    "candidate_external_callable_count": 1526,
+    "candidate_external_callable_count": 1527,
     "declared_unverified_feature_callable_count": 0,
     "default_static_callable_count": 1113,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 8,
-      "planned-provider": 350,
+      "planned-provider": 351,
       "policy-decision-required": 6
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
     "header_ownership_routing_complete": true,
-    "missing_reference_declaration_name_count": 1,
-    "missing_reference_declaration_record_count": 3,
+    "missing_reference_declaration_name_count": 0,
+    "missing_reference_declaration_record_count": 0,
     "missing_reference_declaration_routing_complete": true,
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 366,
+    "unprovided_callable_count": 367,
     "verified_feature_callable_count": 47
   },
   "target": "x86_64-unknown-linux-musl",
@@ -1797,7 +1788,7 @@
     "baseline_source": "Pinned musl 1.2.6 selected x86 public headers and the checked compiler-derived candidate callable inventory.",
     "blocker": "The frozen selected external callable surface had a single no-provider bucket, which could not distinguish planned semantic owners, compiler builtins, consumer callbacks, oracle-declared no-provider declarations, or project-only atomic policy work.",
     "dependent_work": [
-      "zero missing selected header declarations",
+      "maintain zero missing selected header declarations",
       "libc.c-abi-compat final callable-provider archive closure",
       "ordinary archive extraction for future providers",
       "header-family aggregate closure"
@@ -1809,10 +1800,10 @@
       "exact missing-reference declaration roster",
       "native x86 inventory regeneration plus checked report"
     ],
-    "expected_transition": "Completed as a non-promoting checked disposition: all 1,526 current candidate external callable names and the one current missing reference declaration name receive exact accounting records. The 350 deferred names remain provider/archive work. Declaration parity remains red after the missing reference name reaches zero until the independent declaration/macro matrix and remaining header obligations close.",
+    "expected_transition": "Completed as a non-promoting checked disposition: all 1,527 current candidate external callable names receive exact accounting records, including statx as a planned libc.posix-runtime provider. The 351 deferred names remain provider/archive work. Declaration parity remains red despite the zero missing reference declaration names until the independent declaration/macro matrix and remaining header obligations close.",
     "family_aggregate_command": "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts",
     "focused_evidence_command": "./scripts/dev-x86_64.sh header-callable-disposition",
-    "negative_scope": "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not waive the one remaining pinned-musl declaration name, infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support.",
+    "negative_scope": "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support.",
     "prerequisites": [
       "oracle.musl-toolchain",
       "compiler-derived selected header callable inventory",

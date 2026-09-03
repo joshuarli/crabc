@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "23635ab43a6d87d46f805b86c9f882c2f991eb8596ff99cddb3b97a9b97b6c23",
+    "callable_inventory_sha256": "4a1f83707b5a21a4096f65a7dd859bb4c7b1899badbb526610d73bbbb03c16d4",
     "matrix_contract_sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -4620,7 +4620,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 62,
+      "candidate_callable_count": 63,
       "candidate_only": [
         {
           "classification": "external",
@@ -4750,19 +4750,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_callable_count": 31,
+      "matched_callable_count": 32,
       "profile": "c11-gnu",
       "reference_callable_count": 32,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "statx"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 62,
+      "candidate_callable_count": 63,
       "candidate_only": [
         {
           "classification": "external",
@@ -4892,15 +4887,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_callable_count": 31,
+      "matched_callable_count": 32,
       "profile": "cxx17-gnu",
       "reference_callable_count": 32,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "statx"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -5344,7 +5334,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 62,
+      "candidate_callable_count": 63,
       "candidate_only": [
         {
           "classification": "external",
@@ -5474,15 +5464,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_callable_count": 31,
+      "matched_callable_count": 32,
       "profile": "cxx17-strict",
       "reference_callable_count": 32,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "statx"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -43947,7 +43932,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 60,
+      "candidate_callable_count": 61,
       "candidate_only": [
         {
           "classification": "external",
@@ -44077,19 +44062,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/stat.h",
-      "matched_callable_count": 29,
+      "matched_callable_count": 30,
       "profile": "c11-gnu",
       "reference_callable_count": 30,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "statx"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 60,
+      "candidate_callable_count": 61,
       "candidate_only": [
         {
           "classification": "external",
@@ -44219,15 +44199,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/stat.h",
-      "matched_callable_count": 29,
+      "matched_callable_count": 30,
       "profile": "cxx17-gnu",
       "reference_callable_count": 30,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "statx"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -44671,7 +44646,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 60,
+      "candidate_callable_count": 61,
       "candidate_only": [
         {
           "classification": "external",
@@ -44801,15 +44776,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sys/stat.h",
-      "matched_callable_count": 29,
+      "matched_callable_count": 30,
       "profile": "cxx17-strict",
       "reference_callable_count": 30,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "statx"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -55864,7 +55834,7 @@
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
-    "matched_callable_count": 32248,
+    "matched_callable_count": 32254,
     "mismatch_row_count": 531,
     "oracle_not_applicable_candidate_visible_callable_count": 39,
     "oracle_not_applicable_row_count": 1,
@@ -55874,7 +55844,7 @@
     "project_only_callable_count": 414,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_callable_count": 2444,
+    "reference_only_callable_count": 2438,
     "row_count": 1337
   },
   "target": "x86_64-unknown-linux-musl"

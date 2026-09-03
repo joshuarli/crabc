@@ -434,6 +434,61 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                     f"{row['header']}:{row['profile']} {field} GNU namespace facts",
                 )
 
+    def test_statx_gnu_declaration_and_record_facts_match_without_claiming_a_provider(self) -> None:
+        """The declaration matrix closes the public surface, not archive linkage."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        profiles = ("c11-gnu", "cxx17-gnu", "cxx17-strict")
+        names = {
+            "statx",
+            "statx_timestamp",
+            "STATX_TYPE",
+            "STATX_MODE",
+            "STATX_NLINK",
+            "STATX_UID",
+            "STATX_GID",
+            "STATX_ATIME",
+            "STATX_MTIME",
+            "STATX_CTIME",
+            "STATX_INO",
+            "STATX_SIZE",
+            "STATX_BLOCKS",
+            "STATX_BASIC_STATS",
+            "STATX_BTIME",
+            "STATX_ALL",
+            "STATX_MNT_ID",
+            "STATX_DIOALIGN",
+            "STATX_MNT_ID_UNIQUE",
+            "STATX_SUBVOL",
+            "STATX_WRITE_ATOMIC",
+            "STATX_ATTR_COMPRESSED",
+            "STATX_ATTR_IMMUTABLE",
+            "STATX_ATTR_APPEND",
+            "STATX_ATTR_NODUMP",
+            "STATX_ATTR_ENCRYPTED",
+            "STATX_ATTR_AUTOMOUNT",
+            "STATX_ATTR_MOUNT_ROOT",
+            "STATX_ATTR_VERITY",
+            "STATX_ATTR_DAX",
+            "STATX_ATTR_WRITE_ATOMIC",
+        }
+
+        for header in ("sys/stat.h", "ftw.h"):
+            for profile in profiles:
+                difference = rows[(header, profile)]["difference"]
+                for field in ("candidate_only", "incompatible", "reference_only"):
+                    facts = [
+                        fact for fact in difference[field] if fact.get("name") in names
+                    ]
+                    self.assertEqual(
+                        facts,
+                        [],
+                        f"{header}:{profile} {field} statx declaration/layout facts",
+                    )
+
     def test_stdio_wchar_and_monetary_declarations_match_musl_forms(self) -> None:
         """Header visibility must not promote deferred stream or locale providers."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

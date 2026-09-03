@@ -272,7 +272,7 @@ def deferred_groups(value: object, known_families: set[str]) -> tuple[DeferredOw
 def missing_reference_groups(
     value: object, known_families: set[str]
 ) -> tuple[MissingReferenceDeclarationGroup, ...]:
-    require(isinstance(value, list) and value, "missing_reference_declaration_group rows are missing")
+    require(isinstance(value, list), "missing_reference_declaration_group rows are invalid")
     rows: list[MissingReferenceDeclarationGroup] = []
     identifiers: set[str] = set()
     expected = {"id", "semantic_family", "resolution", "source_oracle", "members"}

@@ -177,6 +177,29 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             contract.work_package["source_owners"],
         )
 
+    def test_statx_gnu_identities_are_no_longer_reference_only(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in report["rows"]
+        }
+        names = {
+            "statx",
+            "statx_timestamp",
+            "STATX_TYPE",
+            "STATX_BASIC_STATS",
+            "STATX_WRITE_ATOMIC",
+            "STATX_ATTR_WRITE_ATOMIC",
+        }
+        for header in ("sys/stat.h", "ftw.h"):
+            for profile in ("c11-gnu", "cxx17-gnu", "cxx17-strict"):
+                row = rows[(header, profile)]
+                for field in ("candidate_only", "reference_only"):
+                    self.assertFalse(
+                        names & {fact["name"] for fact in row[field]},
+                        f"{header}:{profile} {field} statx identities",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

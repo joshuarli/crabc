@@ -2,7 +2,16 @@
 #define _SYS_STAT_H
 
 #include <features.h>
+#if defined(_GNU_SOURCE)
+#define __NEED_int64_t
+#define __NEED_uint64_t
+#define __NEED_uint32_t
+#define __NEED_uint16_t
+#endif
 #include <sys/types.h>
+#if defined(_GNU_SOURCE)
+#include <bits/alltypes.h>
+#endif
 #include <time.h>
 
 #if defined(__x86_64__)
@@ -92,6 +101,78 @@ int fchmod(int, mode_t);
 int fchmodat(int, const char *, mode_t, int);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int lchmod(const char *, mode_t);
+#endif
+
+#if defined(_GNU_SOURCE)
+#define STATX_TYPE 1U
+#define STATX_MODE 2U
+#define STATX_NLINK 4U
+#define STATX_UID 8U
+#define STATX_GID 0x10U
+#define STATX_ATIME 0x20U
+#define STATX_MTIME 0x40U
+#define STATX_CTIME 0x80U
+#define STATX_INO 0x100U
+#define STATX_SIZE 0x200U
+#define STATX_BLOCKS 0x400U
+#define STATX_BASIC_STATS 0x7ffU
+#define STATX_BTIME 0x800U
+#define STATX_ALL 0xfffU
+#define STATX_MNT_ID 0x1000U
+#define STATX_DIOALIGN 0x2000U
+#define STATX_MNT_ID_UNIQUE 0x4000U
+#define STATX_SUBVOL 0x8000U
+#define STATX_WRITE_ATOMIC 0x10000U
+
+#define STATX_ATTR_COMPRESSED 0x4
+#define STATX_ATTR_IMMUTABLE 0x10
+#define STATX_ATTR_APPEND 0x20
+#define STATX_ATTR_NODUMP 0x40
+#define STATX_ATTR_ENCRYPTED 0x800
+#define STATX_ATTR_AUTOMOUNT 0x1000
+#define STATX_ATTR_MOUNT_ROOT 0x2000
+#define STATX_ATTR_VERITY 0x100000
+#define STATX_ATTR_DAX 0x200000
+#define STATX_ATTR_WRITE_ATOMIC 0x400000
+
+struct statx_timestamp {
+    int64_t tv_sec;
+    uint32_t tv_nsec, __pad;
+};
+
+struct statx {
+    uint32_t stx_mask;
+    uint32_t stx_blksize;
+    uint64_t stx_attributes;
+    uint32_t stx_nlink;
+    uint32_t stx_uid;
+    uint32_t stx_gid;
+    uint16_t stx_mode;
+    uint16_t __pad0[1];
+    uint64_t stx_ino;
+    uint64_t stx_size;
+    uint64_t stx_blocks;
+    uint64_t stx_attributes_mask;
+    struct statx_timestamp stx_atime;
+    struct statx_timestamp stx_btime;
+    struct statx_timestamp stx_ctime;
+    struct statx_timestamp stx_mtime;
+    uint32_t stx_rdev_major;
+    uint32_t stx_rdev_minor;
+    uint32_t stx_dev_major;
+    uint32_t stx_dev_minor;
+    uint64_t stx_mnt_id;
+    uint32_t stx_dio_mem_align;
+    uint32_t stx_dio_offset_align;
+    uint64_t stx_subvol;
+    uint32_t stx_atomic_write_unit_min;
+    uint32_t stx_atomic_write_unit_max;
+    uint32_t stx_atomic_write_segments_max;
+    uint32_t __pad1[1];
+    uint64_t __pad2[9];
+};
+
+int statx(int, const char *__restrict, int, unsigned, struct statx *__restrict);
 #endif
 int mkdir(const char *, mode_t);
 int mkdirat(int, const char *, mode_t);

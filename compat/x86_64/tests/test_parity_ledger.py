@@ -3345,7 +3345,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 37595, "reference_only": 84766},
+            {"candidate_only": 37595, "reference_only": 84502},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3376,13 +3376,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             disposition["command"],
             "./scripts/dev-x86_64.sh header-callable-disposition",
         )
-        self.assertEqual(disposition["candidate_external_callable_count"], 1526)
+        self.assertEqual(disposition["candidate_external_callable_count"], 1527)
         self.assertEqual(disposition["default_static_callable_count"], 1113)
         self.assertEqual(disposition["verified_feature_callable_count"], 47)
         self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 366)
-        self.assertEqual(disposition["missing_reference_declaration_name_count"], 1)
-        self.assertEqual(disposition["missing_reference_declaration_record_count"], 3)
+        self.assertEqual(disposition["unprovided_callable_count"], 367)
+        self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
+        self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
         self.assertTrue(disposition["header_ownership_routing_complete"])
         self.assertFalse(disposition["header_declaration_parity_complete"])
@@ -3395,12 +3395,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             provider_audit["command"],
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
-        self.assertEqual(provider_audit["candidate_external_callable_count"], 1526)
+        self.assertEqual(provider_audit["candidate_external_callable_count"], 1527)
         self.assertEqual(provider_audit["default_static_callable_count"], 1113)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 366)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 367)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
