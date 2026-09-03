@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "b6ad694ff7e39105571228aba2662cffe1a1197cec88b7dd17df4040ebce1eca",
+    "callable_inventory_sha256": "25783b06f76ec4207a07194e7e81a954196670dfcd5d6e2d9fe02c66b80f912e",
     "matrix_contract_sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -4904,7 +4904,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 37,
+      "candidate_callable_count": 38,
       "candidate_only": [
         {
           "classification": "external",
@@ -4950,19 +4950,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_callable_count": 27,
+      "matched_callable_count": 28,
       "profile": "c11-strict",
       "reference_callable_count": 28,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ftw"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 54,
+      "candidate_callable_count": 55,
       "candidate_only": [
         {
           "classification": "external",
@@ -5076,15 +5071,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_callable_count": 27,
+      "matched_callable_count": 28,
       "profile": "c11-posix-2008",
       "reference_callable_count": 28,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "ftw"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -27785,7 +27775,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 189,
+      "candidate_callable_count": 191,
       "candidate_only": [
         {
           "classification": "external",
@@ -27799,23 +27789,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_callable_count": 187,
+      "matched_callable_count": 189,
       "profile": "c11-gnu",
       "reference_callable_count": 189,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "setns"
-        },
-        {
-          "classification": "external",
-          "name": "unshare"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 188,
+      "candidate_callable_count": 190,
       "candidate_only": [
         {
           "classification": "external",
@@ -27829,19 +27810,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_callable_count": 186,
+      "matched_callable_count": 188,
       "profile": "cxx17-gnu",
       "reference_callable_count": 188,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "setns"
-        },
-        {
-          "classification": "external",
-          "name": "unshare"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -27929,7 +27901,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 188,
+      "candidate_callable_count": 190,
       "candidate_only": [
         {
           "classification": "external",
@@ -27943,19 +27915,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_callable_count": 186,
+      "matched_callable_count": 188,
       "profile": "cxx17-strict",
       "reference_callable_count": 188,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "setns"
-        },
-        {
-          "classification": "external",
-          "name": "unshare"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -30162,7 +30125,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 75,
+      "candidate_callable_count": 77,
       "candidate_only": [
         {
           "classification": "external",
@@ -30292,23 +30255,14 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_callable_count": 44,
+      "matched_callable_count": 46,
       "profile": "c11-gnu",
       "reference_callable_count": 46,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "setns"
-        },
-        {
-          "classification": "external",
-          "name": "unshare"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 75,
+      "candidate_callable_count": 77,
       "candidate_only": [
         {
           "classification": "external",
@@ -30438,19 +30392,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_callable_count": 44,
+      "matched_callable_count": 46,
       "profile": "cxx17-gnu",
       "reference_callable_count": 46,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "setns"
-        },
-        {
-          "classification": "external",
-          "name": "unshare"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -30894,7 +30839,7 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 75,
+      "candidate_callable_count": 77,
       "candidate_only": [
         {
           "classification": "external",
@@ -31024,19 +30969,10 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_callable_count": 44,
+      "matched_callable_count": 46,
       "profile": "cxx17-strict",
       "reference_callable_count": 46,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "setns"
-        },
-        {
-          "classification": "external",
-          "name": "unshare"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -62176,7 +62112,7 @@
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
-    "matched_callable_count": 32154,
+    "matched_callable_count": 32168,
     "mismatch_row_count": 560,
     "oracle_not_applicable_candidate_visible_callable_count": 39,
     "oracle_not_applicable_row_count": 1,
@@ -62186,7 +62122,7 @@
     "project_only_callable_count": 414,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_callable_count": 2538,
+    "reference_only_callable_count": 2524,
     "row_count": 1337
   },
   "target": "x86_64-unknown-linux-musl"

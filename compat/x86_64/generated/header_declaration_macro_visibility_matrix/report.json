@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "4c22f1669e8ac9ad0a8d6cd2b99388a8f2749853ccdd94eca613e5156e5e6fd7"
+    "source_abi_report_sha256": "ef9c9bc50aad79bcd830d70d7e8b1b15b2744ea462e1cc37910d9daac16d520a"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -46495,14 +46495,14 @@
     },
     {
       "candidate": {
-        "count": 156,
+        "count": 157,
         "kind_counts": {
-          "function": 25,
+          "function": 26,
           "macro": 91,
           "record": 5,
           "typedef": 35
         },
-        "sha256": "679986568ec5897e3e22e697b43e9cd1cb0894fce0596b7cc8a913182e733c0e"
+        "sha256": "c2ac3782dc65831f1619c9bd2204784fc17379558f0046de5cb89c12e958e08e"
       },
       "candidate_only": [
         {
@@ -46761,7 +46761,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_identity_count": 93,
+      "matched_identity_count": 94,
       "profile": "c11-strict",
       "reference": {
         "count": 112,
@@ -46774,10 +46774,6 @@
         "sha256": "92006d33f1ba37faf19cee822aef0e30f0c04dcc1bc708d7b7d873fcf316e665"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "ftw"
-        },
         {
           "kind": "macro",
           "name": "__DEFINED_blkcnt_t"
@@ -46857,15 +46853,15 @@
     },
     {
       "candidate": {
-        "count": 187,
+        "count": 188,
         "kind_counts": {
-          "function": 42,
+          "function": 43,
           "macro": 100,
           "record": 8,
           "typedef": 36,
           "variable": 1
         },
-        "sha256": "eb9fdca761af6f3c51518a33526b433bc8b0eaba43d17b9a9fd0dd036d4a81c4"
+        "sha256": "08ee21c7f6752156c71894f5b1e1154b80734e500ca2b469cd983c9d975ddc89"
       },
       "candidate_only": [
         {
@@ -47248,7 +47244,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "ftw.h",
-      "matched_identity_count": 93,
+      "matched_identity_count": 94,
       "profile": "c11-posix-2008",
       "reference": {
         "count": 112,
@@ -47261,10 +47257,6 @@
         "sha256": "92006d33f1ba37faf19cee822aef0e30f0c04dcc1bc708d7b7d873fcf316e665"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "ftw"
-        },
         {
           "kind": "macro",
           "name": "__DEFINED_blkcnt_t"
@@ -302034,15 +302026,15 @@
     },
     {
       "candidate": {
-        "count": 356,
+        "count": 358,
         "kind_counts": {
-          "function": 162,
+          "function": 164,
           "macro": 142,
           "record": 10,
           "typedef": 38,
           "variable": 4
         },
-        "sha256": "45a5cbd11b6d29b467dc3897f6d303b1dcedc32697cb92682ab3c597b68ed20d"
+        "sha256": "a3dad7f4645c0731a59b5f5b9bbe4f35e6cf8031c75ce46d57b6f6e93748d57c"
       },
       "candidate_only": [
         {
@@ -302141,7 +302133,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_identity_count": 333,
+      "matched_identity_count": 335,
       "profile": "c11-gnu",
       "reference": {
         "count": 361,
@@ -302155,14 +302147,6 @@
         "sha256": "6e4ea7384b71eb56a4e19d8694fa2423161ba7852d3f598b6bf2ecaa9d785c64"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "setns"
-        },
-        {
-          "kind": "function",
-          "name": "unshare"
-        },
         {
           "kind": "macro",
           "name": "__DEFINED_pthread_attr_t"
@@ -302274,15 +302258,15 @@
     },
     {
       "candidate": {
-        "count": 354,
+        "count": 356,
         "kind_counts": {
-          "function": 162,
+          "function": 164,
           "macro": 141,
           "record": 9,
           "typedef": 38,
           "variable": 4
         },
-        "sha256": "73eebb0257e3b32a9de9d8e4fa4cd6aa23b316b43f496c5e4003729788195e81"
+        "sha256": "b0eeea43a791ad90d5c7245bb6374391b3e888b5e0904bf1d178004ce117f994"
       },
       "candidate_only": [
         {
@@ -302381,7 +302365,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_identity_count": 331,
+      "matched_identity_count": 333,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 359,
@@ -302395,14 +302379,6 @@
         "sha256": "1c193c118615decbf6ba9510ca3c10e0985bf153d34b149600e3a968481c0822"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "setns"
-        },
-        {
-          "kind": "function",
-          "name": "unshare"
-        },
         {
           "kind": "macro",
           "name": "__DEFINED_pthread_attr_t"
@@ -303508,15 +303484,15 @@
     },
     {
       "candidate": {
-        "count": 354,
+        "count": 356,
         "kind_counts": {
-          "function": 162,
+          "function": 164,
           "macro": 141,
           "record": 9,
           "typedef": 38,
           "variable": 4
         },
-        "sha256": "73eebb0257e3b32a9de9d8e4fa4cd6aa23b316b43f496c5e4003729788195e81"
+        "sha256": "b0eeea43a791ad90d5c7245bb6374391b3e888b5e0904bf1d178004ce117f994"
       },
       "candidate_only": [
         {
@@ -303615,7 +303591,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "pthread.h",
-      "matched_identity_count": 331,
+      "matched_identity_count": 333,
       "profile": "cxx17-strict",
       "reference": {
         "count": 359,
@@ -303629,14 +303605,6 @@
         "sha256": "1c193c118615decbf6ba9510ca3c10e0985bf153d34b149600e3a968481c0822"
       },
       "reference_only": [
-        {
-          "kind": "function",
-          "name": "setns"
-        },
-        {
-          "kind": "function",
-          "name": "unshare"
-        },
         {
           "kind": "macro",
           "name": "__DEFINED_pthread_attr_t"
@@ -335392,15 +335360,15 @@
     },
     {
       "candidate": {
-        "count": 207,
+        "count": 209,
         "kind_counts": {
-          "function": 51,
+          "function": 53,
           "macro": 107,
           "record": 8,
           "typedef": 37,
           "variable": 4
         },
-        "sha256": "b8b911b53613132c126010f79552af356e5cede1a60a221c56081ac127b9f319"
+        "sha256": "ac30d82d71649301b5c0f4654fa7bbc7637e74b371078b91848a5c5f5ba07dd3"
       },
       "candidate_only": [
         {
@@ -335831,7 +335799,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_identity_count": 101,
+      "matched_identity_count": 103,
       "profile": "c11-gnu",
       "reference": {
         "count": 103,
@@ -335843,31 +335811,22 @@
         },
         "sha256": "f8650c0db92ee476ac61cafec10b2e0eedc28104607c73c03bc0cb533d6f6cc0"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "setns"
-        },
-        {
-          "kind": "function",
-          "name": "unshare"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 206,
+        "count": 208,
         "kind_counts": {
-          "function": 51,
+          "function": 53,
           "macro": 107,
           "record": 7,
           "typedef": 37,
           "variable": 4
         },
-        "sha256": "93798d1b2f008aafd589fa330b4c1f74fadc96724778e8a390b423727db18fcf"
+        "sha256": "ea26261ff7c7ea7733ec21313176a03e0428d35972d0eb2f196c397f5762fc70"
       },
       "candidate_only": [
         {
@@ -336294,7 +336253,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_identity_count": 101,
+      "matched_identity_count": 103,
       "profile": "cxx17-gnu",
       "reference": {
         "count": 103,
@@ -336306,16 +336265,7 @@
         },
         "sha256": "b37a9d5acab5a6b82fb1798ccca8401b7d9d675a3971741dcd038b58d1c395e2"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "setns"
-        },
-        {
-          "kind": "function",
-          "name": "unshare"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
@@ -337990,15 +337940,15 @@
     },
     {
       "candidate": {
-        "count": 206,
+        "count": 208,
         "kind_counts": {
-          "function": 51,
+          "function": 53,
           "macro": 107,
           "record": 7,
           "typedef": 37,
           "variable": 4
         },
-        "sha256": "93798d1b2f008aafd589fa330b4c1f74fadc96724778e8a390b423727db18fcf"
+        "sha256": "ea26261ff7c7ea7733ec21313176a03e0428d35972d0eb2f196c397f5762fc70"
       },
       "candidate_only": [
         {
@@ -338425,7 +338375,7 @@
       "candidate_status": "ok",
       "comparison": "mismatch",
       "header": "sched.h",
-      "matched_identity_count": 101,
+      "matched_identity_count": 103,
       "profile": "cxx17-strict",
       "reference": {
         "count": 103,
@@ -338437,16 +338387,7 @@
         },
         "sha256": "b37a9d5acab5a6b82fb1798ccca8401b7d9d675a3971741dcd038b58d1c395e2"
       },
-      "reference_only": [
-        {
-          "kind": "function",
-          "name": "setns"
-        },
-        {
-          "kind": "function",
-          "name": "unshare"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok",
       "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
@@ -544011,7 +543952,7 @@
       "56 project-only header/profile rows remain pending C ABI policy",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
-    "matched_identity_count": 210410,
+    "matched_identity_count": 210424,
     "mismatch_row_count": 942,
     "oracle_not_applicable_candidate_fact_count": 243,
     "oracle_not_applicable_row_count": 1,
@@ -544021,10 +543962,10 @@
     "project_only_candidate_fact_count": 1964,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 84954,
+    "reference_only_identity_count": 84940,
     "reference_only_identity_kind_counts": {
       "enum": 66,
-      "function": 1183,
+      "function": 1169,
       "macro": 81197,
       "record": 922,
       "typedef": 1549,

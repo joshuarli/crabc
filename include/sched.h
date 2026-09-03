@@ -126,6 +126,8 @@ __CPU_op_func_S(XOR, ^)
 #define CLONE_IO            0x80000000
 
 int clone(int (*)(void *), void *, int, void *, ...);
+int unshare(int);
+int setns(int, int);
 int sched_getaffinity(pid_t, size_t, cpu_set_t *);
 int sched_setaffinity(pid_t, size_t, const cpu_set_t *);
 int sched_getcpu(void);

@@ -266,6 +266,74 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt"} & unprovided)
         self.assertIn("fputws", unprovided)
 
+    def test_ftw_and_gnu_namespace_declarations_match_pinned_visibility(self) -> None:
+        """Keep small POSIX header repairs below future C ABI provider work."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        profiles = {
+            "all": {
+                "c11-bsd",
+                "c11-gnu",
+                "c11-posix-2008",
+                "c11-strict",
+                "c11-xopen-700",
+                "cxx17-gnu",
+                "cxx17-strict",
+            },
+            "gnu": {"c11-gnu", "cxx17-gnu", "cxx17-strict"},
+        }
+        expected = {
+            "ftw": (
+                profiles["all"],
+                "ftw.h",
+                "int (const char *, int (*)(const char *, const struct stat *, int), int)",
+                ["ftw.h"],
+            ),
+            "setns": (
+                profiles["gnu"],
+                "pthread.h",
+                "int (int, int)",
+                ["pthread.h", "sched.h"],
+            ),
+            "unshare": (
+                profiles["gnu"],
+                "pthread.h",
+                "int (int)",
+                ["pthread.h", "sched.h"],
+            ),
+        }
+        callables = report["callables"]
+        assert isinstance(callables, list)
+
+        for name, (visible_profiles, header, signature, visible_headers) in expected.items():
+            for tree in ("reference", "candidate"):
+                rows = [
+                    row
+                    for row in callables
+                    if row.get("tree") == tree
+                    and row.get("classification") == "external"
+                    and row.get("name") == name
+                ]
+                self.assertEqual(
+                    {row["profile"] for row in rows},
+                    visible_profiles,
+                    f"{tree} {name} visibility drifted",
+                )
+                for row in rows:
+                    self.assertEqual(row["declaring_header"], header)
+                    self.assertEqual(row["type"], signature)
+                    self.assertEqual(row["visible_from_headers"], visible_headers)
+
+        missing = {
+            row["name"]
+            for row in callables
+            if row.get("tree") == "comparison"
+            and row.get("classification") == "missing"
+            and row.get("name") in expected
+        }
+        self.assertEqual(missing, set())
+
     def test_pthread_barrier_provider_block_is_default_static_not_unprovided(self) -> None:
         """Keep the selected barrier ABI in the default archive provider partition."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:

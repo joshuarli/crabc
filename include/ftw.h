@@ -22,11 +22,8 @@ extern "C" {
 
 struct FTW { int base; int level; };
 
-/* ftw is a legacy interface removed from the current POSIX/XSI namespace. */
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE) \
- || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE < 800)
+/* musl retains the legacy ftw declaration in every feature profile. */
 int ftw(const char *, int (*)(const char *, const struct stat *, int), int);
-#endif
 int nftw(const char *, int (*)(const char *, const struct stat *, int, struct FTW *), int, int);
 
 #if defined(_LARGEFILE64_SOURCE)

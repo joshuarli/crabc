@@ -33,8 +33,8 @@ baseline_source = "Pinned musl 1.2.6 selected x86 public headers and the checked
 source_owners = ["compat/x86_64/header_callable_disposition.toml", "compat/x86_64/header_callable_disposition.py", "compat/x86_64/header_callable_linkage_audit.py", "compat/x86_64/header_callable_inventory.json", "compat/x86_64/static_c_abi_exports.txt", "compat/x86_64/parity.toml", "compat/x86_64/headers-layouts-foundation.toml", "compat/x86_64/tests/test_header_callable_disposition.py", "scripts/dev-x86_64.sh"]
 focused_evidence_command = "./scripts/dev-x86_64.sh header-callable-disposition"
 family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
-negative_scope = "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not waive the 16 missing pinned-musl declaration names, infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support."
-expected_transition = "Completed as a non-promoting checked disposition: all 1,513 current candidate external callable names and all 16 current missing reference declaration names receive exact accounting records. The 353 deferred names remain provider/archive work. Declaration parity remains red after the missing reference names reach zero until the independent declaration/macro matrix and remaining header obligations close."
+negative_scope = "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not waive the 13 missing pinned-musl declaration names, infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support."
+expected_transition = "Completed as a non-promoting checked disposition: all 1,515 current candidate external callable names and all 13 current missing reference declaration names receive exact accounting records. The 355 deferred names remain provider/archive work. Declaration parity remains red after the missing reference names reach zero until the independent declaration/macro matrix and remaining header obligations close."
 evidence = ["compiler-derived inventory digest binding", "exact disjoint primary callable partition", "exact deferred-owner roster", "exact missing-reference declaration roster", "native x86 inventory regeneration plus checked report"]
 
 [[deferred_owner_group]]
@@ -75,7 +75,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.posix-runtime"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["acct", "aio_cancel", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "brk", "capget", "capset", "chroot", "clone", "closelog", "daemon", "delete_module", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fallocate", "fanotify_init", "fanotify_mark", "fchmodat", "fchown", "fchownat", "fexecve", "forkpty", "get_current_dir_name", "getitimer", "gmtime", "init_module", "initstate", "isastream", "klogctl", "lio_listio", "lockf", "login_tty", "mkdtemp", "mknod", "mknodat", "mkostemp", "mkostemps", "mkstemp", "mkstemps", "mount", "mq_close", "mq_getattr", "mq_notify", "mq_open", "mq_receive", "mq_send", "mq_timedreceive", "mq_timedsend", "mq_unlink", "mremap", "name_to_handle_at", "open_by_handle_at", "openlog", "openpty", "pivot_root", "posix_openpt", "posix_spawn", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "posix_spawnp", "prctl", "preadv2", "process_vm_readv", "process_vm_writev", "ptrace", "ptsname", "ptsname_r", "pwritev2", "quotactl", "rand", "random", "realpath", "reboot", "remap_file_pages", "renameat", "sbrk", "sem_close", "sem_open", "sem_timedwait", "sem_unlink", "setitimer", "setlogmask", "setstate", "shm_open", "shm_unlink", "srand", "srandom", "swapoff", "swapon", "symlinkat", "syscall", "syslog", "system", "tcdrain", "tcgetsid", "tempnam", "timer_create", "times", "tmpnam", "ttyname", "umount", "umount2", "vfork", "vhangup", "vmsplice", "vsyslog"]
+members = ["acct", "aio_cancel", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "brk", "capget", "capset", "chroot", "clone", "closelog", "daemon", "delete_module", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fallocate", "fanotify_init", "fanotify_mark", "fchmodat", "fchown", "fchownat", "fexecve", "forkpty", "get_current_dir_name", "getitimer", "gmtime", "init_module", "initstate", "isastream", "klogctl", "lio_listio", "lockf", "login_tty", "mkdtemp", "mknod", "mknodat", "mkostemp", "mkostemps", "mkstemp", "mkstemps", "mount", "mq_close", "mq_getattr", "mq_notify", "mq_open", "mq_receive", "mq_send", "mq_timedreceive", "mq_timedsend", "mq_unlink", "mremap", "name_to_handle_at", "open_by_handle_at", "openlog", "openpty", "pivot_root", "posix_openpt", "posix_spawn", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "posix_spawnp", "prctl", "preadv2", "process_vm_readv", "process_vm_writev", "ptrace", "ptsname", "ptsname_r", "pwritev2", "quotactl", "rand", "random", "realpath", "reboot", "remap_file_pages", "renameat", "sbrk", "sem_close", "sem_open", "sem_timedwait", "sem_unlink", "setitimer", "setlogmask", "setns", "setstate", "shm_open", "shm_unlink", "srand", "srandom", "swapoff", "swapon", "symlinkat", "syscall", "syslog", "system", "tcdrain", "tcgetsid", "tempnam", "timer_create", "times", "tmpnam", "ttyname", "umount", "umount2", "unshare", "vfork", "vhangup", "vmsplice", "vsyslog"]
 
 [[deferred_owner_group]]
 id = "x86-cabi-compat-errors-users-v1"
@@ -135,15 +135,8 @@ source_oracle = "Pinned musl 1.2.6 stdio.h and monetary.h declaration inventory"
 members = ["clearerr_unlocked", "fflush_unlocked", "fgetc_unlocked", "fgets_unlocked", "fputc_unlocked", "fputs_unlocked", "fputws_unlocked", "fread_unlocked", "fwrite_unlocked", "getw", "putw", "strfmon_l"]
 
 [[missing_reference_declaration_group]]
-id = "x86-header-missing-filesystem-v1"
+id = "x86-header-missing-statx-v1"
 semantic_family = "libc.posix-runtime"
 resolution = "candidate-declaration-missing"
-source_oracle = "Pinned musl 1.2.6 ftw.h and sys/stat.h declaration inventory"
-members = ["ftw", "statx"]
-
-[[missing_reference_declaration_group]]
-id = "x86-header-missing-namespace-v1"
-semantic_family = "libc.posix-runtime"
-resolution = "candidate-declaration-missing"
-source_oracle = "Pinned musl 1.2.6 sched.h declaration inventory"
-members = ["setns", "unshare"]
+source_oracle = "Pinned musl 1.2.6 sys/stat.h declaration inventory"
+members = ["statx"]

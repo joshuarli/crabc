@@ -401,6 +401,39 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                 f"{sorted(owned_names & differing_names)}",
             )
 
+    def test_gnu_namespace_declarations_keep_cxx_c_linkage(self) -> None:
+        """The canonical C++ profiles retain musl's GNU namespace spellings."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        expected = {
+            ("sched.h", "cxx17-gnu"),
+            ("sched.h", "cxx17-strict"),
+            ("pthread.h", "cxx17-gnu"),
+            ("pthread.h", "cxx17-strict"),
+        }
+        rows = [
+            row
+            for row in checked["rows"]
+            if (row["header"], row["profile"]) in expected
+        ]
+        self.assertEqual(
+            {(row["header"], row["profile"]) for row in rows}, expected
+        )
+
+        names = {"setns", "unshare"}
+        for row in rows:
+            difference = row["difference"]
+            for field in ("reference_only", "candidate_only", "incompatible"):
+                facts = [
+                    fact
+                    for fact in difference[field]
+                    if fact.get("name") in names
+                ]
+                self.assertEqual(
+                    facts,
+                    [],
+                    f"{row['header']}:{row['profile']} {field} GNU namespace facts",
+                )
+
     def test_features_header_uses_pinned_musl_include_guard(self) -> None:
         """Keep the public feature-selection prelude's identity aligned with musl."""
         profiles = (

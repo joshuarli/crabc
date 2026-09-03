@@ -873,10 +873,8 @@ The separate private `ftw-header-abi` gate
 (`./scripts/dev-x86_64.sh ftw-header-abi`) compares project-header-first and
 pinned-musl 1.2.6 `<ftw.h>` declarations across seven base C11/C++17 feature
 profiles plus GNU C11/C++17 `_LARGEFILE64_SOURCE` alias profiles. Pinned musl
-exposes `ftw` in every profile, while the frozen project
-header deliberately retains its legacy GNU/BSD/XOPEN-below-800 visibility
-gate; the runner records that inherited divergence rather than hiding it.
-`nftw` remains declared in every profile; both LFS profiles prove the `ftw64`
+and the project header expose `ftw` in every profile. `nftw` likewise remains
+declared in every profile; both LFS profiles prove the `ftw64`
 and `nftw64` macro aliases, and the C++ probes retain the unmangled C
 spellings. This is declaration evidence only: it does not prove
 archive linkage, traversal runtime behavior, promotion, or public x86 support.
@@ -1716,16 +1714,16 @@ archive, runtime, installed-header, family-promotion, or public-x86 evidence.
 The wider candidate visibility for those `aio.h` rows remains a tracked parity
 question rather than being silently treated as equivalent. The static-export
 list is only an input to the default archive linkage audit. The checked
-`header-callable-disposition` report now routes all 1,513 current selected
+`header-callable-disposition` report now routes all 1,515 current selected
 external callables through current selected provider assignments or exact deferred owners, while
-separately retaining 53 missing pinned-musl declaration records across 16
+separately retaining 45 missing pinned-musl declaration records across 13
 names. That closes accounting only: missing declarations remain header-parity
 work, and `libc.c-abi-compat` retains final provider selection, ordinary
 archive extraction, behavior, and C-ABI closure.
 
 `header-callable-disposition` regenerates the compiler-derived callable
 inventory, then checks that its 1,113 default-static, 47 verified
-feature-provider, and 353 deferred names form one exact primary partition.
+feature-provider, and 355 deferred names form one exact primary partition.
 Its deferred groups distinguish planned semantic providers from compiler
 builtins, consumer-supplied callbacks, oracle-declared no-provider names, and
 project-only atomic policy. It neither performs archive extraction nor claims
@@ -1737,7 +1735,7 @@ to ordinarily extract the 1,113 current default-static and 47 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 353-name unprovided complement remains explicit:
+selection and behavior. Its 355-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 

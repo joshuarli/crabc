@@ -3070,10 +3070,9 @@ the stated promotion goal.
 The separate private `ftw-header-abi` matrix
 (`./scripts/dev-x86_64.sh ftw-header-abi`) compares project-header-first and
 pinned-musl 1.2.6 `<ftw.h>` declarations across seven base C11/C++17 profiles
-plus GNU C11/C++17 `_LARGEFILE64_SOURCE` alias profiles. Pinned musl exposes
-`ftw` in every profile, while the frozen project header
-keeps its legacy GNU/BSD/XOPEN-below-800 gate; that inherited divergence is
-recorded explicitly. `nftw` remains visible in every profile, and both LFS
+plus GNU C11/C++17 `_LARGEFILE64_SOURCE` alias profiles. Pinned musl and the
+project header expose `ftw` in every profile. `nftw` likewise remains visible
+in every profile, and both LFS
 profiles prove `ftw64`/`nftw64` macro aliases plus unmangled C++ C-linkage
 spelling. The matrix is declaration evidence only,
 not archive-linkage, traversal-runtime, promotion, or public-support evidence.

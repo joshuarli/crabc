@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "b6ad694ff7e39105571228aba2662cffe1a1197cec88b7dd17df4040ebce1eca",
-    "candidate_external_callable_sha256": "628691f6fc710d40bc3e61a7bbc49afbc278887ea8286ce82ebc02163965aa93",
-    "parity_ledger_sha256": "a7280bb8bb8610074cc11d7a5db9771c8d37231981c24a7fbf97595556492d6a",
+    "callable_inventory_sha256": "25783b06f76ec4207a07194e7e81a954196670dfcd5d6e2d9fe02c66b80f912e",
+    "candidate_external_callable_sha256": "2f62addb43267d3d6408dba26ddd26fca530f2b417b7a39598fdb0d1d7427c68",
+    "parity_ledger_sha256": "9d6f6af1870960f22c03c0f2f3e6d165282ff4c5d7fd2f515f7e2294424d18d0",
     "static_c_abi_exports_sha256": "ba6d5107f5db1176812a9eae768519b086b7b41c7942aa81afd2cd63366bc312"
   },
   "missing_reference_declaration_groups": [
@@ -28,24 +28,13 @@
       "source_oracle": "Pinned musl 1.2.6 stdio.h and monetary.h declaration inventory"
     },
     {
-      "id": "x86-header-missing-filesystem-v1",
+      "id": "x86-header-missing-statx-v1",
       "members": [
-        "ftw",
         "statx"
       ],
       "resolution": "candidate-declaration-missing",
       "semantic_family": "libc.posix-runtime",
-      "source_oracle": "Pinned musl 1.2.6 ftw.h and sys/stat.h declaration inventory"
-    },
-    {
-      "id": "x86-header-missing-namespace-v1",
-      "members": [
-        "setns",
-        "unshare"
-      ],
-      "resolution": "candidate-declaration-missing",
-      "semantic_family": "libc.posix-runtime",
-      "source_oracle": "Pinned musl 1.2.6 sched.h declaration inventory"
+      "source_oracle": "Pinned musl 1.2.6 sys/stat.h declaration inventory"
     }
   ],
   "oracle": "Pinned musl 1.2.6",
@@ -1452,6 +1441,7 @@
           "sem_unlink",
           "setitimer",
           "setlogmask",
+          "setns",
           "setstate",
           "shm_open",
           "shm_unlink",
@@ -1472,6 +1462,7 @@
           "ttyname",
           "umount",
           "umount2",
+          "unshare",
           "vfork",
           "vhangup",
           "vmsplice",
@@ -1788,26 +1779,26 @@
     "runtime_semantics": false
   },
   "summary": {
-    "candidate_external_callable_count": 1513,
+    "candidate_external_callable_count": 1515,
     "declared_unverified_feature_callable_count": 0,
     "default_static_callable_count": 1113,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 8,
-      "planned-provider": 337,
+      "planned-provider": 339,
       "policy-decision-required": 6
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
     "header_ownership_routing_complete": true,
-    "missing_reference_declaration_name_count": 16,
-    "missing_reference_declaration_record_count": 53,
+    "missing_reference_declaration_name_count": 13,
+    "missing_reference_declaration_record_count": 45,
     "missing_reference_declaration_routing_complete": true,
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 353,
+    "unprovided_callable_count": 355,
     "verified_feature_callable_count": 47
   },
   "target": "x86_64-unknown-linux-musl",
@@ -1827,10 +1818,10 @@
       "exact missing-reference declaration roster",
       "native x86 inventory regeneration plus checked report"
     ],
-    "expected_transition": "Completed as a non-promoting checked disposition: all 1,513 current candidate external callable names and all 16 current missing reference declaration names receive exact accounting records. The 353 deferred names remain provider/archive work. Declaration parity remains red after the missing reference names reach zero until the independent declaration/macro matrix and remaining header obligations close.",
+    "expected_transition": "Completed as a non-promoting checked disposition: all 1,515 current candidate external callable names and all 13 current missing reference declaration names receive exact accounting records. The 355 deferred names remain provider/archive work. Declaration parity remains red after the missing reference names reach zero until the independent declaration/macro matrix and remaining header obligations close.",
     "family_aggregate_command": "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts",
     "focused_evidence_command": "./scripts/dev-x86_64.sh header-callable-disposition",
-    "negative_scope": "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not waive the 16 missing pinned-musl declaration names, infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support.",
+    "negative_scope": "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not waive the 13 missing pinned-musl declaration names, infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support.",
     "prerequisites": [
       "oracle.musl-toolchain",
       "compiler-derived selected header callable inventory",

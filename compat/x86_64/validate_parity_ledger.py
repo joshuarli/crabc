@@ -400,7 +400,7 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "mismatch_fact_counts": {
         "candidate_only_count": 40499,
         "incompatible_count": 22208,
-        "reference_only_count": 84954,
+        "reference_only_count": 84940,
     },
     "mismatch_row_count": 997,
     "pinned_public_header_count": 183,
@@ -440,7 +440,7 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 210410,
+    "matched_identity_count": 210424,
     "mismatch_row_count": 942,
     "oracle_not_applicable_candidate_fact_count": 243,
     "oracle_not_applicable_row_count": 1,
@@ -450,10 +450,10 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 1964,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 84954,
+    "reference_only_identity_count": 84940,
     "reference_only_identity_kind_counts": {
         "enum": 66,
-        "function": 1183,
+        "function": 1169,
         "macro": 81197,
         "record": 922,
         "typedef": 1549,
@@ -2669,7 +2669,7 @@ def require_header_callable_visibility_matrix(
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
-            "matched_callable_count": 32154,
+            "matched_callable_count": 32168,
             "mismatch_row_count": 560,
             "oracle_not_applicable_candidate_visible_callable_count": 39,
             "oracle_not_applicable_row_count": 1,
@@ -2679,7 +2679,7 @@ def require_header_callable_visibility_matrix(
             "project_only_callable_count": 414,
             "project_only_header_count": 8,
             "project_only_row_count": 56,
-            "reference_only_callable_count": 2538,
+            "reference_only_callable_count": 2524,
             "row_count": 1337,
         },
         "callable visibility matrix finite baseline drifted",
@@ -3174,12 +3174,12 @@ def validate_header_layout_foundation_manifest(
             "state": "partial-verified",
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
-            "candidate_external_callable_count": 1513,
+            "candidate_external_callable_count": 1515,
             "default_static_callable_count": 1113,
             "verified_feature_callable_count": 47,
             "verified_feature_profile_count": 21,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 353,
+            "unprovided_callable_count": 355,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3240,13 +3240,13 @@ def validate_header_layout_foundation_manifest(
             "command": EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND,
             "contract": "compat/x86_64/header_callable_disposition.toml",
             "report": "compat/x86_64/header_callable_disposition.json",
-            "candidate_external_callable_count": 1513,
+            "candidate_external_callable_count": 1515,
             "default_static_callable_count": 1113,
             "verified_feature_callable_count": 47,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 353,
-            "missing_reference_declaration_name_count": 16,
-            "missing_reference_declaration_record_count": 53,
+            "unprovided_callable_count": 355,
+            "missing_reference_declaration_name_count": 13,
+            "missing_reference_declaration_record_count": 45,
             "missing_reference_declaration_routing_complete": True,
             "header_ownership_routing_complete": True,
             "header_declaration_parity_complete": False,
@@ -3260,8 +3260,8 @@ def validate_header_layout_foundation_manifest(
     description = callable_disposition["description"]
     require(
         isinstance(description, str)
-        and "all 1,513 selected external callable names" in description
-        and "16 pinned-musl declaration names" in description
+        and "all 1,515 selected external callable names" in description
+        and "13 pinned-musl declaration names" in description
         and "archive extraction" in description
         and "final C ABI provider/archive closure" in description
         and "public x86 support" in description,
@@ -6290,11 +6290,11 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     assert isinstance(description, str)
     for phrase in (
         "still-planned `libc.headers-layouts`",
-        "all 1,513 current names",
+        "all 1,515 current names",
         "1,113 default-static",
         "47 verified feature-provider",
-        "353 exact deferred-owner records",
-        "53 current pinned-musl missing declaration records across 16 names",
+        "355 exact deferred-owner records",
+        "45 current pinned-musl missing declaration records across 13 names",
         "not declaration parity",
         "does not perform archive extraction",
         "runtime semantics",
@@ -6334,8 +6334,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "353 deferred providers" in scope
-        and "16 missing reference declaration names" in scope
+        and "355 deferred providers" in scope
+        and "13 missing reference declaration names" in scope
         and "not archive extraction, runtime semantics, declaration parity, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
     )
@@ -6356,26 +6356,26 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     require(
         dict(summary)
         == {
-            "candidate_external_callable_count": 1513,
+            "candidate_external_callable_count": 1515,
             "declared_unverified_feature_callable_count": 0,
             "default_static_callable_count": 1113,
             "deferred_resolution_counts": {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 8,
-                "planned-provider": 337,
+                "planned-provider": 339,
                 "policy-decision-required": 6,
             },
             "final_provider_archive_closure_complete": False,
             "header_declaration_parity_complete": False,
             "header_ownership_routing_complete": True,
-            "missing_reference_declaration_name_count": 16,
-            "missing_reference_declaration_record_count": 53,
+            "missing_reference_declaration_name_count": 13,
+            "missing_reference_declaration_record_count": 45,
             "missing_reference_declaration_routing_complete": True,
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 353,
+            "unprovided_callable_count": 355,
             "verified_feature_callable_count": 47,
         },
         "header callable disposition summary drifted",
@@ -6442,7 +6442,7 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "353-name unprovided complement",
+        "355-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -40879,7 +40879,7 @@ def require_filesystem_traversal_artifact(family: Mapping[str, Any]) -> None:
         "CRABC_FTW_REQUIRE_LARGEFILE_ALIASES",
         "c11-gnu-largefile",
         "cxx17-gnu-largefile",
-        "frozen ftw visibility divergence recorded",
+        "unconditional ftw visibility",
     ):
         require(
             snippet in header_runner,

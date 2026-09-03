@@ -6,11 +6,6 @@
 #error "this probe requires native Linux/x86-64 little-endian LP64"
 #endif
 
-#if (defined(CRABC_FTW_EXPECT_FTW_VISIBLE) + \
-    defined(CRABC_FTW_REQUIRE_FTW_HIDDEN)) != 1
-#error "select exactly one ftw visibility class"
-#endif
-
 #include <stddef.h>
 #include <ftw.h>
 
@@ -32,11 +27,9 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&nftw), nftw_signature),
 
 __attribute__((used)) static nftw_signature crabc_nftw_reference = nftw;
 
-#if defined(CRABC_FTW_EXPECT_FTW_VISIBLE)
 _Static_assert(__builtin_types_compatible_p(__typeof__(&ftw), ftw_signature),
     "ftw declaration");
 __attribute__((used)) static ftw_signature crabc_ftw_reference = ftw;
-#endif
 
 #if defined(CRABC_FTW_REQUIRE_LARGEFILE_ALIASES)
 #ifndef ftw64
@@ -51,10 +44,6 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&nftw64), nftw_signature)
     "nftw64 alias declaration");
 __attribute__((used)) static ftw_signature crabc_ftw64_reference = ftw64;
 __attribute__((used)) static nftw_signature crabc_nftw64_reference = nftw64;
-#endif
-
-#if defined(CRABC_FTW_REQUIRE_FTW_HIDDEN)
-__attribute__((used)) static ftw_signature crabc_ftw_hidden = ftw;
 #endif
 
 int crabc_x86_64_ftw_header_abi_probe(void)

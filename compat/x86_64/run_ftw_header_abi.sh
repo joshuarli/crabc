@@ -2,10 +2,9 @@
 # Native Linux/x86-64 <ftw.h> ABI profile matrix.
 #
 # Pinned musl 1.2.6 is the declaration/layout oracle. Its ftw declaration is
-# unconditional, while the frozen project header deliberately retains the
-# older GNU/BSD/XOPEN<800 visibility gate. This runner records that inherited
-# divergence explicitly while proving nftw's every-profile declaration and
-# C++ C linkage; it does not link a crabc archive or claim runtime support.
+# unconditional, and this runner proves the project header retains that
+# visibility alongside nftw's declaration and C++ C linkage. It does not link
+# a crabc archive or claim runtime support.
 set -euo pipefail
 export LC_ALL=C
 
@@ -17,7 +16,6 @@ readonly PROJECT_INCLUDE="$ROOT_DIR/include"
 readonly C_PROBE="$ROOT_DIR/compat/x86_64/ftw_header_abi_probe.c"
 readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/ftw_header_abi_probe.cpp"
 readonly -a PROFILES=(c11-gnu cxx17-gnu c11-gnu-largefile cxx17-gnu-largefile c11-strict c11-posix-2008 c11-xopen-700 c11-bsd cxx17-strict)
-readonly -a PROJECT_FTW_VISIBLE=(c11-gnu cxx17-gnu c11-gnu-largefile cxx17-gnu-largefile c11-xopen-700 c11-bsd)
 
 fail() {
     printf 'ERROR: x86 ftw header ABI: %s\n' "$*" >&2
@@ -43,14 +41,6 @@ profile_requires_largefile_aliases() {
     case "$1" in *-largefile) return 0 ;; *) return 1 ;; esac
 }
 
-project_ftw_visible() {
-    local profile="$1" visible
-    for visible in "${PROJECT_FTW_VISIBLE[@]}"; do
-        [ "$profile" = "$visible" ] && return 0
-    done
-    return 1
-}
-
 profile_arguments() {
     case "$1" in
         c11-gnu|cxx17-gnu) printf '%s\n' '-D_GNU_SOURCE' ;;
@@ -64,7 +54,7 @@ profile_arguments() {
 }
 
 compile_profile() {
-    local tree="$1" profile="$2" expected="$3" diagnostic="$4" object="$5"
+    local tree="$1" profile="$2" diagnostic="$3" object="$4"
     local compiler include_root source
     local -a arguments profile_args
 
@@ -75,11 +65,6 @@ compile_profile() {
     esac
     mapfile -t profile_args < <(profile_arguments "$profile")
     arguments=(-nostdinc -I "$include_root" -isystem "$builtin_include" -H -fno-builtin "${profile_args[@]}")
-    if [ "$expected" = visible ]; then
-        arguments+=(-DCRABC_FTW_EXPECT_FTW_VISIBLE)
-    else
-        arguments+=(-DCRABC_FTW_REQUIRE_FTW_HIDDEN)
-    fi
     if profile_requires_largefile_aliases "$profile"; then
         arguments+=(-DCRABC_FTW_REQUIRE_LARGEFILE_ALIASES)
     fi
@@ -118,14 +103,12 @@ check_trace() {
 }
 
 check_cxx_linkage() {
-    local object="$1" expected="$2" undefined
+    local object="$1" undefined
     undefined="$(nm --undefined-only "$object")"
     printf '%s\n' "$undefined" | grep -Eq '[[:space:]]nftw$' ||
         fail "C++ probe does not retain nftw's C spelling"
-    if [ "$expected" = visible ]; then
-        printf '%s\n' "$undefined" | grep -Eq '[[:space:]]ftw$' ||
-            fail "C++ probe does not retain ftw's C spelling"
-    fi
+    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]ftw$' ||
+        fail "C++ probe does not retain ftw's C spelling"
     if printf '%s\n' "$undefined" | grep -Eq '_Z.*(ftw|nftw)'; then
         fail "C++ probe retained a mangled ftw/nftw spelling"
     fi
@@ -148,29 +131,15 @@ trap 'rm -rf -- "$work_dir"' EXIT
 
 for profile in "${PROFILES[@]}"; do
     for tree in reference candidate; do
-        expected=visible
-        if [ "$tree" = candidate ] && ! project_ftw_visible "$profile"; then
-            expected=hidden
-        fi
         diagnostic="$work_dir/$tree-$profile.trace"
         object="$work_dir/$tree-$profile.o"
-        if compile_profile "$tree" "$profile" "$expected" "$diagnostic" "$object"; then
-            if [ "$expected" = hidden ]; then
-                fail "$tree $profile unexpectedly exposed frozen-hidden ftw"
-            fi
-        else
-            if [ "$expected" = visible ]; then
-                fail "$tree $profile ftw/nftw header profile failed"
-            fi
-            grep -Eq 'ftw' "$diagnostic" ||
-                fail "$tree $profile hidden ftw diagnostic named no ftw declaration"
-            continue
-        fi
+        compile_profile "$tree" "$profile" "$diagnostic" "$object" ||
+            fail "$tree $profile ftw/nftw header profile failed"
         check_trace "$tree" "$diagnostic"
         if profile_is_cxx "$profile"; then
-            check_cxx_linkage "$object" "$expected"
+            check_cxx_linkage "$object"
         fi
     done
 done
 
-printf 'x86 pinned-musl/project C/C++ ftw header ABI: PASS (9 profiles; frozen ftw visibility divergence recorded)\n'
+printf 'x86 pinned-musl/project C/C++ ftw header ABI: PASS (9 profiles; unconditional ftw visibility)\n'
