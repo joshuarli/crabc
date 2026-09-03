@@ -9,8 +9,9 @@
 // selected Malloc branch of `_mi_meta_free`, and `_mi_meta_is_meta_page`) with
 // bootstrap ordering from
 // `src/init.c:15-145,184-208`, plus `src/arena.c:1433-1490` for selected
-// regular-OS release and `src/arena.c:674-723,1613-1673` for the typed
-// non-main `mi_arena_pages_t` metadata image. The detached owner uses
+// regular-OS release and the separate typed `MI_MEM_ARENA` identity-gated
+// release witness in `ArenaSliceClaim`, and `src/arena.c:674-723,1613-1673`
+// for the typed non-main `mi_arena_pages_t` metadata image. The detached owner uses
 // the already-portioned `src/arena.c`/`src/page-map.c`/`src/page.c` ordinary
 // page lifecycle rather than a bespoke metadata allocator.
 
@@ -819,9 +820,11 @@ impl<'owner> MetaAllocation<'owner> {
 /// `MI_MEM_MALLOC`, while a real `_mi_arenas_free` OS owner needs the broader
 /// memory-ID/subprocess contract that this value intentionally does not hold.
 /// A source `needs_no_free` branch creates no value: it has no release
-/// authority to transfer. Arena release is also deliberately absent until its
-/// token carries and checks the source registry/subprocess identity required
-/// by `_mi_arenas_free`.
+/// authority to transfer. This enum deliberately does not carry arena
+/// release: the separate
+/// [`crate::arena::ArenaSliceClaim::release_for_subprocess`] now proves one
+/// typed arena claim and its source registry/subprocess identity gate without
+/// pretending to be a general metadata dispatcher.
 ///
 /// Consequently this is not a general `_mi_meta_free` dispatcher.  It proves
 /// only that the two represented owners cannot select a release algorithm by

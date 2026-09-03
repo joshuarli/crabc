@@ -2248,6 +2248,15 @@ class ContractTests(unittest.TestCase):
                         "preserves_the_old_malloc_capability_then_retries"
                     ),
                 },
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "arena-release-subprocess-identity-gate",
+                    "kind": "rust-unit",
+                    "target": (
+                        "arena::tests::arena_release_rejects_foreign_subprocess_before_"
+                        "purge_or_free_then_releases_selected_claim"
+                    ),
+                },
             ],
         )
         bitmaps = next(component for component in summary["components"] if component["id"] == "bitmaps")

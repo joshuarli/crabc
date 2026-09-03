@@ -40,7 +40,13 @@ owner remains live and is returned after a failed `munmap`. That regular-OS
 form is an intentionally unconnected retry witness, not a C metadata caller:
 pinned `_mi_meta_zalloc` forms Malloc IDs, while a real `_mi_arenas_free` OS
 owner needs a wider memory-ID/subprocess contract. It intentionally does not
-represent no-free, arena, huge, or remap source branches. The selected
+represent no-free, huge, or remap source branches. Separately,
+`ArenaSliceClaim::release_for_subprocess` carries one live typed arena claim:
+a foreign `MainSubprocess` identity returns that unchanged claim before purge
+or free-bitmap mutation, while the matching identity consumes it through the
+existing terminal release result. This makes C's internal arena/subprocess
+assertion a Rust fail-closed safety boundary; it does not add a
+`MetaRelease::Arena` branch or generic metadata-free dispatch. The selected
 later-TLD witness now covers only one direct-Malloc caller lifetime: ticket-zero
 teardown has no metadata capability, an injected post-ready direct-zeroed
 failure consumes its sequence without a capability or lease, and one retry
@@ -60,8 +66,8 @@ allocation, complete TLS/TLD/Theap/registry lifecycle, concurrency,
 pthread/process lifecycle, or ABI integration.
 This state
 is not a valid C-program observable difference and has no C differential
-entry; an arena-release result may be added only when it can prove retained
-registry/subprocess ownership.
+entry; the selected arena witness is source-level safety evidence over C's
+assertion-invalid input, not C/Rust invalid-input parity.
 
 ### `CRABC-LIBC-SHADOW-ABI-REALLOC-NULL-ZERO-ALIGNMENT` — observed public-C ABI known red
 

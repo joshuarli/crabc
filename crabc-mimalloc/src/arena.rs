@@ -1198,10 +1198,12 @@ unsafe fn manage_in_place(
 /// A live, contiguous claim from one initialized external arena.
 ///
 /// The claim has no destructor: its owner transfers the exact source release
-/// obligation either through [`Self::release`] or, when later page lifecycle
-/// code stores the provenance, through [`release_arena_slices`]. Keeping that
-/// transfer explicit prevents an implicit drop from returning slices while a
-/// page still refers to them.
+/// obligation either through [`Self::release`], through
+/// [`Self::release_for_subprocess`] when the source caller carries a
+/// subprocess identity, or, when later page lifecycle code stores the
+/// provenance, through [`release_arena_slices`]. Keeping that transfer
+/// explicit prevents an implicit drop from returning slices while a page still
+/// refers to them.
 pub(crate) struct ArenaSliceClaim<'arena> {
     arena: NonNull<Arena>,
     start: NonNull<u8>,
@@ -1330,6 +1332,36 @@ impl ArenaSliceClaim<'_> {
     #[inline]
     pub(crate) fn release(self) -> bool {
         unsafe { release_arena_slices(self.memory) }
+    }
+
+    /// Returns this exact claim to its source free bitmap for `subprocess`.
+    ///
+    /// This is the selected `MI_MEM_ARENA` identity gate in
+    /// `src/subproc.c:_mi_meta_free` and `src/arena.c:_mi_arenas_free`:
+    /// source requires `arena->subproc == subproc` before it schedules an
+    /// optional purge or returns the span to `slices_free`. A foreign
+    /// subprocess is rejected before either mutation and receives the exact
+    /// unchanged claim back in `Err`. The bounded Rust API makes that source
+    /// assertion an explicit safe refusal; it does not model C diagnostics or
+    /// a general `mi_subproc_t` lifecycle.
+    ///
+    /// `Ok(false)` has the same consumed, non-retryable invalid-ownership
+    /// meaning as [`Self::release`]: this safe claim should normally make the
+    /// source free-bit transition succeed, while a violated underlying source
+    /// invariant may already have scheduled a purge before reporting false.
+    #[inline]
+    pub(crate) fn release_for_subprocess(
+        self,
+        subprocess: &MainSubprocess,
+    ) -> Result<bool, Self> {
+        // SAFETY: `ArenaSliceClaim` is formed only from the live arena behind
+        // its borrowing `ArenaView`; the same source lifetime obligation that
+        // permits `release` makes this identity read valid.
+        let arena = unsafe { self.arena.as_ref() };
+        if !core::ptr::eq(arena.subprocess, subprocess.as_ptr()) {
+            return Err(self);
+        }
+        Ok(unsafe { release_arena_slices(self.memory) })
     }
 }
 
@@ -2775,6 +2807,76 @@ mod tests {
             view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
             0,
         );
+    }
+
+    #[test]
+    fn arena_release_rejects_foreign_subprocess_before_purge_or_free_then_releases_selected_claim() {
+        // `src/subproc.c:_mi_meta_free` routes non-Malloc metadata through
+        // `_mi_arenas_free(subproc, ...)`; its `MI_MEM_ARENA` branch asserts
+        // this exact arena/subprocess identity before it schedules purge or
+        // returns a free bitmap span. Keep this fixture unpinned: an incorrect
+        // release that schedules purge before checking identity would change
+        // observable purge state. A rejected foreign caller must leave both
+        // purge and free-bitmap state unchanged.
+        let selected = MainSubprocess::test_static_owner();
+        let foreign = MainSubprocess::test_static_owner();
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(selected.as_ptr());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .expect("the selected arena has one usable slice claim");
+        let slice_index = claim.slice_index();
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(free.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(purge.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(
+            view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+
+        let claim = claim
+            .release_for_subprocess(foreign)
+            .expect_err("a foreign subprocess must be rejected before Rust purge/free state changes");
+        assert_eq!(free.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(purge.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(
+            view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+
+        let released = match claim.release_for_subprocess(selected) {
+            Ok(released) => released,
+            Err(_) => panic!("the selected subprocess may return its exact arena claim"),
+        };
+        assert!(released);
+        assert_eq!(free.is_set_range(slice_index, 1), Some(true));
+
+        let retry = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .expect("the selected release restores the exact free bitmap bit");
+        assert_eq!(retry.slice_index(), slice_index);
+        let released_retry = match retry.release_for_subprocess(selected) {
+            Ok(released) => released,
+            Err(_) => panic!("the selected retry owns the same arena/subprocess pair"),
+        };
+        assert!(released_retry);
     }
 
     #[test]
