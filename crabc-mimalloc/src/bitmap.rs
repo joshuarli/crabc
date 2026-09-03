@@ -16,9 +16,9 @@
 // arithmetic, atomic set/clear, rollback, set-run selection, scalar relaxed
 // chunk observations, caller-owned bitmap initialization, range operations,
 // and conservative chunkmap maintenance), `src/bitmap.c:109-129,920-928,
-// 1024-1042,1297-1403,1425-1432` (the abandoned-page single-bit claim
-// visitor, its conservative-map repair, reverse set-bit observation, and
-// clear-once-set reader quiescence),
+// 1024-1042,1297-1420,1425-1432` (the abandoned-page single-bit claim
+// visitor, its conservative-map repair, reverse set-bit and count
+// observations, and clear-once-set reader quiescence),
 // `src/bitmap.c:1437-1460` (the selected scalar read-only set-bit visitor),
 // `src/bitmap.c:1462-1521` (the selected scalar clear-range visitor and its
 // default `rangesn` dispatch), plus `src/bitmap.c:1583-1784,1794-1997`
@@ -1536,6 +1536,41 @@ impl<'storage> BitmapView<'storage> {
         None
     }
 
+    /// Port of `mi_bitmap_popcount`: count set data bits selected by the
+    /// conservative chunk map without changing either image.
+    ///
+    /// The pinned source walks chunk-map fields and their set bits low to high,
+    /// then sums each selected chunk's fields with Relaxed loads. A stale
+    /// in-layout map bit consequently contributes zero for an empty data
+    /// chunk; this observer neither repairs that map bit nor reads data from a
+    /// chunk whose map bit was not observed set. Like the source, its result is
+    /// a mixed-time observation under concurrent mutation, not a snapshot.
+    ///
+    /// Pinned C requires every selected map bit to name dynamic trailing
+    /// storage. The checked Rust view skips an out-of-layout stale bit rather
+    /// than deriving an out-of-bounds chunk pointer, while retaining that map
+    /// bit unchanged.
+    #[inline]
+    pub(crate) fn popcount_relaxed(&self) -> usize {
+        let chunk_count = self.chunk_count();
+        let chunkmap_field_count = (chunk_count + BFIELD_BITS - 1) / BFIELD_BITS;
+        let mut count = 0;
+
+        for chunkmap_field_index in 0..chunkmap_field_count {
+            let mut chunkmap_entry =
+                word_load_relaxed(self.chunkmap().field(chunkmap_field_index));
+            while chunkmap_entry != 0 {
+                let chunkmap_bit = ctz(chunkmap_entry);
+                chunkmap_entry &= chunkmap_entry.wrapping_sub(1);
+                let chunk_index = chunkmap_field_index * BFIELD_BITS + chunkmap_bit;
+                if chunk_index < chunk_count {
+                    count += self.chunk(chunk_index).popcount_relaxed();
+                }
+            }
+        }
+        count
+    }
+
     /// Finds and atomically claims the lowest available bit through ordinary
     /// `mi_bitmap_find(..., tseq = 0, n = 1)` traversal.
     ///
@@ -2789,6 +2824,69 @@ mod tests {
         let before = word_load_relaxed(bitmap.chunkmap().field(0));
         assert_eq!(bitmap.highest_set_relaxed(), Some(7));
         assert_eq!(word_load_relaxed(bitmap.chunkmap().field(0)), before);
+    }
+
+    #[test]
+    fn bitmap_popcount_relaxed_scans_conservative_map_fields_without_repair() {
+        let layout = BitmapLayout::for_bit_count(BCHUNK_BITS * SET_VISITOR_CHUNK_COUNT).unwrap();
+        let mut storage = BitmapSetVisitorTestStorage::uninit();
+        let bitmap = unsafe {
+            BitmapView::initialize(
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+
+        let low = 1;
+        let stale = (BFIELD_BITS - 1) * BCHUNK_BITS + BFIELD_BITS + 3;
+        let next_chunkmap_field = BFIELD_BITS * BCHUNK_BITS + BFIELD_BITS * 2 + 5;
+        for index in [low, stale, next_chunkmap_field] {
+            assert!(bitmap.set_range(index, 1).unwrap().all_transitioned());
+        }
+        assert_eq!(bitmap.popcount_relaxed(), 3);
+
+        let chunkmap_field_0_before = word_load_relaxed(bitmap.chunkmap().field(0));
+        let chunkmap_field_1_before = word_load_relaxed(bitmap.chunkmap().field(1));
+        assert_eq!(
+            chunkmap_field_0_before,
+            1 | (1usize << (BFIELD_BITS - 1)),
+        );
+        assert_eq!(chunkmap_field_1_before, 1);
+
+        // A source visitor can leave an in-layout conservative-map bit after
+        // clearing data. `mi_bitmap_popcount` still selects that empty chunk,
+        // counts zero from it, and must not repair its map bit.
+        assert!(bitmap
+            .chunk(BFIELD_BITS - 1)
+            .clear_run(BFIELD_BITS + 3, 1)
+            .unwrap()
+            .all_transitioned());
+        assert_eq!(bitmap.popcount_relaxed(), 2);
+        assert_eq!(
+            word_load_relaxed(bitmap.chunkmap().field(0)),
+            chunkmap_field_0_before,
+        );
+        assert_eq!(
+            word_load_relaxed(bitmap.chunkmap().field(1)),
+            chunkmap_field_1_before,
+        );
+
+        // Pinned C asserts this final map bit is in the dynamic tail. The
+        // checked view retains it but refuses to turn it into an out-of-bounds
+        // data-chunk access.
+        assert!(bitmap
+            .chunkmap()
+            .set_run(BFIELD_BITS + BFIELD_BITS - 1, 1)
+            .unwrap()
+            .all_transitioned());
+        assert_eq!(bitmap.popcount_relaxed(), 2);
+        assert_eq!(
+            word_load_relaxed(bitmap.chunkmap().field(1)),
+            chunkmap_field_1_before | (1usize << (BFIELD_BITS - 1)),
+        );
     }
 
     #[test]
