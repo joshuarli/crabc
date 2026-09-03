@@ -32,6 +32,7 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of};
+use core::num::NonZeroUsize;
 use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicI64, AtomicPtr, Ordering};
 
@@ -2093,6 +2094,12 @@ impl<'arena> ArenaView<'arena> {
         let free = unsafe { self.slices_free() }?;
         let committed = unsafe { self.slices_committed() }?;
         let dirty = unsafe { self.slices_dirty() }?;
+        // The source claim has a nonzero slice count bounded by the arena
+        // image, so form the byte span before changing `slices_free`. This
+        // checked length lets the later Linux reuse boundary be infallible:
+        // `_mi_os_reuse` cannot introduce a late allocation-failure edge
+        // after `mi_bbitmap_try_find_and_clearN` succeeds.
+        let size = invariants::size_of_slices(slice_count).and_then(NonZeroUsize::new)?;
         let slice_index = free.try_find_and_claim(thread_sequence, slice_count)?;
         let rollback = || free.set_range(slice_index, slice_count) == Some(true);
 
@@ -2130,16 +2137,12 @@ impl<'arena> ArenaView<'arena> {
                     let _ = rollback();
                     return None;
                 };
-                let Some(size) = invariants::size_of_slices(slice_count) else {
-                    let _ = rollback();
-                    return None;
-                };
                 let mut commit_zero = false;
                 let committed_now = unsafe {
                     commit_function(
                         true,
                         start.as_ptr(),
-                        size,
+                        size.get(),
                         &mut commit_zero,
                         arena.commit_function_argument,
                     )
@@ -2156,6 +2159,17 @@ impl<'arena> ArenaView<'arena> {
                 if committed.set_range(slice_index, slice_count).is_none() {
                     let _ = rollback();
                     return None;
+                }
+            } else {
+                // Pinned `src/arena.c:296-307` calls `_mi_os_reuse` only
+                // after the binned free claim succeeded and the ordinary
+                // bitmap reports this exact span fully committed. The Linux
+                // primitive is a contained-range no-op; retain its caller
+                // ordering before publishing `initially_committed` without
+                // transferring the external mapping owner or adding an
+                // allocation-failure path.
+                match os::reuse_arena_range(start, size) {
+                    crate::os::ReuseOutcome::NoOp => {}
                 }
             }
             memory.initially_committed = true;
@@ -3270,6 +3284,51 @@ mod tests {
         );
         assert!(claim.release());
         assert_eq!(script.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn fully_committed_arena_claim_invokes_linux_reuse_for_its_exact_span() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let slice_index = view.arena().info_slices;
+        let start = view
+            .slice_start(slice_index)
+            .and_then(NonNull::new)
+            .expect("the first usable source arena slice has one non-null start");
+        let slice_count = 2;
+        let size = invariants::size_of_slices(slice_count)
+            .and_then(NonZeroUsize::new)
+            .expect("the exact two-slice source span has a checked nonzero size");
+        let reuse = os::test_install_arena_reuse_witness(start, size);
+
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), slice_count, true, 0)
+            .expect("the precommitted source span is claimable");
+
+        assert_eq!(claim.slice_count(), slice_count);
+        assert!(claim.memory_id().initially_committed());
+        assert!(claim.release());
+        assert_eq!(
+            reuse.calls(),
+            1,
+            "pinned src/arena.c:296-307 reuses the exact already committed claimed span"
+        );
     }
 
     #[test]

@@ -39,6 +39,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crabc_core::{Errno, Result};
 
+use crate::config::ARENA_SLICE_SIZE;
 use crate::invariants;
 use crate::types::MemoryId;
 
@@ -480,6 +481,110 @@ pub(crate) enum DecommitOutcome {
 pub(crate) enum ReuseOutcome {
     /// A complete contained page range was accepted without a Linux transition.
     NoOp,
+}
+
+/// Accepts one exact, non-owning arena-slice span for Linux `_mi_os_reuse`.
+///
+/// Pinned `src/os.c:643-653` first conservatively retains complete base pages,
+/// then calls `src/prim/unix/prim.c:536-542`. The only caller is the
+/// `src/arena.c:296-307` already-committed branch, where the source start is
+/// `MI_ARENA_SLICE_SIZE` aligned and the checked length is a nonzero multiple
+/// of that size. Every supported Linux/AArch64 base-page size (4, 16, or
+/// 64 KiB) divides the fixed 64 KiB source slice, so conservative normalization
+/// retains this whole span. Linux then has no primitive operation at all.
+///
+/// This deliberately takes neither a [`Mapping`] nor a raw release capability:
+/// the arena's external backing owner remains responsible for its complete
+/// mapping. It has no syscall, fault-injection edge, state mutation, or error
+/// path, and therefore cannot turn a successfully claimed arena span into a
+/// late allocation failure.
+#[inline]
+pub(crate) fn reuse_arena_range(address: NonNull<u8>, length: NonZeroUsize) -> ReuseOutcome {
+    debug_assert_eq!(address.as_ptr().addr() % ARENA_SLICE_SIZE, 0);
+    debug_assert_eq!(length.get() % ARENA_SLICE_SIZE, 0);
+    let _ = (address, length);
+    #[cfg(test)]
+    observe_arena_reuse_for_test(address, length);
+    ReuseOutcome::NoOp
+}
+
+#[cfg(test)]
+static ARENA_REUSE_WITNESS_ADDRESS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+static ARENA_REUSE_WITNESS_LENGTH: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+static ARENA_REUSE_WITNESS_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+/// Test-only exact-span witness for the otherwise intentionally invisible
+/// Linux reuse call. It exposes no VM operation or production state.
+#[cfg(test)]
+pub(crate) struct ArenaReuseWitness {
+    address: usize,
+    length: usize,
+}
+
+#[cfg(test)]
+impl ArenaReuseWitness {
+    #[inline]
+    pub(crate) fn calls(&self) -> usize {
+        assert_eq!(
+            ARENA_REUSE_WITNESS_ADDRESS.load(Ordering::Acquire),
+            self.address,
+            "the exact-span reuse witness remains installed"
+        );
+        assert_eq!(
+            ARENA_REUSE_WITNESS_LENGTH.load(Ordering::Acquire),
+            self.length,
+            "the exact-span reuse witness retains its checked length"
+        );
+        ARENA_REUSE_WITNESS_CALLS.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+impl Drop for ArenaReuseWitness {
+    fn drop(&mut self) {
+        ARENA_REUSE_WITNESS_ADDRESS.store(0, Ordering::Release);
+        ARENA_REUSE_WITNESS_LENGTH.store(0, Ordering::Release);
+        ARENA_REUSE_WITNESS_CALLS.store(0, Ordering::Release);
+    }
+}
+
+/// Installs one test-only exact-span observer for [`reuse_arena_range`].
+///
+/// Test arena regions stay live and disjoint, so matching the concrete start
+/// and length isolates this assertion from unrelated parallel allocator tests.
+#[cfg(test)]
+#[inline]
+pub(crate) fn test_install_arena_reuse_witness(
+    address: NonNull<u8>,
+    length: NonZeroUsize,
+) -> ArenaReuseWitness {
+    let address = address.as_ptr().addr();
+    let length = length.get();
+    ARENA_REUSE_WITNESS_CALLS.store(0, Ordering::Release);
+    assert_eq!(
+        ARENA_REUSE_WITNESS_ADDRESS.compare_exchange(
+            0,
+            address,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ),
+        Ok(0),
+        "one exact-span reuse witness may be active at a time"
+    );
+    ARENA_REUSE_WITNESS_LENGTH.store(length, Ordering::Release);
+    ArenaReuseWitness { address, length }
+}
+
+#[cfg(test)]
+#[inline]
+fn observe_arena_reuse_for_test(address: NonNull<u8>, length: NonZeroUsize) {
+    if ARENA_REUSE_WITNESS_ADDRESS.load(Ordering::Acquire) == address.as_ptr().addr()
+        && ARENA_REUSE_WITNESS_LENGTH.load(Ordering::Acquire) == length.get()
+    {
+        ARENA_REUSE_WITNESS_CALLS.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 /// Applies the pinned default arena-purge decommit to one non-owning span.
