@@ -2377,9 +2377,9 @@ advance this AArch64 allocator ledger.
 
 | Milestone | Status | Evidence and remaining closure condition |
 | --- | --- | --- |
-| M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. At `46d179f7f2ca3830700be8cbd11b1185fe65f2d3`, two clean detached native `./scripts/dev.sh allocator --quick` revalidations exited 0; both detached source trees remained clean through their complete `quick`/M1/M2 gate sequences. This is inventory/skeleton completion only, not engine parity. |
-| M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. At `46d179f7f2ca3830700be8cbd11b1185fe65f2d3`, two clean detached native `./scripts/dev.sh allocator-m1` revalidations exited 0; both reports attest a clean source before and after execution, unchanged during it, with all six components complete and no unmet IDs. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current 65-check executable gate; revalidated) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `46d179f7f2ca3830700be8cbd11b1185fe65f2d3`, two clean detached native sequences ran `allocator --quick` (exit 0), `allocator-m1` (exit 0), and `allocator-m2` (exit 3 as its partial contract requires). Both M2 reports attest that source revision was clean before and after execution and unchanged during it; all 65 selected checks passed. The current contract has fourteen VM-primitives, twelve metadata, nine bitmap, ten PageMap, five arena, nine initialization, two fault-injection, and four allocator-recursion checks. The two detached initialization records cover only the detached `src/init.c:108-118,184-193,236-250` static preimage: a direct pinned-C/Rust trace separately applies the kind-only `MI_MEM_STATIC` predecessor and the file-static `mi_tld_init` detached branch, matching 40 address-independent fields, including `numa_node = -1`, the subprocess relation, null head, lock round trip, static memid flags, and unchanged zero counters. Its local zeroed subprocess is address-only and valid only for this helper, not `_mi_subproc_main_init`, the normal branch, or general TLD lifecycle. A separate Rust unit regression refuses a busy private lock both before the predecessor and between the two stages without replacing modeled fields or counters; that is a Rust safety strengthening, not C invalid-input or pthread-lock parity. The two normal additions cover only direct `src/init.c:236-250` from a fresh all-zero TLD/address-only zero-subprocess helper preimage with caller-owned total=8, sequence=7, and live=0: the pinned-C/Rust trace matches 31 address-independent relations, while a Rust busy-lock refusal returns its unconsumed test ticket before mutation. The selected ticket-zero static path now separately observes live registration while its slot remains `CLAIMED`, before Release publication. None of those normal records establishes `mi_tld_create`, caller lifecycle, literal primitive timing, TLS/list/root publication, teardown, races, or allocator integration. The fifth bitmap C/Rust record calls pinned `mi_bbitmap_bsr_inv` on valid two-chunk images: a logical 513-bit image observes padded bit 1023, while a seeded image returns 963, 585, 511, then no result while its binned chunk map stays empty. It is a read-only observer, not binned search, claim, ownership, concurrency, or allocator integration evidence. The second fault record is an initialized two-level PageMap C/Rust lazy-commit failure before committed-prefix publication or submap allocation, followed by one retry; it is not general PageMap fault parity. Its exact unmet IDs remain `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and `allocator-recursion`; PageMap remains the sole complete M2 component. The selected continuation does not close the other seven. |
+| M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. At `0e15fcbbb3775b6ff5a4f991f2751626c3d67f64`, two clean detached native `./scripts/dev.sh allocator --quick` revalidations exited 0; both detached source trees remained clean through their complete `quick`/M1/M2 gate sequences. This is inventory/skeleton completion only, not engine parity. |
+| M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. At `0e15fcbbb3775b6ff5a4f991f2751626c3d67f64`, two clean detached native `./scripts/dev.sh allocator-m1` revalidations exited 0; both reports attest a clean source before and after execution, unchanged during it, with all six components complete and no unmet IDs. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
+| M2 — memory substrate | partial (current 66-check executable gate; revalidated) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At `0e15fcbbb3775b6ff5a4f991f2751626c3d67f64`, two clean detached native sequences ran `allocator --quick` (exit 0), `allocator-m1` (exit 0), and `allocator-m2` (exit 3 as its partial contract requires). Both M2 reports attest a clean, unchanged exact revision and all 66 selected checks passing: fourteen VM-primitives, twelve metadata, nine bitmap, ten PageMap, five arena, ten initialization, two fault-injection, and four allocator-recursion checks. The new initialization record directly compares only the selected first-main/static `src/init.c:253-272` `mi_tld_create` success arm: pinned C calls file-static `mi_tld_create(_mi_subproc_main())` once with source static identities, zero counts, and inert nonnull `theap_meta`, while Rust begins after its separately modeled selector/Heap-foundation prerequisites and matches 36 address-independent semantic suffix relations. It does not compare predicate/caller/preflight/primitive/return-boundary timing, C/Rust layouts, `_mi_subproc_main_init`, actual Theap/metadata initialization, other arms, TLS/list/root publication, teardown, races, or allocator integration. The earlier detached and normal-helper records remain bounded helpers, not a general `mi_tld_create` lifecycle. PageMap remains the sole complete M2 component; its exact unmet IDs remain `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and `allocator-recursion`. |
 | M3 — single-thread allocation | not active (historical partial evidence only) | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri. A forced `cfg(miri)` smoke is currently unavailable because `os_host_model.rs` lacks the existing NUMA/identity/entropy and `Mapping::page_size` APIs its callers require; the same ten compile errors existed at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is not M2 evidence or a reason to advance past the still-partial M2 gate. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
@@ -2478,11 +2478,11 @@ and after execution and unchanged during it. M1 remains six-of-six complete;
 M2 records all 63 selected checks passing—fourteen VM-primitives, twelve
 metadata, nine bitmap, ten PageMap, five arena, seven initialization, two
 fault-injection, and four allocator-recursion—with exactly the same seven
-unmet IDs named in the table. This is historical evidence after the 65-check
-revalidation below.
+unmet IDs named in the table. This is historical evidence after the later
+65- and 66-check revalidations below.
 
 At `46d179f7f2ca3830700be8cbd11b1185fe65f2d3`, two clean detached native
-reruns attested the current 65-check source/contract revision: each ran
+reruns attested the then-current 65-check source/contract revision: each ran
 `allocator --quick` and `allocator-m1` with exit 0, then `allocator-m2` with
 its expected partial-gate exit 3. The M1/M2 reports attest the same revision
 was clean before and after execution and unchanged during it. M1 remains
@@ -2491,7 +2491,22 @@ passing—fourteen VM-primitives, twelve metadata, nine bitmap, ten PageMap,
 five arena, nine initialization, two fault-injection, and four
 allocator-recursion—with exactly the same seven unmet IDs. The two additions
 are the direct normal `mi_tld_init` C/Rust trace and its Rust busy-lock safety
-regression; PageMap remains the sole complete M2 component.
+regression; PageMap remains the sole complete M2 component. This is historical
+evidence after the 66-check revalidation below.
+
+At `0e15fcbbb3775b6ff5a4f991f2751626c3d67f64`, two clean detached native
+reruns attest the current 66-check source/contract revision: each ran
+`allocator --quick` and `allocator-m1` with exit 0, then `allocator-m2` with
+its expected partial-gate exit 3. The M1/M2 reports attest the exact revision
+was clean before and after execution and unchanged during it. M1 remains
+six-of-six complete with no unmet IDs; M2 records all 66 selected checks
+passing—fourteen VM-primitives, twelve metadata, nine bitmap, ten PageMap,
+five arena, ten initialization, two fault-injection, and four
+allocator-recursion—with exactly the same seven unmet IDs. The added direct
+static-first record is limited to the selected `src/init.c:253-272`
+`mi_tld_create` success arm; it matches 36 address-independent semantic
+relations and does not establish general TLD lifecycle or allocator
+integration. PageMap remains the sole complete M2 component.
 
 ## M1 closure evidence
 
@@ -2608,10 +2623,10 @@ control and transition fields for initial partial commitment, lazy extension
 across two submaps, one two-slice unregister, final-boundary rollback, and an
 absent root after destruction.
 
-The checked-in working set contains 65 native checks: fourteen VM-primitives
+The checked-in working set contains 66 native checks: fourteen VM-primitives
 checks, twelve metadata checks, five bitmap C/Rust differentials plus four
 Rust-only bitmap-observer check records, ten PageMap checks, five arena
-checks, nine initialization checks, two fault-injection checks, and four
+checks, ten initialization checks, two fault-injection checks, and four
 allocator-recursion checks. The fault records are the native one-page
 protect/unprotect owner-and-retry regression and the initialized two-level
 pinned-C/Rust PageMap lazy-commit failure/retry differential. The 37-, 38-,
@@ -2671,11 +2686,11 @@ initialization evidence is the direct 40-field pinned-C/Rust detached static
 preimage trace and a selected Rust busy-lock refusal regression. The trace
 excludes main-subprocess initialization, normal `mi_tld_init`/`mi_tld_create`,
 and general TLD lifecycle; the busy-lock refusal is a Rust safety strengthening
-rather than C lock parity. This is historical evidence after the 65-check
-revalidation below.
+rather than C lock parity. This is historical evidence after the later 65- and
+66-check revalidations below.
 
 At `46d179f7f2ca3830700be8cbd11b1185fe65f2d3`, two clean detached native
-reruns attested the current 65-check revision: each `allocator --quick` and
+reruns attested the then-current 65-check revision: each `allocator --quick` and
 `allocator-m1` command exited 0, while `allocator-m2` exited 3 as its partial
 contract requires. The M1/M2 reports attest clean source before and after
 execution and no source change during it. M1 remains six-of-six complete with
@@ -2685,7 +2700,32 @@ initialization, two fault-injection, and four allocator-recursion. The new
 normal records are a 31-relation direct C/Rust `src/init.c:236-250` helper
 trace and a Rust busy-lock safety regression; they do not establish
 `mi_tld_create` or a caller lifecycle. The contract retains the exact same
-seven unmet component IDs; only `page-map` is complete.
+seven unmet component IDs; only `page-map` is complete. This is historical
+evidence after the 66-check revalidation below.
+
+At `0e15fcbbb3775b6ff5a4f991f2751626c3d67f64`, two clean detached native
+reruns attest the current 66-check revision: each `allocator --quick` and
+`allocator-m1` command exited 0, while `allocator-m2` exited 3 as its partial
+contract requires. The M1/M2 reports attest clean source before and after
+execution and no source change during it. M1 remains six-of-six complete with
+no unmet IDs; M2 records all 66 selected checks passing—fourteen
+VM-primitives, twelve metadata, nine bitmap, ten PageMap, five arena, ten
+initialization, two fault-injection, and four allocator-recursion. The added
+record directly compares only the selected first-main/static
+`src/init.c:253-272` `mi_tld_create` success arm. Pinned C calls file-static
+`mi_tld_create(_mi_subproc_main())` exactly once with the source static
+identities, zero total/live counts, and inert nonnull `theap_meta`; its
+C-only trace also observes the actual selected predicate-to-return chain and
+zero `_mi_meta_zalloc` calls. Rust begins only after separately modeled
+selector and Heap-foundation prerequisites. The shared 36-key,
+address-independent schema covers a normalized semantic suffix from ticket
+zero through typed static memory identity, modeled normal body, live
+registration, and labeled Release visibility. It does not establish equal
+C/Rust predicate, caller, preflight, primitive, or return-boundary timing;
+C/Rust layouts; `_mi_subproc_main_init`; actual Theap or metadata
+initialization; failed, generic, or later arms; TLS/list/root publication;
+teardown; races; pthread ABI; or allocator integration. The contract retains
+the exact same seven unmet component IDs; only `page-map` is complete.
 
 The new VM slice maps only fixed normal/offset non-huge allocation:
 `NormalOsAllocation` retains the complete map base/length in `MemoryId::os`
@@ -3709,27 +3749,33 @@ result, but do not use it to advance M5.
 
 M0 and M1 are closed predecessors only under their bounded contracts; neither
 claim is allocator-engine or lifecycle completion. Their latest clean detached
-native revalidation is `46d179f7f2ca3830700be8cbd11b1185fe65f2d3`: two
-independent `allocator --quick`/`allocator-m1` sequences exited 0, and both M1
-reports attest all six bounded components complete with no unmet IDs. M2 is the
-current closure gate. Its 65 selected checks are fourteen VM-primitives,
+native revalidation is `0e15fcbbb3775b6ff5a4f991f2751626c3d67f64`: two
+independent `allocator --quick`/`allocator-m1` sequences exited 0, both M1
+reports attest all six bounded components complete with no unmet IDs, and both
+following `allocator-m2` runs exited 3 as its partial contract requires. M2 is
+the current closure gate. Its 66 selected checks are fourteen VM-primitives,
 twelve metadata, five bitmap C/Rust differentials plus four Rust-only
-bitmap-observer check records, ten PageMap, five arena, nine initialization,
-two fault-injection records, and four allocator-recursion checks. The detached
-static-preimage trace remains a 40-address-independent-field direct C/Rust
-record; the new normal direct `src/init.c:236-250` helper trace adds 31
-address-independent relations from only a fresh zero TLD/subprocess post-ticket
-fixture, while its Rust busy-lock regression refuses before mutation. The
-selected ticket-zero static route separately records live registration while
-`CLAIMED` before Release publication. Those normal records are not
-`mi_tld_create`, caller-lifecycle, primitive-timing, TLS/list/root-publication,
-teardown, race, or allocator-integration parity. At that same clean detached
-revision, `allocator-m2` exited 3 as its partial contract requires, with all
-65 selected checks passing and source clean before and after execution and
-unchanged during it. PageMap remains the sole complete component and exactly
-the other seven required components remain partial: `vm-primitives`,
-`metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and
-`allocator-recursion`. Do not advance M3, M4, or later milestones until M2 has
+bitmap-observer check records, ten PageMap, five arena, ten initialization,
+two fault-injection records, and four allocator-recursion checks. Alongside
+the historical detached and normal-helper records, the new static-first record
+directly compares only the selected first-main/static
+`src/init.c:253-272` `mi_tld_create` success arm. Its pinned C side calls
+file-static `mi_tld_create(_mi_subproc_main())` once with the actual static
+identities, zero total/live counts, and inert nonnull `theap_meta`; its
+C-only trace observes the selected predicate-to-return chain and zero
+`_mi_meta_zalloc` calls. Rust begins after separately modeled selector and
+Heap-foundation prerequisites. The 36 matched address-independent relations
+cover a normalized semantic suffix—ticket zero, typed static memory identity,
+modeled normal body, live registration, and labeled Release visibility—not
+identical C/Rust predicate, caller, preflight, primitive, or return-boundary
+timing. They also do not establish C/Rust layouts, `_mi_subproc_main_init`,
+actual Theap/metadata initialization, failed/generic/later arms, TLS/list/root
+publication, teardown, races, pthread ABI, or allocator integration. At that
+same clean detached revision, all 66 selected checks passed; source was clean
+before and after execution and unchanged during it. PageMap remains the sole
+complete component and exactly the other seven required components remain
+partial: `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`,
+`fault-injection`, and `allocator-recursion`. Do not advance M3, M4, or later milestones until M2 has
 its own complete current-commit contract and evidence. The narrowly scoped M5
 work around the bounded process-once envelope does not advance M5. Existing
 M3/M4 bounded evidence remains regression evidence, not permission to skip M2
