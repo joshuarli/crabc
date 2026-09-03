@@ -135,12 +135,18 @@
           "id": "c-rust-bitmap-rangesn-differential",
           "kind": "c-rust-bitmap-rangesn-differential",
           "target": "bitmap::tests::emit_m2_bitmap_rangesn_c_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-bitmap-set-differential",
+          "kind": "c-rust-bitmap-set-differential",
+          "target": "bitmap::tests::emit_m2_bitmap_forall_set_c_rust_trace"
         }
       ],
       "completion_status": "partial",
       "id": "bitmaps",
       "remaining_conditions": [
-        "complete source-shaped bitmap ownership, range, other visitor families, statistics, and concurrency behavior beyond the selected one-chunk abandoned-page reject/restore, accept, and stale-conservative-map repair differential, generic scalar clear-range visitor's field-bounded completed/stopped traversal, and rangesn wrapper's selected aligned-three completed/stopped, <=1 delegation, and above-field cap traces"
+        "complete source-shaped bitmap ownership, range, remaining visitor families, statistics, and concurrency behavior beyond the selected one-chunk abandoned-page reject/restore, accept, and stale-conservative-map repair differential; generic scalar clear-range visitor's field-bounded completed/stopped traversal; rangesn wrapper's selected aligned-three completed/stopped, <=1 delegation, and above-field cap traces; and direct read-only set-bit visitor's selected 65-chunk cross-chunkmap-field completed/stopped walks without Heap/Page/Arena integration"
       ],
       "source_units": [
         "src/bitmap.c",

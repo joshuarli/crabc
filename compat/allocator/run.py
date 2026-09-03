@@ -196,6 +196,9 @@ M2_BITMAP_CLEAR_RANGE_TRACE_ARTIFACT_ROOT = (
 M2_BITMAP_RANGESN_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/bitmap-rangesn-trace"
 )
+M2_BITMAP_SET_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "m2-memory-substrate/bitmap-set-trace"
+)
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
 CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
@@ -458,6 +461,43 @@ M2_BITMAP_RANGESN_TRACE_KEYS = (
     "m2.bitmap_rangesn.cap_over.range_0_count",
     "m2.bitmap_rangesn.cap_over.field_0_after",
     "m2.bitmap_rangesn.cap_over.chunkmap_field_0_after",
+)
+# This direct scalar record spans the first chunk-map field boundary in a
+# 65-chunk valid bitmap. Completed and stopped walks prove low-to-high
+# read-only callbacks, immediate refusal, and no data/map mutation. It is not
+# a Heap/Page/Arena integration, callback-mutation, binned, or concurrent
+# bitmap contract.
+M2_BITMAP_SET_TRACE_KEYS = (
+    "m2.bitmap_set.control.bfield_bits",
+    "m2.bitmap_set.control.bchunk_bits",
+    "m2.bitmap_set.control.chunk_count",
+    "m2.bitmap_set.layout.byte_size",
+    "m2.bitmap_set.complete.seeded",
+    "m2.bitmap_set.complete.returned_completed",
+    "m2.bitmap_set.complete.callback_count",
+    "m2.bitmap_set.complete.visit_0_index",
+    "m2.bitmap_set.complete.visit_0_count",
+    "m2.bitmap_set.complete.visit_1_index",
+    "m2.bitmap_set.complete.visit_1_count",
+    "m2.bitmap_set.complete.visit_2_index",
+    "m2.bitmap_set.complete.visit_2_count",
+    "m2.bitmap_set.complete.chunk_0_field_0_after",
+    "m2.bitmap_set.complete.chunk_0_field_1_after",
+    "m2.bitmap_set.complete.chunk_64_field_0_after",
+    "m2.bitmap_set.complete.chunkmap_field_0_after",
+    "m2.bitmap_set.complete.chunkmap_field_1_after",
+    "m2.bitmap_set.reject.seeded",
+    "m2.bitmap_set.reject.returned_completed",
+    "m2.bitmap_set.reject.callback_count",
+    "m2.bitmap_set.reject.visit_0_index",
+    "m2.bitmap_set.reject.visit_0_count",
+    "m2.bitmap_set.reject.visit_1_index",
+    "m2.bitmap_set.reject.visit_1_count",
+    "m2.bitmap_set.reject.chunk_0_field_0_after",
+    "m2.bitmap_set.reject.chunk_0_field_1_after",
+    "m2.bitmap_set.reject.chunk_64_field_0_after",
+    "m2.bitmap_set.reject.chunkmap_field_0_after",
+    "m2.bitmap_set.reject.chunkmap_field_1_after",
 )
 M1_FOUNDATIONS_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
@@ -3295,6 +3335,169 @@ int main(void) {
 """
 
 
+# This fixture includes the source-private read-only set-bit visitor itself.
+# Its valid 65-chunk tail image crosses the first chunk-map field boundary;
+# fresh complete and stopped images make the record address-free and prove no
+# source data/map exchange or repair occurs in either selected walk.
+M2_BITMAP_SET_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "bitmap.c"
+
+#define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+typedef struct m2_bitmap_set_image_s {
+  mi_bitmap_t bitmap;
+  mi_bchunk_t extra[MI_BFIELD_BITS];
+} m2_bitmap_set_image_t;
+
+typedef struct m2_bitmap_set_trace_s {
+  size_t count;
+  size_t indices[3];
+  size_t counts[3];
+} m2_bitmap_set_trace_t;
+
+static m2_bitmap_set_image_t m2_bitmap_set_complete;
+static m2_bitmap_set_image_t m2_bitmap_set_reject;
+static m2_bitmap_set_trace_t m2_bitmap_set_complete_trace;
+static m2_bitmap_set_trace_t m2_bitmap_set_reject_trace;
+
+static bool m2_bitmap_set_seed(mi_bitmap_t* bitmap) {
+  return mi_bitmap_setN(bitmap, 1, 1, NULL) &&
+      mi_bitmap_setN(bitmap, MI_BFIELD_BITS + 1, 1, NULL) &&
+      mi_bitmap_setN(bitmap, MI_BFIELD_BITS * MI_BCHUNK_BITS + 2, 1, NULL);
+}
+
+static bool m2_bitmap_set_complete_visit(
+    size_t slice_index, size_t slice_count, mi_arena_t* arena, void* arg)
+{
+  m2_bitmap_set_trace_t* const trace = (m2_bitmap_set_trace_t*)arg;
+  if (arena != NULL || trace != &m2_bitmap_set_complete_trace ||
+      slice_count != 1 || trace->count >= 3) return false;
+  trace->indices[trace->count] = slice_index;
+  trace->counts[trace->count] = slice_count;
+  trace->count++;
+  return true;
+}
+
+static bool m2_bitmap_set_reject_visit(
+    size_t slice_index, size_t slice_count, mi_arena_t* arena, void* arg)
+{
+  m2_bitmap_set_trace_t* const trace = (m2_bitmap_set_trace_t*)arg;
+  if (arena != NULL || trace != &m2_bitmap_set_reject_trace ||
+      slice_count != 1 || trace->count >= 3) return false;
+  trace->indices[trace->count] = slice_index;
+  trace->counts[trace->count] = slice_count;
+  trace->count++;
+  return trace->count != 2;
+}
+
+int main(void) {
+  const size_t bit_count = MI_BCHUNK_BITS * (MI_BFIELD_BITS + 1);
+  const size_t complete_size = mi_bitmap_init(
+      &m2_bitmap_set_complete.bitmap, bit_count, true);
+  const size_t reject_size = mi_bitmap_init(
+      &m2_bitmap_set_reject.bitmap, bit_count, true);
+
+  const bool complete_seeded = m2_bitmap_set_seed(&m2_bitmap_set_complete.bitmap);
+  const bool complete_returned_completed = _mi_bitmap_forall_set(
+      &m2_bitmap_set_complete.bitmap, &m2_bitmap_set_complete_visit, NULL,
+      &m2_bitmap_set_complete_trace);
+  const mi_bfield_t complete_chunk_0_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_complete.bitmap.chunks[0].bfields[0]);
+  const mi_bfield_t complete_chunk_0_field_1_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_complete.bitmap.chunks[0].bfields[1]);
+  const mi_bfield_t complete_chunk_64_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_complete.bitmap.chunks[MI_BFIELD_BITS].bfields[0]);
+  const mi_bfield_t complete_chunkmap_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_complete.bitmap.chunkmap.bfields[0]);
+  const mi_bfield_t complete_chunkmap_field_1_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_complete.bitmap.chunkmap.bfields[1]);
+
+  const bool reject_seeded = m2_bitmap_set_seed(&m2_bitmap_set_reject.bitmap);
+  const bool reject_returned_completed = _mi_bitmap_forall_set(
+      &m2_bitmap_set_reject.bitmap, &m2_bitmap_set_reject_visit, NULL,
+      &m2_bitmap_set_reject_trace);
+  const mi_bfield_t reject_chunk_0_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_reject.bitmap.chunks[0].bfields[0]);
+  const mi_bfield_t reject_chunk_0_field_1_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_reject.bitmap.chunks[0].bfields[1]);
+  const mi_bfield_t reject_chunk_64_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_reject.bitmap.chunks[MI_BFIELD_BITS].bfields[0]);
+  const mi_bfield_t reject_chunkmap_field_0_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_reject.bitmap.chunkmap.bfields[0]);
+  const mi_bfield_t reject_chunkmap_field_1_after = mi_atomic_load_relaxed(
+      &m2_bitmap_set_reject.bitmap.chunkmap.bfields[1]);
+
+  const bool all_relations =
+      complete_size == sizeof(m2_bitmap_set_complete) &&
+      reject_size == sizeof(m2_bitmap_set_reject) &&
+      complete_seeded && complete_returned_completed &&
+      m2_bitmap_set_complete_trace.count == 3 &&
+      m2_bitmap_set_complete_trace.indices[0] == 1 &&
+      m2_bitmap_set_complete_trace.counts[0] == 1 &&
+      m2_bitmap_set_complete_trace.indices[1] == MI_BFIELD_BITS + 1 &&
+      m2_bitmap_set_complete_trace.counts[1] == 1 &&
+      m2_bitmap_set_complete_trace.indices[2] == MI_BFIELD_BITS * MI_BCHUNK_BITS + 2 &&
+      m2_bitmap_set_complete_trace.counts[2] == 1 &&
+      complete_chunk_0_field_0_after == 2 &&
+      complete_chunk_0_field_1_after == 2 &&
+      complete_chunk_64_field_0_after == 4 &&
+      complete_chunkmap_field_0_after == 1 &&
+      complete_chunkmap_field_1_after == 1 &&
+      reject_seeded && !reject_returned_completed &&
+      m2_bitmap_set_reject_trace.count == 2 &&
+      m2_bitmap_set_reject_trace.indices[0] == 1 &&
+      m2_bitmap_set_reject_trace.counts[0] == 1 &&
+      m2_bitmap_set_reject_trace.indices[1] == MI_BFIELD_BITS + 1 &&
+      m2_bitmap_set_reject_trace.counts[1] == 1 &&
+      reject_chunk_0_field_0_after == 2 &&
+      reject_chunk_0_field_1_after == 2 &&
+      reject_chunk_64_field_0_after == 4 &&
+      reject_chunkmap_field_0_after == 1 &&
+      reject_chunkmap_field_1_after == 1;
+  if (!all_relations) return 10;
+
+  puts("CRABC_MI_M2_BITMAP_SET_TRACE_BEGIN");
+  U("m2.bitmap_set.control.bfield_bits", MI_BFIELD_BITS);
+  U("m2.bitmap_set.control.bchunk_bits", MI_BCHUNK_BITS);
+  U("m2.bitmap_set.control.chunk_count", MI_BFIELD_BITS + 1);
+  U("m2.bitmap_set.layout.byte_size", complete_size);
+  U("m2.bitmap_set.complete.seeded", complete_seeded);
+  U("m2.bitmap_set.complete.returned_completed", complete_returned_completed);
+  U("m2.bitmap_set.complete.callback_count", m2_bitmap_set_complete_trace.count);
+  U("m2.bitmap_set.complete.visit_0_index", m2_bitmap_set_complete_trace.indices[0]);
+  U("m2.bitmap_set.complete.visit_0_count", m2_bitmap_set_complete_trace.counts[0]);
+  U("m2.bitmap_set.complete.visit_1_index", m2_bitmap_set_complete_trace.indices[1]);
+  U("m2.bitmap_set.complete.visit_1_count", m2_bitmap_set_complete_trace.counts[1]);
+  U("m2.bitmap_set.complete.visit_2_index", m2_bitmap_set_complete_trace.indices[2]);
+  U("m2.bitmap_set.complete.visit_2_count", m2_bitmap_set_complete_trace.counts[2]);
+  U("m2.bitmap_set.complete.chunk_0_field_0_after", complete_chunk_0_field_0_after);
+  U("m2.bitmap_set.complete.chunk_0_field_1_after", complete_chunk_0_field_1_after);
+  U("m2.bitmap_set.complete.chunk_64_field_0_after", complete_chunk_64_field_0_after);
+  U("m2.bitmap_set.complete.chunkmap_field_0_after", complete_chunkmap_field_0_after);
+  U("m2.bitmap_set.complete.chunkmap_field_1_after", complete_chunkmap_field_1_after);
+  U("m2.bitmap_set.reject.seeded", reject_seeded);
+  U("m2.bitmap_set.reject.returned_completed", reject_returned_completed);
+  U("m2.bitmap_set.reject.callback_count", m2_bitmap_set_reject_trace.count);
+  U("m2.bitmap_set.reject.visit_0_index", m2_bitmap_set_reject_trace.indices[0]);
+  U("m2.bitmap_set.reject.visit_0_count", m2_bitmap_set_reject_trace.counts[0]);
+  U("m2.bitmap_set.reject.visit_1_index", m2_bitmap_set_reject_trace.indices[1]);
+  U("m2.bitmap_set.reject.visit_1_count", m2_bitmap_set_reject_trace.counts[1]);
+  U("m2.bitmap_set.reject.chunk_0_field_0_after", reject_chunk_0_field_0_after);
+  U("m2.bitmap_set.reject.chunk_0_field_1_after", reject_chunk_0_field_1_after);
+  U("m2.bitmap_set.reject.chunk_64_field_0_after", reject_chunk_64_field_0_after);
+  U("m2.bitmap_set.reject.chunkmap_field_0_after", reject_chunkmap_field_0_after);
+  U("m2.bitmap_set.reject.chunkmap_field_1_after", reject_chunkmap_field_1_after);
+  puts("CRABC_MI_M2_BITMAP_SET_TRACE_END");
+  return 0;
+}
+"""
+
+
 # The image reader directly includes `src/threadlocal.c` solely to observe
 # its private static root and direct-TLS declarations. It is compiled with
 # the same isolated constructor-suppression define as the M1 bootstrap reader;
@@ -5991,6 +6194,7 @@ def validate_m2_memory_substrate_contract(
                     "c-rust-bitmap-abandoned-claim-differential",
                     "c-rust-bitmap-clear-range-differential",
                     "c-rust-bitmap-rangesn-differential",
+                    "c-rust-bitmap-set-differential",
                     "c-rust-page-map-success-differential",
                     "c-rust-page-map-cold-init-differential",
                 }
@@ -6321,6 +6525,75 @@ def run_m2_bitmap_rangesn_differential(
     }
 
 
+def run_m2_bitmap_set_differential(
+    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+) -> dict[str, Any]:
+    """Compare the selected pinned-C/Rust read-only bitmap set-bit visitor."""
+
+    require_native_aarch64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-bitmap-set-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_bitmap_set_trace(
+            compiler,
+            source,
+            M2_BITMAP_SET_TRACE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        "bitmap::tests::emit_m2_bitmap_forall_set_c_rust_trace",
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
+    rust_result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(rust_result, "Rust M2 bitmap set-bit trace")
+    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    rust_trace = parse_m2_bitmap_set_trace(rust_output, source="Rust")
+    validate_m2_bitmap_set_trace(rust_trace, source="Rust")
+    passed_test_count = parse_rust_test_count(rust_output)
+    if passed_test_count != 1:
+        raise HarnessError(
+            "Rust M2 bitmap set-bit trace passed an unexpected test count: "
+            f"{passed_test_count}"
+        )
+    comparison = compare_m2_bitmap_set_trace(c_oracle["record"], rust_trace)
+    return {
+        "c_oracle": c_oracle,
+        "comparison": comparison,
+        "rust": {
+            "command": command,
+            "passed_test_count": passed_test_count,
+            "record": rust_trace,
+        },
+        "scope": (
+            "one pinned-C/Rust scalar read-only `_mi_bitmap_forall_set` trace on "
+            "fresh valid 65-chunk bitmaps: low-to-high callbacks cross the first "
+            "chunk-map field boundary, and a second-callback stop leaves all selected "
+            "data and conservative-map fields unchanged. It does not cover Heap/Page/"
+            "Arena pointers, `_mi_heap_visit_blocks`, callback mutation, binned "
+            "behavior, flexible allocation ownership, arena/subprocess ownership, "
+            "races, statistics, or allocator integration."
+        ),
+        "status": comparison["status"],
+    }
+
+
 def run_m2_page_map_differential(
     pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
 ) -> dict[str, Any]:
@@ -6508,6 +6781,26 @@ def run_m2_memory_substrate_checks(
                 continue
             if check["kind"] == "c-rust-bitmap-rangesn-differential":
                 differential = run_m2_bitmap_rangesn_differential(
+                    pin,
+                    offline=offline,
+                    timeout_seconds=summary["execution"]["timeout_seconds"],
+                )
+                records.append(
+                    {
+                        "c_oracle": differential["c_oracle"],
+                        "comparison": differential["comparison"],
+                        "component": component["id"],
+                        "command": differential["rust"]["command"],
+                        "evidence_scope": differential["scope"],
+                        "id": check["id"],
+                        "passed_test_count": differential["rust"]["passed_test_count"],
+                        "target": check["target"],
+                        "trace": differential["rust"]["record"],
+                    }
+                )
+                continue
+            if check["kind"] == "c-rust-bitmap-set-differential":
+                differential = run_m2_bitmap_set_differential(
                     pin,
                     offline=offline,
                     timeout_seconds=summary["execution"]["timeout_seconds"],
@@ -12120,6 +12413,104 @@ def compare_m2_bitmap_rangesn_trace(
     }
 
 
+def parse_m2_bitmap_set_trace(output: str, *, source: str) -> dict[str, int]:
+    """Parse the fixed scalar read-only bitmap set-bit record."""
+
+    trace = parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_M2_BITMAP_SET_TRACE_BEGIN",
+        end="CRABC_MI_M2_BITMAP_SET_TRACE_END",
+        description=f"{source} M2 bitmap set-bit trace",
+    )
+    if set(trace) != set(M2_BITMAP_SET_TRACE_KEYS):
+        missing = sorted(set(M2_BITMAP_SET_TRACE_KEYS) - set(trace))
+        unexpected = sorted(set(trace) - set(M2_BITMAP_SET_TRACE_KEYS))
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} M2 bitmap set-bit trace does not match the fixed schema: "
+            + "; ".join(problems)
+        )
+    return trace
+
+
+def validate_m2_bitmap_set_trace(trace: Mapping[str, int], *, source: str) -> None:
+    """Require selected read-only set-bit facts before C/Rust comparison."""
+
+    if source not in {"pinned C", "Rust"}:
+        raise HarnessError(f"unknown M2 bitmap set-bit trace source: {source}")
+    if set(trace) != set(M2_BITMAP_SET_TRACE_KEYS):
+        raise HarnessError(f"{source} M2 bitmap set-bit trace keys differ from the fixed contract")
+    for key in M2_BITMAP_SET_TRACE_KEYS:
+        if type(trace[key]) is not int:
+            raise HarnessError(
+                f"{source} M2 bitmap set-bit trace field is not an integer: {key}"
+            )
+
+    expected = {
+        "m2.bitmap_set.control.bfield_bits": 64,
+        "m2.bitmap_set.control.bchunk_bits": 512,
+        "m2.bitmap_set.control.chunk_count": 65,
+        "m2.bitmap_set.layout.byte_size": 4288,
+        "m2.bitmap_set.complete.seeded": 1,
+        "m2.bitmap_set.complete.returned_completed": 1,
+        "m2.bitmap_set.complete.callback_count": 3,
+        "m2.bitmap_set.complete.visit_0_index": 1,
+        "m2.bitmap_set.complete.visit_0_count": 1,
+        "m2.bitmap_set.complete.visit_1_index": 65,
+        "m2.bitmap_set.complete.visit_1_count": 1,
+        "m2.bitmap_set.complete.visit_2_index": 32770,
+        "m2.bitmap_set.complete.visit_2_count": 1,
+        "m2.bitmap_set.complete.chunk_0_field_0_after": 2,
+        "m2.bitmap_set.complete.chunk_0_field_1_after": 2,
+        "m2.bitmap_set.complete.chunk_64_field_0_after": 4,
+        "m2.bitmap_set.complete.chunkmap_field_0_after": 1,
+        "m2.bitmap_set.complete.chunkmap_field_1_after": 1,
+        "m2.bitmap_set.reject.seeded": 1,
+        "m2.bitmap_set.reject.returned_completed": 0,
+        "m2.bitmap_set.reject.callback_count": 2,
+        "m2.bitmap_set.reject.visit_0_index": 1,
+        "m2.bitmap_set.reject.visit_0_count": 1,
+        "m2.bitmap_set.reject.visit_1_index": 65,
+        "m2.bitmap_set.reject.visit_1_count": 1,
+        "m2.bitmap_set.reject.chunk_0_field_0_after": 2,
+        "m2.bitmap_set.reject.chunk_0_field_1_after": 2,
+        "m2.bitmap_set.reject.chunk_64_field_0_after": 4,
+        "m2.bitmap_set.reject.chunkmap_field_0_after": 1,
+        "m2.bitmap_set.reject.chunkmap_field_1_after": 1,
+    }
+    for key, value in expected.items():
+        if trace[key] != value:
+            raise HarnessError(
+                f"{source} M2 bitmap set-bit trace contains an unmet relation: {key}"
+            )
+
+
+def compare_m2_bitmap_set_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require exact equality for the selected read-only bitmap set-bit walk."""
+
+    validate_m2_bitmap_set_trace(c_trace, source="pinned C")
+    validate_m2_bitmap_set_trace(rust_trace, source="Rust")
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in M2_BITMAP_SET_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise HarnessError(
+            "Rust M2 bitmap set-bit trace differs from pinned C: " + "; ".join(mismatches)
+        )
+    return {
+        "compared_value_count": len(M2_BITMAP_SET_TRACE_KEYS),
+        "status": "matched",
+    }
+
+
 def parse_rust_test_count(output: str) -> int:
     matches = re.findall(
         r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
@@ -13336,6 +13727,66 @@ def build_m2_bitmap_rangesn_trace(
     require_success(run, "pinned C M2 bitmap rangesn trace execution")
     record = parse_m2_bitmap_rangesn_trace(str(run["stdout"]), source="pinned C")
     validate_m2_bitmap_rangesn_trace(record, source="pinned C")
+    return {
+        "command": command,
+        "record": record,
+        "source_files": source_file_records(
+            source,
+            (
+                "include/mimalloc.h",
+                "include/mimalloc/atomic.h",
+                "include/mimalloc/bits.h",
+                "include/mimalloc/internal.h",
+                "include/mimalloc/prim.h",
+                "include/mimalloc/types.h",
+                "src/bitmap.h",
+                "src/bitmap.c",
+            ),
+        ),
+    }
+
+
+def build_m2_bitmap_set_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the selected source-private read-only bitmap set-bit producer."""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    trace_source = profile_dir / "m2-bitmap-set-trace-probe.c"
+    trace_binary = profile_dir / "m2-bitmap-set-trace-probe"
+    trace_source.write_text(M2_BITMAP_SET_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        "-DMI_OPT_SIMD=0",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        "-ffunction-sections",
+        "-fdata-sections",
+        str(trace_source),
+        "-Wl,--gc-sections",
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M2 bitmap set-bit trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M2 bitmap set-bit trace execution")
+    record = parse_m2_bitmap_set_trace(str(run["stdout"]), source="pinned C")
+    validate_m2_bitmap_set_trace(record, source="pinned C")
     return {
         "command": command,
         "record": record,

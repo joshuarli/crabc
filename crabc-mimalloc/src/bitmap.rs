@@ -18,17 +18,20 @@
 // and conservative chunkmap maintenance), `src/bitmap.c:109-129,920-928,
 // 1024-1042,1297-1380,1425-1432` (the abandoned-page single-bit claim
 // visitor, its conservative-map repair, and clear-once-set reader quiescence),
+// `src/bitmap.c:1437-1460` (the selected scalar read-only set-bit visitor),
 // `src/bitmap.c:1462-1521` (the selected scalar clear-range visitor and its
 // default `rangesn` dispatch), plus `src/bitmap.c:1583-1784,1794-1997`
 // (binned initialization, size bins, two-level claims, and exact multi-chunk
-// rollback). This slice intentionally excludes other visitor/callback
-// families and statistics-counter integration. The one-chunk M2 C/Rust traces
-// below cover the abandoned visitor's reject/restore, accepted-claim, and
-// stale-map repair plus the scalar clear-range visitor's completed and stopped
-// field-bounded walks; neither trace is general callback parity. The allocator-owned dynamic
-// TLS registry projects its typed metadata capability only transiently through
-// the ordinary lowest-bit claim path below; it does not add a general bitmap
-// metadata ownership API.
+// rollback). This slice intentionally excludes other visitor/callback families
+// and statistics-counter integration. The M2 C/Rust traces below cover the
+// abandoned visitor's reject/restore, accepted-claim, and stale-map repair;
+// the scalar clear-range visitor's completed and stopped field-bounded walks;
+// the `rangesn` wrapper's selected aligned/delegated paths; and a direct
+// 65-chunk read-only set-bit walk across the first chunk-map field boundary.
+// None is general callback parity or allocator integration. The allocator-owned
+// dynamic TLS registry projects its typed metadata capability only transiently
+// through the ordinary lowest-bit claim path below; it does not add a general
+// bitmap metadata ownership API.
 
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of};
@@ -1232,6 +1235,53 @@ impl<'storage> BitmapView<'storage> {
         Some(all_transitioned)
     }
 
+    /// Visits every set bit in source snapshot order without changing the bitmap.
+    ///
+    /// This is the scalar `_mi_bitmap_forall_set` algorithm. It snapshots each
+    /// conservative chunk-map field with Relaxed ordering, then snapshots each
+    /// named data field with the same ordering. Set bits are offered low-to-high
+    /// as one-slice callbacks; a refusal stops immediately. Unlike the clearing
+    /// visitor families below, this routine neither exchanges data fields nor
+    /// repairs conservative chunk-map bits.
+    ///
+    /// The pinned source assumes every set chunk-map bit names a live data
+    /// chunk. A checked Rust view instead ignores a stale out-of-layout map bit
+    /// without deriving an out-of-bounds pointer, while retaining that map bit.
+    pub(crate) fn visit_set_bits<F>(&self, mut visit: F) -> bool
+    where
+        F: FnMut(usize, usize) -> bool,
+    {
+        let chunk_count = self.chunk_count();
+        let chunkmap_field_count = (chunk_count + BFIELD_BITS - 1) / BFIELD_BITS;
+        for chunkmap_field_index in 0..chunkmap_field_count {
+            let mut chunkmap_entry =
+                word_load_relaxed(self.chunkmap().field(chunkmap_field_index));
+            while chunkmap_entry != 0 {
+                let chunkmap_bit = ctz(chunkmap_entry);
+                chunkmap_entry &= chunkmap_entry.wrapping_sub(1);
+                let chunk_index = chunkmap_field_index * BFIELD_BITS + chunkmap_bit;
+                if chunk_index >= chunk_count {
+                    continue;
+                }
+
+                let chunk = self.chunk(chunk_index);
+                for field_index in 0..BCHUNK_FIELDS {
+                    let mut bits = word_load_relaxed(chunk.field(field_index));
+                    while bits != 0 {
+                        let bit_index = ctz(bits);
+                        bits &= bits.wrapping_sub(1);
+                        let slice_index =
+                            chunk_index * BCHUNK_BITS + field_index * BFIELD_BITS + bit_index;
+                        if !visit(slice_index, 1) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        true
+    }
+
     /// Visits the source's maximal set ranges while atomically clearing them.
     ///
     /// This is the scalar `mi_bitmap_forall_setc_ranges` algorithm used by
@@ -2213,6 +2263,19 @@ mod tests {
         bytes: [MaybeUninit<u8>; 640],
     }
 
+    // This image crosses the first source `mi_bfield_t` boundary in the
+    // chunk-map: chunk 0 lives in map field 0, while chunk 64 lives in map
+    // field 1. It is intentionally test storage only; `BitmapView` remains a
+    // caller-owned dynamic view rather than a fixed Rust bitmap owner.
+    const SET_VISITOR_CHUNK_COUNT: usize = BFIELD_BITS + 1;
+    const SET_VISITOR_STORAGE_BYTES: usize =
+        BITMAP_CHUNKS_OFFSET + SET_VISITOR_CHUNK_COUNT * BCHUNK_SIZE;
+
+    #[repr(align(64))]
+    struct BitmapSetVisitorTestStorage {
+        bytes: [MaybeUninit<u8>; SET_VISITOR_STORAGE_BYTES],
+    }
+
     impl BitmapTestStorage {
         const fn uninit() -> Self {
             Self {
@@ -2225,6 +2288,14 @@ mod tests {
         const fn uninit() -> Self {
             Self {
                 bytes: [const { MaybeUninit::uninit() }; 640],
+            }
+        }
+    }
+
+    impl BitmapSetVisitorTestStorage {
+        const fn uninit() -> Self {
+            Self {
+                bytes: [const { MaybeUninit::uninit() }; SET_VISITOR_STORAGE_BYTES],
             }
         }
     }
@@ -2748,6 +2819,121 @@ mod tests {
             }
         ));
         assert_eq!(capped_visits, std::vec![(0, BFIELD_BITS)]);
+    }
+
+    #[test]
+    fn set_bit_visitor_crosses_chunkmap_fields_without_mutating_snapshots() {
+        extern crate std;
+
+        let layout = BitmapLayout::for_bit_count(BCHUNK_BITS * SET_VISITOR_CHUNK_COUNT).unwrap();
+        let mut complete_storage = BitmapSetVisitorTestStorage::uninit();
+        let complete = unsafe {
+            BitmapView::initialize(
+                complete_storage.bytes.as_mut_ptr().cast(),
+                complete_storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+        for index in [1, BFIELD_BITS + 1, BFIELD_BITS * BCHUNK_BITS + 2] {
+            assert_eq!(
+                complete.set_range(index, 1),
+                Some(RunTransition::all_clear(0))
+            );
+        }
+        let complete_before = (
+            word_load_relaxed(complete.chunk(0).field(0)),
+            word_load_relaxed(complete.chunk(0).field(1)),
+            word_load_relaxed(complete.chunk(BFIELD_BITS).field(0)),
+            word_load_relaxed(complete.chunkmap().field(0)),
+            word_load_relaxed(complete.chunkmap().field(1)),
+        );
+        let mut complete_visits = std::vec::Vec::new();
+
+        assert!(complete.visit_set_bits(|slice_index, slice_count| {
+            complete_visits.push((slice_index, slice_count));
+            true
+        }));
+        assert_eq!(
+            complete_visits,
+            std::vec![(1, 1), (BFIELD_BITS + 1, 1), (BFIELD_BITS * BCHUNK_BITS + 2, 1)]
+        );
+        assert_eq!(
+            (
+                word_load_relaxed(complete.chunk(0).field(0)),
+                word_load_relaxed(complete.chunk(0).field(1)),
+                word_load_relaxed(complete.chunk(BFIELD_BITS).field(0)),
+                word_load_relaxed(complete.chunkmap().field(0)),
+                word_load_relaxed(complete.chunkmap().field(1)),
+            ),
+            complete_before,
+            "the source read-only visitor must not clear data or repair its conservative map"
+        );
+
+        let mut stopped_storage = BitmapSetVisitorTestStorage::uninit();
+        let stopped = unsafe {
+            BitmapView::initialize(
+                stopped_storage.bytes.as_mut_ptr().cast(),
+                stopped_storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+        for index in [1, BFIELD_BITS + 1, BFIELD_BITS * BCHUNK_BITS + 2] {
+            assert_eq!(
+                stopped.set_range(index, 1),
+                Some(RunTransition::all_clear(0))
+            );
+        }
+        let stopped_before = (
+            word_load_relaxed(stopped.chunk(0).field(0)),
+            word_load_relaxed(stopped.chunk(0).field(1)),
+            word_load_relaxed(stopped.chunk(BFIELD_BITS).field(0)),
+            word_load_relaxed(stopped.chunkmap().field(0)),
+            word_load_relaxed(stopped.chunkmap().field(1)),
+        );
+        let mut stopped_visits = std::vec::Vec::new();
+
+        assert!(!stopped.visit_set_bits(|slice_index, slice_count| {
+            stopped_visits.push((slice_index, slice_count));
+            stopped_visits.len() != 2
+        }));
+        assert_eq!(stopped_visits, std::vec![(1, 1), (BFIELD_BITS + 1, 1)]);
+        assert_eq!(
+            (
+                word_load_relaxed(stopped.chunk(0).field(0)),
+                word_load_relaxed(stopped.chunk(0).field(1)),
+                word_load_relaxed(stopped.chunk(BFIELD_BITS).field(0)),
+                word_load_relaxed(stopped.chunkmap().field(0)),
+                word_load_relaxed(stopped.chunkmap().field(1)),
+            ),
+            stopped_before,
+            "a callback stop must leave data, later chunks, and the conservative map untouched"
+        );
+
+        let mut stale_storage = BitmapSetVisitorTestStorage::uninit();
+        let stale = unsafe {
+            BitmapView::initialize(
+                stale_storage.bytes.as_mut_ptr().cast(),
+                stale_storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+        // The source relies on a valid layout and would form `chunks[65]` for
+        // this map bit. The checked Rust view must instead preserve the stale
+        // bit without naming storage outside its 65-chunk caller image.
+        word_or_relaxed(stale.chunkmap().field(1), 1 << 1);
+        let mut stale_visits = std::vec::Vec::new();
+        assert!(stale.visit_set_bits(|slice_index, slice_count| {
+            stale_visits.push((slice_index, slice_count));
+            true
+        }));
+        assert!(stale_visits.is_empty());
+        assert_eq!(word_load_relaxed(stale.chunkmap().field(1)), 1 << 1);
     }
 
     #[test]
@@ -3394,6 +3580,169 @@ mod tests {
             capped_chunkmap_field_0_after
         );
         std::println!("CRABC_MI_M2_BITMAP_RANGESN_TRACE_END");
+    }
+
+    /// Emits the address-free Rust half of the selected
+    /// `_mi_bitmap_forall_set` differential. Fresh 65-chunk images cross the
+    /// first source chunk-map field boundary. One completes the low-to-high
+    /// scalar walk, while the other stops at its second callback; neither walk
+    /// may change a data field or repair the conservative chunk map.
+    #[test]
+    fn emit_m2_bitmap_forall_set_c_rust_trace() {
+        extern crate std;
+
+        let layout = BitmapLayout::for_bit_count(BCHUNK_BITS * SET_VISITOR_CHUNK_COUNT).unwrap();
+        let selected_indices = [1, BFIELD_BITS + 1, BFIELD_BITS * BCHUNK_BITS + 2];
+
+        let mut complete_storage = BitmapSetVisitorTestStorage::uninit();
+        let complete = unsafe {
+            BitmapView::initialize(
+                complete_storage.bytes.as_mut_ptr().cast(),
+                complete_storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+        let complete_seeded = selected_indices.into_iter().all(|index| {
+            matches!(
+                complete.set_range(index, 1),
+                Some(transition) if transition.all_transitioned()
+            )
+        });
+        let mut complete_visits = std::vec::Vec::new();
+        let complete_returned_completed = complete.visit_set_bits(|slice_index, slice_count| {
+            complete_visits.push((slice_index, slice_count));
+            true
+        });
+        let complete_chunk_0_field_0_after = word_load_relaxed(complete.chunk(0).field(0));
+        let complete_chunk_0_field_1_after = word_load_relaxed(complete.chunk(0).field(1));
+        let complete_chunk_64_field_0_after =
+            word_load_relaxed(complete.chunk(BFIELD_BITS).field(0));
+        let complete_chunkmap_field_0_after = word_load_relaxed(complete.chunkmap().field(0));
+        let complete_chunkmap_field_1_after = word_load_relaxed(complete.chunkmap().field(1));
+
+        let mut reject_storage = BitmapSetVisitorTestStorage::uninit();
+        let reject = unsafe {
+            BitmapView::initialize(
+                reject_storage.bytes.as_mut_ptr().cast(),
+                reject_storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+        let reject_seeded = selected_indices.into_iter().all(|index| {
+            matches!(
+                reject.set_range(index, 1),
+                Some(transition) if transition.all_transitioned()
+            )
+        });
+        let mut reject_visits = std::vec::Vec::new();
+        let reject_returned_completed = reject.visit_set_bits(|slice_index, slice_count| {
+            reject_visits.push((slice_index, slice_count));
+            reject_visits.len() != 2
+        });
+        let reject_chunk_0_field_0_after = word_load_relaxed(reject.chunk(0).field(0));
+        let reject_chunk_0_field_1_after = word_load_relaxed(reject.chunk(0).field(1));
+        let reject_chunk_64_field_0_after = word_load_relaxed(reject.chunk(BFIELD_BITS).field(0));
+        let reject_chunkmap_field_0_after = word_load_relaxed(reject.chunkmap().field(0));
+        let reject_chunkmap_field_1_after = word_load_relaxed(reject.chunkmap().field(1));
+
+        assert_eq!(layout.byte_size(), SET_VISITOR_STORAGE_BYTES);
+        assert!(complete_seeded);
+        assert!(complete_returned_completed);
+        assert_eq!(
+            complete_visits,
+            std::vec![(1, 1), (BFIELD_BITS + 1, 1), (BFIELD_BITS * BCHUNK_BITS + 2, 1)]
+        );
+        assert_eq!(complete_chunk_0_field_0_after, 1 << 1);
+        assert_eq!(complete_chunk_0_field_1_after, 1 << 1);
+        assert_eq!(complete_chunk_64_field_0_after, 1 << 2);
+        assert_eq!(complete_chunkmap_field_0_after, 1);
+        assert_eq!(complete_chunkmap_field_1_after, 1);
+        assert!(reject_seeded);
+        assert!(!reject_returned_completed);
+        assert_eq!(reject_visits, std::vec![(1, 1), (BFIELD_BITS + 1, 1)]);
+        assert_eq!(reject_chunk_0_field_0_after, 1 << 1);
+        assert_eq!(reject_chunk_0_field_1_after, 1 << 1);
+        assert_eq!(reject_chunk_64_field_0_after, 1 << 2);
+        assert_eq!(reject_chunkmap_field_0_after, 1);
+        assert_eq!(reject_chunkmap_field_1_after, 1);
+
+        macro_rules! emit {
+            ($name:expr, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+        std::println!("CRABC_MI_M2_BITMAP_SET_TRACE_BEGIN");
+        emit!("m2.bitmap_set.control.bfield_bits", BFIELD_BITS);
+        emit!("m2.bitmap_set.control.bchunk_bits", BCHUNK_BITS);
+        emit!("m2.bitmap_set.control.chunk_count", SET_VISITOR_CHUNK_COUNT);
+        emit!("m2.bitmap_set.layout.byte_size", layout.byte_size());
+        emit!("m2.bitmap_set.complete.seeded", complete_seeded);
+        emit!(
+            "m2.bitmap_set.complete.returned_completed",
+            complete_returned_completed
+        );
+        emit!("m2.bitmap_set.complete.callback_count", complete_visits.len());
+        emit!("m2.bitmap_set.complete.visit_0_index", complete_visits[0].0);
+        emit!("m2.bitmap_set.complete.visit_0_count", complete_visits[0].1);
+        emit!("m2.bitmap_set.complete.visit_1_index", complete_visits[1].0);
+        emit!("m2.bitmap_set.complete.visit_1_count", complete_visits[1].1);
+        emit!("m2.bitmap_set.complete.visit_2_index", complete_visits[2].0);
+        emit!("m2.bitmap_set.complete.visit_2_count", complete_visits[2].1);
+        emit!(
+            "m2.bitmap_set.complete.chunk_0_field_0_after",
+            complete_chunk_0_field_0_after
+        );
+        emit!(
+            "m2.bitmap_set.complete.chunk_0_field_1_after",
+            complete_chunk_0_field_1_after
+        );
+        emit!(
+            "m2.bitmap_set.complete.chunk_64_field_0_after",
+            complete_chunk_64_field_0_after
+        );
+        emit!(
+            "m2.bitmap_set.complete.chunkmap_field_0_after",
+            complete_chunkmap_field_0_after
+        );
+        emit!(
+            "m2.bitmap_set.complete.chunkmap_field_1_after",
+            complete_chunkmap_field_1_after
+        );
+        emit!("m2.bitmap_set.reject.seeded", reject_seeded);
+        emit!(
+            "m2.bitmap_set.reject.returned_completed",
+            reject_returned_completed
+        );
+        emit!("m2.bitmap_set.reject.callback_count", reject_visits.len());
+        emit!("m2.bitmap_set.reject.visit_0_index", reject_visits[0].0);
+        emit!("m2.bitmap_set.reject.visit_0_count", reject_visits[0].1);
+        emit!("m2.bitmap_set.reject.visit_1_index", reject_visits[1].0);
+        emit!("m2.bitmap_set.reject.visit_1_count", reject_visits[1].1);
+        emit!(
+            "m2.bitmap_set.reject.chunk_0_field_0_after",
+            reject_chunk_0_field_0_after
+        );
+        emit!(
+            "m2.bitmap_set.reject.chunk_0_field_1_after",
+            reject_chunk_0_field_1_after
+        );
+        emit!(
+            "m2.bitmap_set.reject.chunk_64_field_0_after",
+            reject_chunk_64_field_0_after
+        );
+        emit!(
+            "m2.bitmap_set.reject.chunkmap_field_0_after",
+            reject_chunkmap_field_0_after
+        );
+        emit!(
+            "m2.bitmap_set.reject.chunkmap_field_1_after",
+            reject_chunkmap_field_1_after
+        );
+        std::println!("CRABC_MI_M2_BITMAP_SET_TRACE_END");
     }
 
     /// Emits the address-free Rust half of the selected `mi_bitmap_try_find_and_claim`

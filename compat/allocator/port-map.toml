@@ -1936,6 +1936,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/bitmap.c"
+name = "scalar-read-only-set-bit-visitor"
+source_region = "src/bitmap.c:1437-1460 _mi_bitmap_forall_set; source caller src/arena.c:2484-2493 _mi_heap_visit_blocks"
+rust_module = "crabc_mimalloc::bitmap"
+rust_item = "BitmapView::visit_set_bits"
+intentional_difference = "The selected native pinned-C/Rust trace calls the source visitor directly on fresh valid 65-chunk images: bits 1, 65, and 32770 cross chunk-map fields zero and one; a completed walk emits each one-slice callback low-to-high, while a second-callback refusal stops immediately. Both records retain all selected data fields and conservative map fields. The source assumes every map bit names an in-layout chunk; Rust snapshots its immutable chunk count once and skips a stale out-of-layout map bit without deriving an invalid pointer, retaining that map bit (a Rust-only unit test covers this checked safety divergence). This does not claim Heap/Page/Arena pointers, _mi_heap_visit_blocks integration, callback mutation, flexible allocation ownership, arena/subprocess ownership, binned behavior, races, statistics, or allocator integration."
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/prim/unix/prim.c"
 name = "linux-regular-map-memory-transitions"
 source_region = "_mi_prim_free; the no-hint/non-large regular unix_mmap branch used by _mi_prim_alloc; _mi_prim_commit; normal-release _mi_prim_decommit; _mi_prim_reset; and _mi_prim_protect"
