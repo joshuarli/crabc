@@ -672,9 +672,10 @@ assertion-invalid input, not C/Rust invalid-input parity.
   writes an out-of-layout high map bit and proves the checked scan remains
   bounded, returns the lower live bit, and retains that invalid map entry.
 - **Decision/removal:** accepted for this checked read-only slice. It does
-  not establish C bsr differential parity, binned bitmaps, visitor/popcount
-  behavior, flexible-image allocation ownership, Heap/Page/Arena integration,
-  statistics, races, or allocator routing.
+  not establish C bsr differential parity, binned search/claim behavior,
+  visitor behavior, or popcount behavior beyond its separately mapped
+  observer; nor flexible-image allocation ownership, Heap/Page/Arena
+  integration, statistics, races, or allocator routing.
 
 ### `CRABC-MI-ORDINARY-BITMAP-POPCOUNT-CONSERVATIVE-CHUNKMAP` — accepted checked observer boundary
 
