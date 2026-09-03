@@ -2499,6 +2499,15 @@ class ContractTests(unittest.TestCase):
                 },
                 {
                     "expected_passed_test_count": 1,
+                    "id": "arena-purge-partial-allocation-reclaim-free-sibling",
+                    "kind": "rust-unit",
+                    "target": (
+                        "arena::tests::scheduled_purge_retries_the_free_sibling_after_"
+                        "partial_allocation_reclaim"
+                    ),
+                },
+                {
+                    "expected_passed_test_count": 1,
                     "id": "arena-purge-decommit-error-consumption",
                     "kind": "rust-unit",
                     "target": (

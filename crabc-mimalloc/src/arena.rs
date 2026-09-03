@@ -2733,6 +2733,70 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_purge_retries_the_free_sibling_after_partial_allocation_reclaim() {
+        // Pinned `mi_arena_try_purge_visitor` first claims a whole scheduled
+        // run. When an allocation has reclaimed one slice, its failed whole
+        // claim retries each slice: the allocation-won slice stays unavailable
+        // while a free sibling is still purged. Keep the reclaim live through
+        // collection so this observes that source fallback rather than an
+        // ordinary two-slice purge.
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let script = CommitScript::new(false);
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                Some(CommitHook::new(
+                    scripted_commit,
+                    (&script as *const CommitScript).cast_mut().cast(),
+                )),
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let first_usable_slice = view.arena().info_slices;
+        assert_eq!(first_usable_slice, 9);
+
+        let scheduled = view
+            .try_claim_suitable_slices(ArenaId::none(), 2, true, 0)
+            .expect("the selected external arena has a two-slice free run");
+        assert_eq!(scheduled.slice_index(), first_usable_slice);
+        assert!(scheduled.release());
+
+        let reclaimed = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .expect("the low slice is reclaimed before forced purge collection");
+        assert_eq!(reclaimed.slice_index(), first_usable_slice);
+
+        let calls_before = script.calls.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(view.collect_scheduled_purge(PageSize::new(4096).unwrap(), true));
+        assert_eq!(
+            script.calls.load(std::sync::atomic::Ordering::Relaxed),
+            calls_before + 1,
+            "only the still-free sibling reaches the external decommit callback"
+        );
+
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(free.is_clear_range(first_usable_slice, 1), Some(true));
+        assert_eq!(
+            free.is_set_range(first_usable_slice + 1, 1),
+            Some(true),
+        );
+        assert_eq!(purge.is_clear_range(first_usable_slice, 2), Some(true));
+
+        assert!(reclaimed.release());
+    }
+
+    #[test]
     fn clock_failure_skips_optional_purge_without_losing_the_released_slice() {
         let _fault = crate::os::fault::install(crate::os::fault::Plan::at(
             crate::os::fault::Point::Clock,
