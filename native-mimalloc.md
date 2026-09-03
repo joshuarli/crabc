@@ -2377,9 +2377,9 @@ advance this AArch64 allocator ledger.
 
 | Milestone | Status | Evidence and remaining closure condition |
 | --- | --- | --- |
-| M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. A clean detached native `./scripts/dev.sh allocator --quick` exited 0 at `5c2ce5414b8975e4507f7691c037f124850921a5`. This is inventory/skeleton completion only, not engine parity. |
-| M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. Its latest clean detached native revalidation, at `5c2ce5414b8975e4507f7691c037f124850921a5`, exited 0 with all six components complete, no unmet IDs, and 45 executed records. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
-| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At source commit `5c2ce5414b8975e4507f7691c037f124850921a5`, a clean detached native `./scripts/dev.sh allocator-m2` ran all 36 selected checks with source clean before and after and unchanged during execution; its defined exit is 3 because exactly seven components remain unmet: `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and `allocator-recursion`. PageMap alone is complete. VM primitives has eight selected checks; metadata seven; bitmaps four pinned-C/Rust differentials; PageMap ten; arenas two; initialization three; fault injection one native protect/unprotect owner-and-retry regression; and allocator recursion one same-thread metadata direct-demand regression. The seventh metadata check is a separate typed `ArenaSliceClaim` subprocess-identity gate, not `MetaRelease::Arena` or a generic metadata-free dispatcher. These are selected bounded claims, not category closure. In particular, the protection test uses test-only pre-syscall `NOMEM`, retains the exact base/length, proves a failed protect remains writable, and retries after disabling injection; it is not live-kernel or C failure parity. The ten PageMap checks cover source-private C/Rust success and failed-first-init differentials, bootstrap/lazy/release ownership failures, private-lock publication, and the process-owner terminal boundary. The metadata checks do not claim Rust's bounded private direct-OS backing matches C's normal `_mi_meta_zalloc` backing route, generic `_mi_meta_free` dispatch, or full `mi_tld_init`/`mi_tld_free` list and lock behavior; `MetaRelease::RegularOs` remains only a standalone retry witness, not a C metadata caller. |
+| M0 — pin, scope, inventory, skeleton | complete (inventory/skeleton; revalidated) | `crabc-mimalloc/UPSTREAM.md` fixes v3.5.0, its revision, archive hash, and MIT provenance; `crabc-mimalloc` is `#![no_std]`; `compat/allocator/api-v3.5.0.json`, `compat/allocator/port-map.toml`, and `compat/allocator/run.py` provide the inventory, source map, C oracle, layout baseline, and canonical harness. A clean detached native `./scripts/dev.sh allocator --quick` exited 0 at `50049e9131f729b82615ac99c2a784974775aefd`. This is inventory/skeleton completion only, not engine parity. |
+| M1 — pure foundations | complete (6/6 bounded components; revalidated) | `configuration-and-arithmetic`, `atomics-locks-once-and-bootstrap`, `provenance-and-represented-layouts`, `random-image`, `linux-raw-primitives`, and `compiler-tls-roots` have no remaining condition in `compat/allocator/m1-foundations-v3.5.0.json`. Its latest clean detached native revalidation, at `50049e9131f729b82615ac99c2a784974775aefd`, exited 0 with all six components complete, no unmet IDs, and 45 executed records. The compiler-TLS evidence is its selected 32-field image and the 40-field normal-artifact C/Rust same-TLD `D`/`A` terminal trace. These are bounded component claims, not whole-`src/init.c`, `types.h`, `prim.h`, `prim-tls.h`, or `internal.h` completion, and not outer `_mi_thread_done`, page-bearing lifecycle, production deferred/retired prepasses, or allocator integration. |
+| M2 — memory substrate | partial (current executable gate) | `compat/allocator/m2-memory-substrate-v3.5.0.json` fixes eight categories. At source commit `50049e9131f729b82615ac99c2a784974775aefd`, a clean detached native `./scripts/dev.sh allocator-m2` ran all 37 selected checks with source clean before and after and unchanged during execution; its defined exit is 3 because exactly seven components remain unmet: `vm-primitives`, `metadata`, `bitmaps`, `arenas`, `initialization`, `fault-injection`, and `allocator-recursion`. PageMap alone is complete. VM primitives has eight selected checks; metadata seven; bitmaps four pinned-C/Rust differentials; PageMap ten; arenas three; initialization three; fault injection one native protect/unprotect owner-and-retry regression; and allocator recursion one same-thread metadata direct-demand regression. The third arena check selects only the default delayed-purge full-claim failure after a sequential one-slice reclaim, where the still-free sibling is individually purged and restored. The seventh metadata check is a separate typed `ArenaSliceClaim` subprocess-identity gate, not `MetaRelease::Arena` or a generic metadata-free dispatcher. These are selected bounded claims, not category closure. In particular, the protection test uses test-only pre-syscall `NOMEM`, retains the exact base/length, proves a failed protect remains writable, and retries after disabling injection; it is not live-kernel or C failure parity. The ten PageMap checks cover source-private C/Rust success and failed-first-init differentials, bootstrap/lazy/release ownership failures, private-lock publication, and the process-owner terminal boundary. The metadata checks do not claim Rust's bounded private direct-OS backing matches C's normal `_mi_meta_zalloc` backing route, generic `_mi_meta_free` dispatch, or full `mi_tld_init`/`mi_tld_free` list and lock behavior; `MetaRelease::RegularOs` remains only a standalone retry witness, not a C metadata caller. |
 | M3 — single-thread allocation | partial | The direct-engine allocator covers selected queues, page classes, retirement, and traces, but Heap/Theap, page, and queue units remain partial. The pinned image has no Miri. A forced `cfg(miri)` smoke is currently unavailable because `os_host_model.rs` lacks the existing NUMA/identity/entropy and `Mapping::page_size` APIs its callers require; the same ten compile errors existed at `265c49ddc21e614dfe055e1bc794e73a3ecf6f1e`. This is an M3 host-model limitation, not M2 evidence or a regression introduced by the aligned-overmap slice. |
 | M4 — fundamental operations | bounded direct-engine evidence | A reviewed private M4 C adapter selects 33 tests and explicitly omits 21, but no clean-current-commit native adapter report exists; it runs only in the `allocator --full`/`--churn` lanes. It is a one-thread private adapter over the still-partial M1–M3 substrate, not a closed production/general milestone. |
 | M5 — concurrency and lifecycle | open | `m5.base`, `m5.5a`, `m5.5b`, and `m5.5c` are bounded/direct evidence only. `m5.5d` and `m5.5e` are blocked; all Phase A–G acceptance conditions remain required. |
@@ -2500,9 +2500,9 @@ control and transition fields for initial partial commitment, lazy extension
 across two submaps, one two-slice unregister, final-boundary rollback, and an
 absent root after destruction.
 
-The current selected set contains 36 native checks: eight VM-primitives
+The current selected set contains 37 native checks: eight VM-primitives
 checks, seven metadata checks, four bitmap C/Rust differentials, ten PageMap
-checks, two arena checks, three initialization checks, one native
+checks, three arena checks, three initialization checks, one native
 protect/unprotect fault-injection check, and one same-thread metadata-recursion
 check. `page-map` is complete within this M2 contract; the other seven required
 components remain partial under their explicit remaining conditions.
@@ -2663,6 +2663,17 @@ reports an error. Therefore the source keeps `slices_committed` set, restores
 continues collection. The Rust regression proves exactly those facts and that
 the external mapping remains owned by its caller. It does not claim general
 purge fault parity or error-reporting policy.
+
+The third selected arena test is a sequential partial-reclaim fallback, not a
+live allocation/purge race. It schedules the two-slice `[9, 11)` range, then
+reclaims `[9, 10)` before forced collection. The source-shaped whole
+`slices_free` claim therefore fails; the allocation-won low slice remains
+unavailable and does not call the decommit hook, while the high free sibling is
+individually claimed, calls that hook exactly once, and is restored to free.
+The source-cleared purge bits for both slices remain clear. This does not claim
+arbitrary spans or visitor outcomes, configurable/minimal/THP purge policy,
+multi-chunk, registry-wide, or multi-arena collection, concurrency, lifecycle
+closure, fault/retry behavior, or a C/Rust differential.
 
 The manifest additionally selects
 `os::tests::reset_retries_the_initial_advice_after_a_concurrent_global_fallback`.
@@ -3121,6 +3132,24 @@ or invalid-input parity. The unmet IDs remain exactly `vm-primitives`,
 `allocator-recursion`; M2 remains partial and does not advance M3 or any later
 milestone.
 
+At `50049e9131f729b82615ac99c2a784974775aefd`, a clean detached native
+checkout reran all predecessor and M2 gates after adding the selected
+allocation-won arena-purge fallback regression. `./scripts/dev.sh allocator
+--quick` exited 0. `./scripts/dev.sh allocator-m1` exited 0 with all six
+bounded M1 components complete, no unmet IDs, and 45 executed records.
+`./scripts/dev.sh allocator-m2` ran 37 selected checks, attested a clean source
+tree before and after execution and unchanged during the run, and exited 3 as
+designed. The `arenas` category now has three selected checks. Its new
+two-slice external-arena witness releases `[9, 11)`, reclaims the low slice
+before forced collection, then observes the failed full claim skip that
+allocation-won slice while the high free sibling is individually hooked and
+restored; both purge bits remain consumed. It is same-thread source-mapped
+state evidence, not a live race, broader visitor/purge-policy proof,
+multi-arena or lifecycle claim, fault/retry proof, or C/Rust differential. The
+unmet IDs remain exactly `vm-primitives`, `metadata`, `bitmaps`, `arenas`,
+`initialization`, `fault-injection`, and `allocator-recursion`; M2 remains
+partial and does not advance M3 or any later milestone.
+
 ## Active boundary and priority rule
 
 The integrated owner-local mapped-abandoned medium reclaim slice is a narrowly
@@ -3129,10 +3158,10 @@ shadow, or promotion claim. Keep its source map, regression, and exact test
 result, but do not use it to advance M5.
 
 M0 and M1 are closed predecessors under their bounded contracts and were
-revalidated cleanly at `5c2ce5414b8975e4507f7691c037f124850921a5`. M2 is now
-the current closure gate; its current clean native evidence has 36 selected
+revalidated cleanly at `50049e9131f729b82615ac99c2a784974775aefd`. M2 is now
+the current closure gate; its current clean native evidence has 37 selected
 checks (eight VM-primitives, seven metadata, four bitmap C/Rust differentials,
-ten PageMap, two arena, three initialization, one native protection
+ten PageMap, three arena, three initialization, one native protection
 fault-injection check, and one same-thread metadata recursion check), its
 selected PageMap component is complete, and the other seven required
 components remain partial (including the selected-but-incomplete bitmap,
