@@ -34,9 +34,9 @@ planning checkpoints, not runtime or allocator completion.
 2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
    then establish native x86 M0/M1/M2 qualification. Imported
    AArch64 milestone passes do not count as x86 passes.
-   The first contained native quick run reaches Rust tests but exposes two
-   PageMap trace assertions that assume 48 virtual-address bits on x86's
-   configured 47-bit profile; qualify those controls against the pinned oracle.
+   Native unit tests pass with target-qualified PageMap address-bit controls.
+   The quick gate now reaches the private C adapter fixture, which aborts;
+   diagnose that boundary before claiming a complete x86 baseline.
 3. Integration: agree on bootstrap, errno, TLS/TCB, pthread exit, fork, and
    loader ownership. Continue independent runtime work with the accepted C
    backend; requalify installed x86 products after native allocator promotion.

@@ -1080,6 +1080,10 @@ mod tests {
 
         assert_eq!(control_page_size, 4 * 1024);
         assert!(control_has_overcommit_false);
+        // Pinned bits.h selects 47 user-address bits on x86-64, 48 on AArch64.
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(control_max_vabits, 47);
+        #[cfg(target_arch = "aarch64")]
         assert_eq!(control_max_vabits, 48);
         assert_ne!(layout_header_bytes, 0);
         assert_ne!(layout_lock_bytes, 0);
@@ -1251,6 +1255,10 @@ mod tests {
 
         assert_eq!(control_page_size, 4 * 1024);
         assert!(control_has_overcommit_false);
+        // Keep the C/Rust trace control matched to the target's bits.h profile.
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(control_max_vabits, 47);
+        #[cfg(target_arch = "aarch64")]
         assert_eq!(control_max_vabits, 48);
         assert!(failure_returned);
         assert_eq!(failure_commit_attempts, 1);
