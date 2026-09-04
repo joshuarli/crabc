@@ -107,6 +107,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   stdlib-header-abi  compare x86 <stdlib.h> strict/POSIX/XOPEN/GNU/BSD/LFS profiles with musl
   getloadavg-header-abi  verify x86 GNU/BSD <stdlib.h> getloadavg C/C++ declaration and linkage
   stdio-standard-header-abi  compare selected x86 <stdio.h> standard-stream C/C++ profiles with musl
+  stdio-header-source-form  verify x86 <stdio.h>/<stdio_ext.h> pinned-musl declaration form
   fopen64-header-abi  verify x86 _LARGEFILE64_SOURCE fopen64 C/C++ macro-alias profiles
   stdio-permanent-line-io-header-abi  verify x86 <stdio.h> permanent line-I/O C/C++ declarations and linkage
   stdio-permanent-byte-io-header-abi  verify x86 <stdio.h> permanent byte-I/O C/C++ declarations and linkage
@@ -2806,6 +2807,10 @@ run_stdio_standard_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_stdio_standard_header_abi.sh
 }
 
+run_stdio_header_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_stdio_header_source_form.sh
+}
+
 run_fopen64_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_fopen64_header_abi.sh
 }
@@ -5388,6 +5393,7 @@ case "$command" in
     terminal-streams-header-topology) ;;
     link-header-source-form) ;;
     reboot-header-source-form) ;;
+    stdio-header-source-form) ;;
     math-tgmath-source-form) ;;
     mount-header-source-form) ;;
     fcntl-event-header-topology) ;;
@@ -5689,6 +5695,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "stdio-standard-header-abi takes no arguments"
         ensure_image
         run_stdio_standard_header_abi
+        ;;
+    stdio-header-source-form)
+        [ "$#" -eq 0 ] || fail "stdio-header-source-form takes no arguments"
+        ensure_image
+        run_stdio_header_source_form
         ;;
     fopen64-header-abi)
         [ "$#" -eq 0 ] || fail "fopen64-header-abi takes no arguments"

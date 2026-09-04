@@ -1994,6 +1994,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "terminal-streams-header-topology",
             "link-header-source-form",
             "reboot-header-source-form",
+            "stdio-header-source-form",
             "math-tgmath-source-form",
             "mount-header-source-form",
             "fcntl-event-header-topology",
@@ -2222,6 +2223,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_stdlib_header_abi.sh', source)
         self.assertIn('run_stdio_standard_header_abi()', source)
         self.assertIn('compat/x86_64/run_stdio_standard_header_abi.sh', source)
+        self.assertIn('run_stdio_header_source_form()', source)
+        self.assertIn('compat/x86_64/run_stdio_header_source_form.sh', source)
         self.assertIn('run_ctype_header_abi()', source)
         self.assertIn('compat/x86_64/run_ctype_header_abi.sh', source)
         self.assertIn('run_integer_arithmetic_header_abi()', source)
@@ -12117,7 +12120,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, header_c)
             self.assertIn(required, header_cxx)
         self.assertIn(
-            "#define L_ctermid 20\nchar *ctermid(char *);",
+            "char *ctermid(char *);\n#define L_ctermid 20",
             stdio_header,
         )
         self.assertNotIn("#define L_ctermid 20\n\n/* File access */", stdio_header)
