@@ -209,12 +209,12 @@ id = "selected-header-callable-provider-linkage-audit"
 state = "partial-verified"
 owner = "libc.headers-layouts"
 command = "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
-candidate_external_callable_count = 1526
+candidate_external_callable_count = 1525
 default_static_callable_count = 1119
-verified_feature_callable_count = 47
-verified_feature_profile_count = 21
+verified_feature_callable_count = 52
+verified_feature_profile_count = 23
 declared_unverified_feature_callable_count = 0
-unprovided_callable_count = 360
+unprovided_callable_count = 354
 topology_only_profile_count = 1
 ordinary_archive_extraction = true
 uses_whole_archive = false
@@ -230,11 +230,11 @@ owner = "libc.headers-layouts"
 command = "./scripts/dev-x86_64.sh header-callable-disposition"
 contract = "compat/x86_64/header_callable_disposition.toml"
 report = "compat/x86_64/header_callable_disposition.json"
-candidate_external_callable_count = 1526
+candidate_external_callable_count = 1525
 default_static_callable_count = 1119
-verified_feature_callable_count = 47
+verified_feature_callable_count = 52
 declared_unverified_feature_callable_count = 0
-unprovided_callable_count = 360
+unprovided_callable_count = 354
 missing_reference_declaration_name_count = 0
 missing_reference_declaration_record_count = 0
 missing_reference_declaration_routing_complete = true
@@ -243,7 +243,7 @@ header_declaration_parity_complete = false
 final_provider_archive_closure_complete = false
 family_promotion = false
 public_support = false
-description = "The checked compiler-derived disposition routes all 1,526 selected external callable names through current default or verified-feature provider assignments, exact planned semantic owners, compiler-builtin, consumer-supplied, or oracle-declared-no-provider records. The project-only addressable stdatomic declarations now have selected default-static providers without making their source-only header policy public support. The zero current missing pinned-musl declaration names do not make this routing pass declaration parity. It excludes archive extraction, runtime semantics, final C ABI provider/archive closure, header-family promotion, and public x86 support."
+description = "The checked compiler-derived disposition routes all 1,525 selected external callable names through current default or verified-feature provider assignments, exact planned semantic owners, compiler-builtin, consumer-supplied, or oracle-declared-no-provider records. The project-only addressable stdatomic declarations have selected default-static providers, while the interval-timer and pthread-spin opt-in archives own five selected feature providers, without making their source-only header policy public support. The zero current missing pinned-musl declaration names do not make this routing pass declaration parity. It excludes archive extraction, runtime semantics, final C ABI provider/archive closure, header-family promotion, and public x86 support."
 
 [selected_header_install_projection]
 id = "x86-selected-header-install-projection"
@@ -1458,8 +1458,8 @@ pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
 comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 748, mismatch = 532, oracle-not-applicable = 1 }
-identity_difference_counts = { candidate_only = 12140, reference_only = 8219 }
-source_form_difference_count = 2448
+identity_difference_counts = { candidate_only = 13036, reference_only = 1709 }
+source_form_difference_count = 2567
 source_form_difference_row_count = 432
 source_form_only_difference_row_count = 71
 scope = "Derived from the checked compiler-generated declaration-form report, this all-header direct-public-include C11/C++17 matrix compares named function, typedef, record, enum, variable, and macro identities only for comparable rows. It preserves same-identity source-form differences as separately accounted context, records every current comparable identity gap, and accounts for project-only and oracle-not-applicable rows through checked candidate fact summaries and digests. It excludes declaration-form equality, macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, and public support."
@@ -1493,7 +1493,7 @@ pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
 comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 677, mismatch = 603, oracle-not-applicable = 1 }
-mismatch_fact_counts = { candidate_only_count = 12140, incompatible_count = 2448, reference_only_count = 8219 }
+mismatch_fact_counts = { candidate_only_count = 13036, incompatible_count = 2567, reference_only_count = 1709 }
 scope = "Compiler-derived direct-public-include source declaration forms: function signatures with emitted linkage spellings, named typedefs, named record shapes, enum values, variables, and macro replacement forms across all seven C11/C++17 profiles. It records red source-form differences and one pinned-musl C11 strict aio.h oracle-not-applicable row, but does not classify raw spelling differences as ABI differences or prove record byte layouts, anonymous declarations, archive linkage, runtime behavior, family promotion, or public support."
 
 [[language_profile]]

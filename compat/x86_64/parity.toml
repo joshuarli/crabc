@@ -1491,7 +1491,7 @@ id = "libc.headers-layouts"
 order = 60
 depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
-description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf, plus GNU `<sys/stat.h>` `statx` declaration/layout and C++ C-linkage evidence without a C runtime-provider claim; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, seven-row `stddef.h`, seven-row `netinet/tcp.h`, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. Its separate selected install projection materializes the 183 pinned paths and project-private bits/** inputs while explicitly excluding the eight shared source-only headers; that private source-preserving policy does not complete callable providers. The checked declaration/macro identity matrix derives generic feature visibility from that compiler-generated source-form report: it records 532 current comparable identity-mismatch rows and 748 matched rows, while the one aio.h oracle-not-applicable row and 56 project-only rows retain checked candidate fact summaries and digests; 2,448 same-identity source-form differences remain separately accounted. The compiler-derived callable inventory partitions every declared external among default, feature, and remaining provider classes. Its checked disposition now routes all 1,526 selected external names through current selected provider assignments or exact deferred owners, with zero current missing pinned-musl declaration records; neither fact completes declaration parity or C-ABI provider closure. A selected-provider audit ordinarily extracts all 1,119 current default-static and 47 verified feature-provider members through isolated exact Cargo profiles, while retaining the 360-name deferred complement and full callable closure as red work. The project-only `stdatomic.h` artifact separately proves its six address-taken C symbols without exposing a C++ header surface or treating Musl's absent header as an oracle. Its all-header matrix records direct callable name/class visibility differences and the eight project-only current surfaces without treating either as prototype, noncallable ABI, linkage, or runtime parity. The checked `headers_layouts_aggregate` control binds each direct probe, generic report, profile/facet/ownership roster, and finite blocker to reviewed native runners while retaining planned family status. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Declaration-form equality, record byte layouts, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
+description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf, plus GNU `<sys/stat.h>` `statx` declaration/layout and C++ C-linkage evidence without a C runtime-provider claim; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, seven-row `stddef.h`, seven-row `netinet/tcp.h`, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. Its separate selected install projection materializes the 183 pinned paths and project-private bits/** inputs while explicitly excluding the eight shared source-only headers; that private source-preserving policy does not complete callable providers. The checked declaration/macro identity matrix derives generic feature visibility from that compiler-generated source-form report: it records 532 current comparable identity-mismatch rows and 748 matched rows, while the one aio.h oracle-not-applicable row and 56 project-only rows retain checked candidate fact summaries and digests; 2,448 same-identity source-form differences remain separately accounted. The compiler-derived callable inventory partitions every declared external among default, feature, and remaining provider classes. Its checked disposition now routes all 1,525 selected external names through current selected provider assignments or exact deferred owners, with zero current missing pinned-musl declaration records; neither fact completes declaration parity or C-ABI provider closure. A selected-provider audit ordinarily extracts all 1,119 current default-static and 52 verified feature-provider members through isolated exact Cargo profiles, while retaining the 354-name deferred complement and full callable closure as red work. The project-only `stdatomic.h` artifact separately proves its six address-taken C symbols without exposing a C++ header surface or treating Musl's absent header as an oracle. Its all-header matrix records direct callable name/class visibility differences and the eight project-only current surfaces without treating either as prototype, noncallable ABI, linkage, or runtime parity. The checked `headers_layouts_aggregate` control binds each direct probe, generic report, profile/facet/ownership roster, and finite blocker to reviewed native runners while retaining planned family status. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Declaration-form equality, record byte layouts, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
 aarch64_gates = ["abi-probe", "build", "test"]
 source_owners = [
   "docker/Dockerfile.x86_64",
@@ -2092,7 +2092,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-h
 
 [[family.verified_artifact]]
 id = "all-header-callable-feature-visibility"
-description = "Private native x86 all-header callable feature-visibility artifact within still-planned `libc.headers-layouts`. It checks a compiler-derived 1,337-row direct-public-include C11/C++17 matrix against pinned musl 1.2.6, records 163 current comparable callable name/class mismatch rows, one current oracle-not-applicable `aio.h` row, and 56 project-only header/profile rows with explicit pending-C-ABI-policy dispositions. It proves a finite callable visibility baseline only: it does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support."
+description = "Private native x86 all-header callable feature-visibility artifact within still-planned `libc.headers-layouts`. It checks a compiler-derived 1,337-row direct-public-include C11/C++17 matrix against pinned musl 1.2.6, records 129 current comparable callable name/class mismatch rows, one current oracle-not-applicable `aio.h` row, and 56 project-only header/profile rows with explicit pending-C-ABI-policy dispositions. It proves a finite callable visibility baseline only: it does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support."
 source_owners = [
   "compat/x86_64/header_callable_inventory.json",
   "compat/x86_64/header_callable_inventory.py",
@@ -2120,7 +2120,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-h
 
 [[family.verified_artifact]]
 id = "header-callable-disposition"
-description = "Private native x86 checked header-callable disposition artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived selected external callable inventory and derives, rather than replaces, its current selected provider assignments before validating an exact, disjoint ownership routing for all 1,526 current names: 1,119 default-static, 47 verified feature-provider, and 360 exact deferred-owner records. The deferred names retain planned semantic family owners, compiler-builtin, consumer-supplied callback, and oracle-declared-no-provider distinctions rather than becoming a blanket no-provider exception. The project-only addressable atomic names are now exact default-static assignments. The zero current pinned-musl missing declaration records are not declaration parity. It does not perform archive extraction, establish runtime semantics, complete final C ABI provider/archive closure, promote the header family, or claim public x86 support."
+description = "Private native x86 checked header-callable disposition artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived selected external callable inventory and derives, rather than replaces, its current selected provider assignments before validating an exact, disjoint ownership routing for all 1,525 current names: 1,119 default-static, 52 verified feature-provider, and 354 exact deferred-owner records. The deferred names retain planned semantic family owners, compiler-builtin, consumer-supplied callback, and oracle-declared-no-provider distinctions rather than becoming a blanket no-provider exception. The project-only addressable atomic names are exact default-static assignments, while the selected interval-timer and pthread-spin feature archives own their five opt-in names. The zero current pinned-musl missing declaration records are not declaration parity. It does not perform archive extraction, establish runtime semantics, complete final C ABI provider/archive closure, promote the header family, or claim public x86 support."
 source_owners = [
   "compat/x86_64/header_callable_disposition.toml",
   "compat/x86_64/header_callable_disposition.py",
@@ -2147,12 +2147,12 @@ x86_header_prerequisites = [
   "Header ownership routing is complete only when every selected external name and every current missing pinned-musl declaration name has one exact checked record. A zero missing-declaration roster does not waive the independent declaration/macro matrix or final provider closure.",
   "Compiler builtins, program-supplied callbacks, and oracle-declared no-provider names remain structural dispositions rather than silently becoming archive-provider claims; the project-only addressable atomic declarations have an explicit selected default-static provider.",
 ]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh header-callable-disposition", scope = "Native inventory regeneration plus exact checked header-callable ownership routing report. It preserves the 360 deferred providers as explicit red work; zero missing reference declaration names do not establish declaration parity. It is not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh header-callable-disposition", scope = "Native inventory regeneration plus exact checked header-callable ownership routing report. It preserves the 354 deferred providers as explicit red work; zero missing reference declaration names do not establish declaration parity. It is not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 public headers and checked compiler-derived callable inventory", role = "Selected callable declaration and missing-reference boundary oracle; provider/archive proof remains separate." }]
 
 [[family.verified_artifact]]
 id = "selected-header-callable-provider-linkage-audit"
-description = "Private native x86 selected header-callable provider linkage artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived candidate callable inventory, builds the no-feature default static archive plus every verified feature archive in isolated exact Cargo requests, and uses ordinary archive extraction to prove all 1,119 current default-static and 47 verified feature-provider callable members. It checks each declared replacement symbol is extractable from both baseline and enabled archives, while dedicated environment and resolver evidence retains replacement-provider selection and behavior; it proves weak same-address aliases without making hidden resolver targets public. The named `x86-crypt-allocator-composition` profile is deliberately topology-only: the audit builds only its named composition and delegates its intentionally rejected direct manual pair plus allocator-provider proof to its dedicated runner. The finite 360-name unprovided complement remains explicit, so this is not full callable closure, behavior replacement proof, header-family promotion, runtime completion, or public x86 support."
+description = "Private native x86 selected header-callable provider linkage artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived candidate callable inventory, builds the no-feature default static archive plus every verified feature archive in isolated exact Cargo requests, and uses ordinary archive extraction to prove all 1,119 current default-static and 52 verified feature-provider callable members. It checks each declared replacement symbol is extractable from both baseline and enabled archives, while dedicated environment and resolver evidence retains replacement-provider selection and behavior; it proves weak same-address aliases without making hidden resolver targets public. The named `x86-crypt-allocator-composition` profile is deliberately topology-only: the audit builds only its named composition and delegates its intentionally rejected direct manual pair plus allocator-provider proof to its dedicated runner. The finite 354-name unprovided complement remains explicit, so this is not full callable closure, behavior replacement proof, header-family promotion, runtime completion, or public x86 support."
 source_owners = [
   "compat/x86_64/feature_archive_roster.py",
   "compat/x86_64/header_callable_inventory.toml",
@@ -5886,6 +5886,60 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, feature-test declaration, and valid-input behavior oracle for src/unistd/ualarm.c plus the x86 LP64 direct branch of src/signal/setitimer.c: zero-second microsecond ITIMER_REAL fields and old tv_sec*1000000 + tv_usec return. Its uninitialized it_old makes the invalid-field return deliberately non-oracular." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "setitimer=38 register ABI, ITIMER_REAL selector, timeval/itimerval record layout, canonical tv_usec validation, and process-global timer state observed by the fixture." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "Unsigned-int two-argument C/C++ linkage, feature archive delta, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-interval-timers"
+description = "Private native x86 opt-in selected-static-archive two-symbol process interval-timer control artifact inside planned `libc.posix-runtime`. Only the `x86-interval-timers` feature archive exposes exactly `getitimer` and `setitimer`; the frozen default `static_c_abi_exports.txt` archive deliberately remains unchanged. The source-specific Linux/x86-64 port of pinned musl 1.2.6 `src/signal/getitimer.c` and `src/signal/setitimer.c` forwards caller-owned 32-byte `itimerval` records directly to Linux syscalls 36 and 38, preserving ordinary Linux pointer, selector, and timeval validation through the shared errno translation boundary. Its project-header C fixture first executes through pinned musl and then a true `-nostdlib -static` candidate, proving zero/one-shot/periodic state, old-value observation, stale errno on success, invalid timeval rejection, unchanged timer state, feature-archive delta, and archive ownership. It does not select `alarm` or `ualarm`, install signal handlers, alter masks, wait for delivery, choose signal or POSIX-timer policy, provide timer descriptors, complete a signal or timer family, promote any capability, or claim public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/interval_timers.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/stddef.h",
+  "include/sys/time.h",
+  "include/sys/select.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/libc_interval_timers_probe.c",
+  "compat/x86_64/libc_interval_timers_start.S",
+  "compat/x86_64/run_libc_interval_timers.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/header_callable_disposition.toml",
+  "compat/x86_64/header_callable_disposition.json",
+  "compat/x86_64/header_callable_inventory.json",
+  "compat/x86_64/headers-layouts-foundation.toml",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_feature_archive_roster.py",
+  "compat/x86_64/tests/test_header_callable_inventory.py",
+  "compat/x86_64/tests/test_interval_timers.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/parity.toml",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 `src/signal/getitimer.c` and `src/signal/setitimer.c` are direct x86 LP64 syscall wrappers. SysV AMD64 passes `int which` in edi and each pointer in rsi/rdx; Linux x86-64 receives getitimer=36 and setitimer=38 with 32-byte align-eight `itimerval` records containing two 16-byte `timeval` records of signed eight-byte longs.",
+  "The exported unsafe C functions retain the Linux pointer contract: getitimer's output must be writable, setitimer's new value must be readable, and its old value is either null or writable for a complete aligned record. The kernel owns invalid selector, invalid pointer, and timeval-range rejection; successful calls preserve stale errno through `c_status`.",
+  "The true-static fixture exercises clean zero, one-shot, periodic, prior-value, stale-errno, invalid-timeval, and unchanged-state cases after a direct Static Initial TLS v1 errno bootstrap. It rejects default-export drift, unowned archive members, dynamic TLS, allocators, unresolved symbols, interpreter/DT_NEEDED, and unrelated timer, signal, pthread, or allocator surfaces.",
+]
+x86_header_prerequisites = [
+  "The project-first C trace uses project `errno.h`, `stddef.h`, `sys/time.h`, `sys/select.h`, `sys/syscall.h`, `bits/alltypes.h`, and `bits/syscall.h` while compiling the exact `getitimer`/`setitimer` signatures and LP64 `timeval`/`itimerval` layouts against pinned musl. This is a bounded declaration/layout trace, not installed-header or timer-family completion.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-interval-timers", scope = "Pinned-musl 1.2.6 project-header C reference plus a true opt-in `x86-interval-timers` x86 crabc-libc archive and `-nostdlib -static` candidate. The gate proves the feature archive delta is exactly getitimer/setitimer while the default static export roster excludes both; checks source/archive/final-ELF ownership, initial-TLS errno, direct getitimer=36 and setitimer=38 syscalls, and zero/one-shot/periodic/prior-value/stale-errno/invalid-timeval-and-unchanged-state behavior. It rejects signal handlers/masks/waits/delivery policy, alarm/ualarm, POSIX timers, timer descriptors, pthreads, allocation, dynamic TLS, loader, CRT, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/signal/getitimer.c and src/signal/setitimer.c: direct public record forwarding, selector handling, and ordinary error result boundary." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "getitimer=36 and setitimer=38 register ABI, ITIMER selectors, x86 LP64 timeval/itimerval layout, pointer validation, timeval validation, and process-global timer state." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "Int/pointer call ABI, caller-owned LP64 record layouts, static archive extraction, and direct final-static executable purity boundary." },
 ]
 
 [[family.verified_artifact]]
@@ -12092,6 +12146,57 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-spin-init", scope = "Pinned-musl 1.2.6 project-header C reference plus a dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The same 5-by-5 initial/pshared corpus proves each call returns zero and fully resets arbitrary four-byte caller-owned record bits. Header/source/archive/final-ELF/disassembly checks require exactly pthread_spin_init, direct record storage, the closed static export surface, C++ C linkage, and no interpreter/DT_NEEDED/unresolved symbol, PT_TLS, errno/bootstrap, syscall in the leaf, helper call, allocator, or ambient runtime. It excludes destroy/lock/trylock/unlock, process sharing, synchronization, thread/TLS lifecycle, cancellation, family completion, promotion, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/thread/pthread_spin_init.c: direct zero store and zero return while ignoring pshared. Other spin APIs, process sharing, and lifecycle remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/int function ABI, public four-byte aligned spinlock record layout, C++ C linkage, static archive ownership, and direct static executable purity boundary." }]
+
+[[family.verified_artifact]]
+id = "static-c-pthread-spin-operations"
+description = "Private native x86 opt-in selected-static-archive three-symbol pthread spin-operation artifact inside still-planned `libc.pthread-tls`. Only the `x86-pthread-spin-operations` feature archive adds exactly `pthread_spin_lock`, `pthread_spin_trylock`, and `pthread_spin_unlock`; the frozen default static archive remains closed while the separately selected init/destroy leaves retain their own boundaries. This source-specific semantic port of pinned musl 1.2.6 `pthread_spin_lock.c`, `pthread_spin_trylock.c`, and `pthread_spin_unlock.c` operates on one caller-owned four-byte `pthread_spinlock_t`: lock loops on a zero-to-EBUSY compare/exchange with x86 `pause`, trylock returns the compare/exchange observation, and unlock atomically stores zero with release ordering. The project-first pinned-musl C fixture and C/C++ header probes are then linked into a true `-nostdlib -static` candidate, proving the exact feature delta, source ownership, lock-state behavior, C++ linkage, and final ELF closure. It does not select process sharing, mutexes, condition variables, thread lifecycle, TLS, cancellation, allocation, errno, a general pthread runtime, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/pthread_spin_operations.rs",
+  "libc/src/c_abi/x86_64/pthread_spin_init.rs",
+  "libc/src/c_abi/x86_64/atomic.rs",
+  "include/features.h",
+  "include/pthread.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/pthread_spin_operations_header_abi_probe.c",
+  "compat/x86_64/pthread_spin_operations_header_abi_probe.cpp",
+  "compat/x86_64/run_pthread_spin_operations_header_abi.sh",
+  "compat/x86_64/libc_pthread_spin_operations_probe.c",
+  "compat/x86_64/libc_pthread_spin_operations_start.S",
+  "compat/x86_64/run_libc_pthread_spin_operations.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/header_callable_disposition.toml",
+  "compat/x86_64/header_callable_disposition.json",
+  "compat/x86_64/header_callable_inventory.json",
+  "compat/x86_64/headers-layouts-foundation.toml",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_feature_archive_roster.py",
+  "compat/x86_64/tests/test_header_callable_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/parity.toml",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 `src/thread/pthread_spin_lock.c`, `pthread_spin_trylock.c`, and `pthread_spin_unlock.c` define the exact selected state machine: zero means unlocked, EBUSY is the held word, lock retries compare/exchange after x86 `pause`, trylock returns the observation, and unlock performs the zero release store.",
+  "SysV AMD64 passes the four-byte aligned writable `pthread_spinlock_t *` in rdi and returns the four-byte int result in eax. The selected port composes only the existing four-byte initializer record and private atomic helper; no TCB, TLS, errno, syscall, allocator, or mutex/condition state is introduced.",
+  "The true-static candidate links project-header fixture, selected init, and selected operations only. It proves exact three-name feature delta, C++ unmangled references, lock/trylock/unlock transitions, x86 pause/cmpxchg ownership, no dynamic TLS/allocators/unresolved symbols/interpreter/DT_NEEDED, and no unselected pthread surface.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl and project `<pthread.h>` C/C++ probes prove exact `int (*)(pthread_spinlock_t *)` declarations for lock/trylock/unlock, the four-byte align-four public `pthread_spinlock_t` record, GNU declaration visibility, and retained unmangled C++ references. This is bounded declaration/layout/linkage evidence, not general pthread or installed-header completion.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-spin-operations", scope = "Pinned-musl 1.2.6 project-header C reference and C/C++ header proof plus a true opt-in `x86-pthread-spin-operations` x86 crabc-libc archive and `-nostdlib -static` candidate. The gate proves exactly pthread_spin_lock/pthread_spin_trylock/pthread_spin_unlock beyond the frozen default archive; source/archive/final-ELF/disassembly ownership; x86 pause/cmpxchg behavior; and observable lock, busy trylock, unlock, and reacquisition transitions. It rejects process sharing, mutex/condition/thread lifecycle, TLS, cancellation, errno, allocator, general pthread runtime, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/thread/pthread_spin_lock.c, pthread_spin_trylock.c, and pthread_spin_unlock.c: EBUSY state, acquisition observation, pause retry, and release-to-zero behavior." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/int function ABI, public four-byte aligned spinlock record layout, C++ C linkage, static archive extraction, and direct final-static executable purity boundary." },
+]
 
 [[family.verified_artifact]]
 id = "static-c-pthread-attr-lifecycle"
@@ -19874,6 +19979,18 @@ replacement_callables = []
 aliases = []
 
 [[feature_archive]]
+id = "x86-interval-timers"
+state = "verified"
+evidence_record = "static-c-interval-timers"
+runner = "compat/x86_64/run_libc_interval_timers.sh"
+dispatch_command = "libc-interval-timers"
+baseline_features = []
+enabled_features = ["x86-interval-timers"]
+additive_callables = ["getitimer", "setitimer"]
+replacement_callables = []
+aliases = []
+
+[[feature_archive]]
 id = "x86-resolver-runtime"
 state = "verified"
 evidence_record = "static-c-resolver-runtime"
@@ -20035,3 +20152,15 @@ enabled_features = ["x86-netdb-setent"]
 additive_callables = ["sethostent", "setnetent"]
 replacement_callables = []
 aliases = [{ name = "setnetent", target = "sethostent", binding = "weak-same-address" }]
+
+[[feature_archive]]
+id = "x86-pthread-spin-operations"
+state = "verified"
+evidence_record = "static-c-pthread-spin-operations"
+runner = "compat/x86_64/run_libc_pthread_spin_operations.sh"
+dispatch_command = "libc-pthread-spin-operations"
+baseline_features = []
+enabled_features = ["x86-pthread-spin-operations"]
+additive_callables = ["pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"]
+replacement_callables = []
+aliases = []

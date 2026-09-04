@@ -445,7 +445,7 @@ def generic_reports(foundation: Mapping[str, Any]) -> list[dict[str, Any]]:
         require(isinstance(summary, Mapping), f"generic report {identifier} summary is invalid")
         if identifier == "callable-disposition":
             require(
-                summary.get("candidate_external_callable_count") == 1526,
+                summary.get("candidate_external_callable_count") == 1525,
                 "generic report callable-disposition candidate count drifted",
             )
         else:
@@ -576,7 +576,7 @@ def validate_accounted_incomplete_linkage_audit_report(report: Mapping[str, Any]
         "accounted-incomplete linkage audit scope drifted",
     )
     require(
-        report.get("external_callable_count") == 1526
+        report.get("external_callable_count") == 1525
         and report.get("ratcheted_external_callable_count") == 1119,
         "accounted-incomplete linkage audit callable counts drifted",
     )
@@ -586,8 +586,8 @@ def validate_accounted_incomplete_linkage_audit_report(report: Mapping[str, Any]
             "callable_provider_counts": {
                 "declared_unverified_feature_archives": 0,
                 "default_static": 1119,
-                "unprovided": 360,
-                "verified_feature_archives": 47,
+                "unprovided": 354,
+                "verified_feature_archives": 52,
             },
             "complete": False,
             "extraction_status_counts": {"extracted": 1119},

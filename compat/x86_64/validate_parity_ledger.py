@@ -406,9 +406,9 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 12140,
-        "incompatible_count": 2448,
-        "reference_only_count": 8219,
+        "candidate_only_count": 13036,
+        "incompatible_count": 2567,
+        "reference_only_count": 1709,
     },
     "mismatch_row_count": 603,
     "pinned_public_header_count": 183,
@@ -425,12 +425,12 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 12140,
+    "candidate_only_identity_count": 13036,
     "candidate_only_identity_kind_counts": {
-        "function": 834,
-        "macro": 8442,
-        "record": 233,
-        "typedef": 2589,
+        "function": 807,
+        "macro": 9727,
+        "record": 216,
+        "typedef": 2244,
         "variable": 42,
     },
     "candidate_public_header_count": 191,
@@ -448,7 +448,7 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 287145,
+    "matched_identity_count": 293655,
     "mismatch_row_count": 532,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
@@ -458,11 +458,11 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 8219,
+    "reference_only_identity_count": 1709,
     "reference_only_identity_kind_counts": {
-        "function": 43,
-        "macro": 8103,
-        "record": 36,
+        "function": 29,
+        "macro": 1614,
+        "record": 29,
         "typedef": 28,
         "variable": 9,
     },
@@ -473,7 +473,7 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
         "mismatch": 603,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 2448,
+    "source_form_difference_count": 2567,
     "source_form_difference_row_count": 432,
     "source_form_only_difference_row_count": 71,
 }
@@ -2690,23 +2690,23 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 1776,
+            "candidate_only_callable_count": 1619,
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1117,
-                "mismatch": 163,
+                "matched": 1151,
+                "mismatch": 129,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "163 comparable pinned header/profile rows have callable visibility differences",
+                "129 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
-            "matched_callable_count": 34555,
-            "mismatch_row_count": 163,
+            "matched_callable_count": 34639,
+            "mismatch_row_count": 129,
             "oracle_not_applicable_candidate_visible_callable_count": 21,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
@@ -2715,7 +2715,7 @@ def require_header_callable_visibility_matrix(
             "project_only_callable_count": 407,
             "project_only_header_count": 8,
             "project_only_row_count": 56,
-            "reference_only_callable_count": 137,
+            "reference_only_callable_count": 53,
             "row_count": 1337,
         },
         "callable visibility matrix finite baseline drifted",
@@ -3211,12 +3211,12 @@ def validate_header_layout_foundation_manifest(
             "state": "partial-verified",
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
-            "candidate_external_callable_count": 1526,
+            "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 47,
-            "verified_feature_profile_count": 21,
+            "verified_feature_callable_count": 52,
+            "verified_feature_profile_count": 23,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 360,
+            "unprovided_callable_count": 354,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3277,11 +3277,11 @@ def validate_header_layout_foundation_manifest(
             "command": EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND,
             "contract": "compat/x86_64/header_callable_disposition.toml",
             "report": "compat/x86_64/header_callable_disposition.json",
-            "candidate_external_callable_count": 1526,
+            "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 47,
+            "verified_feature_callable_count": 52,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 360,
+            "unprovided_callable_count": 354,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
             "missing_reference_declaration_routing_complete": True,
@@ -3297,7 +3297,7 @@ def validate_header_layout_foundation_manifest(
     description = callable_disposition["description"]
     require(
         isinstance(description, str)
-        and "all 1,526 selected external callable names" in description
+        and "all 1,525 selected external callable names" in description
         and "zero current missing pinned-musl declaration names" in description
         and "archive extraction" in description
         and "final C ABI provider/archive closure" in description
@@ -6484,7 +6484,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "163 current comparable callable name/class mismatch rows",
+        "129 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6531,10 +6531,10 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     assert isinstance(description, str)
     for phrase in (
         "still-planned `libc.headers-layouts`",
-        "all 1,526 current names",
+        "all 1,525 current names",
         "1,119 default-static",
-        "47 verified feature-provider",
-        "360 exact deferred-owner records",
+        "52 verified feature-provider",
+        "354 exact deferred-owner records",
         "zero current pinned-musl missing declaration records",
         "not declaration parity",
         "does not perform archive extraction",
@@ -6575,7 +6575,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "360 deferred providers" in scope
+        and "354 deferred providers" in scope
         and "zero missing reference declaration names" in scope
         and "not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
@@ -6597,14 +6597,14 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     require(
         dict(summary)
         == {
-            "candidate_external_callable_count": 1526,
+            "candidate_external_callable_count": 1525,
             "declared_unverified_feature_callable_count": 0,
             "default_static_callable_count": 1119,
             "deferred_resolution_counts": {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 351,
+                "planned-provider": 345,
             },
             "final_provider_archive_closure_complete": False,
             "header_declaration_parity_complete": False,
@@ -6615,8 +6615,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 360,
-            "verified_feature_callable_count": 47,
+            "unprovided_callable_count": 354,
+            "verified_feature_callable_count": 52,
         },
         "header callable disposition summary drifted",
     )
@@ -6678,11 +6678,11 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "isolated exact Cargo requests",
         "ordinary archive extraction",
         "1,119 current default-static",
-        "47 verified feature-provider",
+        "52 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "360-name unprovided complement",
+        "354-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -16726,8 +16726,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -17485,8 +17485,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -17812,8 +17812,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -18183,8 +18183,8 @@ def require_static_pthread_cancel_deferred_artifact(
         "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71035,8 +71035,8 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-atfork-fork artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71367,8 +71367,8 @@ def require_static_pthread_affinity_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread-affinity artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71557,8 +71557,8 @@ def require_static_pthread_cpuclock_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread CPU-clock artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71750,8 +71750,8 @@ def require_static_pthread_name_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread task-name artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -71955,8 +71955,8 @@ def require_static_pthread_spin_destroy_artifact(
         "libc.pthread-tls must contain exactly one source-closed pthread spin-destroy artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -72203,8 +72203,8 @@ def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one pthread attribute artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -72461,8 +72461,8 @@ def require_static_pthread_barrierattr_pshared_artifact(
         "libc.pthread-tls must contain exactly one barrierattr pshared artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -72648,8 +72648,8 @@ def require_static_pthread_barrier_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-barrier artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -72849,8 +72849,8 @@ def require_static_pthread_spin_init_artifact(family: Mapping[str, Any]) -> None
         "libc.pthread-tls must contain exactly one pthread spin-init artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -73091,8 +73091,8 @@ def require_static_thrd_yield_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one direct C11 thrd_yield artifact",
     )
     require(
-        len(artifacts) == 38,
-        "libc.pthread-tls must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.pthread-tls must retain exactly thirty-nine private verified artifacts",
     )
     require(
         family.get("status") == "planned",

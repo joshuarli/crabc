@@ -95,6 +95,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   atomic-addressable-abi  verify addressable C11 atomic flag/fence symbols
   pthread-cancellation-header-abi  verify staged x86 deferred pthread-cancellation C/C++ header ABI profiles
   pthread-spin-destroy-header-abi  verify x86 pthread_spin_destroy C/C++ declaration and linkage
+  pthread-spin-operations-header-abi  verify x86 pthread spin-operation C/C++ declarations and linkage
   stdlib-header-abi  compare x86 <stdlib.h> strict/POSIX/XOPEN/GNU/BSD/LFS profiles with musl
   getloadavg-header-abi  verify x86 GNU/BSD <stdlib.h> getloadavg C/C++ declaration and linkage
   stdio-standard-header-abi  compare selected x86 <stdio.h> standard-stream C/C++ profiles with musl
@@ -252,6 +253,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-alarm  run the static x86 crabc-libc historical SIGALRM timer slice
   ualarm-header-abi  run the x86 musl/project ualarm C/C++ declaration matrix
   libc-ualarm  run the opt-in static x86 crabc-libc ualarm timer slice
+  libc-interval-timers  run the opt-in static x86 crabc-libc getitimer/setitimer slice
   usleep-header-abi  run the x86 musl/project usleep C/C++ declaration matrix
   libc-usleep  run the static x86 crabc-libc usleep nanosleep-adapter slice
   basename-header-abi  run the x86 musl/project basename C/C++ declaration matrix
@@ -405,6 +407,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-barrierattr-pshared  run the static x86 crabc-libc barrier-attribute pshared record slice
   libc-pthread-barrier  run the static x86 crabc-libc private/shared pthread-barrier slice
   libc-pthread-spin-destroy  run the static x86 crabc-libc private pthread spin-destruction leaf
+  libc-pthread-spin-operations  run the opt-in static x86 crabc-libc pthread spin-operation slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
   libc-pthread-rwlock  run the static x86 crabc-libc pthread read/write-lock slice
   libc-pthread-cond-private  run the static x86 crabc-libc private pthread-condition slice
@@ -2738,6 +2741,10 @@ run_pthread_spin_destroy_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_pthread_spin_destroy_header_abi.sh
 }
 
+run_pthread_spin_operations_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_pthread_spin_operations_header_abi.sh
+}
+
 run_stdlib_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_stdlib_header_abi.sh
 }
@@ -3240,6 +3247,14 @@ run_ualarm_header_abi() {
 
 run_libc_ualarm_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_ualarm.sh
+}
+
+run_libc_interval_timers_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_interval_timers.sh
+}
+
+run_libc_pthread_spin_operations_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_spin_operations.sh
 }
 
 run_usleep_header_abi() {
@@ -5089,7 +5104,7 @@ case "$command" in
     psignal-header-abi|libc-psignal|libc-process-signal) ;;
     h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime) ;;
     legacy-misc-header-abi|libc-legacy-misc) ;;
-    ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
+    ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-interval-timers|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
     sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
@@ -5118,7 +5133,7 @@ case "$command" in
     timer-gettime-header-abi) ;;
     timer-settime-header-abi) ;;
     fopen64-header-abi) ;;
-    pthread-spin-destroy-header-abi) ;;
+    pthread-spin-destroy-header-abi|pthread-spin-operations-header-abi) ;;
     sys-io-header-abi) ;;
     tcp-header-abi) ;;
     stddef-header-abi) ;;
@@ -5217,7 +5232,7 @@ case "$command" in
     libc-pthread-affinity) ;;
     libc-pthread-cpuclock) ;;
     libc-pthread-name) ;;
-    libc-pthread-attributes|libc-pthread-attr-lifecycle|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init) ;;
+    libc-pthread-attributes|libc-pthread-attr-lifecycle|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init|libc-pthread-spin-operations) ;;
     libc-pthread-spin-destroy) ;;
     libc-pthread-detach) ;;
     libc-thrd-yield) ;;
@@ -5508,6 +5523,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "pthread-spin-destroy-header-abi takes no arguments"
         ensure_image
         run_pthread_spin_destroy_header_abi
+        ;;
+    pthread-spin-operations-header-abi)
+        [ "$#" -eq 0 ] || fail "pthread-spin-operations-header-abi takes no arguments"
+        ensure_image
+        run_pthread_spin_operations_header_abi
         ;;
     stdlib-header-abi)
         [ "$#" -eq 0 ] || fail "stdlib-header-abi takes no arguments"
@@ -6943,6 +6963,11 @@ case "$command" in
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_pthread_spin_destroy.sh
         ;;
+    libc-pthread-spin-operations)
+        [ "$#" -eq 0 ] || fail "libc-pthread-spin-operations takes no arguments"
+        ensure_image
+        run_libc_pthread_spin_operations_probe
+        ;;
     libc-pthread-detach)
         [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"
         ensure_image
@@ -7961,6 +7986,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-ualarm takes no arguments"
         ensure_image
         run_libc_ualarm_probe
+        ;;
+    libc-interval-timers)
+        [ "$#" -eq 0 ] || fail "libc-interval-timers takes no arguments"
+        ensure_image
+        run_libc_interval_timers_probe
         ;;
     usleep-header-abi)
         [ "$#" -eq 0 ] || fail "usleep-header-abi takes no arguments"

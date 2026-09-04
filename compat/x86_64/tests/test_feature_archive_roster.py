@@ -55,7 +55,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         rows = ROSTER.load_feature_archive_roster()
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
-        self.assertEqual(len(rows), 21)
+        self.assertEqual(len(rows), 23)
         self.assertEqual([item.identifier for item in rows if item.state == "planned"], [])
         resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
         self.assertEqual(resolver.state, "verified")
@@ -72,6 +72,25 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(
             next(item for item in rows if item.identifier == "x86-environment-runtime").additive_callables,
             (),
+        )
+        interval_timers = next(
+            item for item in rows if item.identifier == "x86-interval-timers"
+        )
+        self.assertEqual(interval_timers.evidence_record, "static-c-interval-timers")
+        self.assertEqual(interval_timers.dispatch_command, "libc-interval-timers")
+        self.assertEqual(interval_timers.additive_callables, ("getitimer", "setitimer"))
+        spin_operations = next(
+            item
+            for item in rows
+            if item.identifier == "x86-pthread-spin-operations"
+        )
+        self.assertEqual(
+            spin_operations.evidence_record,
+            "static-c-pthread-spin-operations",
+        )
+        self.assertEqual(
+            spin_operations.additive_callables,
+            ("pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"),
         )
         composition = next(
             item

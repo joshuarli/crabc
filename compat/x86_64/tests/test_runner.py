@@ -1802,7 +1802,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "psignal-header-abi|libc-psignal|libc-process-signal",
             "h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime",
             "legacy-misc-header-abi|libc-legacy-misc",
-            "ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
+            "ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-interval-timers|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
             "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
             "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
@@ -1831,7 +1831,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "timer-gettime-header-abi",
             "timer-settime-header-abi",
             "fopen64-header-abi",
-            "pthread-spin-destroy-header-abi",
+            "pthread-spin-destroy-header-abi|pthread-spin-operations-header-abi",
             "sys-io-header-abi",
             "tcp-header-abi",
             "stddef-header-abi",
@@ -1923,7 +1923,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
             "libc-pthread-name",
-            "libc-pthread-attributes|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init",
+            "libc-pthread-attributes|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init|libc-pthread-spin-operations",
             "libc-pthread-spin-destroy",
             "libc-pthread-detach",
             "libc-thrd-yield",
@@ -2055,6 +2055,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-barrier", source)
         self.assertIn("pthread-spin-destroy-header-abi", source)
         self.assertIn("libc-pthread-spin-destroy", source)
+        self.assertIn("pthread-spin-operations-header-abi", source)
+        self.assertIn("libc-pthread-spin-operations", source)
+        self.assertIn("libc-interval-timers", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("ctermid-header-abi", source)
         self.assertIn("libc-ctermid", source)

@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "1672737efe400d3fb95d2fc77dd7c29cfbc7f6cb687fe5aa1234b6e9ace3a6fb",
-    "candidate_external_callable_sha256": "8278fe5e67fc3e31b0b54a7634568435aba6d9602aca50ebf2b8a6656eeb5c6c",
-    "parity_ledger_sha256": "bf36ae4068b4030b433b4336695c35ad8d07c7eb2ab34cb7fcd1f581a55465a8",
+    "callable_inventory_sha256": "20c947b3c8b4f1294f7a51d348b8b716fd6f483ed0155c3df5f2e33e8883c234",
+    "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
+    "parity_ledger_sha256": "469319c52c0434dc4998784db9f537d29f95a93d352b353bf44377ae1c2d0bb1",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "missing_reference_declaration_groups": [],
@@ -1293,9 +1293,6 @@
           "pthread_setschedparam",
           "pthread_setschedprio",
           "pthread_sigmask",
-          "pthread_spin_lock",
-          "pthread_spin_trylock",
-          "pthread_spin_unlock",
           "pthread_timedjoin_np",
           "pthread_tryjoin_np"
         ],
@@ -1365,7 +1362,6 @@
           "fexecve",
           "forkpty",
           "get_current_dir_name",
-          "getitimer",
           "gmtime",
           "init_module",
           "initstate",
@@ -1396,7 +1392,6 @@
           "open_by_handle_at",
           "openlog",
           "openpty",
-          "pivot_root",
           "posix_openpt",
           "posix_spawn",
           "posix_spawn_file_actions_addchdir_np",
@@ -1426,7 +1421,6 @@
           "sem_open",
           "sem_timedwait",
           "sem_unlink",
-          "setitimer",
           "setlogmask",
           "setns",
           "setstate",
@@ -1643,6 +1637,13 @@
         ]
       },
       {
+        "id": "x86-interval-timers",
+        "members": [
+          "getitimer",
+          "setitimer"
+        ]
+      },
+      {
         "id": "x86-resolver-runtime",
         "members": [
           "__res_state",
@@ -1735,6 +1736,14 @@
           "sethostent",
           "setnetent"
         ]
+      },
+      {
+        "id": "x86-pthread-spin-operations",
+        "members": [
+          "pthread_spin_lock",
+          "pthread_spin_trylock",
+          "pthread_spin_unlock"
+        ]
       }
     ]
   },
@@ -1749,14 +1758,14 @@
     "runtime_semantics": false
   },
   "summary": {
-    "candidate_external_callable_count": 1526,
+    "candidate_external_callable_count": 1525,
     "declared_unverified_feature_callable_count": 0,
     "default_static_callable_count": 1119,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 351
+      "planned-provider": 345
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1767,8 +1776,8 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 360,
-    "verified_feature_callable_count": 47
+    "unprovided_callable_count": 354,
+    "verified_feature_callable_count": 52
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {
@@ -1787,7 +1796,7 @@
       "exact missing-reference declaration roster",
       "native x86 inventory regeneration plus checked report"
     ],
-    "expected_transition": "Completed as a non-promoting checked disposition: all 1,526 current candidate external callable names receive exact accounting records, including statx as a planned libc.posix-runtime provider and six project-only addressable atomic names with selected default-static providers. The 351 planned-provider names remain provider/archive work. Declaration parity remains red despite the zero missing reference declaration names until the independent declaration/macro matrix and remaining header obligations close.",
+    "expected_transition": "Completed as a non-promoting checked disposition: all 1,525 current candidate external callable names receive exact accounting records, including statx as a planned libc.posix-runtime provider, six project-only addressable atomic names with selected default-static providers, and five selected opt-in interval-timer/pthread-spin providers. The 345 planned-provider names remain provider/archive work. Declaration parity remains red despite the zero missing reference declaration names until the independent declaration/macro matrix and remaining header obligations close.",
     "family_aggregate_command": "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts",
     "focused_evidence_command": "./scripts/dev-x86_64.sh header-callable-disposition",
     "negative_scope": "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support.",

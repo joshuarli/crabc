@@ -378,6 +378,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/pthread_name.rs"),
     Path("libc/src/c_abi/x86_64/pthread_setconcurrency.rs"),
     Path("libc/src/c_abi/x86_64/pthread_spin_init.rs"),
+    # The feature-gated lock/trylock/unlock port is separately evidenced and
+    # retains the frozen default spinlock archive boundary.
+    Path("libc/src/c_abi/x86_64/pthread_spin_operations.rs"),
     Path("libc/src/c_abi/x86_64/rand_r.rs"),
     Path("libc/src/c_abi/x86_64/lrand48.rs"),
     Path("libc/src/c_abi/x86_64/stack_chk_fail.rs"),

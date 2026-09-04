@@ -66,9 +66,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 370)
-        self.assertEqual(report["feature_archive_count"], 21)
-        self.assertEqual(report["verified_feature_archive_count"], 21)
+        self.assertEqual(report["verified_artifact_count"], 372)
+        self.assertEqual(report["feature_archive_count"], 23)
+        self.assertEqual(report["verified_feature_archive_count"], 23)
         self.assertEqual(report["planned_feature_archive_count"], 0)
         self.assertEqual(report["header_layout_probe_count"], 55)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -131,9 +131,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             data, self.verified_records(data)
         )
         self.assertEqual(report, {
-            "feature_archive_count": 21,
+            "feature_archive_count": 23,
             "planned_feature_archive_count": 0,
-            "verified_feature_archive_count": 21,
+            "verified_feature_archive_count": 23,
         })
 
         feature_archives = data["feature_archive"]
@@ -3580,7 +3580,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 12140, "reference_only": 8219},
+            {"candidate_only": 13036, "reference_only": 1709},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3611,11 +3611,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             disposition["command"],
             "./scripts/dev-x86_64.sh header-callable-disposition",
         )
-        self.assertEqual(disposition["candidate_external_callable_count"], 1526)
+        self.assertEqual(disposition["candidate_external_callable_count"], 1525)
         self.assertEqual(disposition["default_static_callable_count"], 1119)
-        self.assertEqual(disposition["verified_feature_callable_count"], 47)
+        self.assertEqual(disposition["verified_feature_callable_count"], 52)
         self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 360)
+        self.assertEqual(disposition["unprovided_callable_count"], 354)
         self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
         self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
@@ -3630,12 +3630,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             provider_audit["command"],
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
-        self.assertEqual(provider_audit["candidate_external_callable_count"], 1526)
+        self.assertEqual(provider_audit["candidate_external_callable_count"], 1525)
         self.assertEqual(provider_audit["default_static_callable_count"], 1119)
-        self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
-        self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
+        self.assertEqual(provider_audit["verified_feature_callable_count"], 52)
+        self.assertEqual(provider_audit["verified_feature_profile_count"], 23)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 360)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 354)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -4777,7 +4777,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "163 current comparable callable name/class mismatch rows",
+            "129 current comparable callable name/class mismatch rows",
             "one current oracle-not-applicable `aio.h` row",
             "56 project-only header/profile rows",
             "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -15686,7 +15686,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 38)
+        self.assertEqual(len(artifacts), 39)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -15718,6 +15718,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-barrierattr-pshared",
                 "static-c-pthread-barrier",
                 "static-c-pthread-spin-init",
+                "static-c-pthread-spin-operations",
                 "static-c-thrd-yield",
                 "static-c-pthread-condattr-pshared",
                 "static-c-pthread-condattr-clock",
