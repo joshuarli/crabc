@@ -35,11 +35,16 @@ planning checkpoints, not runtime or allocator completion.
    then establish native x86 M0/M1/M2 qualification. Imported
    AArch64 milestone passes do not count as x86 passes.
    Native unit tests pass with target-qualified PageMap address-bit controls.
-   The quick gate now reaches the private C adapter fixture, which aborts;
-   diagnose that boundary before claiming a complete x86 baseline.
+   The native quick gate passes after correcting legacy fixture allocations
+   that crossed allocator ownership. Native M1 behavioral checks pass on a
+   worker revision, but source-classification requirements still need to be
+   restored in its target-qualified gate before claiming M1 completion.
 3. Integration: agree on bootstrap, errno, TLS/TCB, pthread exit, fork, and
    loader ownership. Continue independent runtime work with the accepted C
    backend; requalify installed x86 products after native allocator promotion.
+   Installed static/static-PIE allocator and TLS consumers now pass, including
+   extracted-package and two-clean-build checks. Complete runtime composition
+   and allocator lifecycle remain open; this is not static-product completion.
 4. Recovery: inspect existing worktrees before duplicating work. The legacy
    `x86/reboot-feature-20260904` branch still has unfinished uncommitted work
    outside the checkout; preserve and reconcile it. Create no new external

@@ -33,6 +33,12 @@ Keep a reproducing regression for bugs and verify changed unsafe/interface
 boundaries, but do not manufacture a failing test for prose or a behavior-neutral
 mechanical change. Reuse existing harnesses and matrices.
 
+Proactively improve test throughput and isolation as harnesses are touched:
+parallelize independent checks with bounded concurrency, reuse development
+artifacts where valid, and give each run private scratch, reports, and process
+ownership. Preserve cold-build reproducibility and clean-revision qualification
+at the final gates; faster iteration must not hide failures or weaken evidence.
+
 Record a result once with its owning contract or report. Update planning/status
 only when priorities, prerequisites, or completion state materially change;
 do not require a new report, handoff essay, or every-document update per slice.
