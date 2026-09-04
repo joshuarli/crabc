@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import stat
+import tempfile
 import subprocess
 import tomllib
 import unittest
@@ -144,6 +145,43 @@ class CandidateHeaderClosureTests(unittest.TestCase):
             "candidate-header-closure takes no arguments",
         ):
             self.assertIn(phrase, dispatcher)
+
+    def test_utmpx_preserves_non_x86_include_route(self) -> None:
+        """The private direct alltypes route must not alter AArch64 inputs."""
+        builtin_include = subprocess.check_output(
+            ["gcc", "-print-file-name=include"], text=True
+        ).strip()
+        self.assertTrue(builtin_include.startswith("/"), builtin_include)
+        with tempfile.TemporaryDirectory(prefix="crabc-utmpx-arch-boundary.") as work:
+            source = Path(work) / "probe.c"
+            source.write_text("#include <utmpx.h>\n", encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "gcc",
+                    "-x",
+                    "c",
+                    "-std=c11",
+                    "-nostdinc",
+                    "-I",
+                    str(ROOT / "include"),
+                    "-isystem",
+                    builtin_include,
+                    "-U__x86_64__",
+                    "-U__amd64__",
+                    "-D__aarch64__",
+                    "-H",
+                    "-fsyntax-only",
+                    str(source),
+                ],
+                cwd=ROOT,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(ROOT / "include" / "sys/types.h"), result.stderr)
+        self.assertIn(str(ROOT / "include" / "sys/time.h"), result.stderr)
 
 
 if __name__ == "__main__":

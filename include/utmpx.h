@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+#if defined(__x86_64__)
 #include <features.h>
 
 #define __NEED_pid_t
@@ -13,6 +14,10 @@ extern "C" {
 #define __NEED_struct_timeval
 
 #include <bits/alltypes.h>
+#else
+#include <sys/types.h>
+#include <sys/time.h>
+#endif
 
 struct utmpx {
     short ut_type;
