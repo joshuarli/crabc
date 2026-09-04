@@ -4844,7 +4844,12 @@ runtime differential adds only `tmpnam` and `tempnam` through
 single process-global 20-byte storage; `tempnam` returns an allocator-owned
 `strdup` copy. Both use the source-selected current-absence probe and never
 create, reserve, open, or unlink a pathname, so neither is a secure
-temporary-object primitive or Rust API.
+temporary-object primitive or Rust API. The shared suffix helper deliberately
+uses raw Linux `clock_gettime=228` and `gettid=186`; a seccomp denial of either
+takes the target-local fail-closed route: `tmpnam`/`tempnam` return `NULL` and
+publish that errno, while `mktemp` clears its supplied template. Musl may
+instead succeed through its VDSO-first clock/TCB path, so this exception is not
+claimed as musl parity.
 
 `libc-filesystem-extensions`
 (`./scripts/dev-x86_64.sh libc-filesystem-extensions`) is the private aggregate

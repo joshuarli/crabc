@@ -680,6 +680,11 @@ allocator string-duplication client. The temporary-name header and runtime
 gates preserve musl's 20-byte caller/global `tmpnam` storage and
 allocator-owned `tempnam` result, including their current-absence probes; they
 do not create, reserve, open, or unlink a pathname and remain inherently racy.
+The shared suffix helper deliberately uses raw Linux `clock_gettime=228` and
+`gettid=186`; a seccomp denial of either takes the target-local fail-closed
+route: `tmpnam`/`tempnam` return `NULL` and publish that errno, while `mktemp`
+clears its supplied template. Musl may instead succeed through its VDSO-first
+clock/TCB path, so this exception is not claimed as musl parity.
 The aggregate therefore records `filesystem.extensions` as
 `selected-private`, not as a secure temporary-object policy, file-handle
 facade, Rust API, family completion, product transition, promotion, or public
