@@ -7,6 +7,13 @@ lifecycle_null_finalizer:
     jmp _start
 .size lifecycle_null_finalizer,.-lifecycle_null_finalizer
 
+.global lifecycle_wrong_finalizer
+.type lifecycle_wrong_finalizer,@function
+lifecycle_wrong_finalizer:
+    lea lifecycle_missing_random(%rip),%rdx
+    jmp _start
+.size lifecycle_wrong_finalizer,.-lifecycle_wrong_finalizer
+
 .global lifecycle_missing_random
 .type lifecycle_missing_random,@function
 lifecycle_missing_random:

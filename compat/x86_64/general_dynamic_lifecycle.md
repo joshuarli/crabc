@@ -56,7 +56,9 @@ stack-protected dependencies using the same general graph owner as any
 admitted topology. Both sibling orders run ordinary return (19), explicit
 exit (23), and immediate exit (29). Preinit, dependency callbacks, executable
 callbacks, and handlers verify environment, auxv/security, compiler guard,
-errno, and initial TLS. Negative entry shims erase `rdx` or `AT_RANDOM` and
+errno, and initial TLS. Guard checks require the exact masked `AT_RANDOM`
+copy, not merely a nonzero slot. Negative entry shims erase or replace `rdx`,
+or erase `AT_RANDOM`, and
 must exit 127 without any callback marker. A native ptrace launch requires
 exactly one attempted and successful FS installation.
 

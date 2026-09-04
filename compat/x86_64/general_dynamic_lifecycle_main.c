@@ -18,13 +18,18 @@ void lifecycle_emit(char value) {
 }
 void lifecycle_runtime_check(void) {
     char *value = getenv("CRABC_LIFECYCLE_VALUE");
-    unsigned long guard;
+    unsigned long guard, expected_guard = 0;
+    const unsigned char *random = (const unsigned char *)getauxval(25);
+    if (!random) _Exit(71);
+    for (unsigned int index = 0; index < sizeof(expected_guard); index++)
+        expected_guard |= (unsigned long)random[index] << (index * 8);
+    expected_guard &= ~0xff00UL;
     __asm__ volatile("mov %%fs:40, %0" : "=r"(guard));
     if (!environ || !value || value[0] != 'y' || value[1] != 'e'
         || value[2] != 's' || value[3] || getauxval(6) != 4096
         || issetugid() != !!(getauxval(23) || getauxval(11) != getauxval(12)
                             || getauxval(13) != getauxval(14))
-        || !guard || (guard & 0xff00) || application_tls != 17)
+        || !guard || guard != expected_guard || application_tls != 17)
         _Exit(71);
 }
 static void preinit(void) {

@@ -99,7 +99,7 @@ for order in left right; do
         [ "$(<"$work/musl-$order-$mode.txt")" = "${expected_output#P}" ]
     done
 done
-for entry in lifecycle_null_finalizer lifecycle_missing_random; do
+for entry in lifecycle_null_finalizer lifecycle_wrong_finalizer lifecycle_missing_random; do
     REJECT_ENTRY="$entry" build_applications left right return
     status=0
     env -i PATH=/usr/bin:/bin CRABC_LIFECYCLE_VALUE=yes \
@@ -118,5 +118,6 @@ for binary in loader.so libcrabc-dynamic.so candidate shared.so left.so right.so
 done
 ! grep -q '(NEEDED)' "$work/loader.so.dynamic.txt"
 ! grep -q '(NEEDED)' "$work/libcrabc-dynamic.so.dynamic.txt"
-! readelf --dyn-syms -W "$work/libcrabc-dynamic.so" | grep -q '__crabc_dynamic_main_thread_runtime_v1_fini_state'
+readelf --dyn-syms -W "$work/libcrabc-dynamic.so" >"$work/libcrabc-dynamic.so.symbols.txt"
+! grep -q '__crabc_dynamic_main_thread_runtime_v1_fini_state' "$work/libcrabc-dynamic.so.symbols.txt"
 printf 'general dynamic lifecycle: PASS (owned Scrt1/libc, return/exit/_Exit, musl order, guard/TLS/env/auxv); evidence: %s\n' "$work"
