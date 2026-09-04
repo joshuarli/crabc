@@ -184,7 +184,59 @@ def sha256_file(path: Path) -> str:
 
 
 def source_header(node: Mapping[str, Any], header_root: Path) -> str | None:
-    return inventory.source_path_for_location(node.get("loc"), header_root)
+    """Resolve a record declaration's physical source header.
+
+    ``includedFrom`` identifies the include context, not the declaration's
+    owner.  The callable inventory intentionally considers that context for
+    its own provenance, but using it here turns compact transitive AST records
+    such as ``struct flock`` into declarations of every wrapper that includes
+    ``fcntl.h``.  Record-layout comparison instead follows only the physical
+    location and its spelling/expansion locations.
+    """
+    location = node.get("loc")
+    if not isinstance(location, Mapping):
+        return None
+    candidates: list[Mapping[str, Any]] = [location]
+    for key in ("spellingLoc", "expansionLoc"):
+        nested = location.get(key)
+        if isinstance(nested, Mapping):
+            candidates.append(nested)
+    resolved_root = header_root.resolve()
+    for candidate in candidates:
+        file_name = candidate.get("file")
+        if not isinstance(file_name, str) or not file_name or file_name.startswith("<"):
+            continue
+        try:
+            return Path(file_name).resolve().relative_to(resolved_root).as_posix()
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def direct_include_header(location: object, header_root: Path, primary_header: str) -> str | None:
+    """Recover a compact declaration only when its include context is direct.
+
+    Clang can omit the physical file for a declaration at the start of a
+    direct public include.  A primary-header or generated-TU context then
+    identifies that direct observation.  An intermediate project header does
+    not: it must never turn a transitive record into the wrapper's record.
+    This fallback deliberately does not update ``last_physical_header``.
+    """
+    if not isinstance(location, Mapping):
+        return None
+    included_from = location.get("includedFrom")
+    if not isinstance(included_from, Mapping):
+        return None
+    file_name = included_from.get("file")
+    if not isinstance(file_name, str) or not file_name or file_name.startswith("<"):
+        return None
+    try:
+        included_header = Path(file_name).resolve().relative_to(header_root.resolve()).as_posix()
+    except (OSError, ValueError):
+        # The compiler's generated translation unit lies outside the header
+        # tree, so its direct include is the only public-header context.
+        return primary_header
+    return primary_header if included_header == primary_header else None
 
 
 def explicit_location(location: object) -> bool:
@@ -228,18 +280,20 @@ def child_field_name(parent: Mapping[str, Any], child: Mapping[str, Any]) -> str
 def declaration_nodes(ast: Mapping[str, Any], header_root: Path, primary_header: str) -> list[tuple[Mapping[str, Any], str | None, tuple[str, ...], tuple[str, ...]]]:
     result: list[tuple[Mapping[str, Any], str | None, tuple[str, ...], tuple[str, ...]]] = []
     stack: list[tuple[Mapping[str, Any], tuple[str, ...], tuple[str, ...]]] = [(ast, (), ())]
-    last_header: str | None = None
+    last_physical_header: str | None = None
     while stack:
         node, context, field_path = stack.pop()
         location = node.get("loc")
         physical = source_header(node, header_root)
         if physical is not None:
-            last_header = physical
+            last_physical_header = physical
         elif explicit_location(location):
-            last_header = None
+            last_physical_header = None
         visible = physical
         if visible is None and compact_location(location):
-            visible = last_header
+            visible = last_physical_header
+        if visible is None:
+            visible = direct_include_header(location, header_root, primary_header)
         result.append((node, visible if visible == primary_header else None, context, field_path))
         children = node.get("inner")
         if isinstance(children, list):

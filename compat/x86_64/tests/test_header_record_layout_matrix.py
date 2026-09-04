@@ -92,6 +92,98 @@ Layout: <ASTRecordLayout
         self.assertEqual(parsed["struct c_record"], {"size": 8, "alignment": 4, "offsets": [0, 32]})
         self.assertEqual(parsed["struct CxxRecord"]["size"], 8)
 
+    def test_transitive_record_keeps_its_physical_header_origin(self) -> None:
+        """Do not attribute a compact fcntl AST record to an including wrapper."""
+        header_root = ROOT / "include"
+        fcntl_path = str(header_root / "fcntl.h")
+        semaphore_path = str(header_root / "semaphore.h")
+        flock = {
+            "kind": "RecordDecl",
+            "name": "flock",
+            "loc": {
+                "offset": 20,
+                "line": 2,
+                "col": 1,
+                "includedFrom": {"file": semaphore_path},
+            },
+        }
+        ast = {
+            "kind": "TranslationUnitDecl",
+            "inner": [
+                {
+                    "kind": "TypedefDecl",
+                    "name": "fcntl_prelude",
+                    "loc": {"file": fcntl_path, "line": 1, "col": 1},
+                },
+                flock,
+            ],
+        }
+
+        def flock_header(primary_header: str) -> str | None:
+            nodes = MATRIX.declaration_nodes(ast, header_root, primary_header)
+            return next(
+                visible
+                for node, visible, _context, _field_path in nodes
+                if node.get("name") == "flock"
+            )
+
+        self.assertIsNone(flock_header("semaphore.h"))
+        self.assertEqual(flock_header("fcntl.h"), "fcntl.h")
+
+    def test_compact_direct_record_uses_only_a_direct_include_context(self) -> None:
+        """Compact records may use the primary include, never an intermediate header."""
+        header_root = ROOT / "include"
+        primary_path = str(header_root / "fenv.h")
+
+        def record_header(included_from: str, prior_physical_header: str | None = None) -> str | None:
+            inner = []
+            if prior_physical_header is not None:
+                inner.append(
+                    {
+                        "kind": "TypedefDecl",
+                        "name": "physical_prelude",
+                        "loc": {"file": prior_physical_header, "line": 1, "col": 1},
+                    }
+                )
+            inner.append(
+                {
+                    "kind": "RecordDecl",
+                    "name": "compact_fenv",
+                    "loc": {
+                        "offset": 20,
+                        "line": 2,
+                        "col": 1,
+                        "includedFrom": {"file": included_from},
+                    },
+                }
+            )
+            ast = {
+                "kind": "TranslationUnitDecl",
+                "inner": inner,
+            }
+            nodes = MATRIX.declaration_nodes(ast, header_root, "fenv.h")
+            return next(
+                visible
+                for node, visible, _context, _field_path in nodes
+                if node.get("name") == "compact_fenv"
+            )
+
+        self.assertEqual(record_header(primary_path), "fenv.h")
+        self.assertEqual(record_header("/tmp/record-layout-matrix/ast.c"), "fenv.h")
+        self.assertIsNone(record_header(str(header_root / "fcntl.h")))
+        self.assertIsNone(record_header(primary_path, str(header_root / "bits" / "fenv.h")))
+
+    def test_physical_spelling_location_beats_include_context(self) -> None:
+        """A spelling location remains source ownership even through a wrapper."""
+        header_root = ROOT / "include"
+        record = {
+            "loc": {
+                "spellingLoc": {"file": str(header_root / "fcntl.h")},
+                "includedFrom": {"file": str(header_root / "semaphore.h")},
+            }
+        }
+        self.assertEqual(MATRIX.source_header(record, header_root), "fcntl.h")
+
     def test_checked_report_is_finite_non_promoting_and_hash_bound(self) -> None:
         report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
         MATRIX.validate_checked_report(report, MATRIX.load_contract())

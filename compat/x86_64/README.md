@@ -1777,10 +1777,11 @@ family promotion, and public x86 support.
 `header-record-layout-matrix` is a separate checked Clang-derived 1,337-row
 report for complete named record sizes, alignments, and named field offsets.
 It keeps incomplete, anonymous-only, bit-field, flexible-tail, and
-non-addressable record or field facts explicit. Its 191 current comparable
-byte-layout mismatch rows, 1,089 matched rows, one `aio.h:c11-strict`
+non-addressable record or field facts explicit. Its 88 current comparable
+byte-layout mismatch rows, 1,192 matched rows, one `aio.h:c11-strict`
 oracle-not-applicable row, and 56 project-only rows are finite partial evidence
-only: it does not establish declaration-form equality, archive linkage,
+only: physical declaration ownership prevents an `includedFrom` wrapper from
+claiming a transitive record, and it does not establish declaration-form equality, archive linkage,
 runtime behavior, family promotion, or public x86 support.
 
 `header-declaration-macro-visibility-matrix` derives a checked identity report

@@ -3888,8 +3888,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             record_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 1089,
-                "mismatch": 191,
+                "matched": 1192,
+                "mismatch": 88,
                 "oracle-not-applicable": 1,
             },
         )
@@ -5161,12 +5161,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "191 current comparable record-byte-layout mismatch rows",
-            "1,089 matched rows",
+            "88 current comparable record-byte-layout mismatch rows",
+            "1,192 matched rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "complete named record sizes, alignments, and named field offsets",
             "incomplete, anonymous-only, bit-field, flexible-tail, and non-addressable",
+            "Physical declaration ownership prevents a wrapper's include context from claiming a transitive record",
             "does not prove declaration-form equality, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])

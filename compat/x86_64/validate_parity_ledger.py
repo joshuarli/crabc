@@ -434,22 +434,22 @@ EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_COMMAND = (
 )
 EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_SUMMARY = {
     "candidate_field_categories": {
-        "bit-field": 723,
-        "flexible-tail": 59,
+        "bit-field": 343,
+        "flexible-tail": 31,
         "non-addressable-field": 10,
     },
     "candidate_public_header_count": 191,
-    "candidate_record_categories": {"anonymous-only": 1015, "incomplete": 211},
-    "candidate_record_count": 5530,
+    "candidate_record_categories": {"anonymous-only": 446, "incomplete": 88},
+    "candidate_record_count": 2549,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 1089,
-        "mismatch": 191,
+        "matched": 1192,
+        "mismatch": 88,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "191 comparable header/profile rows have record-byte-layout differences",
+        "88 comparable header/profile rows have record-byte-layout differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record-byte-layouts remain partial until every applicable named record and field is matched",
@@ -458,12 +458,12 @@ EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_SUMMARY = {
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "reference_field_categories": {
-        "bit-field": 723,
-        "flexible-tail": 59,
+        "bit-field": 329,
+        "flexible-tail": 31,
         "non-addressable-field": 10,
     },
-    "reference_record_categories": {"anonymous-only": 986, "incomplete": 209},
-    "reference_record_count": 5106,
+    "reference_record_categories": {"anonymous-only": 436, "incomplete": 89},
+    "reference_record_count": 2186,
     "row_count": 1337,
 }
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_COMMAND = (
@@ -7057,12 +7057,13 @@ def require_all_header_record_byte_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "191 current comparable record-byte-layout mismatch rows",
-        "1,089 matched rows",
+        "88 current comparable record-byte-layout mismatch rows",
+        "1,192 matched rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "complete named record sizes, alignments, and named field offsets",
         "incomplete, anonymous-only, bit-field, flexible-tail, and non-addressable",
+        "Physical declaration ownership prevents a wrapper's include context from claiming a transitive record",
         "does not prove declaration-form equality, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"record byte-layout artifact description omits {phrase}")

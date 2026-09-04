@@ -54,7 +54,7 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         self.assertIn("callable-provider-closure", report["blockers"])
         blocker_counts = report["blocker_counts"]
         assert isinstance(blocker_counts, dict)
-        self.assertEqual(blocker_counts["record_byte_layout_mismatch_rows"], 191)
+        self.assertEqual(blocker_counts["record_byte_layout_mismatch_rows"], 88)
         generic_reports = report["generic_reports"]
         assert isinstance(generic_reports, list)
         self.assertIn(

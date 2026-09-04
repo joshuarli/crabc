@@ -1513,14 +1513,14 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 1089, mismatch = 191, oracle-not-applicable = 1 }
-candidate_record_count = 5530
-reference_record_count = 5106
-candidate_record_categories = { anonymous-only = 1015, incomplete = 211 }
-reference_record_categories = { anonymous-only = 986, incomplete = 209 }
-candidate_field_categories = { bit-field = 723, flexible-tail = 59, non-addressable-field = 10 }
-reference_field_categories = { bit-field = 723, flexible-tail = 59, non-addressable-field = 10 }
-scope = "Compiler-derived direct-public-include record byte layouts: complete named records contribute size, alignment, and named field offsets across all seven C11/C++17 profiles, while incomplete, anonymous-only, bit-field, flexible-tail, and non-addressable facts remain explicit. It records current mismatches, project-only rows, and the pinned-musl C11 strict aio.h oracle-not-applicable row without inferring archive linkage, runtime behavior, family promotion, or public support."
+comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 1192, mismatch = 88, oracle-not-applicable = 1 }
+candidate_record_count = 2549
+reference_record_count = 2186
+candidate_record_categories = { anonymous-only = 446, incomplete = 88 }
+reference_record_categories = { anonymous-only = 436, incomplete = 89 }
+candidate_field_categories = { bit-field = 343, flexible-tail = 31, non-addressable-field = 10 }
+reference_field_categories = { bit-field = 329, flexible-tail = 31, non-addressable-field = 10 }
+scope = "Compiler-derived direct-public-include record byte layouts: complete named records contribute size, alignment, and named field offsets across all seven C11/C++17 profiles, while incomplete, anonymous-only, bit-field, flexible-tail, and non-addressable facts remain explicit. Record ownership follows physical declaration, spelling, or expansion source; a compact direct-include fallback never assigns a transitive record to an intermediate wrapper. It records current mismatches, project-only rows, and the pinned-musl C11 strict aio.h oracle-not-applicable row without inferring archive linkage, runtime behavior, family promotion, or public support."
 
 [[language_profile]]
 id = "c11-gnu"
@@ -1956,7 +1956,7 @@ state = "partial-verified"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
 evidence = ["all-header-record-byte-layout-matrix"]
-description = "The checked compiler-derived 1,337-row matrix records complete named record size, alignment, and named field offsets against pinned musl, while preserving incomplete, anonymous-only, bit-field, flexible-tail, and non-addressable facts. Its 191 current comparable byte-layout mismatch rows remain red work; it excludes archive linkage, runtime behavior, family promotion, and public support."
+description = "The checked compiler-derived 1,337-row matrix records complete named record size, alignment, and named field offsets against pinned musl, while preserving incomplete, anonymous-only, bit-field, flexible-tail, and non-addressable facts. Its 88 current comparable byte-layout mismatch rows remain red work; physical declaration ownership prevents a wrapper's include context from claiming a transitive record. It excludes archive linkage, runtime behavior, family promotion, and public support."
 
 [[abi_facet]]
 id = "callable-linkage-ownership"
