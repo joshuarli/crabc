@@ -3870,6 +3870,35 @@ class ContractTests(unittest.TestCase):
             list(RUNNER.M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS),
         )
 
+    def test_m1_static_image_probe_creates_its_target_private_directory(self) -> None:
+        # The x86 M1 gate invokes this helper outside `build_profile`, so its
+        # own target-private root must be usable from an initially empty work
+        # directory.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "mimalloc"
+            source.mkdir()
+            profile_dir = root / "target-private" / "static-image"
+            static_image = "\n".join(
+                f"{key}=1" for key in RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS
+            )
+            records = [
+                {"status": 0, "stderr": "", "stdout": ""},
+                {"status": 0, "stderr": "", "stdout": static_image},
+            ]
+
+            with mock.patch.object(RUNNER, "command_record", side_effect=records):
+                evidence = RUNNER.build_m1_static_image_probe(
+                    "musl-gcc", source, profile_dir, ()
+                )
+
+            self.assertTrue(profile_dir.is_dir())
+            self.assertTrue((profile_dir / "m1-static-image-probe.c").is_file())
+            self.assertEqual(
+                evidence["layout"],
+                {key: 1 for key in RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS},
+            )
+
     def test_x86_m1_contract_is_ready_for_native_evidence_not_an_aarch64_status_copy(self) -> None:
         contract = RUNNER.read_json(RUNNER.M1_X86_64_FOUNDATIONS_CONTRACT)
         summary = RUNNER.validate_x86_64_m1_foundations_contract(

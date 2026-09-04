@@ -17302,6 +17302,10 @@ def build_m1_static_image_probe(
     traces retain the pinned ordinary automatic-attach configuration.
     """
 
+    # This helper is also used by the native x86 M1 gate with a target-private
+    # artifact root, rather than by `build_profile`, which normally creates
+    # its profile directory first.
+    profile_dir.mkdir(parents=True, exist_ok=True)
     probe_source = profile_dir / "m1-static-image-probe.c"
     probe_binary = profile_dir / "m1-static-image-probe"
     probe_source.write_text(STATIC_IMAGE_PROBE, encoding="utf-8")
