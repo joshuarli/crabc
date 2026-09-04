@@ -1747,6 +1747,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    ftw-header-abi) ;;", source)
         self.assertIn("    stat-ftw-header-source-form) ;;", source)
+        self.assertIn("    param-header-source-form) ;;", source)
         self.assertIn("    math-tgmath-source-form) ;;", source)
         self.assertIn("    mount-header-source-form) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
@@ -1897,6 +1898,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "dirent-header-abi",
             "ftw-header-abi",
             "stat-ftw-header-source-form",
+            "param-header-source-form",
             "pathname-lifecycle-header-abi",
             "timeval-transitive-header-abi",
             "sys-time-direct-header-abi",

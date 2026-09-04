@@ -59,7 +59,11 @@ struct rlimit {
 #define PRIO_PGRP 1
 #define PRIO_USER 2
 #define RUSAGE_SELF 0
+#if defined(__x86_64__)
+#define RUSAGE_CHILDREN (-1)
+#else
 #define RUSAGE_CHILDREN -1
+#endif
 #define RUSAGE_THREAD 1
 
 struct rusage {
