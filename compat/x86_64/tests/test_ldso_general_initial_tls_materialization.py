@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 LOADER = ROOT / "ldso" / "src" / "x86_64_initial_graph.rs"
 GENERAL_GRAPH = ROOT / "ldso" / "src" / "x86_64_general_initial_graph.rs"
+COMMON_STATE = ROOT / "ldso" / "src" / "x86_64_general_initial_loader_state.rs"
 STATE = ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs"
 SOURCE_ROOT = ROOT / "ldso" / "src" / "x86_64_general_initial_tls_source_root.rs"
 RUNNER = ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls.sh"
@@ -19,7 +20,8 @@ TARGET_RUNNER = (
 
 
 class GeneralInitialTlsMaterializationTests(unittest.TestCase):
-    def test_loader_owned_initial_tls_state_is_explicit_and_generation_one_only(self) -> None:
+    def test_common_loader_owner_and_tls_sidecar_are_explicit_and_generation_one_only(self) -> None:
+        common_state = COMMON_STATE.read_text(encoding="utf-8")
         state = STATE.read_text(encoding="utf-8")
         root = SOURCE_ROOT.read_text(encoding="utf-8")
 
@@ -45,7 +47,48 @@ class GeneralInitialTlsMaterializationTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, state)
 
-        self.assertIn("GENERAL_INITIAL_TLS", state)
+        for required in (
+            "GeneralInitialLoaderPhase",
+            "Vacant",
+            "Discovering",
+            "Prepared",
+            "Reserved",
+            "Ready",
+            "GENERAL_INITIAL_LOADER_PUBLICATION",
+            "pub(crate) fn prepare",
+            "pub(crate) fn reserve_publication",
+            "pub(crate) unsafe fn commit",
+            "pub(crate) fn retained",
+            "attach_initial_tls",
+            "map_provenance",
+            "graph: InitialGraphState",
+            "objects: [Object; MAX_OBJECTS]",
+        ):
+            with self.subTest(common_required=required):
+                self.assertIn(required, common_state)
+
+        for required in (
+            "loader: GeneralInitialLoaderState",
+            "GeneralInitialTlsAttachment",
+            "GENERAL_INITIAL_TLS_ATTACHMENT",
+            "self.loader.attach_initial_tls()",
+            "publish_initial_tls_attachment",
+        ):
+            with self.subTest(sidecar_required=required):
+                self.assertIn(required, state)
+
+        self.assertNotIn("graph: InitialGraphState", state)
+        self.assertNotIn("objects: [Object; MAX_OBJECTS]", state)
+        self.assertNotIn("GENERAL_INITIAL_TLS_PUBLISHING", state)
+        self.assertNotIn("GENERAL_INITIAL_TLS_COMMITTED", state)
+        self.assertLess(
+            common_state.index("pub(crate) fn prepare"),
+            common_state.index("pub(crate) fn reserve_publication"),
+        )
+        self.assertLess(
+            common_state.index("pub(crate) fn reserve_publication"),
+            common_state.index("pub(crate) unsafe fn commit"),
+        )
         # The ordinary direct root cannot accidentally acquire the descriptor
         # just because its shared state also carries the separate cfg-isolated
         # general RuntimeV1 producer.

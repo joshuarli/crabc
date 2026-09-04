@@ -1040,19 +1040,30 @@ loader lifecycle nor main-image/CRT lifecycle, `DT_INIT`/`DT_FINI`/
 `DT_PREINIT_ARRAY`/`DT_FINI_ARRAY`, TLS, RuntimeV1, libc, finalization/unload,
 dynamic CRT/sysroot, family promotion, or public x86 support.
 
+The common `ldso/src/x86_64_general_initial_loader_state.rs` owner now retains
+that bounded general graph's identity/edges, complete object records, and map
+provenance across both direct general roots. Its private lifecycle is
+`Vacant -> Discovering -> Prepared -> Reserved -> Ready`: all fallible graph
+work and constructor preflight finish before reservation, pre-FS rollback
+restores `Vacant`, and the non-fallible release commit precedes callbacks.
+Kernel-owned main mappings are never transaction rollback targets. This is a
+selected-private `runtime.loader` state slice, not general loader completion
+or a public-support transition.
+
 The separate `ldso-general-initial-tls-materialization` artifact adds initial
 TLS materialization only to that bounded dependency transaction. It assigns
 loader-order module IDs, validates and lays the main -> left/right -> shared
 Variant-II images below TP, copies initialized bytes, zeroes TBSS, and resolves
 the bounded DTPMOD/DTPOFF/direct `__tls_get_addr` inputs. Mapping, relocation,
 protection, RELRO, registry/template, and dependency `DT_INIT_ARRAY` planning
-all complete before `ARCH_SET_FS`; the loader reserves its one private
-publication slot before that syscall, rolls it back on every pre-FS failure,
-and performs only a nonfallible retained-state commit after a successful
-install. The complete dependency-only callback plan is preflighted before FS
-installation, and candidate callbacks run only after that commit; the fixture
-proves the shared callback occurs once and that the dependency branches observe
-ready template/TBSS state. The naked pinned-musl reference intentionally
+all complete before `ARCH_SET_FS`; the common graph/object/map-provenance owner
+reserves its one private publication slot before that syscall, rolls it back to
+`Vacant` on every pre-FS failure, and performs only a nonfallible commit after
+a successful install. The TLS record is a registry/allocation sidecar, not a
+second graph or object store. The complete dependency-only callback plan is
+preflighted before FS installation, and candidate callbacks run only after
+that commit; the fixture proves the shared callback occurs once and that the
+dependency branches observe ready template/TBSS state. The naked pinned-musl reference intentionally
 bypasses CRT constructor dispatch, so it remains an initial-TLS layout/value
 oracle rather than a constructor-order differential. This does not select
 RuntimeV1, libc attachment, dynamic CRT, pthread/new-thread TLS, DTV
@@ -1063,12 +1074,12 @@ x86 support.
 
 The separate `loader-libc-general-tls-runtime-v1` artifact is the one-shot
 private RuntimeV1 sibling over that bounded arbitrary initial-TLS graph. Its
-cfg-selected source and Cargo roots reserve retained loader state and the
-72-byte local/hidden descriptor together before `ARCH_SET_FS`; pre-FS failure
-releases both. A successful install nonfallibly commits the retained snapshot,
-fills the descriptor, release-publishes `READY` last, and only then dispatches
-the preflighted dependency constructor plan. The libc evidence consumer remains
-an observer: it validates the exact record before `ARCH_GET_FS`, `%fs`, or DTV
+cfg-selected source and Cargo roots reserve common loader state and the 72-byte
+local/hidden descriptor together before `ARCH_SET_FS`; pre-FS failure releases
+both. A successful install nonfallibly commits the common owner, fills the
+descriptor, release-publishes `READY` last, and only then dispatches the
+preflighted dependency constructor plan. The libc evidence consumer remains an
+observer: it validates the exact record before `ARCH_GET_FS`, `%fs`, or DTV
 access. Direct native evidence checks its writable non-`.dynsym`,
 non-page-rounded-RELRO ELF placement, metadata and poisoned-DTV rejection,
 constructor attachment, and rejection of strong-main/weak-DSO record imports
@@ -1079,7 +1090,7 @@ pthread/new-thread implementation, DTV growth/replacement, runtime mapping or
 unload, general lifecycle, family/capability promotion, or public x86 support.
 
 `dynamic-main-thread-runtime-v1` is one newer, still-private bridge over that
-same wire. A separately built Rust `Scrt1.o` attaches the main-resident
+same common graph/object owner plus attached TLS sidecar and descriptor wire. A separately built Rust `Scrt1.o` attaches the main-resident
 RuntimeV1 consumer immediately before a fixture-local dynamic
 `__libc_start_main`; its real main and tiny private dynamic libc prove
 `PIMFL`, dynamic TLS, and dynamic errno. The loader admits only Scrt1's exact

@@ -980,7 +980,7 @@
     },
     {
       "aarch64_classification": "internal-runtime",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "runtime.loader",
       "x86_family": "ldso.dynamic-runtime"
     },
@@ -1347,8 +1347,8 @@
   ],
   "capability_state_counts": {
     "implemented-foundation": 180,
-    "missing": 18,
-    "selected-private": 25
+    "missing": 17,
+    "selected-private": 26
   },
   "families": [
     {
@@ -1507,7 +1507,7 @@
       "contract_state": "selected-private",
       "id": "ldso.dynamic-runtime",
       "verified_artifact_count": 16,
-      "verified_slice_count": 0
+      "verified_slice_count": 1
     },
     {
       "aarch64_gates": [
@@ -3196,7 +3196,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "da42ea9531bc4a3dc125a1f35a6e0aa19aa0bfe073a5e8526672c5024b419066",
+    "x86_parity_ledger": "19f4f114a461371067d4c68e1711f6d56263e0de2fb8228109d87300368d99cc",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },

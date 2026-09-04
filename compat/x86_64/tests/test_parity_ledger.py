@@ -65,7 +65,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 50)
+        self.assertEqual(report["verified_slice_count"], 51)
         self.assertEqual(report["verified_artifact_count"], 378)
         self.assertEqual(report["feature_archive_count"], 28)
         self.assertEqual(report["verified_feature_archive_count"], 28)
@@ -988,6 +988,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             },
         )
         for owner in (
+            "ldso/src/x86_64_general_initial_loader_state.rs",
             "ldso/src/x86_64_general_initial_graph.rs",
             "ldso/src/x86_64_initial_graph_state.rs",
             "compat/x86_64/ldso_general_initial_graph_cycle_marker.h",
@@ -1055,6 +1056,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             },
         )
         for owner in (
+            "ldso/src/x86_64_general_initial_loader_state.rs",
             "ldso/src/x86_64_general_initial_tls_state.rs",
             "ldso/src/x86_64_general_initial_tls_source_root.rs",
             "compat/x86_64/run_ldso_general_initial_tls.sh",
@@ -1127,6 +1129,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             },
         )
         for owner in (
+            "ldso/src/x86_64_general_initial_loader_state.rs",
             "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs",
             "ldso/src/x86_64_general_initial_tls_state.rs",
             "libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs",
@@ -1205,6 +1208,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             },
         )
         for owner in (
+            "ldso/src/x86_64_general_initial_loader_state.rs",
             "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs",
             "crt/build_x86_64.py",
             "crt/src/x86_64_dynamic_startup.rs",
@@ -1240,6 +1244,68 @@ class X86ParityLedgerTests(unittest.TestCase):
             "dynamic-main-thread-runtime-v1 description omits `PIMFL`",
         ):
             ledger.validate_ledger(changed)
+
+    def test_runtime_loader_general_initial_state_is_a_bounded_nonpromoting_slice(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if entry["id"] == "runtime.loader.general-initial-state"
+        )
+        assert isinstance(selected, dict)
+        self.assertEqual(selected["capabilities"], ["runtime.loader"])
+        for phrase in (
+            "selected-private `runtime.loader`",
+            "common graph/object/map-provenance owner",
+            "Vacant -> Discovering -> Prepared -> Reserved -> Ready",
+            "TLS-only registry/allocation sidecar",
+            "does not select RuntimeV1 descriptor",
+            "public x86 support",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, selected["description"])
+        self.assertEqual(
+            {entry["command"] for entry in selected["native_evidence"]},
+            {
+                "./scripts/dev-x86_64.sh ldso-general-initial-tls",
+                "./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root",
+            },
+        )
+        for owner in (
+            "ldso/src/x86_64_general_initial_loader_state.rs",
+            "ldso/src/x86_64_general_initial_tls_state.rs",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "docs/evidence/x86-loader-libc-tls-runtime-v1.md",
+        ):
+            with self.subTest(owner=owner):
+                self.assertIn(owner, selected["source_owners"])
+        policy = data["policy"]
+        assert isinstance(policy, dict)
+        self.assertFalse(policy["public_support"])
+
+        changed = copy.deepcopy(data)
+        changed_slices = self.family(changed, "ldso.dynamic-runtime")["verified_slice"]
+        assert isinstance(changed_slices, list)
+        changed_selected = next(
+            entry
+            for entry in changed_slices
+            if entry["id"] == "runtime.loader.general-initial-state"
+        )
+        assert isinstance(changed_selected, dict)
+        changed_selected["description"] = changed_selected["description"].replace(
+            "common graph/object/map-provenance owner", "separate graph owners"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "runtime.loader.general-initial-state description omits common graph/object/map-provenance owner",
+        ):
+            ledger.require_runtime_loader_general_initial_state_slice(
+                self.family(changed, "ldso.dynamic-runtime")
+            )
 
     def test_allocator_wrapper_stays_mixed_runtime_and_non_promoting(self) -> None:
         data = self.data()

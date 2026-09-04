@@ -7395,13 +7395,15 @@ runtime, libc, dynamic CRT/sysroot, promotion, or public x86 support.
 
 `loader-libc-general-tls-runtime-v1` is a separate private wire over the
 bounded general main -> left/right -> shared initial-TLS graph. Its dedicated
-cfg root reserves both the retained general-TLS state and a local/hidden
-72-byte loader descriptor before `ARCH_SET_FS`; pre-FS failure releases both.
-After successful installation it commits retained state without a fallible
-successor, fills the descriptor, release-publishes `READY` last, and only then
-allows the preflighted dependency constructor to attach the libc observer. The
-observer validates ready/magic/version/ABI-size/mode/owner/generation and DTV
-bounds before `ARCH_GET_FS`, `%fs`, or DTV access. Native direct evidence
+cfg root reserves the common general graph/object/map-provenance owner and a
+local/hidden 72-byte loader descriptor before `ARCH_SET_FS`; the TLS state is
+only its registry/allocation sidecar and carries no duplicate graph or object
+storage. A pre-FS failure releases both reservations. After successful
+installation it commits common state without a fallible successor, fills the
+descriptor, release-publishes `READY` last, and only then allows the
+preflighted dependency constructor to attach the libc observer. The observer
+validates ready/magic/version/ABI-size/mode/owner/generation and DTV bounds
+before `ARCH_GET_FS`, `%fs`, or DTV access. Native direct evidence
 checks that the record is writable, absent from `.dynsym`, outside rounded
 RELRO, and reached only by its exact weak undefined main-image GOT import;
 strong-main and weak-DSO import variants reject before FS installation. The

@@ -12659,6 +12659,7 @@ def require_ldso_general_initial_graph_artifact(family: Mapping[str, Any]) -> No
         "absolute RUNPATH components",
         "`(st_dev, st_ino)`",
         "diamond and cycle",
+        "shared common owner retains",
         "R_X86_64_RELATIVE",
         "R_X86_64_GLOB_DAT",
         "R_X86_64_JUMP_SLOT",
@@ -12681,6 +12682,7 @@ def require_ldso_general_initial_graph_artifact(family: Mapping[str, Any]) -> No
         "ldso/src/lib.rs",
         "ldso/src/x86_64_initial_graph.rs",
         "ldso/src/x86_64_initial_graph_state.rs",
+        "ldso/src/x86_64_general_initial_loader_state.rs",
         "ldso/src/x86_64_general_initial_graph.rs",
         "ldso/src/x86_64_general_initial_graph_source_root.rs",
         "compat/x86_64/ldso_initial_graph_start.S",
@@ -12820,6 +12822,8 @@ def require_ldso_general_initial_tls_artifact(family: Mapping[str, Any]) -> None
         "__tls_get_addr",
         "ARCH_SET_FS",
         "atomically reserves",
+        "common graph/object/map-provenance owner",
+        "registry/allocation sidecar",
         "non-fallible retained-state commit",
         "dependency `DT_INIT_ARRAY` plan failures remain before ARCH_SET_FS",
         "preflighted before ARCH_SET_FS",
@@ -12840,6 +12844,7 @@ def require_ldso_general_initial_tls_artifact(family: Mapping[str, Any]) -> None
         "ldso/src/lib.rs",
         "ldso/src/x86_64_initial_graph.rs",
         "ldso/src/x86_64_initial_graph_state.rs",
+        "ldso/src/x86_64_general_initial_loader_state.rs",
         "ldso/src/x86_64_initial_tls_registry.rs",
         "ldso/src/x86_64_general_initial_graph.rs",
         "ldso/src/x86_64_general_initial_tls_state.rs",
@@ -12914,6 +12919,9 @@ def require_ldso_general_initial_tls_artifact(family: Mapping[str, Any]) -> None
     state = (
         ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs"
     ).read_text(encoding="utf-8")
+    common_state = (
+        ROOT / "ldso" / "src" / "x86_64_general_initial_loader_state.rs"
+    ).read_text(encoding="utf-8")
     graph = (
         ROOT / "ldso" / "src" / "x86_64_general_initial_graph.rs"
     ).read_text(encoding="utf-8")
@@ -12927,14 +12935,48 @@ def require_ldso_general_initial_tls_artifact(family: Mapping[str, Any]) -> None
         "PublicationReserved",
         "PublicationUnavailable",
         "reserve_publication",
-        "GENERAL_INITIAL_TLS_PUBLISHING",
-        "GENERAL_INITIAL_TLS_COMMITTED",
+        "loader: GeneralInitialLoaderState",
+        "GeneralInitialTlsAttachment",
+        "GENERAL_INITIAL_TLS_ATTACHMENT",
+        "self.loader.attach_initial_tls()",
+        "publish_initial_tls_attachment",
         "pre_fs_publication_reservation_rolls_back_and_allows_retry",
     ):
         require(
             phrase in state,
             f"ldso-general-initial-tls state omits {phrase}",
         )
+    for phrase in (
+        "GeneralInitialLoaderPhase",
+        "Vacant",
+        "Discovering",
+        "Prepared",
+        "Reserved",
+        "Ready",
+        "GENERAL_INITIAL_LOADER_PUBLICATION",
+        "pub(crate) fn prepare",
+        "pub(crate) fn reserve_publication",
+        "pub(crate) unsafe fn commit",
+        "pub(crate) fn retained",
+        "map_provenance",
+    ):
+        require(
+            phrase in common_state,
+            f"ldso-general-initial-tls common owner omits {phrase}",
+        )
+    require(
+        "graph: InitialGraphState" not in state
+        and "objects: [Object; MAX_OBJECTS]" not in state
+        and "GENERAL_INITIAL_TLS_PUBLISHING" not in state
+        and "GENERAL_INITIAL_TLS_COMMITTED" not in state,
+        "ldso-general-initial-tls TLS sidecar must not duplicate graph/object storage or retired publication state",
+    )
+    require(
+        common_state.index("pub(crate) fn prepare")
+        < common_state.index("pub(crate) fn reserve_publication")
+        < common_state.index("pub(crate) unsafe fn commit"),
+        "ldso-general-initial-tls common owner lifecycle ordering drifted",
+    )
     require(
         graph.index("state.reserve_publication()")
         < graph.index("state.materialize_initial_tls()"),
@@ -12965,6 +13007,198 @@ def require_ldso_general_initial_tls_artifact(family: Mapping[str, Any]) -> None
             phrase in dispatcher,
             f"ldso-general-initial-tls dispatcher omits {phrase}",
         )
+
+
+def require_runtime_loader_general_initial_state_slice(family: Mapping[str, Any]) -> None:
+    """Ratchet the shared initial owner without promoting the loader family."""
+    family_capabilities = string_list(
+        family.get("capabilities"), "family[ldso.dynamic-runtime].capabilities"
+    )
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[ldso.dynamic-runtime].verified_slice",
+        family.get("status", ""),
+        family_capabilities,
+    )
+    matching = [
+        entry
+        for entry in slices
+        if entry.get("id") == "runtime.loader.general-initial-state"
+    ]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one runtime.loader.general-initial-state slice",
+    )
+    selected = matching[0]
+    require(
+        family.get("status") == "planned",
+        "runtime.loader.general-initial-state must not promote ldso.dynamic-runtime",
+    )
+    require(
+        string_list(
+            selected["capabilities"],
+            "runtime.loader.general-initial-state capabilities",
+        )
+        == ["runtime.loader"],
+        "runtime.loader.general-initial-state must select only runtime.loader",
+    )
+    description = selected["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-private `runtime.loader`",
+        "common graph/object/map-provenance owner",
+        "Vacant -> Discovering -> Prepared -> Reserved -> Ready",
+        "TLS-only registry/allocation sidecar",
+        "All fallible graph work and constructor preflight",
+        "reserves before `ARCH_SET_FS`",
+        "non-fallible commit before dependency callbacks",
+        "pinned musl remains only the initial Variant-II layout/value oracle",
+        "does not select RuntimeV1 descriptor",
+        "runtime mapping/dlopen/unload",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"runtime.loader.general-initial-state description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/Cargo.toml",
+        "ldso/build.rs",
+        "ldso/src/lib.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "ldso/src/x86_64_initial_graph_state.rs",
+        "ldso/src/x86_64_initial_tls_registry.rs",
+        "ldso/src/x86_64_general_initial_loader_state.rs",
+        "ldso/src/x86_64_general_initial_graph.rs",
+        "ldso/src/x86_64_general_initial_tls_state.rs",
+        "ldso/src/x86_64_general_initial_tls_source_root.rs",
+        "compat/x86_64/ldso_initial_graph_start.S",
+        "compat/x86_64/ldso_general_initial_tls_main.c",
+        "compat/x86_64/ldso_general_initial_tls_left.c",
+        "compat/x86_64/ldso_general_initial_tls_right.c",
+        "compat/x86_64/ldso_general_initial_tls_shared.c",
+        "compat/x86_64/ldso_general_initial_tls_capacity.c",
+        "compat/x86_64/ldso_general_initial_tls_trace.c",
+        "compat/x86_64/run_ldso_general_initial_tls.sh",
+        "compat/x86_64/run_ldso_general_initial_tls_target_root.sh",
+        "compat/x86_64/loader-libc-tls-runtime-v1.toml",
+        "compat/x86_64/validate_loader_libc_tls_runtime_v1.py",
+        "compat/x86_64/tests/test_ldso_general_initial_tls_materialization.py",
+        "compat/x86_64/tests/test_loader_libc_tls_runtime_v1.py",
+        "compat/x86_64/tests/test_loader_libc_general_tls_runtime_v1.py",
+        "compat/x86_64/parity.toml",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/README.md",
+        "docs/evidence/x86-loader-libc-tls-runtime-v1.md",
+        "STATUS.md",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(
+            string_list(
+                selected["source_owners"],
+                "runtime.loader.general-initial-state source owners",
+            )
+        )
+        == expected_sources,
+        "runtime.loader.general-initial-state source owners drifted",
+    )
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {
+            "./scripts/dev-x86_64.sh ldso-general-initial-tls",
+            "./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root",
+        },
+        "runtime.loader.general-initial-state must use both existing general-TLS native commands",
+    )
+    common_state = (
+        ROOT / "ldso" / "src" / "x86_64_general_initial_loader_state.rs"
+    ).read_text(encoding="utf-8")
+    tls_state = (
+        ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs"
+    ).read_text(encoding="utf-8")
+    graph = (
+        ROOT / "ldso" / "src" / "x86_64_general_initial_graph.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "GeneralInitialLoaderPhase",
+        "Vacant",
+        "Discovering",
+        "Prepared",
+        "Reserved",
+        "Ready",
+        "GENERAL_INITIAL_LOADER_PUBLICATION",
+        "graph: InitialGraphState",
+        "objects: [Object; MAX_OBJECTS]",
+        "map_provenance",
+        "pub(crate) fn prepare",
+        "pub(crate) fn reserve_publication",
+        "pub(crate) unsafe fn commit",
+        "pub(crate) fn retained",
+        "attach_initial_tls",
+    ):
+        require(
+            phrase in common_state,
+            f"runtime.loader.general-initial-state common owner omits {phrase}",
+        )
+    require(
+        common_state.index("pub(crate) fn prepare")
+        < common_state.index("pub(crate) fn reserve_publication")
+        < common_state.index("pub(crate) unsafe fn commit"),
+        "runtime.loader.general-initial-state common owner lifecycle ordering drifted",
+    )
+    for phrase in (
+        "loader: GeneralInitialLoaderState",
+        "GeneralInitialTlsAttachment",
+        "GENERAL_INITIAL_TLS_ATTACHMENT",
+        "self.loader.attach_initial_tls()",
+        "publish_initial_tls_attachment",
+        "self.loader.commit()",
+    ):
+        require(
+            phrase in tls_state,
+            f"runtime.loader.general-initial-state TLS sidecar omits {phrase}",
+        )
+    require(
+        "graph: InitialGraphState" not in tls_state
+        and "objects: [Object; MAX_OBJECTS]" not in tls_state
+        and "GENERAL_INITIAL_TLS_PUBLISHING" not in tls_state
+        and "GENERAL_INITIAL_TLS_COMMITTED" not in tls_state,
+        "runtime.loader.general-initial-state TLS sidecar must not duplicate graph/object or retired publication state",
+    )
+    require(
+        graph.index("state.reserve_publication()")
+        < graph.index("state.materialize_initial_tls()")
+        < graph.index("unsafe { state.commit(installed) };")
+        < graph.rindex("unsafe { dispatch_dependency_initializers(&initializers) };"),
+        "runtime.loader.general-initial-state must publish common state before callbacks",
+    )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls.sh").read_text(
+        encoding="utf-8"
+    )
+    for phrase in (
+        "crabc_general_initial_tls_materialization_v1",
+        "ARCH_SET_FS",
+        "expect_candidate_rejection_before_fs",
+    ):
+        require(
+            phrase in runner,
+            f"runtime.loader.general-initial-state runner omits {phrase}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls_target_root.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_LDSO_GENERAL_INITIAL_TLS_ROOT=crabc-target" in wrapper,
+        "runtime.loader.general-initial-state target-root wrapper must select the Cargo root",
+    )
 
 
 def require_loader_libc_general_tls_runtime_v1_artifact(family: Mapping[str, Any]) -> None:
@@ -13004,6 +13238,7 @@ def require_loader_libc_general_tls_runtime_v1_artifact(family: Mapping[str, Any
         "page-rounded `PT_GNU_RELRO`",
         "`UNPUBLISHED` -> `PUBLISHING` -> `READY`",
         "Before `ARCH_SET_FS`",
+        "common general initial loader state",
         "non-fallibly commits retained state",
         "release-publishes `READY` last",
         "dependency `DT_INIT_ARRAY` plan only after ready",
@@ -13027,6 +13262,7 @@ def require_loader_libc_general_tls_runtime_v1_artifact(family: Mapping[str, Any
         "ldso/src/lib.rs",
         "ldso/src/x86_64_initial_graph.rs",
         "ldso/src/x86_64_initial_graph_state.rs",
+        "ldso/src/x86_64_general_initial_loader_state.rs",
         "ldso/src/x86_64_initial_tls_registry.rs",
         "ldso/src/x86_64_general_initial_graph.rs",
         "ldso/src/x86_64_general_initial_tls_state.rs",
@@ -13195,6 +13431,8 @@ def require_dynamic_main_thread_runtime_v1_artifact(family: Mapping[str, Any]) -
         "still-planned `ldso.dynamic-runtime`",
         "real-Scrt1 dynamic-main-thread RuntimeV1 bridge",
         "`x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter`",
+        "common general initial graph/object owner",
+        "attached TLS sidecar",
         "Rust-produced `Scrt1.o`",
         "`__crabc_x86_loader_tls_runtime_v1_attach`",
         "immediately before `__libc_start_main`",
@@ -13224,6 +13462,7 @@ def require_dynamic_main_thread_runtime_v1_artifact(family: Mapping[str, Any]) -
         "ldso/src/lib.rs",
         "ldso/src/x86_64_initial_graph.rs",
         "ldso/src/x86_64_initial_graph_state.rs",
+        "ldso/src/x86_64_general_initial_loader_state.rs",
         "ldso/src/x86_64_initial_tls_registry.rs",
         "ldso/src/x86_64_general_initial_graph.rs",
         "ldso/src/x86_64_general_initial_tls_state.rs",
@@ -78903,6 +79142,7 @@ def validate_ledger(
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_general_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_general_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
+    require_runtime_loader_general_initial_state_slice(by_id["ldso.dynamic-runtime"])
     require_loader_libc_general_tls_runtime_v1_artifact(by_id["ldso.dynamic-runtime"])
     require_dynamic_main_thread_runtime_v1_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_target_root_admission_artifact(by_id["ldso.dynamic-runtime"])

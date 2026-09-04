@@ -431,6 +431,7 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         ROOT / "compat" / "x86_64" / "run_loader_libc_tls_runtime_v1.sh",
         ROOT / "ldso" / "src" / "x86_64_initial_tls_registry.rs",
         ROOT / "compat" / "x86_64" / "run_loader_libc_tls_runtime_v1_registry.sh",
+        ROOT / "ldso" / "src" / "x86_64_general_initial_loader_state.rs",
         ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs",
         ROOT / "ldso" / "src" / "x86_64_general_initial_tls_source_root.rs",
         ROOT / "ldso" / "src" / "x86_64_general_initial_tls_runtime_v1_source_root.rs",

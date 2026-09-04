@@ -134,6 +134,35 @@ initial IDs, sealing, capacity/duplicate rejection, and no-mutation runtime
 growth rejection. It is not a loader product test and makes no static libc,
 dynamic pthread, DTV-growth, capability, or promotion claim.
 
+## Implemented private common general initial-state owner
+
+`ldso/src/x86_64_general_initial_loader_state.rs` is the sole retained owner
+of the bounded general initial graph identity and edges, complete `Object`
+records, and transaction map provenance. Its explicit lifecycle is
+`Vacant -> Discovering -> Prepared -> Reserved -> Ready`: graph work and
+constructor preflight remain fallible through `Prepared`; reservation occurs
+before `ARCH_SET_FS`; a pre-FS failure returns the owner to `Vacant`; and only
+the non-fallible commit release-publishes `Ready` before dependency callbacks.
+Kernel-provided main-image mappings are never transaction rollback or `munmap`
+targets.
+
+`ldso/src/x86_64_general_initial_tls_state.rs` is consequently a TLS-only
+registry/allocation sidecar. It attaches its installed TLS record to the common
+owner and contains neither another `InitialGraphState` nor another `Object`
+array. The existing direct and Cargo-root general-TLS runners exercise that
+owner/sidecar boundary together:
+
+```text
+./scripts/dev-x86_64.sh ldso-general-initial-tls
+./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root
+```
+
+Pinned musl remains the ordinary initial Variant-II layout/value oracle, not
+an oracle for this private owner topology. This selected-private state does not
+make `ldso.dynamic-runtime` a general loader or select RuntimeV1, libc handoff,
+dynamic CRT, pthreads, DTV growth, runtime mapping/unload, an installed
+product, family promotion, or public x86 support.
+
 ## Implemented private general initial-TLS materialization
 
 `ldso/src/x86_64_general_initial_tls_source_root.rs` is the ordinary
@@ -147,11 +176,12 @@ CRT carrier, pthread/new-thread operation, runtime map operation, DTV
 replacement, or unload policy.
 
 All fallible graph, relocation, protection, RELRO, registry, and publication
-arbitration work finishes before `ARCH_SET_FS`. The state reserves its sole
-private publication slot before that syscall; any pre-FS failure rolls the
-reservation back to unpublished. After a successful install, the retained
-loader snapshot commits without a fallible step, so it never reports failure
-with a changed `%fs` and no owner. The source-root and feature-gated target
+arbitration work finishes before `ARCH_SET_FS`. The common graph/object/map
+owner reserves its sole private publication slot before that syscall; any
+pre-FS failure restores `Vacant`. After a successful install, the common owner
+commits without a fallible step while the TLS state remains only the attached
+registry/allocation sidecar, so it never reports failure with a changed `%fs`
+and no owner or duplicates the graph. The source-root and feature-gated target
 roots both run a pinned-musl diamond differential and malformed-input matrix,
 including the reservation rollback/retry regression:
 
@@ -174,10 +204,11 @@ cfg-isolated root. It combines `crabc_general_initial_graph`,
 initial `PT_TLS` diamond. It is the dedicated private general RuntimeV1
 producer; it does not alter the ordinary source root described above.
 
-Before `ARCH_SET_FS`, the loader reserves both the retained general-TLS state
-and its descriptor. Each moves from `UNPUBLISHED` to `PUBLISHING`; every
-pre-FS failure releases both reservations. After the successful install, the
-retained state commits without a fallible successor, fills the 72-byte
+Before `ARCH_SET_FS`, the loader reserves both the common general initial
+graph/object owner and its descriptor. Each moves through its reserved
+publication state; every pre-FS failure releases both reservations. After the
+successful install, the common owner commits without a fallible successor,
+fills the 72-byte
 loader-owned descriptor, and release-publishes `READY` last. Dependency
 constructors run only after that `READY` transition, so their
 `__crabc_x86_loader_tls_runtime_v1_attach` observation cannot see a partial
@@ -219,7 +250,8 @@ general lifecycle, family/capability promotion, or public x86 support.
 `ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs` is a fourth,
 explicitly dependent general RuntimeV1 root. It adds only the shape needed by
 the private real-Scrt1 fixture: `crabc_dynamic_main_thread_runtime_v1` keeps
-the existing retained general initial-TLS state and 72-byte RuntimeV1 record,
+the common general initial graph/object owner, its attached TLS sidecar, and
+the 72-byte RuntimeV1 record,
 then admits the ordinary null weak owned-CRT relocation emitted by the
 Rust-produced `Scrt1.o`. It does not select the older owned-CRT carrier.
 
@@ -334,6 +366,9 @@ The following normal fixtures remain private regressions, not RuntimeV1 producer
 - `ldso/src/x86_64_initial_graph.rs` — normal fixed-graph initial dynamic
   TLS/DTV fixture. Its separate cfg-isolated RuntimeV1 foundation above is a
   one-shot producer/consumer proof, not a general loader runtime.
+- `ldso/src/x86_64_general_initial_loader_state.rs` — common retained graph,
+  object, and map-provenance owner for the bounded general roots; it is not a
+  public loader state or runtime mapping API.
 - `ldso/src/x86_64_general_initial_tls_source_root.rs` — ordinary bounded
   general initial-TLS materialization. Its separate
   `x86_64_general_initial_tls_runtime_v1_source_root.rs` sibling is the
