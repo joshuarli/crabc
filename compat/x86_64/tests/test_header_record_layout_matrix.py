@@ -184,6 +184,96 @@ Layout: <ASTRecordLayout
         }
         self.assertEqual(MATRIX.source_header(record, header_root), "fcntl.h")
 
+    def test_declared_uapi_root_is_limited_to_the_three_record_wrappers(self) -> None:
+        """Physical Linux UAPI records are visible only through their mapped wrapper."""
+        with tempfile.TemporaryDirectory(prefix="crabc-record-uapi-") as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            uapi = root / "uapi"
+            (project / "sys").mkdir(parents=True)
+            (uapi / "linux").mkdir(parents=True)
+            for wrapper, dependency in MATRIX.UAPI_RECORD_WRAPPERS.items():
+                (project / wrapper).touch()
+                (uapi / dependency).touch()
+
+            def records(wrapper: str, dependency: str):
+                ast = {
+                    "kind": "TranslationUnitDecl",
+                    "inner": [
+                        {
+                            "kind": "RecordDecl",
+                            "id": f"{wrapper}-allowed",
+                            "name": "allowed_record",
+                            "tagUsed": "struct",
+                            "completeDefinition": True,
+                            "loc": {"file": str(uapi / dependency), "line": 1, "col": 1},
+                        },
+                        {
+                            "kind": "RecordDecl",
+                            "id": f"{wrapper}-unrelated",
+                            "name": "unrelated_record",
+                            "tagUsed": "struct",
+                            "completeDefinition": True,
+                            "loc": {"file": str(uapi / "linux" / "unrelated.h"), "line": 2, "col": 1},
+                        },
+                    ],
+                }
+                return MATRIX.direct_records(ast, project, wrapper, uapi)
+
+            for wrapper, dependency in MATRIX.UAPI_RECORD_WRAPPERS.items():
+                self.assertEqual([record.key for record in records(wrapper, dependency)], ["struct:allowed_record"])
+
+            unrelated_wrapper = "net/if.h"
+            (project / "net").mkdir()
+            (project / unrelated_wrapper).touch()
+            self.assertEqual(records(unrelated_wrapper, "linux/if.h"), [])
+
+    def test_bits_records_require_the_same_direct_wrapper_context_in_both_trees(self) -> None:
+        """A direct bits indirection compares symmetrically; transitive bits do not leak."""
+        with tempfile.TemporaryDirectory(prefix="crabc-record-bits-") as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            reference = root / "reference"
+            for tree in (candidate, reference):
+                (tree / "bits").mkdir(parents=True)
+                (tree / "fenv.h").touch()
+                (tree / "stdio.h").touch()
+                (tree / "bits" / "fenv.h").touch()
+
+            def ast(tree: Path, included_from: str):
+                return {
+                    "kind": "TranslationUnitDecl",
+                    "inner": [
+                        {
+                            "kind": "RecordDecl",
+                            "id": str(tree),
+                            "name": "fenv_record",
+                            "tagUsed": "struct",
+                            "completeDefinition": True,
+                            "loc": {
+                                "file": str(tree / "bits" / "fenv.h"),
+                                "includedFrom": {"file": included_from},
+                                "line": 1,
+                                "col": 1,
+                            },
+                        }
+                    ],
+                }
+
+            candidate_records = MATRIX.direct_records(ast(candidate, str(candidate / "fenv.h")), candidate, "fenv.h")
+            reference_records = MATRIX.direct_records(ast(reference, str(reference / "fenv.h")), reference, "fenv.h")
+            self.assertEqual([record.key for record in candidate_records], ["struct:fenv_record"])
+            self.assertEqual([record.key for record in reference_records], ["struct:fenv_record"])
+            self.assertEqual(
+                MATRIX.compare_records(
+                    [{"key": record.key, "tag": record.tag, "name": record.name, "alias": record.alias, "applicability": "applicable", "size": 1, "alignment": 1, "fields": []} for record in candidate_records],
+                    [{"key": record.key, "tag": record.tag, "name": record.name, "alias": record.alias, "applicability": "applicable", "size": 1, "alignment": 1, "fields": []} for record in reference_records],
+                )["incompatible_count"],
+                0,
+            )
+            transitive = MATRIX.direct_records(ast(candidate, str(candidate / "stdio.h")), candidate, "fenv.h")
+            self.assertEqual(transitive, [])
+
     def test_checked_report_is_finite_non_promoting_and_hash_bound(self) -> None:
         report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
         MATRIX.validate_checked_report(report, MATRIX.load_contract())

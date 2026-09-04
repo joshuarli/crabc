@@ -47,6 +47,16 @@ REPORT_SCOPE = {
     "public_support": False,
     "runtime": False,
 }
+# These wrappers are the only selected public headers whose record declarations
+# are physically owned by the separately pinned Linux UAPI tree.  Keep this
+# allowlist narrow: an external include root must not turn arbitrary
+# transitive kernel records into records of whichever public header requested
+# them.
+UAPI_RECORD_WRAPPERS = {
+    "sys/kd.h": "linux/kd.h",
+    "sys/soundcard.h": "linux/soundcard.h",
+    "sys/vt.h": "linux/vt.h",
+}
 NA_CATEGORIES = (
     "incomplete",
     "anonymous-only",
@@ -183,7 +193,33 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def source_header(node: Mapping[str, Any], header_root: Path) -> str | None:
+def _source_location(node: Mapping[str, Any], header_root: Path, linux_uapi_include: Path | None = None) -> tuple[int, str] | None:
+    location = node.get("loc")
+    if not isinstance(location, Mapping):
+        return None
+    candidates: list[Mapping[str, Any]] = [location]
+    for key in ("spellingLoc", "expansionLoc"):
+        nested = location.get(key)
+        if isinstance(nested, Mapping):
+            candidates.append(nested)
+    roots = [header_root]
+    if linux_uapi_include is not None:
+        roots.append(linux_uapi_include)
+    resolved_roots = [root.resolve() for root in roots]
+    for candidate in candidates:
+        file_name = candidate.get("file")
+        if not isinstance(file_name, str) or not file_name or file_name.startswith("<"):
+            continue
+        file_path = Path(file_name)
+        for index, resolved_root in enumerate(resolved_roots):
+            try:
+                return index, file_path.resolve().relative_to(resolved_root).as_posix()
+            except (OSError, ValueError):
+                continue
+    return None
+
+
+def source_header(node: Mapping[str, Any], header_root: Path, linux_uapi_include: Path | None = None) -> str | None:
     """Resolve a record declaration's physical source header.
 
     ``includedFrom`` identifies the include context, not the declaration's
@@ -193,27 +229,16 @@ def source_header(node: Mapping[str, Any], header_root: Path) -> str | None:
     ``fcntl.h``.  Record-layout comparison instead follows only the physical
     location and its spelling/expansion locations.
     """
-    location = node.get("loc")
-    if not isinstance(location, Mapping):
-        return None
-    candidates: list[Mapping[str, Any]] = [location]
-    for key in ("spellingLoc", "expansionLoc"):
-        nested = location.get(key)
-        if isinstance(nested, Mapping):
-            candidates.append(nested)
-    resolved_root = header_root.resolve()
-    for candidate in candidates:
-        file_name = candidate.get("file")
-        if not isinstance(file_name, str) or not file_name or file_name.startswith("<"):
-            continue
-        try:
-            return Path(file_name).resolve().relative_to(resolved_root).as_posix()
-        except (OSError, ValueError):
-            continue
-    return None
+    physical = _source_location(node, header_root, linux_uapi_include)
+    return physical[1] if physical is not None else None
 
 
-def direct_include_header(location: object, header_root: Path, primary_header: str) -> str | None:
+def direct_include_header(
+    location: object,
+    header_root: Path,
+    primary_header: str,
+    linux_uapi_include: Path | None = None,
+) -> str | None:
     """Recover a compact declaration only when its include context is direct.
 
     Clang can omit the physical file for a declaration at the start of a
@@ -230,13 +255,57 @@ def direct_include_header(location: object, header_root: Path, primary_header: s
     file_name = included_from.get("file")
     if not isinstance(file_name, str) or not file_name or file_name.startswith("<"):
         return None
+    included_path = Path(file_name)
     try:
-        included_header = Path(file_name).resolve().relative_to(header_root.resolve()).as_posix()
+        included_header = included_path.resolve().relative_to(header_root.resolve()).as_posix()
     except (OSError, ValueError):
-        # The compiler's generated translation unit lies outside the header
-        # tree, so its direct include is the only public-header context.
+        if linux_uapi_include is not None:
+            try:
+                uapi_header = included_path.resolve().relative_to(linux_uapi_include.resolve()).as_posix()
+            except (OSError, ValueError):
+                uapi_header = None
+            if uapi_header is not None:
+                return primary_header if UAPI_RECORD_WRAPPERS.get(primary_header) == uapi_header else None
+        # The compiler's generated translation unit lies outside both header
+        # trees, so its direct include is the only public-header context.
         return primary_header
     return primary_header if included_header == primary_header else None
+
+
+def _direct_private_header(location: object, header_root: Path, primary_header: str, physical_header: str) -> bool:
+    """Accept a private bits record only when the public wrapper includes it directly."""
+    if not physical_header.startswith("bits/"):
+        return False
+    if not isinstance(location, Mapping):
+        return False
+    included_from = location.get("includedFrom")
+    if not isinstance(included_from, Mapping):
+        return False
+    file_name = included_from.get("file")
+    if not isinstance(file_name, str) or not file_name or file_name.startswith("<"):
+        return False
+    try:
+        return Path(file_name).resolve().relative_to(header_root.resolve()).as_posix() == primary_header
+    except (OSError, ValueError):
+        return False
+
+
+def _visible_source(
+    physical: tuple[int, str] | None,
+    location: object,
+    header_root: Path,
+    primary_header: str,
+    *,
+    allow_private: bool = True,
+) -> bool:
+    if physical is None:
+        return False
+    root_index, physical_header = physical
+    if root_index == 0:
+        return physical_header == primary_header or (
+            allow_private and _direct_private_header(location, header_root, primary_header, physical_header)
+        )
+    return UAPI_RECORD_WRAPPERS.get(primary_header) == physical_header
 
 
 def explicit_location(location: object) -> bool:
@@ -277,24 +346,29 @@ def child_field_name(parent: Mapping[str, Any], child: Mapping[str, Any]) -> str
     return None
 
 
-def declaration_nodes(ast: Mapping[str, Any], header_root: Path, primary_header: str) -> list[tuple[Mapping[str, Any], str | None, tuple[str, ...], tuple[str, ...]]]:
+def declaration_nodes(
+    ast: Mapping[str, Any],
+    header_root: Path,
+    primary_header: str,
+    linux_uapi_include: Path | None = None,
+) -> list[tuple[Mapping[str, Any], str | None, tuple[str, ...], tuple[str, ...]]]:
     result: list[tuple[Mapping[str, Any], str | None, tuple[str, ...], tuple[str, ...]]] = []
     stack: list[tuple[Mapping[str, Any], tuple[str, ...], tuple[str, ...]]] = [(ast, (), ())]
-    last_physical_header: str | None = None
+    last_physical: tuple[int, str] | None = None
     while stack:
         node, context, field_path = stack.pop()
         location = node.get("loc")
-        physical = source_header(node, header_root)
+        physical = _source_location(node, header_root, linux_uapi_include)
         if physical is not None:
-            last_physical_header = physical
+            last_physical = physical
         elif explicit_location(location):
-            last_physical_header = None
-        visible = physical
+            last_physical = None
+        visible = physical if _visible_source(physical, location, header_root, primary_header) else None
         if visible is None and compact_location(location):
-            visible = last_physical_header
-        if visible is None:
-            visible = direct_include_header(location, header_root, primary_header)
-        result.append((node, visible if visible == primary_header else None, context, field_path))
+            visible = last_physical if _visible_source(last_physical, location, header_root, primary_header, allow_private=False) else None
+        if visible is None and (last_physical is None or not compact_location(location)):
+            visible = direct_include_header(location, header_root, primary_header, linux_uapi_include)
+        result.append((node, primary_header if visible is not None else None, context, field_path))
         children = node.get("inner")
         if isinstance(children, list):
             child_context = context
@@ -331,8 +405,13 @@ def descendant_ids(node: Mapping[str, Any]) -> set[str]:
     return ids
 
 
-def direct_records(ast: Mapping[str, Any], header_root: Path, primary_header: str) -> list[RecordDecl]:
-    nodes = declaration_nodes(ast, header_root, primary_header)
+def direct_records(
+    ast: Mapping[str, Any],
+    header_root: Path,
+    primary_header: str,
+    linux_uapi_include: Path | None = None,
+) -> list[RecordDecl]:
+    nodes = declaration_nodes(ast, header_root, primary_header, linux_uapi_include)
     aliases: dict[str, list[str]] = {}
     for node, visible, _context, _field_path in nodes:
         if visible != primary_header or node.get("kind") != "TypedefDecl" or node.get("isImplicit") is True:
@@ -469,7 +548,7 @@ def ast_for_header(compiler: str, profile: inventory.Profile, header: str, heade
 def tree_header_profile(compiler: str, profile: inventory.Profile, header: str, header_root: Path, resource_include: Path, linux_uapi_include: Path, work_dir: Path) -> tuple[list[dict[str, Any]], str]:
     ast_source = work_dir / "ast.c"
     ast = ast_for_header(compiler, profile, header, header_root, resource_include, linux_uapi_include, ast_source)
-    records = direct_records(ast, header_root, header)
+    records = direct_records(ast, header_root, header, linux_uapi_include)
     forceable = [record for record in records if record.complete and force_type_for(record, profile.language) is not None]
     layout_source = work_dir / "layout.c"
     language_prefix = "#include <{}>\n".format(header)
