@@ -110,6 +110,9 @@ _Static_assert(TTYDEF_OFLAG == (OPOST | ONLCR | XTABS) &&
 #ifndef VSWTC
 #error "<pty.h> must retain its direct <termios.h> dependency"
 #endif
+#ifdef _BITS_IOCTL_H
+#error "<pty.h> must not acquire a synthetic <bits/ioctl.h> guard"
+#endif
 _Static_assert(sizeof(struct winsize) == 8 && _Alignof(struct winsize) == 2,
     "winsize layout from pty direct dependencies");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&openpty),

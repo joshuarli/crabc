@@ -66,6 +66,9 @@ static_assert(TTYDEF_LFLAG == (ECHO | ICANON | ISIG | IEXTEN | ECHOE | ECHOKE | 
 #ifndef TCGETS
 #error "<pty.h> must retain its direct <sys/ioctl.h> dependency"
 #endif
+#ifdef _BITS_IOCTL_H
+#error "<pty.h> must not acquire a synthetic <bits/ioctl.h> guard"
+#endif
 extern "C" int openpty(int *, int *, char *, const struct termios *, const struct winsize *);
 extern "C" int forkpty(int *, char *, const struct termios *, const struct winsize *);
 static_assert(__is_same(decltype(&openpty),

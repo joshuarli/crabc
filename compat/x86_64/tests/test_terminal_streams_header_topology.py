@@ -69,12 +69,16 @@ class TerminalStreamsHeaderTopologyTests(unittest.TestCase):
             "must not acquire <sys/ioctl.h> request macros",
             "must not directly include <termios.h>",
             "must retain its direct <sys/ioctl.h> dependency",
+            "must not acquire a synthetic <bits/ioctl.h> guard",
             "GNU/BSD termios profile must expose CMSPAR",
             "strict POSIX/XSI termios profile must hide CMSPAR",
         ):
             self.assertIn(required, c_probe)
+        self.assertIn("bits/ioctl.h", RUNNER.read_text(encoding="utf-8"))
+        self.assertIn("bits/ioctl_fix.h", RUNNER.read_text(encoding="utf-8"))
         self.assertIn('extern "C" int openpty', cpp_probe)
         self.assertIn('extern "C" int ioctl', cpp_probe)
+        self.assertIn("must not acquire a synthetic <bits/ioctl.h> guard", cpp_probe)
         self.assertIn("struct winsize", c_negative)
         self.assertIn("struct winsize", cpp_negative)
         self.assertIn("tcgetattr", c_negative)

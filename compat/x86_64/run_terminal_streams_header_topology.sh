@@ -158,6 +158,8 @@ compile_positive() {
         pty)
             require_trace_header "$trace" "$include_root" 'termios.h'
             require_trace_header "$trace" "$include_root" 'sys/ioctl.h'
+            require_trace_header "$trace" "$include_root" 'bits/ioctl.h'
+            require_trace_header "$trace" "$include_root" 'bits/ioctl_fix.h'
             ;;
         sys-termios)
             grep -Fq 'redirecting incorrect #include <sys/termios.h> to <termios.h>' "$trace" ||

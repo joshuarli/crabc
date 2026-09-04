@@ -32,15 +32,17 @@ class IoctlHeaderAbiTests(unittest.TestCase):
         self.assertIn("#define __NEED_struct_winsize", header)
         self.assertIn("#include <bits/alltypes.h>", header)
         for phrase in (
-            "#define _IOC_READ 2U",
-            "#define _IOWR(a, b, c)",
-            "#define FIONREAD 0x541B",
-            "#define FIONBIO 0x5421",
-            "#define FIOCLEX 0x5451",
-            "#define FIONCLEX 0x5450",
+            "#define _IOC_READ  2U",
+            "#define _IOWR(a,b,c)",
+            "#define FIONREAD\t0x541B",
+            "#define FIONBIO\t\t0x5421",
+            "#define FIOCLEX\t\t0x5451",
+            "#define FIONCLEX\t0x5450",
         ):
             self.assertIn(phrase, ioctl_surface)
         self.assertIn("#include <bits/ioctl.h>", header)
+        self.assertIn("#include <bits/ioctl_fix.h>", bits_header)
+        self.assertNotIn("_BITS_IOCTL_H", bits_header)
 
         source = STATIC_SOURCE.read_text(encoding="utf-8")
         for phrase in (
@@ -56,6 +58,18 @@ class IoctlHeaderAbiTests(unittest.TestCase):
         ):
             self.assertIn(phrase, source)
         self.assertNotIn("crabc_core", source)
+
+    def test_direct_header_retains_pinned_macro_source_forms(self) -> None:
+        header = HEADER.read_text(encoding="utf-8")
+        for phrase in (
+            "#define SIOCSIFBRDADDR     0x891a",
+            "#define SIOCGIFNETMASK     0x891b",
+            "#define SIOCSIFNETMASK     0x891c",
+            "#define SIOCGIFMETRIC      0x891d",
+            "#define SIOCSIFMETRIC      0x891e",
+            "#define SIOCGIFMEM         0x891f",
+        ):
+            self.assertIn(phrase, header)
 
     def test_header_matrix_and_static_fixture_are_closed_and_native(self) -> None:
         for probe in (
