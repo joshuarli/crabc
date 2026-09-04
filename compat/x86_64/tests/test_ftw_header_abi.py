@@ -11,6 +11,18 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class X86FtwHeaderAbiTests(unittest.TestCase):
+    def test_project_header_preserves_pinned_musl_source_form(self) -> None:
+        header = (ROOT / "include" / "ftw.h").read_text(encoding="utf-8")
+
+        for required in (
+            "#define\t_FTW_H",
+            "#define FTW_F   1",
+            "#define FTW_PHYS  1",
+            "struct FTW {\n\tint base;\n\tint level;\n};",
+        ):
+            self.assertIn(required, header)
+        self.assertNotIn("struct FTW { int base; int level; };", header)
+
     def test_c_and_cxx_probes_keep_the_x86_unconditional_declaration_contract(self) -> None:
         c_probe = (
             ROOT / "compat" / "x86_64" / "ftw_header_abi_probe.c"
