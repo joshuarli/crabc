@@ -2171,7 +2171,8 @@ unsafe fn materialize_initial_tls(objects: &[Object; MAX_OBJECTS], ownership_pre
     let dtv = tcb.add(TLS_TCB_PREFIX_SIZE) as *mut usize;
     let module_sizes = (dtv as *mut u8).add(TLS_DTV_BYTE_LEN) as *mut usize;
     // SAFETY: the fresh anonymous mapping spans the checked TCB/DTV ranges;
-    // no application code can observe it until ARCH_SET_FS succeeds below.
+    // no application code can observe it until startup installs FS or the
+    // worker owner publishes the returned allocation to CLONE_SETTLS.
     core::ptr::write_unaligned(tcb as *mut usize, thread_pointer);
     core::ptr::write_unaligned(tcb.add(core::mem::size_of::<usize>()) as *mut usize, dtv as usize);
     core::ptr::write_unaligned(

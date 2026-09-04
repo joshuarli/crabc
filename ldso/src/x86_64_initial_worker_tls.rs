@@ -2,8 +2,9 @@
 //!
 //! Materialization uses the startup allocator and retained relocated templates,
 //! without installing FS or calling libc. A generation-tagged token identifies
-//! exactly one live mapping. Registry withdrawal precedes unmapping; wrong,
-//! stale and duplicate tokens cannot unmap another allocation. The libc caller
+//! exactly one live mapping. Unmapping and successful registry withdrawal are
+//! serialized; failure retains the node. Wrong, stale and duplicate tokens
+//! cannot unmap another allocation. The libc caller
 //! must separately prove kernel clear-child-TID and reader quiescence.
 
 use super::*;
@@ -90,6 +91,43 @@ unsafe fn register_allocation(node: *mut AllocationNode, token: WorkerTlsAllocat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_materialization_preserves_fs_and_copies_initial_images_not_live_tls() {
+        let image = [11u8, 12, 13, 14];
+        let aligned_image = [21u8, 22, 23];
+        let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+        objects[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 32,
+            ..EMPTY_OBJECT };
+        // A TLS-free object between providers must not consume a DTV ID.
+        objects[2] = Object { tls_image: aligned_image.as_ptr(), tls_filesz: aligned_image.len(),
+            tls_memsz: 129, tls_align: 4096, tls_module_id: 2, tls_offset_below_tp: 4096,
+            ..EMPTY_OBJECT };
+        let before = unsafe { read_thread_pointer() };
+        let first = unsafe { materialize_initial_tls(&objects, core::mem::size_of::<AllocationNode>()) }.unwrap();
+        unsafe { *first.thread_pointer.sub(32) = 99; }
+        let second = unsafe { materialize_initial_tls(&objects, core::mem::size_of::<AllocationNode>()) }.unwrap();
+        assert_eq!(unsafe { read_thread_pointer() }, before);
+        assert_ne!(first.thread_pointer, second.thread_pointer);
+        for block in [first, second] {
+            assert_eq!(block.thread_pointer as usize % 4096, 0);
+            assert!(block.mapping as usize + core::mem::size_of::<AllocationNode>()
+                <= block.thread_pointer as usize - 4096);
+            assert_eq!(unsafe { *block.dtv }, 2);
+            assert_eq!(unsafe { *block.dtv.add(1) }, block.thread_pointer as usize - 32);
+            assert_eq!(unsafe { *block.dtv.add(2) }, block.thread_pointer as usize - 4096);
+            assert_eq!(unsafe { core::slice::from_raw_parts(block.thread_pointer.sub(4096), 3) }, aligned_image);
+            assert!(unsafe { core::slice::from_raw_parts(block.thread_pointer.sub(4096).add(3), 126) }.iter().all(|byte| *byte == 0));
+            let sizes = unsafe { *block.thread_pointer.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<*const usize>() };
+            assert_eq!(unsafe { *sizes.add(1) }, 32);
+            assert_eq!(unsafe { *sizes.add(2) }, 129);
+        }
+        assert_eq!(unsafe { core::slice::from_raw_parts(second.thread_pointer.sub(32), 4) }, image);
+        for block in [first, second] {
+            assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);
+        }
+    }
 
     /// Exercise the actual release boundary against owned native mappings,
     /// including forged spans, duplicate release and a reused-address stale ID.
