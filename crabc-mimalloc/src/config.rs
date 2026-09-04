@@ -110,6 +110,270 @@ pub(crate) const PAGE_MAP_SUB_SHIFT: usize = 13;
 pub(crate) const PAGE_MAP_SUB_COUNT: usize = 1 << PAGE_MAP_SUB_SHIFT;
 pub(crate) const PAGE_MAP_SHIFT: usize = MAX_VABITS - PAGE_MAP_SUB_SHIFT - ARENA_SLICE_SHIFT;
 
+/// The VM-affecting subset of pinned `src/options.c` descriptors.
+///
+/// These are not a new allocator configuration language.  They retain the
+/// source descriptors that `src/os.c` observes, including their individual
+/// default values and lazy `UNINIT -> DEFAULTED | INITIALIZED` transition.
+/// A process-start owner must supply the environment observation: this
+/// allocation-free crate deliberately has no ambient `environ` reader.
+#[repr(usize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VmOption {
+    PurgeDecommits = 0,
+    AllowLargeOsPages = 1,
+    ReserveHugeOsPages = 2,
+    ReserveHugeOsPagesAt = 3,
+    PurgeDelay = 4,
+    UseNumaNodes = 5,
+    AllowThp = 6,
+}
+
+impl VmOption {
+    pub(crate) const ALL: [Self; 7] = [
+        Self::PurgeDecommits,
+        Self::AllowLargeOsPages,
+        Self::ReserveHugeOsPages,
+        Self::ReserveHugeOsPagesAt,
+        Self::PurgeDelay,
+        Self::UseNumaNodes,
+        Self::AllowThp,
+    ];
+
+    #[inline]
+    const fn default_value(self) -> i64 {
+        match self {
+            // `src/options.c:112-114`.
+            Self::PurgeDecommits => 1,
+            // `MI_DEFAULT_ALLOW_LARGE_OS_PAGES` and
+            // `MI_DEFAULT_RESERVE_HUGE_OS_PAGES` on normal Linux.
+            Self::AllowLargeOsPages | Self::ReserveHugeOsPages => 0,
+            // `src/options.c:117`.
+            Self::ReserveHugeOsPagesAt => -1,
+            // `src/options.c:122`.
+            Self::PurgeDelay => 1_000,
+            // `src/options.c:123`.
+            Self::UseNumaNodes => 0,
+            // `MI_DEFAULT_ALLOW_THP` on non-Android Linux.
+            Self::AllowThp => 1,
+        }
+    }
+}
+
+/// The source state of one lazy option descriptor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VmOptionState {
+    /// No environment observation has completed; upstream retries on a later
+    /// `mi_option_get` when `getenv` was temporarily unavailable.
+    Uninitialized,
+    /// Environment was absent or malformed, so the pinned descriptor value is
+    /// retained without a programmatic mutation.
+    Defaulted,
+    /// A valid environment value or `mi_option_set` supplied this descriptor.
+    Initialized,
+}
+
+/// One process-owner observation for a lazy VM option.
+///
+/// `Unavailable` is distinct from `Absent`: the former leaves the descriptor
+/// uninitialized so a later source lookup may retry, while the latter records
+/// the source's `ENOENT -> DEFAULTED` transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VmOptionEnvironment<'a> {
+    Absent,
+    Value(&'a [u8]),
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VmOptionSlot {
+    value: i64,
+    state: VmOptionState,
+}
+
+impl VmOptionSlot {
+    const fn new(value: i64) -> Self {
+        Self {
+            value,
+            state: VmOptionState::Uninitialized,
+        }
+    }
+}
+
+/// Allocation-free VM option descriptors with the source's lazy timing.
+///
+/// This value deliberately has no global instance.  A future process-start
+/// owner must retain it, provide bounded environment observations, and decide
+/// when all descriptors are ready before constructing [`crate::os::VmPolicy`].
+/// Keeping that owner explicit prevents tests or a second linked allocator
+/// copy from silently changing process policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct VmOptions {
+    slots: [VmOptionSlot; 7],
+}
+
+impl VmOptions {
+    /// Constructs the exact uninitialized source descriptor image.
+    #[inline]
+    pub(crate) const fn uninitialized() -> Self {
+        Self {
+            slots: [
+                VmOptionSlot::new(VmOption::PurgeDecommits.default_value()),
+                VmOptionSlot::new(VmOption::AllowLargeOsPages.default_value()),
+                VmOptionSlot::new(VmOption::ReserveHugeOsPages.default_value()),
+                VmOptionSlot::new(VmOption::ReserveHugeOsPagesAt.default_value()),
+                VmOptionSlot::new(VmOption::PurgeDelay.default_value()),
+                VmOptionSlot::new(VmOption::UseNumaNodes.default_value()),
+                VmOptionSlot::new(VmOption::AllowThp.default_value()),
+            ],
+        }
+    }
+
+    /// Initializes every VM descriptor once, like `_mi_options_init`.
+    ///
+    /// The callback is the process owner's bounded replacement for the C
+    /// `getenv` call. It is invoked only for still-uninitialized descriptors,
+    /// preserving both source retry and source programmatic-set timing.
+    pub(crate) fn initialize_all<'environment>(
+        &mut self,
+        mut environment: impl FnMut(VmOption) -> VmOptionEnvironment<'environment>,
+    ) {
+        for option in VmOption::ALL {
+            self.initialize_one(option, environment(option));
+        }
+    }
+
+    /// Performs one source lazy initialization attempt.
+    pub(crate) fn initialize_one(&mut self, option: VmOption, environment: VmOptionEnvironment<'_>) {
+        let slot = &mut self.slots[option as usize];
+        if slot.state != VmOptionState::Uninitialized {
+            return;
+        }
+        match environment {
+            VmOptionEnvironment::Unavailable => {}
+            VmOptionEnvironment::Absent => slot.state = VmOptionState::Defaulted,
+            VmOptionEnvironment::Value(value) => match parse_source_option_value(value) {
+                Some(value) => {
+                    slot.value = value;
+                    slot.state = VmOptionState::Initialized;
+                }
+                None => slot.state = VmOptionState::Defaulted,
+            },
+        }
+    }
+
+    /// Mirrors `mi_option_set`: replace the value and prevent lazy lookup.
+    #[inline]
+    pub(crate) fn set(&mut self, option: VmOption, value: i64) {
+        self.slots[option as usize] = VmOptionSlot {
+            value,
+            state: VmOptionState::Initialized,
+        };
+    }
+
+    /// Mirrors `mi_option_set_default`: an explicit source set wins, while an
+    /// uninitialized/defaulted descriptor keeps its lazy-state marker.
+    #[inline]
+    pub(crate) fn set_default(&mut self, option: VmOption, value: i64) {
+        let slot = &mut self.slots[option as usize];
+        if slot.state != VmOptionState::Initialized {
+            slot.value = value;
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn state(&self, option: VmOption) -> VmOptionState {
+        self.slots[option as usize].state
+    }
+
+    /// Returns a resolved source value, rejecting a descriptor whose source
+    /// environment lookup may still be retried.
+    #[inline]
+    pub(crate) const fn value(&self, option: VmOption) -> Option<i64> {
+        let slot = self.slots[option as usize];
+        match slot.state {
+            VmOptionState::Uninitialized => None,
+            VmOptionState::Defaulted | VmOptionState::Initialized => Some(slot.value),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn all_resolved(&self) -> bool {
+        let mut index = 0;
+        while index < self.slots.len() {
+            if matches!(self.slots[index].state, VmOptionState::Uninitialized) {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+}
+
+/// Parses the value grammar used by `src/options.c:636-674` for these
+/// non-size VM options. The C path uppercases its bounded temporary buffer,
+/// treats an empty value as enabled, accepts the four boolean spellings, and
+/// otherwise accepts an entire base-ten `strtol` result.
+fn parse_source_option_value(value: &[u8]) -> Option<i64> {
+    if value.is_empty() || ascii_eq_ignore_case(value, b"1") || ascii_eq_ignore_case(value, b"TRUE")
+        || ascii_eq_ignore_case(value, b"YES") || ascii_eq_ignore_case(value, b"ON")
+    {
+        return Some(1);
+    }
+    if ascii_eq_ignore_case(value, b"0") || ascii_eq_ignore_case(value, b"FALSE")
+        || ascii_eq_ignore_case(value, b"NO") || ascii_eq_ignore_case(value, b"OFF")
+    {
+        return Some(0);
+    }
+
+    let mut index = 0;
+    while index < value.len() && matches!(value[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') {
+        index += 1;
+    }
+    let negative = match value.get(index) {
+        Some(b'+') => {
+            index += 1;
+            false
+        }
+        Some(b'-') => {
+            index += 1;
+            true
+        }
+        _ => false,
+    };
+    let digits_start = index;
+    let mut magnitude = 0u64;
+    while let Some(digit) = value.get(index).and_then(|byte| byte.checked_sub(b'0')) {
+        if digit > 9 {
+            break;
+        }
+        magnitude = magnitude.checked_mul(10)?.checked_add(u64::from(digit))?;
+        index += 1;
+    }
+    if index == digits_start || index != value.len() {
+        return None;
+    }
+    if negative {
+        let minimum_magnitude = (i64::MAX as u64) + 1;
+        if magnitude == minimum_magnitude {
+            Some(i64::MIN)
+        } else {
+            i64::try_from(magnitude).ok().map(|value| -value)
+        }
+    } else {
+        i64::try_from(magnitude).ok()
+    }
+}
+
+#[inline]
+fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(&left, &right)| {
+            let left = if left.is_ascii_lowercase() { left - (b'a' - b'A') } else { left };
+            left == right
+        })
+}
+
 const _: [(); 8] = [(); WORD_SIZE];
 const _: [(); 1] = [(); ENABLE_LARGE_PAGES as usize];
 const _: [(); 1] = [(); (!ENCODE_FREELIST) as usize];
@@ -187,5 +451,66 @@ mod tests {
         assert_eq!(LARGE_MAX_OBJ_WSIZE, 65_536);
         assert_eq!(ARENA_MIN_SIZE, 32 * MIB);
         assert_eq!(ARENA_MAX_SIZE, 16 * GIB);
+    }
+
+    #[test]
+    fn vm_options_preserve_source_defaults_and_lazy_environment_states() {
+        let mut options = VmOptions::uninitialized();
+        assert!(!options.all_resolved());
+        assert_eq!(
+            options.state(VmOption::AllowLargeOsPages),
+            VmOptionState::Uninitialized
+        );
+        assert_eq!(options.value(VmOption::AllowLargeOsPages), None);
+
+        options.initialize_one(VmOption::AllowLargeOsPages, VmOptionEnvironment::Absent);
+        options.initialize_one(VmOption::PurgeDelay, VmOptionEnvironment::Value(b"250"));
+        options.initialize_one(VmOption::AllowThp, VmOptionEnvironment::Value(b"off"));
+        options.initialize_one(VmOption::UseNumaNodes, VmOptionEnvironment::Unavailable);
+        options.initialize_one(VmOption::ReserveHugeOsPages, VmOptionEnvironment::Value(b"bogus"));
+
+        assert_eq!(options.value(VmOption::AllowLargeOsPages), Some(0));
+        assert_eq!(options.state(VmOption::AllowLargeOsPages), VmOptionState::Defaulted);
+        assert_eq!(options.value(VmOption::PurgeDelay), Some(250));
+        assert_eq!(options.state(VmOption::PurgeDelay), VmOptionState::Initialized);
+        assert_eq!(options.value(VmOption::AllowThp), Some(0));
+        assert_eq!(options.state(VmOption::AllowThp), VmOptionState::Initialized);
+        assert_eq!(options.value(VmOption::UseNumaNodes), None);
+        assert_eq!(options.state(VmOption::UseNumaNodes), VmOptionState::Uninitialized);
+        assert_eq!(options.value(VmOption::ReserveHugeOsPages), Some(0));
+        assert_eq!(options.state(VmOption::ReserveHugeOsPages), VmOptionState::Defaulted);
+
+        // The C descriptor ignores a later environment lookup after either
+        // a valid value or an absent/invalid result finalized it.
+        options.initialize_one(VmOption::AllowThp, VmOptionEnvironment::Value(b"1"));
+        assert_eq!(options.value(VmOption::AllowThp), Some(0));
+    }
+
+    #[test]
+    fn vm_option_set_and_set_default_keep_source_mutation_precedence() {
+        let mut options = VmOptions::uninitialized();
+        options.set_default(VmOption::PurgeDelay, 5);
+        assert_eq!(options.value(VmOption::PurgeDelay), None);
+        options.initialize_one(VmOption::PurgeDelay, VmOptionEnvironment::Absent);
+        assert_eq!(options.value(VmOption::PurgeDelay), Some(5));
+
+        options.set(VmOption::PurgeDelay, -1);
+        options.set_default(VmOption::PurgeDelay, 1000);
+        options.initialize_one(VmOption::PurgeDelay, VmOptionEnvironment::Value(b"1000"));
+        assert_eq!(options.value(VmOption::PurgeDelay), Some(-1));
+        assert_eq!(options.state(VmOption::PurgeDelay), VmOptionState::Initialized);
+    }
+
+    #[test]
+    fn vm_option_parser_matches_the_non_size_source_grammar() {
+        assert_eq!(parse_source_option_value(b""), Some(1));
+        assert_eq!(parse_source_option_value(b"YeS"), Some(1));
+        assert_eq!(parse_source_option_value(b"OFF"), Some(0));
+        assert_eq!(parse_source_option_value(b" \t-42"), Some(-42));
+        assert_eq!(parse_source_option_value(b"+9223372036854775807"), Some(i64::MAX));
+        assert_eq!(parse_source_option_value(b"-9223372036854775808"), Some(i64::MIN));
+        assert_eq!(parse_source_option_value(b"9223372036854775808"), None);
+        assert_eq!(parse_source_option_value(b"12x"), None);
+        assert_eq!(parse_source_option_value(b" + "), None);
     }
 }

@@ -8,7 +8,7 @@
 
 use crate::syscall::{
     decode, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MLOCK,
-    SYS_MLOCK2, SYS_MLOCKALL, SYS_MADVISE, SYS_MMAP, SYS_MINCORE, SYS_MPROTECT, SYS_MREMAP,
+    SYS_MLOCK2, SYS_MLOCKALL, SYS_MADVISE, SYS_MBIND, SYS_MMAP, SYS_MINCORE, SYS_MPROTECT, SYS_MREMAP,
     SYS_MSYNC, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_REMAP_FILE_PAGES,
 };
 use crate::{RawFd, Result};
@@ -275,6 +275,46 @@ pub unsafe fn madvise_raw(address: *mut u8, length: usize, advice: u32) -> Resul
     // Linux validates the advice value and mapping.
     decode(unsafe { syscall3(SYS_MADVISE, address as usize, length, advice as usize) })
         .map(|_| ())
+}
+
+/// Applies a Linux/x86-64 NUMA memory policy to an existing mapped range.
+///
+/// This is the exact `mbind(2)` word ABI on the native target: `mode` is the
+/// kernel signed integer, while `nodemask` addresses `unsigned long` words.
+/// Linux/x86-64 LP64 makes one Rust `usize` one such word. This raw seam owns
+/// neither node discovery nor a policy vocabulary; callers select and retain
+/// those source-level decisions.
+///
+/// # Safety
+///
+/// `address..address + length` must not wrap and must remain mapped for the
+/// call. A mode that makes Linux inspect `nodemask` requires a suitably
+/// aligned, readable word array for `maxnode` bits (rounded up to word size);
+/// a null pointer is valid only for modes that permit it. The caller owns the
+/// selected policy's lifetime and concurrency effects on this mapping.
+#[inline]
+pub unsafe fn mbind_raw(
+    address: *mut u8,
+    length: usize,
+    mode: i32,
+    nodemask: *const usize,
+    maxnode: usize,
+    flags: u32,
+) -> Result<()> {
+    // SAFETY: the caller owns the mapped range and optional nodemask
+    // contracts; scalar arguments pass unchanged to the Linux x86-64 ABI.
+    decode(unsafe {
+        syscall6(
+            SYS_MBIND,
+            address as usize,
+            length,
+            mode as usize,
+            nodemask as usize,
+            maxnode,
+            flags as usize,
+        )
+    })
+    .map(|_| ())
 }
 
 /// Applies a POSIX memory-access advisory through Linux's `madvise` ABI.

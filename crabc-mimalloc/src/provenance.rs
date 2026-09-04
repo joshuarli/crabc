@@ -114,6 +114,31 @@ impl MemoryId {
         }
     }
 
+    /// Constructs `_mi_memid_create_os(...); memid.memkind = MI_MEM_OS_HUGE`.
+    ///
+    /// Huge-page ownership retains the same `mem.os` base/complete-size union
+    /// and pinned initial state as a large regular OS allocation, but its
+    /// terminal source free path must release one 1-GiB primitive map at a
+    /// time. Keeping the discriminant separate prevents that owner from being
+    /// passed to an ordinary one-range `munmap` release path.
+    #[inline]
+    pub(crate) const fn os_huge(
+        base: *mut u8,
+        size: usize,
+        committed: bool,
+        zero: bool,
+    ) -> Self {
+        Self {
+            info: MemoryInfo {
+                os: OsMemory { base, size },
+            },
+            kind: MemoryKind::OsHuge,
+            is_pinned: true,
+            initially_committed: committed,
+            initially_zero: zero,
+        }
+    }
+
     #[inline]
     pub(crate) fn os_base(&self) -> Option<Address> {
         if !self.is_os() {
@@ -218,6 +243,15 @@ mod tests {
         assert_eq!(os_id.os_base(), Some(Address::from_ptr(bytes.as_ptr())));
         assert!(!os_id.initially_committed());
         assert!(os_id.initially_zero());
+
+        let huge_id = MemoryId::os_huge(bytes.as_mut_ptr(), 1024 * 1024 * 1024, true, false);
+        assert_eq!(huge_id.kind(), MemoryKind::OsHuge);
+        assert!(huge_id.is_os());
+        assert!(huge_id.is_pinned());
+        assert!(huge_id.initially_committed());
+        assert!(!huge_id.initially_zero());
+        assert_eq!(huge_id.os_base(), Some(Address::from_ptr(bytes.as_ptr())));
+        assert_eq!(huge_id.size(), Some(1024 * 1024 * 1024));
     }
 
     #[test]

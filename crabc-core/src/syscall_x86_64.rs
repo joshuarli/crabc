@@ -140,6 +140,9 @@ pub(crate) const SYS_MREMAP: usize = 25;
 pub(crate) const SYS_MSYNC: usize = 26;
 pub(crate) const SYS_MINCORE: usize = 27;
 pub(crate) const SYS_MADVISE: usize = 28;
+// Linux/x86-64 NUMA memory-policy binding. This differs from AArch64's
+// generic-table number (235); x86-64 uses `__NR_mbind == 237`.
+pub(crate) const SYS_MBIND: usize = 237;
 pub(crate) const SYS_MLOCK: usize = 149;
 pub(crate) const SYS_MUNLOCK: usize = 150;
 pub(crate) const SYS_MLOCKALL: usize = 151;

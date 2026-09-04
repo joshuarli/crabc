@@ -36,12 +36,15 @@ use core::ffi::CStr;
 use core::fmt;
 use core::num::NonZeroUsize;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crabc_core::{Errno, Result};
 
-use crate::config::ARENA_SLICE_SIZE;
+use crate::config::{ARENA_SLICE_SIZE, VmOption, VmOptionState, VmOptions};
+#[cfg(test)]
+use crate::config::VmOptionEnvironment;
 use crate::invariants;
+use crate::random::TheapRandomImage;
 use crate::types::{MemoryId, MemoryKind};
 
 // Linux values shared by the exact AArch64 and x86-64 Unix primitive paths.
@@ -53,12 +56,29 @@ const PROT_WRITE: u32 = 0x2;
 const MAP_PRIVATE: u32 = 0x02;
 const MAP_ANONYMOUS: u32 = 0x20;
 const MAP_NORESERVE: u32 = 0x4000;
+const MAP_HUGETLB: u32 = 0x40000;
+const MAP_HUGE_SHIFT: u32 = 26;
+const MAP_HUGE_2MB: u32 = 21 << MAP_HUGE_SHIFT;
+const MAP_HUGE_1GB: u32 = 30 << MAP_HUGE_SHIFT;
 const MADV_DONTNEED: u32 = 4;
 const MADV_FREE: u32 = 8;
+const MADV_HUGEPAGE: u32 = 14;
+const PR_SET_THP_DISABLE: i32 = 41;
+const PR_GET_THP_DISABLE: i32 = 42;
+const MPOL_PREFERRED: i32 = 1;
 const CLOCK_MONOTONIC: i32 = 1;
 const GRND_NONBLOCK: u32 = 0x1;
 const RUSAGE_SELF: i32 = 0;
 const R_OK: u32 = 4;
+
+const MIB: usize = 1024 * 1024;
+const GIB: usize = 1024 * MIB;
+const HINT_BASE: usize = 2 << 40;
+const HINT_AREA: usize = 4 << 40;
+const HINT_MAX: usize = 30 << 40;
+const HUGE_HINT_BASE: usize = 32 << 40;
+const HUGE_PAGE_SIZE: usize = GIB;
+const LARGE_PAGE_FAILED_RETRY_COUNT: usize = 8;
 
 // `src/prim/unix/prim.c:_mi_prim_numa_node_count` probes node entries one at
 // a time instead of allocating or parsing a topology file. It starts after
@@ -277,6 +297,15 @@ impl MemoryConfig {
         self.has_transparent_huge_pages
     }
 
+    /// Applies the `mi_option_allow_thp == 0` source policy after Linux
+    /// primitive probing. The pinned Unix code clears this fact before it
+    /// attempts `PR_GET_THP_DISABLE`, so an unavailable or denied `prctl`
+    /// never lets later allocation policy claim THP remains enabled.
+    #[inline]
+    fn disable_transparent_huge_pages(&mut self) {
+        self.has_transparent_huge_pages = false;
+    }
+
     /// Implements `_mi_os_canuse_large_page` without consulting option state.
     #[inline]
     pub(crate) const fn can_use_large_page(self, size: usize, alignment: usize) -> bool {
@@ -304,6 +333,242 @@ impl MemoryConfig {
             invariants::align_up(size, alignment).unwrap_or(size)
         }
     }
+}
+
+/// A fully resolved VM option image cannot be manufactured from a partial
+/// process-start observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VmPolicyConfigurationError {
+    UnresolvedOption(VmOption),
+}
+
+/// Observable result of the source's process-local THP disable attempt.
+///
+/// `_mi_prim_mem_init` deliberately continues after either `prctl` error. The
+/// value records that fact for the native differential trace without turning a
+/// best-effort source policy into a new allocation failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThpPolicyOutcome {
+    Allowed,
+    DisabledAlready(usize),
+    DisabledSet,
+    DisabledSetFailed(Errno),
+    DisabledQueryFailed(Errno),
+}
+
+/// Process-owned state for the source VM option, hint, large-page retry, and
+/// NUMA-count policy.
+///
+/// This deliberately receives a completed [`VmOptions`] image instead of
+/// reading `environ`, creating random state, or allocating an owner itself.
+/// The eventual process initializer must retain one `VmPolicy` beside the
+/// source `MainSubprocess`; callers pass the already initialized
+/// [`TheapRandomImage`] when a source path requires randomization. The old
+/// fixed-default mapping APIs remain intact while that lifecycle wiring is
+/// being introduced.
+pub(crate) struct VmPolicy {
+    options: VmOptions,
+    aligned_hint_base: AtomicUsize,
+    huge_hint_start: AtomicUsize,
+    large_page_try_ok: AtomicUsize,
+    huge_one_gib_unavailable: AtomicBool,
+    numa_node_count: AtomicUsize,
+}
+
+impl VmPolicy {
+    /// Admits only source options whose lazy environment phase has completed.
+    pub(crate) fn new(options: VmOptions) -> core::result::Result<Self, VmPolicyConfigurationError> {
+        for option in VmOption::ALL {
+            if options.state(option) == VmOptionState::Uninitialized {
+                return Err(VmPolicyConfigurationError::UnresolvedOption(option));
+            }
+        }
+        Ok(Self {
+            options,
+            aligned_hint_base: AtomicUsize::new(0),
+            huge_hint_start: AtomicUsize::new(0),
+            large_page_try_ok: AtomicUsize::new(0),
+            huge_one_gib_unavailable: AtomicBool::new(false),
+            numa_node_count: AtomicUsize::new(0),
+        })
+    }
+
+    /// Starts a source-shaped resolved default policy for a caller which has
+    /// explicitly observed every relevant environment name as absent.
+    ///
+    /// This is not a substitute for process environment ownership. It exists
+    /// for direct native fixtures and for source callers whose startup contract
+    /// has already made the seven absences explicit.
+    #[cfg(test)]
+    fn defaults_for_test() -> Self {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        match Self::new(options) {
+            Ok(policy) => policy,
+            Err(_) => unreachable!("absent source options resolve every VM descriptor"),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn options(&self) -> &VmOptions { &self.options }
+
+    /// Mirrors a source `mi_option_set` performed by the unique process
+    /// options owner. Rust's exclusive borrow makes a concurrent mutation
+    /// impossible here; it does not claim that upstream's ambient global
+    /// option API is generally thread-safe.
+    #[inline]
+    pub(crate) fn set_option(&mut self, option: VmOption, value: i64) {
+        self.options.set(option, value);
+    }
+
+    #[inline]
+    fn option_enabled(&self, option: VmOption) -> bool {
+        self.options
+            .value(option)
+            .expect("VmPolicy accepts only resolved source options")
+            != 0
+    }
+
+    #[inline]
+    fn option_value(&self, option: VmOption) -> i64 {
+        self.options
+            .value(option)
+            .expect("VmPolicy accepts only resolved source options")
+    }
+
+    /// Mirrors the `mi_option_allow_thp` branch in `_mi_prim_mem_init`.
+    ///
+    /// The caller must invoke this only in an isolated process-start child or
+    /// under the eventual process-policy owner: `PR_SET_THP_DISABLE` changes
+    /// the calling process. Native evidence always executes it in its own
+    /// Rust/C fixture process, never in the runner process.
+    pub(crate) fn apply_thp_process_policy(&self, config: &mut MemoryConfig) -> ThpPolicyOutcome {
+        if self.option_enabled(VmOption::AllowThp) {
+            return ThpPolicyOutcome::Allowed;
+        }
+        config.disable_transparent_huge_pages();
+        // SAFETY: these two PR_* values take only scalar zero/one arguments.
+        // The caller owns the process-local THP transition and its timing.
+        match unsafe { crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0) } {
+            Ok(0) => match unsafe { crabc_core::process::prctl_raw(PR_SET_THP_DISABLE, 1, 0, 0, 0) } {
+                Ok(_) => ThpPolicyOutcome::DisabledSet,
+                Err(error) => ThpPolicyOutcome::DisabledSetFailed(error),
+            },
+            Ok(value) => ThpPolicyOutcome::DisabledAlready(value),
+            Err(error) => ThpPolicyOutcome::DisabledQueryFailed(error),
+        }
+    }
+
+    /// Returns `_mi_os_get_aligned_hint`'s address-only result.
+    ///
+    /// The returned integer is an mmap hint, not a reservation or pointer
+    /// owner. In the selected normal-release source branch a missing or
+    /// uninitialized default Theap must return no hint after the source's
+    /// initial atomic cursor increment; callers must pass that real M1 random
+    /// image rather than supplying an ad-hoc generator.
+    pub(crate) fn aligned_hint(
+        &self,
+        config: MemoryConfig,
+        try_alignment: usize,
+        size: usize,
+        default_random: Option<&mut TheapRandomImage>,
+    ) -> Option<usize> {
+        if try_alignment <= config.alloc_granularity()
+            || try_alignment > 16 * GIB
+            || config.virtual_address_bits() < 46
+        {
+            return None;
+        }
+        let request_size = size
+            .checked_add(config.page_size().bytes())?
+            .checked_add(try_alignment.checked_sub(1)?)?;
+        let request_size = invariants::align_up(request_size, config.large_page_size())?;
+        let mut hint = self.aligned_hint_base.fetch_add(request_size, Ordering::AcqRel);
+        if hint == 0 || hint > HINT_MAX {
+            let random = default_random?;
+            if !random.is_initialized() {
+                return None;
+            }
+            let random_bits = (random.next() >> 17) & 0x3f_ffff;
+            let initial = HINT_BASE.checked_add(MIB.checked_mul(random_bits as usize)? % HINT_AREA)?;
+            let expected = hint.wrapping_add(request_size);
+            let _ = self.aligned_hint_base.compare_exchange(
+                expected,
+                initial,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            hint = self.aligned_hint_base.fetch_add(request_size, Ordering::AcqRel);
+            if hint == 0 {
+                return None;
+            }
+        }
+        let aligned = invariants::align_up(hint, try_alignment)?;
+        let request_end = hint.checked_add(request_size)?;
+        if aligned.checked_add(size)? >= request_end {
+            return None;
+        }
+        Some(aligned)
+    }
+
+    /// Claims the source high-address range used for one-or-more 1-GiB huge
+    /// page attempts. Claiming advances the process cursor even when a later
+    /// kernel map fails, exactly as `mi_os_claim_huge_pages` does.
+    fn claim_huge_pages(
+        &self,
+        pages: usize,
+        mut default_random: Option<&mut TheapRandomImage>,
+    ) -> Option<(usize, usize)> {
+        let size = pages.checked_mul(HUGE_PAGE_SIZE)?;
+        let mut observed = self.huge_hint_start.load(Ordering::Relaxed);
+        loop {
+            let mut start = observed;
+            if start == 0 {
+                start = HUGE_HINT_BASE;
+                if let Some(random) = default_random.as_deref_mut() {
+                    if random.is_initialized() {
+                        let random_bits = (random.next() >> 17) & 0x0fff;
+                        start = start.checked_add(HUGE_PAGE_SIZE.checked_mul(random_bits as usize)?)?;
+                    }
+                }
+            }
+            let end = start.checked_add(size)?;
+            match self.huge_hint_start.compare_exchange_weak(
+                observed,
+                end,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some((start, size)),
+                Err(actual) => observed = actual,
+            }
+        }
+    }
+
+    #[inline]
+    fn allow_large_os_pages(&self) -> bool {
+        self.option_enabled(VmOption::AllowLargeOsPages)
+    }
+
+    #[inline]
+    fn allow_thp(&self) -> bool { self.option_enabled(VmOption::AllowThp) }
+
+    #[inline]
+    fn purge_decommits(&self) -> bool { self.option_enabled(VmOption::PurgeDecommits) }
+
+    #[inline]
+    fn purge_delay_milliseconds(&self) -> i64 { self.option_value(VmOption::PurgeDelay) }
+
+    #[inline]
+    fn reserve_huge_os_pages(&self) -> i64 { self.option_value(VmOption::ReserveHugeOsPages) }
+
+    #[inline]
+    fn reserve_huge_os_pages_at(&self) -> i64 {
+        self.option_value(VmOption::ReserveHugeOsPagesAt)
+    }
+
+    #[inline]
+    fn configured_numa_nodes(&self) -> i64 { self.option_value(VmOption::UseNumaNodes) }
 }
 
 fn detected_physical_memory_in_kib() -> Option<usize> {
@@ -692,6 +957,7 @@ pub(crate) struct Mapping {
     page_size: PageSize,
     initially_committed: bool,
     initially_zero: bool,
+    is_large: bool,
     is_mapped: bool,
 }
 
@@ -728,6 +994,178 @@ impl Mapping {
         )
     }
 
+    /// Maps the source Unix allocation route with a process-owned policy.
+    ///
+    /// This additive counterpart of [`Self::map_for_allocator`] preserves the
+    /// frozen default callers while admitting pinned aligned hints, huge-page
+    /// retry, and THP advisory selection only with a resolved [`VmPolicy`].
+    /// `allow_large` is a source caller argument, never an inferred default.
+    pub(crate) fn map_for_allocator_with_policy(
+        policy: &VmPolicy,
+        config: MemoryConfig,
+        length: usize,
+        try_alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        default_random: Option<&mut TheapRandomImage>,
+    ) -> Result<Self> {
+        validate_mapping_length(config.page_size(), length)?;
+        let try_alignment = if try_alignment == 0 { 1 } else { try_alignment };
+        let try_alignment = if config.large_page_size() > 0
+            && length >= 8 * config.large_page_size()
+            && try_alignment.is_power_of_two()
+            && try_alignment < config.large_page_size()
+        {
+            config.large_page_size()
+        } else {
+            try_alignment
+        };
+        Self::map_unix_policy(
+            policy,
+            config,
+            length,
+            try_alignment,
+            access,
+            matches!(access, MapAccess::Committed) && allow_large,
+            false,
+            None,
+            default_random,
+        )
+    }
+
+    /// Attempts the exact one-GiB source huge-page primitive at a claimed
+    /// high-address hint. There is no regular mmap fallback on this path.
+    fn map_huge_page_at(policy: &VmPolicy, config: MemoryConfig, hint: usize) -> Result<Self> {
+        Self::map_unix_policy(
+            policy,
+            config,
+            HUGE_PAGE_SIZE,
+            ARENA_SLICE_SIZE,
+            MapAccess::Committed,
+            true,
+            true,
+            Some(hint),
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn map_unix_policy(
+        policy: &VmPolicy,
+        config: MemoryConfig,
+        length: usize,
+        try_alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        large_only: bool,
+        explicit_hint: Option<usize>,
+        default_random: Option<&mut TheapRandomImage>,
+    ) -> Result<Self> {
+        fault_before(FaultPoint::Map)?;
+        let mut flags = MAP_PRIVATE | MAP_ANONYMOUS;
+        if config.has_overcommit() {
+            flags |= MAP_NORESERVE;
+        }
+        let protection = access.protection();
+        let source_hint = match explicit_hint {
+            Some(hint) => Some(hint),
+            None => policy.aligned_hint(config, try_alignment, length, default_random),
+        };
+        let wants_large = allow_large
+            && (large_only
+                || (config.can_use_large_page(length, try_alignment)
+                    && policy.allow_large_os_pages()));
+        if wants_large {
+            let retry_remaining = policy.large_page_try_ok.load(Ordering::Acquire);
+            if large_only || retry_remaining == 0 {
+                let mut large_flags = (flags & !MAP_NORESERVE) | MAP_HUGETLB;
+                let one_gib = large_only
+                    && length % HUGE_PAGE_SIZE == 0
+                    && !policy.huge_one_gib_unavailable.load(Ordering::Relaxed);
+                large_flags |= if one_gib { MAP_HUGE_1GB } else { MAP_HUGE_2MB };
+                match Self::mmap_with_hint(source_hint, length, protection, large_flags) {
+                    Ok(address) => return Ok(Self::policy_mapping(address, length, config, access, true)),
+                    Err(first_error) if one_gib => {
+                        policy.huge_one_gib_unavailable.store(true, Ordering::Relaxed);
+                        let fallback_flags = (large_flags & !MAP_HUGE_1GB) | MAP_HUGE_2MB;
+                        match Self::mmap_with_hint(source_hint, length, protection, fallback_flags) {
+                            Ok(address) => return Ok(Self::policy_mapping(address, length, config, access, true)),
+                            Err(error) if large_only => return Err(error),
+                            Err(_) => {
+                                let _ = first_error;
+                            }
+                        }
+                    }
+                    Err(error) if large_only => return Err(error),
+                    Err(_) => {}
+                }
+                if large_only {
+                    unreachable!("the large-only error paths returned above");
+                }
+                policy
+                    .large_page_try_ok
+                    .store(LARGE_PAGE_FAILED_RETRY_COUNT, Ordering::Release);
+            } else {
+                let _ = policy.large_page_try_ok.compare_exchange(
+                    retry_remaining,
+                    retry_remaining - 1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+            }
+        }
+        let address = Self::mmap_with_hint(source_hint, length, protection, flags)?;
+        if allow_large && policy.allow_thp() && config.can_use_large_page(length, try_alignment) {
+            // The source ignores this advisory's errno and does not call the
+            // resulting regular map a large-page mapping.
+            // SAFETY: this function owns the just-created mapping until it
+            // returns the explicit `Mapping` owner below.
+            let _ = unsafe { crabc_core::mm::madvise_raw(address, length, MADV_HUGEPAGE) };
+        }
+        Ok(Self::policy_mapping(address, length, config, access, false))
+    }
+
+    #[inline]
+    fn policy_mapping(
+        address: *mut u8,
+        length: usize,
+        config: MemoryConfig,
+        access: MapAccess,
+        is_large: bool,
+    ) -> Self {
+        Self {
+            address,
+            length,
+            page_size: config.page_size(),
+            initially_committed: matches!(access, MapAccess::Committed),
+            initially_zero: true,
+            is_large,
+            is_mapped: true,
+        }
+    }
+
+    #[inline]
+    fn mmap_with_hint(
+        hint: Option<usize>,
+        length: usize,
+        protection: u32,
+        flags: u32,
+    ) -> Result<*mut u8> {
+        // SAFETY: `length` is validated by the caller and the optional hint
+        // is only an address suggestion. Linux validates the raw flags and
+        // creates no Rust reference from the returned mapping address.
+        unsafe {
+            crabc_core::mm::mmap_raw(
+                hint.map_or(core::ptr::null_mut(), |value| value as *mut u8),
+                length,
+                protection,
+                flags,
+                -1,
+                0,
+            )
+        }
+    }
+
     fn map_regular(
         startup: StartupInput,
         length: usize,
@@ -762,6 +1200,7 @@ impl Mapping {
             page_size: startup.page_size,
             initially_committed: matches!(access, MapAccess::Committed),
             initially_zero: true,
+            is_large: false,
             is_mapped: true,
         })
     }
@@ -926,6 +1365,12 @@ impl Mapping {
     pub(crate) const fn initially_committed(&self) -> bool {
         self.initially_committed
     }
+
+    /// Returns whether the successful source primitive used a huge-page mmap
+    /// flag. Transparent-Huge-Page advice intentionally remains false here,
+    /// matching the source's unknown-result representation.
+    #[inline]
+    pub(crate) const fn is_large(&self) -> bool { self.is_large }
 
     /// Returns the actual Linux base-page size selected for this mapping.
     ///
@@ -1621,7 +2066,7 @@ impl NormalOsAllocation {
             length,
             mapping.initially_committed(),
             mapping.initially_zero(),
-            false,
+            mapping.is_large(),
         );
         Ok(Self {
             mapping,
