@@ -79,6 +79,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   reboot-header-source-form  verify x86 <sys/reboot.h> pinned-musl macro form
   mount-header-source-form  verify x86 <sys/mount.h> pinned-musl source form
   fcntl-event-header-topology  verify x86 fcntl/event direct-header topology
+  math-tgmath-source-form  verify x86 math/tgmath source forms and frozen AArch64 arm
   sys-io-header-abi  verify x86 sys/io.h inline port-I/O C/C++ ABI and object code
   timeval-transitive-header-abi  verify selected timeval-dependent header layouts across C/C++ profiles
   sys-time-direct-header-abi  verify selected direct sys/time.h C/C++ ABI profiles and C linkage
@@ -2687,6 +2688,10 @@ run_link_header_source_form() {
 
 run_reboot_header_source_form() {
     run_in_container bash /workspace/compat/x86_64/run_reboot_header_source_form.sh
+}
+
+run_math_tgmath_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_math_tgmath_source_form.sh
 }
 
 run_mount_header_source_form() {
@@ -5383,6 +5388,7 @@ case "$command" in
     terminal-streams-header-topology) ;;
     link-header-source-form) ;;
     reboot-header-source-form) ;;
+    math-tgmath-source-form) ;;
     mount-header-source-form) ;;
     fcntl-event-header-topology) ;;
 
@@ -5533,6 +5539,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "reboot-header-source-form takes no arguments"
         ensure_image
         run_reboot_header_source_form
+        ;;
+    math-tgmath-source-form)
+        [ "$#" -eq 0 ] || fail "math-tgmath-source-form takes no arguments"
+        ensure_image
+        run_math_tgmath_source_form
         ;;
     mount-header-source-form)
         [ "$#" -eq 0 ] || fail "mount-header-source-form takes no arguments"

@@ -25,10 +25,46 @@
 #define M_SQRT2    1.41421356237309504880
 #define M_SQRT1_2  0.707106781186547524401
 #endif
-/* POSIX.1-2024 removes this legacy XSI macro. Keep the historic X/Open
- * namespace and the BSD extension namespace without copying musl's current
- * XSI-800 overexposure. */
-#if defined(_BSD_SOURCE) || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE < 800)
+
+/* The staged x86 header retains musl's literal spellings. The non-x86 arm
+ * intentionally keeps the frozen AArch64 forms above byte-for-byte. */
+#if defined(__x86_64__) && \
+    (defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
+#undef M_E
+#undef M_LOG2E
+#undef M_LOG10E
+#undef M_LN2
+#undef M_LN10
+#undef M_PI
+#undef M_PI_2
+#undef M_PI_4
+#undef M_1_PI
+#undef M_2_PI
+#undef M_2_SQRTPI
+#undef M_SQRT2
+#undef M_SQRT1_2
+#define M_E             2.7182818284590452354
+#define M_LOG2E         1.4426950408889634074
+#define M_LOG10E        0.43429448190325182765
+#define M_LN2           0.69314718055994530942
+#define M_LN10          2.30258509299404568402
+#define M_PI            3.14159265358979323846
+#define M_PI_2          1.57079632679489661923
+#define M_PI_4          0.78539816339744830962
+#define M_1_PI          0.31830988618379067154
+#define M_2_PI          0.63661977236758134308
+#define M_2_SQRTPI      1.12837916709551257390
+#define M_SQRT2         1.41421356237309504880
+#define M_SQRT1_2       0.70710678118654752440
+#endif
+
+/* POSIX.1-2024 removes this legacy XSI macro. Keep AArch64's historic X/Open
+ * namespace and BSD extension boundary; selected x86 retains musl's source
+ * visibility, including the XSI-800 form. */
+#if defined(__x86_64__) && (defined(_XOPEN_SOURCE) || defined(_BSD_SOURCE))
+#undef  MAXFLOAT
+#define MAXFLOAT        3.40282346638528859812e+38F
+#elif defined(_BSD_SOURCE) || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE < 800)
 #define MAXFLOAT 3.40282346638528859812e+38F
 #endif
 
@@ -56,7 +92,7 @@
 /* Pinned musl's x86 math contract reports floating-point exceptions rather
  * than advertising errno-only handling. The selected x87 classifiers below
  * are a prerequisite, not a claim that all x86 scalar math is implemented. */
-#define math_errhandling MATH_ERREXCEPT
+#define math_errhandling 2
 #else
 #define math_errhandling MATH_ERRNO
 #endif
@@ -137,6 +173,32 @@ int __signbitl(long double);
     sizeof(x) == sizeof(float) ? (__FLOAT_BITS(x) & 0x7fffffff) < 0x7f800000 : \
     sizeof(x) == sizeof(double) ? (__DOUBLE_BITS(x) & (-1ULL>>1)) < (0x7ffULL<<52) : \
     __fpclassifyl(x) > FP_INFINITE)
+
+/* Keep the exact pinned x86 macro spellings without changing the frozen
+ * AArch64 forms immediately above. Parenthesization is semantically neutral,
+ * but it is still observable to macro consumers. */
+#if defined(__x86_64__)
+#undef isinf
+#undef isnan
+#undef isnormal
+#undef isfinite
+#define isinf(x) ( \
+	sizeof(x) == sizeof(float) ? (__FLOAT_BITS(x) & 0x7fffffff) == 0x7f800000 : \
+	sizeof(x) == sizeof(double) ? (__DOUBLE_BITS(x) & -1ULL>>1) == 0x7ffULL<<52 : \
+	__fpclassifyl(x) == FP_INFINITE)
+#define isnan(x) ( \
+	sizeof(x) == sizeof(float) ? (__FLOAT_BITS(x) & 0x7fffffff) > 0x7f800000 : \
+	sizeof(x) == sizeof(double) ? (__DOUBLE_BITS(x) & -1ULL>>1) > 0x7ffULL<<52 : \
+	__fpclassifyl(x) == FP_NAN)
+#define isnormal(x) ( \
+	sizeof(x) == sizeof(float) ? ((__FLOAT_BITS(x)+0x00800000) & 0x7fffffff) >= 0x01000000 : \
+	sizeof(x) == sizeof(double) ? ((__DOUBLE_BITS(x)+(1ULL<<52)) & -1ULL>>1) >= 1ULL<<53 : \
+	__fpclassifyl(x) == FP_NORMAL)
+#define isfinite(x) ( \
+	sizeof(x) == sizeof(float) ? (__FLOAT_BITS(x) & 0x7fffffff) < 0x7f800000 : \
+	sizeof(x) == sizeof(double) ? (__DOUBLE_BITS(x) & -1ULL>>1) < 0x7ffULL<<52 : \
+	__fpclassifyl(x) > FP_INFINITE)
+#endif
 
 #define signbit(x) ( \
     sizeof(x) == sizeof(float) ? (int)(__FLOAT_BITS(x)>>31) : \
