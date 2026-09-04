@@ -641,9 +641,15 @@ run_static_mode() {
     )
     candidate="$mode_root/candidate"
     receipt="$mode_root/link.receipt.json"
-    nm -u "$mode_root/peer.o" | grep -Eq '[[:space:]]U[[:space:]]+__stack_chk_fail$' ||
+    # Save symbol evidence before searching it. With `pipefail`, grep -q can
+    # close an nm pipe after its first match and turn nm's harmless SIGPIPE
+    # into a false negative that only appears when parallel jobs alter symbol
+    # ordering and I/O timing.
+    nm -u "$mode_root/peer.o" >"$mode_root/peer.undefined-symbols"
+    nm -u "$mode_root/builtins.o" >"$mode_root/builtins.undefined-symbols"
+    grep -Eq '[[:space:]]U[[:space:]]+__stack_chk_fail$' "$mode_root/peer.undefined-symbols" ||
         fail "${label} protected peer did not emit a compiler stack check"
-    nm -u "$mode_root/builtins.o" | grep -Eq '[[:space:]]U[[:space:]]+__udivti3$' ||
+    grep -Eq '[[:space:]]U[[:space:]]+__udivti3$' "$mode_root/builtins.undefined-symbols" ||
         fail "${label} compiler-helper consumer did not retain an undefined __udivti3 boundary"
     audit_link_receipt "$installed_root" "$mode_root" "$mode" "$candidate" "$receipt"
     assert_forged_link_traces_rejected "$installed_root" "$mode_root" "$mode" "$candidate" "$receipt"
@@ -659,7 +665,8 @@ run_static_mode() {
     [ "$candidate_output" = "$expected_output" ] ||
         fail "${label} candidate output drifted: $candidate_output"
     if [ "$consumer_kind" = stdio ]; then
-        nm --defined-only "$candidate" | grep -Eq '[[:space:]]T[[:space:]]+__stdio_exit$' ||
+        nm --defined-only "$candidate" >"$mode_root/defined-symbols"
+        grep -Eq '[[:space:]]T[[:space:]]+__stdio_exit$' "$mode_root/defined-symbols" ||
             fail "${label} lacks the strong owned stdio exit hook"
         printf 'exit-flushed\n' >"$mode_root/expected-exit-data"
         cmp "$mode_root/expected-exit-data" "$mode_root/exit-data" ||
