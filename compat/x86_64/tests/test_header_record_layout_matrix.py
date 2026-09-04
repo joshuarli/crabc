@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,6 +35,12 @@ MATRIX = load_module("header_record_layout_matrix_test", MATRIX_PATH)
 
 
 class HeaderRecordLayoutMatrixTests(unittest.TestCase):
+    def matrix_test_work_root(self) -> Path:
+        """Keep synthetic record-collection input state inside this checkout."""
+        root = ROOT / ".work" / "x86_64" / "header-record-layout-matrix-tests"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
     def test_contract_uses_fixed_profiles_and_explicit_layout_categories(self) -> None:
         contract = MATRIX.load_contract()
         self.assertEqual(contract.schema, "crabc.x86_64-header-record-layout-matrix/v1")
@@ -47,6 +55,15 @@ class HeaderRecordLayoutMatrixTests(unittest.TestCase):
         self.assertFalse(contract.policy["archive_linkage"])
         self.assertFalse(contract.policy["runtime"])
         self.assertFalse(contract.policy["family_promotion"])
+
+    def test_record_collection_scratch_is_physical_and_checkout_local(self) -> None:
+        work_directory = MATRIX.physical_record_layout_work_directory()
+        self.assertEqual(
+            work_directory,
+            ROOT / ".work" / "x86_64" / "header-record-layout-matrix",
+        )
+        self.assertEqual(work_directory.resolve(strict=True), work_directory)
+        self.assertFalse(work_directory.is_symlink())
 
     def test_field_disposition_marks_layout_exceptions_without_dropping_size(self) -> None:
         fields = MATRIX.field_dispositions(
@@ -353,6 +370,58 @@ Layout: <ASTRecordLayout
         self.assertTrue(any("record-byte-layouts" in reason for reason in report["summary"]["incomplete_reasons"]))
         self.assertFalse(report["scope"]["family_promotion"])
         self.assertFalse(report["scope"]["public_support"])
+
+    def test_collection_digest_binds_layout_relevant_inputs_not_provider_projection(self) -> None:
+        contract = MATRIX.load_contract()
+        with tempfile.TemporaryDirectory(
+            prefix="record-collection-input-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            candidate = Path(temporary) / "include"
+            shutil.copytree(ROOT / "include", candidate)
+            baseline = MATRIX.record_collection_input_digest(contract, candidate)
+
+            source = next(path for path in sorted(candidate.rglob("*.h")) if path.is_file())
+            source.write_bytes(source.read_bytes() + b"\n/* record-collection-input mutation */\n")
+            self.assertNotEqual(baseline, MATRIX.record_collection_input_digest(contract, candidate))
+
+            source.write_bytes(source.read_bytes().replace(b"\n/* record-collection-input mutation */\n", b""))
+            changed_oracle = dict(contract.oracle_not_applicable)
+            changed_oracle[("synthetic.h", "c11-gnu")] = "synthetic record exception"
+            self.assertNotEqual(
+                baseline,
+                MATRIX.record_collection_input_digest(
+                    dataclasses.replace(contract, oracle_not_applicable=changed_oracle),
+                    candidate,
+                ),
+            )
+
+            original_pin = MATRIX.inventory.LINUX_UAPI_HEADER_MANIFEST_SHA256
+            try:
+                MATRIX.inventory.LINUX_UAPI_HEADER_MANIFEST_SHA256 = "1" * 64
+                self.assertNotEqual(baseline, MATRIX.record_collection_input_digest(contract, candidate))
+            finally:
+                MATRIX.inventory.LINUX_UAPI_HEADER_MANIFEST_SHA256 = original_pin
+
+    def test_checked_report_ignores_provider_only_inventory_projection(self) -> None:
+        contract = MATRIX.load_contract()
+        report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(
+            prefix="record-provider-projection-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            provider_only_inventory = Path(temporary) / "header_callable_inventory.json"
+            projection = json.loads(contract.callable_inventory.read_text(encoding="utf-8"))
+            projection["callable_provider_partition"]["unprovided"] = ["synthetic_provider_only"]
+            projection["summary"]["callable_provider_counts"] = {"unprovided": 1}
+            provider_only_inventory.write_text(
+                json.dumps(projection, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            MATRIX.validate_checked_report(
+                report,
+                dataclasses.replace(contract, callable_inventory=provider_only_inventory),
+            )
 
     def test_report_validation_rejects_row_drift(self) -> None:
         report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))

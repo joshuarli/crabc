@@ -3,10 +3,17 @@
 
 from __future__ import annotations
 
+import contextlib
+import dataclasses
 import importlib.util
+import io
 import json
+import os
+import shutil
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -30,6 +37,12 @@ MATRIX = load_module("header_abi_matrix_test", MATRIX_PATH)
 
 
 class HeaderAbiMatrixTests(unittest.TestCase):
+    def matrix_test_work_root(self) -> Path:
+        """Keep synthetic compiler-collection state inside this checkout."""
+        root = ROOT / ".work" / "x86_64" / "header-abi-matrix-tests"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
     def test_comparator_preserves_matched_missing_and_incompatible_facts(self) -> None:
         candidate = [
             MATRIX.fact("function", "shared", "int (int)"),
@@ -314,6 +327,440 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             facts,
             [MATRIX.fact("macro", "O_CREAT", "object-like: 0100")],
         )
+
+    def test_compiler_collection_digest_binds_headers_profiles_pins_and_oracle(self) -> None:
+        """Provider accounting is not a compiler input, unlike these facts."""
+        contract = MATRIX.load_contract()
+        collector = {"id": "declaration-form-v1"}
+        with tempfile.TemporaryDirectory(
+            prefix="compiler-collection-input-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            candidate = Path(temporary) / "include"
+            shutil.copytree(ROOT / "include", candidate)
+            baseline = MATRIX.compiler_collection_input_digest(
+                public_headers=contract.public_headers,
+                profiles=contract.profiles,
+                project_include=candidate,
+                oracle_not_applicable=contract.oracle_not_applicable,
+                collector=collector,
+            )
+
+            source = next(path for path in sorted(candidate.rglob("*.h")) if path.is_file())
+            source.write_bytes(source.read_bytes() + b"\n/* collection-input mutation */\n")
+            self.assertNotEqual(
+                baseline,
+                MATRIX.compiler_collection_input_digest(
+                    public_headers=contract.public_headers,
+                    profiles=contract.profiles,
+                    project_include=candidate,
+                    oracle_not_applicable=contract.oracle_not_applicable,
+                    collector=collector,
+                ),
+            )
+
+            source.write_bytes(source.read_bytes().replace(b"\n/* collection-input mutation */\n", b""))
+            changed_profiles = (
+                dataclasses.replace(
+                    contract.profiles[0],
+                    defines=(*contract.profiles[0].defines, "CRABC_COLLECTION_INPUT_TEST=1"),
+                ),
+                *contract.profiles[1:],
+            )
+            self.assertNotEqual(
+                baseline,
+                MATRIX.compiler_collection_input_digest(
+                    public_headers=contract.public_headers,
+                    profiles=changed_profiles,
+                    project_include=candidate,
+                    oracle_not_applicable=contract.oracle_not_applicable,
+                    collector=collector,
+                ),
+            )
+
+            changed_oracle = dict(contract.oracle_not_applicable)
+            changed_oracle[("synthetic.h", "c11-gnu")] = "synthetic oracle exception"
+            self.assertNotEqual(
+                baseline,
+                MATRIX.compiler_collection_input_digest(
+                    public_headers=contract.public_headers,
+                    profiles=contract.profiles,
+                    project_include=candidate,
+                    oracle_not_applicable=changed_oracle,
+                    collector=collector,
+                ),
+            )
+
+            original_pin = MATRIX.callable_inventory.MUSL_SOURCE_SHA256
+            try:
+                MATRIX.callable_inventory.MUSL_SOURCE_SHA256 = "0" * 64
+                self.assertNotEqual(
+                    baseline,
+                    MATRIX.compiler_collection_input_digest(
+                        public_headers=contract.public_headers,
+                        profiles=contract.profiles,
+                        project_include=candidate,
+                        oracle_not_applicable=contract.oracle_not_applicable,
+                        collector=collector,
+                    ),
+                )
+            finally:
+                MATRIX.callable_inventory.MUSL_SOURCE_SHA256 = original_pin
+
+    def test_compiler_collection_digest_rejects_symlink_escape(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="compiler-collection-symlink-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            root = Path(temporary) / "include"
+            root.mkdir()
+            outside = Path(temporary) / "outside.h"
+            outside.write_text("/* outside */\n", encoding="utf-8")
+            (root / "escaped.h").symlink_to(outside)
+
+            with self.assertRaisesRegex(MATRIX.HeaderAbiMatrixError, "symlink"):
+                MATRIX.header_tree_digest(root)
+
+    def test_compiler_collection_digest_rejects_symlinked_parent_root(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="compiler-collection-parent-symlink-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            temporary_root = Path(temporary)
+            physical_checkout = temporary_root / "physical-checkout"
+            include = physical_checkout / "include"
+            include.mkdir(parents=True)
+            (include / "demo.h").write_text("/* physical input */\n", encoding="utf-8")
+            linked_checkout = temporary_root / "linked-checkout"
+            linked_checkout.symlink_to(physical_checkout, target_is_directory=True)
+
+            with self.assertRaisesRegex(MATRIX.HeaderAbiMatrixError, "physical"):
+                MATRIX.header_tree_digest(linked_checkout / "include")
+
+    def test_collect_tree_uses_bounded_parallel_isolated_workspaces(self) -> None:
+        profiles = MATRIX.load_contract().profiles[:2]
+        observed_work_dirs: list[Path] = []
+        active = 0
+        peak_active = 0
+        lock = threading.Lock()
+        first_pair = threading.Event()
+
+        def fake_compiler_profile(**arguments):
+            nonlocal active, peak_active
+            work_dir = arguments["work_dir"]
+            assert isinstance(work_dir, Path)
+            with lock:
+                observed_work_dirs.append(work_dir)
+                active += 1
+                peak_active = max(peak_active, active)
+                if active >= 2:
+                    first_pair.set()
+            work_dir.joinpath("probe.c").write_text(arguments["header"], encoding="utf-8")
+            first_pair.wait(timeout=2)
+            with lock:
+                active -= 1
+            return "ok", "synthetic compiler result", []
+
+        original = MATRIX.compiler_profile
+        try:
+            MATRIX.compiler_profile = fake_compiler_profile
+            records = MATRIX.collect_tree(
+                tree="candidate",
+                compiler="clang",
+                profiles=profiles,
+                headers=("alpha.h", "beta.h"),
+                header_root=ROOT / "include",
+                resource_include=ROOT / "include",
+                linux_uapi_include=ROOT / "include",
+                oracle_not_applicable={},
+                workers=2,
+            )
+        finally:
+            MATRIX.compiler_profile = original
+
+        self.assertEqual(peak_active, 2)
+        self.assertEqual(len(observed_work_dirs), 4)
+        self.assertEqual(len(set(observed_work_dirs)), 4)
+        expected_root = ROOT / ".work" / "x86_64" / "header-abi-matrix"
+        for work_dir in observed_work_dirs:
+            self.assertTrue(work_dir.is_relative_to(expected_root))
+            self.assertFalse(work_dir.exists())
+        self.assertEqual(set(records), {("alpha.h", profile.identifier) for profile in profiles} | {("beta.h", profile.identifier) for profile in profiles})
+
+    def test_collection_worker_bound_is_explicit(self) -> None:
+        self.assertEqual(MATRIX.DEFAULT_COLLECTION_WORKERS, 4)
+        self.assertEqual(MATRIX.bounded_collection_workers(1), 1)
+        self.assertEqual(MATRIX.bounded_collection_workers(8), 8)
+        for invalid in (0, 9, True):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(MATRIX.HeaderAbiMatrixError, "workers"):
+                    MATRIX.bounded_collection_workers(invalid)
+
+    def test_collect_tree_retains_failed_job_artifacts(self) -> None:
+        expected_root = ROOT / ".work" / "x86_64" / "header-abi-matrix"
+        expected_root.mkdir(parents=True, exist_ok=True)
+        before = set(expected_root.iterdir())
+
+        def fake_compiler_profile(**arguments):
+            work_dir = arguments["work_dir"]
+            assert isinstance(work_dir, Path)
+            work_dir.joinpath("probe.c").write_text("failed synthetic probe\n", encoding="utf-8")
+            return "failed", "synthetic compiler failure", []
+
+        original = MATRIX.compiler_profile
+        try:
+            MATRIX.compiler_profile = fake_compiler_profile
+            diagnostics = io.StringIO()
+            with contextlib.redirect_stderr(diagnostics):
+                records = MATRIX.collect_tree(
+                    tree="candidate",
+                    compiler="clang",
+                    profiles=MATRIX.load_contract().profiles[:1],
+                    headers=("alpha.h",),
+                    header_root=ROOT / "include",
+                    resource_include=ROOT / "include",
+                    linux_uapi_include=ROOT / "include",
+                    oracle_not_applicable={},
+                    workers=1,
+                )
+        finally:
+            MATRIX.compiler_profile = original
+
+        self.assertEqual(records[("alpha.h", "c11-gnu")]["status"], "failed")
+        self.assertEqual(records[("alpha.h", "c11-gnu")]["detail"], "synthetic compiler failure")
+        self.assertIn("scratch retained at .work/x86_64/header-abi-matrix/", diagnostics.getvalue())
+        created = set(expected_root.iterdir()) - before
+        self.assertEqual(len(created), 1)
+        workspace = created.pop()
+        try:
+            self.assertTrue(workspace.is_dir() and not workspace.is_symlink())
+            self.assertTrue((workspace / "jobs").is_dir())
+            self.assertEqual(
+                sorted(path.read_text(encoding="utf-8") for path in workspace.glob("jobs/*/probe.c")),
+                ["failed synthetic probe\n"],
+            )
+        finally:
+            shutil.rmtree(workspace)
+
+    def test_compiler_command_timeout_kills_its_process_group(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="compiler-command-timeout-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            pid_path = Path(temporary) / "child.pid"
+            command = [
+                sys.executable,
+                "-c",
+                (
+                    "import pathlib, subprocess, sys, time; "
+                    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+                    f"pathlib.Path({str(pid_path)!r}).write_text(str(child.pid)); "
+                    "time.sleep(60)"
+                ),
+            ]
+            with self.assertRaisesRegex(MATRIX.CompilerCommandTimeout, "timed out"):
+                MATRIX.run_compiler_command(command, timeout_seconds=0.75)
+            self.assertTrue(pid_path.is_file())
+            child_pid = int(pid_path.read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                state_path = Path(f"/proc/{child_pid}/stat")
+                if not state_path.exists() or state_path.read_text(encoding="utf-8").split()[2] == "Z":
+                    break
+                time.sleep(0.02)
+            state_path = Path(f"/proc/{child_pid}/stat")
+            self.assertTrue(
+                not state_path.exists() or state_path.read_text(encoding="utf-8").split()[2] == "Z",
+                "timed-out compiler descendant remained live",
+            )
+
+    def test_timeout_kills_pipe_holding_descendant_after_leader_exits(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="compiler-command-dead-leader-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            pid_path = Path(temporary) / "child.pid"
+            job_tmp = Path(temporary) / "job-tmp"
+            job_tmp.mkdir()
+            command = [
+                sys.executable,
+                "-c",
+                (
+                    "import pathlib, subprocess, sys; "
+                    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+                    f"pathlib.Path({str(pid_path)!r}).write_text(str(child.pid))"
+                ),
+            ]
+            outcome: list[BaseException] = []
+
+            def run_command() -> None:
+                try:
+                    MATRIX.run_compiler_command(
+                        command,
+                        timeout_seconds=0.2,
+                        temporary_directory=job_tmp,
+                    )
+                except BaseException as error:
+                    outcome.append(error)
+
+            worker = threading.Thread(target=run_command)
+            worker.start()
+            deadline = time.monotonic() + 2
+            while not pid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            try:
+                self.assertTrue(pid_path.is_file(), "pipe-holding compiler descendant did not start")
+                worker.join(timeout=2)
+                if worker.is_alive():
+                    os.kill(int(pid_path.read_text(encoding="utf-8")), 9)
+                    worker.join(timeout=2)
+                    self.fail("timeout did not terminate a pipe-holding compiler descendant")
+                self.assertEqual(len(outcome), 1)
+                self.assertIsInstance(outcome[0], MATRIX.CompilerCommandTimeout)
+            finally:
+                if pid_path.exists():
+                    try:
+                        os.kill(int(pid_path.read_text(encoding="utf-8")), 9)
+                    except ProcessLookupError:
+                        pass
+                worker.join(timeout=2)
+
+    def test_compiler_command_uses_a_job_local_tmpdir_and_rejects_nonfinite_timeout(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="compiler-command-tmpdir-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            job_tmp = Path(temporary) / "job-tmp"
+            job_tmp.mkdir()
+            result = MATRIX.run_compiler_command(
+                [sys.executable, "-c", "import os; print(os.environ['TMPDIR'])"],
+                timeout_seconds=1,
+                temporary_directory=job_tmp,
+            )
+            self.assertEqual(result.stdout.strip(), str(job_tmp))
+            for timeout in (float("inf"), float("nan")):
+                with self.subTest(timeout=timeout):
+                    with self.assertRaisesRegex(MATRIX.HeaderAbiMatrixError, "timeout"):
+                        MATRIX.run_compiler_command(
+                            [sys.executable, "-c", "raise SystemExit(0)"],
+                            timeout_seconds=timeout,
+                            temporary_directory=job_tmp,
+                        )
+
+    def test_reference_timeout_cannot_be_reclassified_as_oracle_not_applicable(self) -> None:
+        original = MATRIX.run_compiler_command
+        expected_root = ROOT / ".work" / "x86_64" / "header-abi-matrix"
+        before = set(expected_root.iterdir())
+        diagnostics = io.StringIO()
+
+        def timed_out(*_arguments, **_keywords):
+            raise MATRIX.CompilerCommandTimeout("synthetic compiler timeout")
+
+        try:
+            MATRIX.run_compiler_command = timed_out
+            with contextlib.redirect_stderr(diagnostics):
+                with self.assertRaisesRegex(MATRIX.HeaderAbiMatrixError, "compiler collection failed"):
+                    MATRIX.collect_tree(
+                        tree="reference",
+                        compiler="clang",
+                        profiles=(
+                            next(
+                                profile
+                                for profile in MATRIX.load_contract().profiles
+                                if profile.identifier == "c11-strict"
+                            ),
+                        ),
+                        headers=("aio.h",),
+                        header_root=ROOT / "include",
+                        resource_include=ROOT / "include",
+                        linux_uapi_include=ROOT / "include",
+                        oracle_not_applicable={("aio.h", "c11-strict"): "known source limitation"},
+                        workers=1,
+                    )
+        finally:
+            MATRIX.run_compiler_command = original
+            for workspace in set(expected_root.iterdir()) - before:
+                if workspace.is_dir() and not workspace.is_symlink():
+                    shutil.rmtree(workspace)
+        self.assertIn("scratch retained at .work/x86_64/header-abi-matrix/", diagnostics.getvalue())
+
+    def test_compiler_job_cancellation_kills_its_process_group(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="compiler-command-cancel-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            pid_path = Path(temporary) / "child.pid"
+            command = [
+                sys.executable,
+                "-c",
+                (
+                    "import pathlib, subprocess, sys, time; "
+                    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+                    f"pathlib.Path({str(pid_path)!r}).write_text(str(child.pid)); "
+                    "time.sleep(60)"
+                ),
+            ]
+            control = MATRIX.CompilerJobControl()
+            outcome: list[BaseException] = []
+
+            def run_command() -> None:
+                try:
+                    MATRIX.run_compiler_command(
+                        command,
+                        timeout_seconds=30,
+                        job_control=control,
+                    )
+                except BaseException as error:
+                    outcome.append(error)
+
+            worker = threading.Thread(target=run_command)
+            worker.start()
+            deadline = time.monotonic() + 2
+            while not pid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            try:
+                self.assertTrue(pid_path.is_file(), "compiler child did not start")
+                control.cancel()
+                worker.join(timeout=3)
+                self.assertFalse(worker.is_alive(), "cancelled compiler worker did not exit")
+                self.assertEqual(len(outcome), 1)
+                self.assertIsInstance(outcome[0], MATRIX.CompilerJobCancelled)
+                child_pid = int(pid_path.read_text(encoding="utf-8"))
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    state_path = Path(f"/proc/{child_pid}/stat")
+                    if not state_path.exists() or state_path.read_text(encoding="utf-8").split()[2] == "Z":
+                        break
+                    time.sleep(0.02)
+                state_path = Path(f"/proc/{child_pid}/stat")
+                self.assertTrue(
+                    not state_path.exists() or state_path.read_text(encoding="utf-8").split()[2] == "Z",
+                    "cancelled compiler descendant remained live",
+                )
+            finally:
+                control.cancel()
+                worker.join(timeout=3)
+
+    def test_checked_report_ignores_provider_only_inventory_projection(self) -> None:
+        """A feature roster/accounting edit must not force Clang recollection."""
+        contract = MATRIX.load_contract()
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(
+            prefix="provider-projection-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            provider_only_inventory = Path(temporary) / "header_callable_inventory.json"
+            projection = json.loads(contract.callable_inventory.read_text(encoding="utf-8"))
+            projection["callable_provider_partition"]["unprovided"] = ["synthetic_provider_only"]
+            projection["summary"]["callable_provider_counts"] = {"unprovided": 1}
+            provider_only_inventory.write_text(
+                json.dumps(projection, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            MATRIX.validate_checked_report(
+                checked,
+                dataclasses.replace(contract, callable_inventory=provider_only_inventory),
+            )
 
     def test_checked_report_is_a_deterministic_partial_header_abi_record(self) -> None:
         contract = MATRIX.load_contract()
@@ -1275,6 +1722,11 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         ``aio.h`` reference limitation remains explicit: pinned musl embeds an
         incomplete ``struct sigevent`` there, while the candidate closure still
         has to compile the direct consumer.
+
+        ``sys/wait.h`` reaches ``RUSAGE_CHILDREN`` through ``sys/resource.h``.
+        The candidate's x86 branch and pinned musl both expose the exact
+        object-like replacement ``(-1)`` for the BSD, GNU, and C++ profiles,
+        so it is matched evidence rather than reviewed source-form debt.
         """
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         rows = {
@@ -1294,7 +1746,6 @@ class HeaderAbiMatrixTests(unittest.TestCase):
 
         signal_form_debt = frozenset({"sigaction", "sigevent"})
         signal_form_debt_with_fpstate = signal_form_debt | {"_fpstate"}
-        resource_form_debt = frozenset({"RUSAGE_CHILDREN"})
         signal_profiles_with_fpstate = frozenset(
             {"c11-bsd", "c11-gnu", "cxx17-gnu", "cxx17-strict"}
         )
@@ -1313,13 +1764,12 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             },
             **{
                 ("sys/wait.h", profile): signal_form_debt_with_fpstate
-                | resource_form_debt
                 for profile in {"c11-gnu", "cxx17-gnu", "cxx17-strict"}
             },
             (
                 "sys/wait.h",
                 "c11-bsd",
-            ): signal_form_debt_with_fpstate | resource_form_debt,
+            ): signal_form_debt_with_fpstate,
             **{
                 ("sys/wait.h", profile): signal_form_debt
                 for profile in signal_profiles_without_fpstate

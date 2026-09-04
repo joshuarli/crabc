@@ -15,12 +15,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -84,15 +90,82 @@ WORK_PACKAGE_KEYS = {
     "expected_transition",
     "evidence",
 }
+DEFAULT_COLLECTION_WORKERS = 4
+MAX_COLLECTION_WORKERS = 8
+DEFAULT_COMPILER_JOB_TIMEOUT_SECONDS = 120.0
 
 
 class HeaderAbiMatrixError(ValueError):
     """The finite header ABI comparison contract is invalid."""
 
 
+class CompilerCommandTimeout(HeaderAbiMatrixError):
+    """One isolated compiler command exceeded the finite collection bound."""
+
+
+class CompilerJobCancelled(HeaderAbiMatrixError):
+    """The matrix stopped an in-flight compiler job during interruption."""
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise HeaderAbiMatrixError(message)
+
+
+def signal_compiler_process_group(process: subprocess.Popen[str], signal_number: int) -> None:
+    """Signal the isolated compiler session without touching unrelated jobs."""
+    try:
+        os.killpg(process.pid, signal_number)
+    except ProcessLookupError:
+        pass
+
+
+def stop_and_reap_compiler_process(
+    process: subprocess.Popen[str],
+    signal_number: int,
+) -> None:
+    """End a compiler process group and reap its leader within a finite bound."""
+    signal_compiler_process_group(process, signal_number)
+    try:
+        process.communicate(timeout=0.25)
+    except subprocess.TimeoutExpired:
+        signal_compiler_process_group(process, signal.SIGKILL)
+        try:
+            process.communicate(timeout=0.25)
+        except subprocess.TimeoutExpired as error:
+            raise HeaderAbiMatrixError("compiler process group did not exit after forced cancellation") from error
+
+
+class CompilerJobControl:
+    """Own the finite set of compiler process groups for one tree pass."""
+
+    def __init__(self) -> None:
+        self._cancelled = False
+        self._lock = threading.Lock()
+        self._processes: dict[int, subprocess.Popen[str]] = {}
+
+    def register(self, process: subprocess.Popen[str]) -> bool:
+        with self._lock:
+            if self._cancelled:
+                return False
+            self._processes[process.pid] = process
+            return True
+
+    def unregister(self, process: subprocess.Popen[str]) -> None:
+        with self._lock:
+            self._processes.pop(process.pid, None)
+
+    def is_cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def cancel(self) -> None:
+        """Kill all known process groups before waiting for worker shutdown."""
+        with self._lock:
+            self._cancelled = True
+            processes = tuple(self._processes.values())
+        for process in processes:
+            signal_compiler_process_group(process, signal.SIGKILL)
 
 
 @dataclass(frozen=True)
@@ -261,6 +334,298 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
 
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def header_tree_digest(root: Path) -> str:
+    """Hash the actual candidate include tree and reject non-physical inputs.
+
+    The compiler can only be invalidated by files it can reach under the
+    project include root.  A digest of the relevant physical tree binds those
+    bytes without dragging feature-provider accounting into this compiler
+    evidence.  Symlinks are rejected rather than resolved so a checked report
+    cannot silently depend on a file outside the checkout.
+    """
+    require(root.is_dir() and not root.is_symlink(), f"candidate include root is unsafe: {root}")
+    try:
+        physical_root = root.resolve(strict=True)
+    except OSError as error:
+        raise HeaderAbiMatrixError(f"cannot resolve candidate include root {root}: {error}") from error
+    require(
+        physical_root == root,
+        f"candidate include root must be a physical path without symlinked parents: {root}",
+    )
+    digest = hashlib.sha256()
+    digest.update(b"crabc.x86_64-header-include-tree/v1\0")
+
+    def visit(directory: Path) -> None:
+        try:
+            entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+        except OSError as error:
+            raise HeaderAbiMatrixError(f"cannot read candidate include directory {directory}: {error}") from error
+        for entry in entries:
+            relative = entry.relative_to(root).as_posix()
+            require(not entry.is_symlink(), f"candidate include tree contains a symlink: {relative}")
+            try:
+                physical_entry = entry.resolve(strict=True)
+            except OSError as error:
+                raise HeaderAbiMatrixError(f"cannot resolve candidate include entry {relative}: {error}") from error
+            require(
+                path_is_within(physical_entry, physical_root),
+                f"candidate include tree escapes its physical root: {relative}",
+            )
+            if entry.is_dir():
+                digest.update(b"directory\0")
+                digest.update(relative.encode("utf-8"))
+                digest.update(b"\0")
+                visit(entry)
+            elif entry.is_file():
+                digest.update(b"file\0")
+                digest.update(relative.encode("utf-8"))
+                digest.update(b"\0")
+                digest.update(sha256_file(entry).encode("ascii"))
+                digest.update(b"\0")
+            else:
+                raise HeaderAbiMatrixError(f"candidate include tree contains a non-regular entry: {relative}")
+
+    visit(root)
+    return digest.hexdigest()
+
+
+def profile_input_records(profiles: Sequence[callable_inventory.Profile]) -> list[dict[str, Any]]:
+    """Render the exact compiler language/profile inputs in stable order."""
+    records: list[dict[str, Any]] = []
+    identifiers: set[str] = set()
+    for profile in profiles:
+        require(profile.identifier not in identifiers, f"compiler profile is duplicated: {profile.identifier}")
+        identifiers.add(profile.identifier)
+        records.append(
+            {
+                "defines": list(profile.defines),
+                "id": profile.identifier,
+                "language": profile.language,
+                "standard": profile.standard,
+            }
+        )
+    require(bool(records), "compiler profile input is empty")
+    return records
+
+
+def oracle_exception_records(
+    oracle_not_applicable: Mapping[tuple[str, str], str],
+) -> list[dict[str, str]]:
+    """Render every explicit source-oracle exception as an input fact."""
+    records: list[dict[str, str]] = []
+    for (header, profile), reason in sorted(oracle_not_applicable.items()):
+        require(
+            isinstance(header, str)
+            and header
+            and isinstance(profile, str)
+            and profile
+            and isinstance(reason, str)
+            and reason,
+            "compiler oracle exception input is invalid",
+        )
+        records.append({"header": header, "profile": profile, "reason": reason})
+    return records
+
+
+def compiler_collection_input_digest(
+    *,
+    public_headers: Path,
+    profiles: Sequence[callable_inventory.Profile],
+    project_include: Path,
+    oracle_not_applicable: Mapping[tuple[str, str], str],
+    collector: Mapping[str, Any],
+) -> str:
+    """Bind compiler-derived evidence to source inputs, never provider rosters.
+
+    ``header_callable_inventory.json`` also records archive/provider planning.
+    That projection is intentionally absent here: these collectors independently
+    compile declarations and layouts from the headers, profile definitions, and
+    frozen source-oracle inputs below.
+    """
+    require(public_headers.is_file() and not public_headers.is_symlink(), "public header manifest is unsafe")
+    require(isinstance(collector, Mapping) and collector, "collector input is invalid")
+    payload = {
+        "candidate_header_tree_sha256": header_tree_digest(project_include),
+        "collector": dict(collector),
+        "oracle_not_applicable": oracle_exception_records(oracle_not_applicable),
+        "oracle_pins": {
+            "linux_uapi_header_manifest_sha256": callable_inventory.LINUX_UAPI_HEADER_MANIFEST_SHA256,
+            "linux_uapi_source_sha256": callable_inventory.LINUX_UAPI_SOURCE_SHA256,
+            "linux_uapi_version": callable_inventory.LINUX_UAPI_VERSION,
+            "musl_source_sha256": callable_inventory.MUSL_SOURCE_SHA256,
+            "musl_version": callable_inventory.MUSL_VERSION,
+        },
+        "profiles": profile_input_records(profiles),
+        "public_header_inventory_sha256": sha256_file(public_headers),
+        "schema": "crabc.x86_64-header-compiler-collection-input/v1",
+    }
+    try:
+        rendered = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    except (TypeError, ValueError) as error:
+        raise HeaderAbiMatrixError(f"compiler collection input cannot be canonicalized: {error}") from error
+    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+
+
+def declaration_form_collection_input_digest(
+    contract: MatrixContract,
+    project_include: Path,
+) -> str:
+    """Bind this matrix's AST/preprocessor declaration-form collector."""
+    return compiler_collection_input_digest(
+        public_headers=contract.public_headers,
+        profiles=contract.profiles,
+        project_include=project_include,
+        oracle_not_applicable=contract.oracle_not_applicable,
+        collector={
+            "ast_json": True,
+            "id": "declaration-form-v1",
+            "macro_preprocessor_records": True,
+            "named_noncallable_declarations": True,
+        },
+    )
+
+
+def physical_x86_work_directory(name: str) -> Path:
+    """Create one named physical x86 header-collector root below this checkout."""
+    require(
+        isinstance(name, str) and name and "/" not in name and "\\" not in name and name not in {".", ".."},
+        "compiler collection work directory name is unsafe",
+    )
+    work_directory = ROOT / ".work" / "x86_64" / name
+    try:
+        physical_checkout = ROOT.resolve(strict=True)
+    except OSError as error:
+        raise HeaderAbiMatrixError(f"cannot resolve checkout root {ROOT}: {error}") from error
+    require(ROOT.is_dir() and not ROOT.is_symlink(), "checkout root is unsafe")
+    current = ROOT
+    for component in work_directory.relative_to(ROOT).parts:
+        current = current / component
+        if current.exists() or current.is_symlink():
+            require(current.is_dir() and not current.is_symlink(), f"compiler collection work directory is unsafe: {current}")
+        else:
+            current.mkdir()
+        try:
+            physical_current = current.resolve(strict=True)
+        except OSError as error:
+            raise HeaderAbiMatrixError(f"cannot resolve compiler collection work directory {current}: {error}") from error
+        require(
+            path_is_within(physical_current, physical_checkout),
+            f"compiler collection work directory escapes checkout: {current}",
+        )
+    return work_directory
+
+
+def physical_collection_work_directory() -> Path:
+    """Create the ABI declaration collector's physical scratch root."""
+    return physical_x86_work_directory("header-abi-matrix")
+
+
+def remove_successful_collection_workspace(workspace: Path, work_root: Path) -> None:
+    """Remove only a fresh, physical successful-run directory we created."""
+    require(workspace.parent == work_root, "compiler collection cleanup target is not a direct run directory")
+    require(workspace.is_dir() and not workspace.is_symlink(), "compiler collection cleanup target is unsafe")
+    physical_workspace = workspace.resolve(strict=True)
+    physical_work_root = work_root.resolve(strict=True)
+    require(
+        path_is_within(physical_workspace, physical_work_root),
+        "compiler collection cleanup target escapes work root",
+    )
+    shutil.rmtree(workspace)
+
+
+def report_retained_collection_workspace(workspace: Path) -> None:
+    """Surface an inspectable failure path without making matrix rows unstable."""
+    print(
+        f"x86 header ABI matrix: compiler scratch retained at {workspace.relative_to(ROOT)}",
+        file=sys.stderr,
+    )
+
+
+def bounded_collection_workers(workers: int) -> int:
+    require(
+        type(workers) is int and 1 <= workers <= MAX_COLLECTION_WORKERS,
+        f"compiler collection workers must be an integer from 1 through {MAX_COLLECTION_WORKERS}",
+    )
+    return workers
+
+
+def run_compiler_command(
+    command: Sequence[str],
+    *,
+    timeout_seconds: float,
+    job_control: CompilerJobControl | None = None,
+    temporary_directory: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run one compiler command in its own process group with finite cleanup."""
+    require(
+        isinstance(timeout_seconds, (int, float))
+        and not isinstance(timeout_seconds, bool)
+        and math.isfinite(float(timeout_seconds))
+        and timeout_seconds > 0,
+        "compiler job timeout must be positive",
+    )
+    if job_control is not None and job_control.is_cancelled():
+        raise CompilerJobCancelled("compiler collection was cancelled before starting a job")
+    environment = None
+    if temporary_directory is not None:
+        require(
+            temporary_directory.is_dir() and not temporary_directory.is_symlink(),
+            f"compiler job temporary directory is unsafe: {temporary_directory}",
+        )
+        try:
+            physical_temporary_directory = temporary_directory.resolve(strict=True)
+        except OSError as error:
+            raise HeaderAbiMatrixError(
+                f"cannot resolve compiler job temporary directory {temporary_directory}: {error}"
+            ) from error
+        require(
+            physical_temporary_directory == temporary_directory,
+            f"compiler job temporary directory must be physical: {temporary_directory}",
+        )
+        environment = os.environ.copy()
+        environment["TMPDIR"] = str(temporary_directory)
+    try:
+        process = subprocess.Popen(
+            list(command),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+            env=environment,
+        )
+    except OSError as error:
+        raise HeaderAbiMatrixError(f"cannot start compiler command: {error}") from error
+    registered = False
+    try:
+        if job_control is not None:
+            registered = job_control.register(process)
+            if not registered:
+                signal_compiler_process_group(process, signal.SIGKILL)
+                raise CompilerJobCancelled("compiler collection was cancelled while starting a job")
+        try:
+            stdout, stderr = process.communicate(timeout=float(timeout_seconds))
+        except subprocess.TimeoutExpired:
+            stop_and_reap_compiler_process(process, signal.SIGTERM)
+            raise CompilerCommandTimeout(f"compiler command timed out after {timeout_seconds:g} seconds")
+        if job_control is not None and job_control.is_cancelled():
+            raise CompilerJobCancelled("compiler collection was cancelled")
+        return subprocess.CompletedProcess(list(command), process.returncode, stdout, stderr)
+    except BaseException:
+        stop_and_reap_compiler_process(process, signal.SIGKILL)
+        raise
+    finally:
+        if job_control is not None and registered:
+            job_control.unregister(process)
 
 
 def signature_digest(signature: str) -> str:
@@ -644,10 +1009,18 @@ def compiler_profile(
     resource_include: Path,
     linux_uapi_include: Path,
     work_dir: Path,
+    timeout_seconds: float = DEFAULT_COMPILER_JOB_TIMEOUT_SECONDS,
+    job_control: CompilerJobControl | None = None,
 ) -> tuple[str, str, list[dict[str, str]]]:
+    temporary_directory = work_dir / "tmp"
+    temporary_directory.mkdir(exist_ok=True)
+    require(
+        temporary_directory.is_dir() and not temporary_directory.is_symlink(),
+        f"compiler job temporary directory is unsafe: {temporary_directory}",
+    )
     source = work_dir / ("probe.cpp" if profile.language == "cxx" else "probe.c")
     source.write_text(f"#include <{header}>\n", encoding="utf-8")
-    ast_result = subprocess.run(
+    ast_result = run_compiler_command(
         callable_inventory.compiler_command(
             compiler,
             profile,
@@ -658,10 +1031,9 @@ def compiler_profile(
             ast=True,
             preprocess=False,
         ),
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        timeout_seconds=timeout_seconds,
+        job_control=job_control,
+        temporary_directory=temporary_directory,
     )
     if ast_result.returncode != 0:
         diagnostic = next((line.strip() for line in ast_result.stderr.splitlines() if line.strip()), "compiler produced no diagnostic")
@@ -672,7 +1044,7 @@ def compiler_profile(
         raise HeaderAbiMatrixError(f"compiler did not emit JSON AST for {header}:{profile.identifier}: {error}") from error
     require(isinstance(ast, Mapping), f"compiler AST root is invalid for {header}:{profile.identifier}")
 
-    macro_result = subprocess.run(
+    macro_result = run_compiler_command(
         callable_inventory.compiler_command(
             compiler,
             profile,
@@ -683,10 +1055,9 @@ def compiler_profile(
             ast=False,
             preprocess=True,
         ),
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        timeout_seconds=timeout_seconds,
+        job_control=job_control,
+        temporary_directory=temporary_directory,
     )
     if macro_result.returncode != 0:
         diagnostic = next((line.strip() for line in macro_result.stderr.splitlines() if line.strip()), "compiler produced no diagnostic")
@@ -722,10 +1093,34 @@ def collect_tree(
     resource_include: Path,
     linux_uapi_include: Path,
     oracle_not_applicable: Mapping[tuple[str, str], str],
+    workers: int = DEFAULT_COLLECTION_WORKERS,
+    timeout_seconds: float = DEFAULT_COMPILER_JOB_TIMEOUT_SECONDS,
 ) -> dict[tuple[str, str], dict[str, Any]]:
+    """Collect independent profile/header rows with bounded isolated jobs.
+
+    Workspaces are unique below the physical checkout ``.work`` root.  A
+    failed compiler row keeps its source artifact for inspection; a clean pass
+    removes only its fresh run directory.  Interruptions cancel every compiler
+    process group before waiting for the executor to finish.
+    """
+    workers = bounded_collection_workers(workers)
+    require(
+        isinstance(timeout_seconds, (int, float))
+        and not isinstance(timeout_seconds, bool)
+        and math.isfinite(float(timeout_seconds))
+        and timeout_seconds > 0,
+        "compiler job timeout must be positive",
+    )
     results: dict[tuple[str, str], dict[str, Any]] = {}
-    with tempfile.TemporaryDirectory(prefix="crabc-x86-header-abi-matrix.") as temporary:
-        work_dir = Path(temporary)
+    work_root = physical_collection_work_directory()
+    workspace = Path(tempfile.mkdtemp(prefix=f"{tree}-", dir=work_root))
+    job_root = workspace / "jobs"
+    job_root.mkdir()
+    job_control = CompilerJobControl()
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="header-abi-clang")
+    futures: dict[Any, tuple[tuple[str, str], Path]] = {}
+    try:
+        ordinal = 0
         for profile in profiles:
             for header in headers:
                 key = (header, profile.identifier)
@@ -736,7 +1131,12 @@ def collect_tree(
                         "status": "not-in-pinned-inventory",
                     }
                     continue
-                status, detail, facts = compiler_profile(
+                job_digest = hashlib.sha256(f"{header}\0{profile.identifier}".encode("utf-8")).hexdigest()[:16]
+                work_dir = job_root / f"{ordinal:04d}-{job_digest}"
+                work_dir.mkdir()
+                ordinal += 1
+                future = executor.submit(
+                    compiler_profile,
                     compiler=compiler,
                     profile=profile,
                     header=header,
@@ -744,11 +1144,41 @@ def collect_tree(
                     resource_include=resource_include,
                     linux_uapi_include=linux_uapi_include,
                     work_dir=work_dir,
+                    timeout_seconds=float(timeout_seconds),
+                    job_control=job_control,
                 )
-                if status == "failed" and tree == "reference" and key in oracle_not_applicable:
-                    status = "oracle-not-applicable"
-                    detail = oracle_not_applicable[key]
-                results[key] = {"detail": detail, "facts": facts, "status": status}
+                futures[future] = (key, work_dir)
+        for future in as_completed(futures):
+            key, _work_dir = futures[future]
+            status, detail, facts = future.result()
+            if status == "failed" and tree == "reference" and key in oracle_not_applicable:
+                status = "oracle-not-applicable"
+                detail = oracle_not_applicable[key]
+            results[key] = {"detail": detail, "facts": facts, "status": status}
+    except KeyboardInterrupt:
+        job_control.cancel()
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
+        report_retained_collection_workspace(workspace)
+        raise
+    except BaseException as error:
+        job_control.cancel()
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
+        report_retained_collection_workspace(workspace)
+        raise HeaderAbiMatrixError(
+            f"{tree} compiler collection failed: {error}"
+        ) from error
+    else:
+        executor.shutdown(wait=True)
+
+    failed = [record for record in results.values() if record["status"] == "failed"]
+    if failed:
+        report_retained_collection_workspace(workspace)
+    else:
+        remove_successful_collection_workspace(workspace, work_root)
     return results
 
 
@@ -759,6 +1189,7 @@ def build_report(
     musl_include: Path,
     linux_uapi_include: Path,
     contract: MatrixContract | None = None,
+    workers: int = DEFAULT_COLLECTION_WORKERS,
 ) -> dict[str, Any]:
     """Compile the finite profile cross-product and return its canonical report."""
     contract = load_contract() if contract is None else contract
@@ -768,6 +1199,7 @@ def build_report(
     pinned_headers = callable_inventory.load_headers(contract.public_headers)
     require(callable_inventory.public_header_paths(musl_include) == pinned_headers, "pinned musl public header tree drifted")
     candidate_headers = callable_inventory.candidate_header_paths(project_include, pinned_headers)
+    collection_inputs = declaration_form_collection_input_digest(contract, project_include)
     resource_include = callable_inventory.compiler_resource_include(compiler)
     candidate = collect_tree(
         tree="candidate",
@@ -778,6 +1210,7 @@ def build_report(
         resource_include=resource_include,
         linux_uapi_include=linux_uapi_include,
         oracle_not_applicable=contract.oracle_not_applicable,
+        workers=workers,
     )
     reference = collect_tree(
         tree="reference",
@@ -788,6 +1221,7 @@ def build_report(
         resource_include=resource_include,
         linux_uapi_include=linux_uapi_include,
         oracle_not_applicable=contract.oracle_not_applicable,
+        workers=workers,
     )
 
     rows: list[dict[str, Any]] = []
@@ -858,7 +1292,7 @@ def build_report(
         "platform": PLATFORM,
         "oracle": ORACLE,
         "inputs": {
-            "callable_inventory_sha256": sha256_file(contract.callable_inventory),
+            "compiler_collection_inputs_sha256": collection_inputs,
             "header_abi_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
             "public_header_inventory_sha256": sha256_file(contract.public_headers),
             "compiler": compiler,
@@ -1056,7 +1490,7 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract)
     require(
         dict(inputs)
         == {
-            "callable_inventory_sha256": sha256_file(contract.callable_inventory),
+            "compiler_collection_inputs_sha256": declaration_form_collection_input_digest(contract, ROOT / "include"),
             "header_abi_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
             "public_header_inventory_sha256": sha256_file(contract.public_headers),
             "compiler": "clang",
@@ -1079,6 +1513,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--project-include", type=Path, default=ROOT / "include")
     parser.add_argument("--musl-include", type=Path, default=Path("/opt/musl-1.2.6/include"))
     parser.add_argument("--linux-uapi-include", type=Path, default=Path("/opt/linux-5.10-uapi/include"))
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_COLLECTION_WORKERS,
+        help=f"bounded concurrent compiler jobs (1 through {MAX_COLLECTION_WORKERS}; default: {DEFAULT_COLLECTION_WORKERS})",
+    )
     parser.add_argument("--write", action="store_true", help="update the checked report")
     parser.add_argument("--check", action="store_true", help="require the checked report to match compiler output")
     parsed = parser.parse_args(arguments)
@@ -1090,6 +1530,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         musl_include=parsed.musl_include,
         linux_uapi_include=parsed.linux_uapi_include,
         contract=contract,
+        workers=parsed.workers,
     )
     rendered = canonical_json(report)
     if parsed.write:

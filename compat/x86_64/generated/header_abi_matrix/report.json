@@ -1,8 +1,8 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "933444511a01f07834af14626cbb7ec741d84f4ebb64843d6156924703ef615e",
     "compiler": "clang",
+    "compiler_collection_inputs_sha256": "069c784ce8edd124098060de6ca3c643d29175adb0826d4c1c00b0d1501ceced",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
