@@ -2178,6 +2178,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_klog_header_source_form()', source)
         self.assertIn(
             'compat/x86_64/run_klog_header_source_form.sh', source
+        )
         self.assertIn('run_pthread_header_source_form()', source)
         self.assertIn(
             'compat/x86_64/run_pthread_header_source_form.sh', source
