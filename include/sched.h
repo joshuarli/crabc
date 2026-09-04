@@ -61,9 +61,13 @@ void *(memset)(void *, int, size_t);
 void *(calloc)(size_t, size_t);
 void (free)(void *);
 
+#if defined(__x86_64__) /* pinned-musl cpu_set_t form; the AArch64 form stays frozen */
+typedef struct cpu_set_t { unsigned long __bits[128/sizeof(long)]; } cpu_set_t;
+#else /* AArch64 frozen cpu_set_t form */
 typedef struct cpu_set_t {
     unsigned long __bits[128 / sizeof(long)];
 } cpu_set_t;
+#endif
 
 int __sched_cpucount(size_t, const cpu_set_t *);
 #define CPU_COUNT_S(size,set) __sched_cpucount(size,set)
