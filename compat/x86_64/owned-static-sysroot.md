@@ -121,7 +121,7 @@ by this consumer.
 `owned_static_stdio_probe.c` exercises the owned descriptor-stream engine in
 `owned_static_stdio.rs`: simultaneous dynamic streams, buffered and terminal
 output, positioning/pushback, errors, append/cloexec, recursive stream locking
-across threads, and the existing bounded formatter/scanner. Both installed
+across threads, unlocked byte/block I/O, and bounded formatting/scanning. Both installed
 modes and extracted copies must match pinned musl and flush an unclosed
 dynamic stream at ordinary exit. The final image must select the strong
 `__stdio_exit` hook. Scratch files are private to each consumer run.
@@ -129,6 +129,13 @@ Reopen preserves the FILE/buffer identity and tests descriptor replacement and
 failure retirement; allocated line input covers growth, embedded NULs, EOF,
 and errors. Complete formatting/scanning, wide and memory/cookie streams,
 `popen`, cancellation, and fork-lock recovery remain unqualified.
+
+`owned_static_printf_probe.c` additionally covers positional integer/string/
+count/pointer/errno/hex-float formatting and FILE, descriptor, allocated, and
+caller-buffer destinations. Its 71-record binary matrix must match pinned
+musl in both modes and extracted copies; defined invalid-format checks remain
+candidate-specific. Decimal, long-double, and wide formatting remain separate
+completion work.
 
 `x86-owned-static-runtime` is a planned archive profile, routed through this
 runner but selected by `scripts/build_x86_64_owned_sysroot.py`. Its direct
@@ -150,7 +157,9 @@ CNAME answers, and missing-name behavior. Each fixture reserves a distinct
 loopback DNS address and uses a private chroot configuration; the concurrent
 isolation check also occupies the former shared endpoint and verifies early
 failure reaps the server. This proves no external DNS behavior or full resolver
-family closure; extracted-package matrix integration remains next.
+family closure. Both modes and extracted copies now run in the same bounded
+24-job consumer matrix. Cold producer reproducibility remains a separate
+mandatory check; serial-versus-parallel timing is opt-in, not extra default work.
 
 ## Deliberately unselected
 
