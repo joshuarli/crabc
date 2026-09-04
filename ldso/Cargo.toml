@@ -21,6 +21,10 @@ x86_64-initial-interpreter = []
 # support claim with the existing fixed-graph root and deliberately excludes
 # TLS, dlfcn, lifecycle, CRT, and installed-product integration.
 x86_64-general-initial-interpreter = []
+# Process dependency lifecycle over the same arbitrary admitted initial graph.
+# This integration staging feature retains per-object callback ownership and
+# passes the conventional x86 rtld_fini address; main lifecycle stays CRT-owned.
+x86_64-general-initial-lifecycle = ["x86_64-general-initial-interpreter"]
 # Private x86 general initial-TLS materialization target. It retains only one
 # initial generation in loader-owned state and explicitly excludes RuntimeV1
 # publication, pthread/new-thread state, runtime DSO admission, DTV growth,

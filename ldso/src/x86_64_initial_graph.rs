@@ -54,6 +54,9 @@ mod x86_64_initial_graph_state;
 #[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_general_initial_loader_state.rs"]
 mod x86_64_general_initial_loader_state;
+#[cfg(crabc_general_initial_lifecycle)]
+#[path = "x86_64_general_initial_lifecycle.rs"]
+mod x86_64_general_initial_lifecycle;
 #[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_general_initial_graph.rs"]
 mod x86_64_general_initial_graph;
@@ -788,6 +791,14 @@ struct Object {
     init: usize,
     init_array: *const usize,
     init_count: usize,
+    #[cfg(crabc_general_initial_lifecycle)]
+    general_init: usize,
+    #[cfg(crabc_general_initial_lifecycle)]
+    general_fini: usize,
+    #[cfg(crabc_general_initial_lifecycle)]
+    general_fini_array: *const usize,
+    #[cfg(crabc_general_initial_lifecycle)]
+    general_fini_count: usize,
     relro_virtual_address: u64,
     relro_byte_len: u64,
     runpath: *const u8,
@@ -828,6 +839,14 @@ const EMPTY_OBJECT: Object = Object {
     init: 0,
     init_array: core::ptr::null(),
     init_count: 0,
+    #[cfg(crabc_general_initial_lifecycle)]
+    general_init: 0,
+    #[cfg(crabc_general_initial_lifecycle)]
+    general_fini: 0,
+    #[cfg(crabc_general_initial_lifecycle)]
+    general_fini_array: core::ptr::null(),
+    #[cfg(crabc_general_initial_lifecycle)]
+    general_fini_count: 0,
     relro_virtual_address: 0,
     relro_byte_len: 0,
     runpath: core::ptr::null(),
@@ -1361,6 +1380,9 @@ unsafe fn parse_mapped(
     let mut pltrel_byte_len = None;
     let mut plt_is_rela = None;
     let mut terminated = false;
+    #[cfg(crabc_general_initial_lifecycle)]
+    let (mut general_init, mut general_fini, mut general_fini_array, mut general_fini_len) =
+        (None, None, None, None);
     for index in 0..dynamic_count {
         let entry = dynamic.add(index * 16);
         let tag = read_i64(entry);
@@ -1441,7 +1463,23 @@ unsafe fn parse_mapped(
             DT_FINI_ARRAYSZ if !mapped => {
                 if owned_crt_main_fini_array_len.replace(value).is_some() { return None; }
             }
-            // The general initial graph has exactly one lifecycle admission:
+            #[cfg(crabc_general_initial_lifecycle)]
+            DT_INIT if general_initial_graph && mapped => {
+                if general_init.replace(value).is_some() { return None; }
+            }
+            #[cfg(crabc_general_initial_lifecycle)]
+            DT_FINI if general_initial_graph && mapped => {
+                if general_fini.replace(value).is_some() { return None; }
+            }
+            #[cfg(crabc_general_initial_lifecycle)]
+            DT_FINI_ARRAY if general_initial_graph && mapped => {
+                if general_fini_array.replace(value).is_some() { return None; }
+            }
+            #[cfg(crabc_general_initial_lifecycle)]
+            DT_FINI_ARRAYSZ if general_initial_graph && mapped => {
+                if general_fini_len.replace(value).is_some() { return None; }
+            }
+            // Without the lifecycle owner, the general graph admits only
             // a dependency DSO's bounded DT_INIT_ARRAY. Main-image arrays
             // remain CRT-owned, and legacy/preinit/finalizer tags stay
             // reject-only because this initial transaction owns neither a
@@ -1583,6 +1621,10 @@ unsafe fn parse_mapped(
             }
             object.init_array = runtime_address(base, address)? as *const usize;
             object.init_count = usize::try_from(byte_len / pointer_size).ok()?;
+            #[cfg(crabc_general_initial_lifecycle)]
+            if !virtual_range_in_readable_file_load(phdr, phnum, address, byte_len) {
+                return None;
+            }
         }
         // The executable's constructors are deliberately CRT-owned.  A
         // main-image init tag is a malformed request for this handoff.
@@ -1592,6 +1634,35 @@ unsafe fn parse_mapped(
             object.init_count = usize::try_from(byte_len / 8).ok()?;
         }
         _ => return None,
+    }
+    #[cfg(crabc_general_initial_lifecycle)]
+    {
+        // Direct legacy callbacks are validated before relocation. Array
+        // storage is bounded here; relocated targets are all preflighted
+        // together before any initializer may run.
+        for (address, destination) in [
+            (general_init, &mut object.general_init),
+            (general_fini, &mut object.general_fini),
+        ] {
+            if let Some(address) = address {
+                if address == 0 || !virtual_range_in_executable_load(phdr, phnum, address, 1) {
+                    return None;
+                }
+                *destination = runtime_address(base, address)? as usize;
+            }
+        }
+        match (general_fini_array, general_fini_len) {
+            (None, None) => {}
+            (Some(address), Some(byte_len))
+                if byte_len != 0 && byte_len % 8 == 0 && address % 8 == 0
+                    && byte_len <= (MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES * 8) as u64
+                    && virtual_range_in_readable_file_load(phdr, phnum, address, byte_len) =>
+            {
+                object.general_fini_array = runtime_address(base, address)? as *const usize;
+                object.general_fini_count = usize::try_from(byte_len / 8).ok()?;
+            }
+            _ => return None,
+        }
     }
     #[cfg(crabc_bounded_runtime_dlopen)]
     match (
@@ -3979,14 +4050,15 @@ unsafe fn virtual_range_in_page_mapped_load(
     false
 }
 
-/// Require a PT_TLS initialized prefix to be backed by one readable file
+/// Require a PT_TLS initialized prefix or initial lifecycle array to be backed by one readable file
 /// segment. `p_memsz` may legitimately extend through BSS, but copying
 /// `p_filesz` from that extension would turn a malformed ELF record into a
 /// speculative read from whatever virtual mapping happens to follow it.
 #[cfg(any(
     crabc_initial_tls_graph,
     crabc_initial_exec_tls_graph,
-    crabc_general_initial_tls_materialization_v1
+    crabc_general_initial_tls_materialization_v1,
+    crabc_general_initial_lifecycle
 ))]
 unsafe fn virtual_range_in_readable_file_load(
     phdr: *const u8,
@@ -4101,7 +4173,16 @@ unsafe fn syscall3(number: i64, one: i64, two: i64, three: i64) -> i64 { let res
 unsafe fn syscall4(number: i64, one: i64, two: i64, three: i64, four: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
 unsafe fn syscall6(number: i64, one: i64, two: i64, three: i64, four: i64, five: i64, six: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, in("r8") five, in("r9") six, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
 
-unsafe fn jump(entry: usize, sp: usize) -> ! { core::arch::asm!("mov rsp, {stack}", "jmp {target}", stack = in(reg) sp, target = in(reg) entry, options(noreturn)); }
+unsafe fn jump(entry: usize, sp: usize) -> ! {
+    #[cfg(crabc_general_initial_lifecycle)]
+    core::arch::asm!("mov rsp, {stack}", "jmp {target}", stack = in(reg) sp,
+        target = in(reg) entry,
+        in("rdx") x86_64_general_initial_lifecycle::process_finalizer as *const () as usize,
+        options(noreturn));
+    #[cfg(not(crabc_general_initial_lifecycle))]
+    core::arch::asm!("mov rsp, {stack}", "jmp {target}", stack = in(reg) sp,
+        target = in(reg) entry, options(noreturn));
+}
 fn fail(message: &[u8]) -> ! { unsafe { die(message) } }
 unsafe fn die(message: &[u8]) -> ! { let _ = syscall3(SYS_WRITE, 2, message.as_ptr() as i64, message.len() as i64); let _ = syscall1(SYS_EXIT, 127); core::hint::unreachable_unchecked() }
 

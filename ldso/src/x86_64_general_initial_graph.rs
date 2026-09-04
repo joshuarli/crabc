@@ -9,8 +9,10 @@
 //! separate `crabc_general_initial_tls_materialization_v1` sibling attaches
 //! one initial Variant-II TLS population to that same owner. Its ordinary cfg
 //! is not a RuntimeV1 producer; the separately cfg-selected general RuntimeV1
-//! handoff still excludes dynamic CRT handoff, general process/DSO lifecycle
-//! ownership beyond the immutable initial state, and runtime DSO mapping.
+//! handoff still excludes dynamic CRT handoff and runtime DSO mapping. The
+//! optional general lifecycle feature retains dependency initialization and
+//! process-finalization plans in the same owner and passes x86 rtld_fini;
+//! it does not yet integrate executable lifecycle or runtime DSO admission.
 
 use super::*;
 use super::x86_64_general_initial_loader_state::{
@@ -110,7 +112,8 @@ unsafe fn run_without_tls(main: Object, main_entry: u64, sp: usize, ldso_base: u
         rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::SelfRelro);
         fail(b"selfrelro\n");
     }
-    let initializers = match preflight_dependency_initializers(
+    #[allow(unused_mut)]
+    let mut initializers = match preflight_dependency_initializers(
         state
             .graph_during_transaction()
             .unwrap_or_else(|_| fail(b"state\n")),
@@ -127,6 +130,11 @@ unsafe fn run_without_tls(main: Object, main_entry: u64, sp: usize, ldso_base: u
             fail(b"ctorplan\n");
         }
     };
+    #[cfg(crabc_general_initial_lifecycle)]
+    if state.attach_lifecycle(initializers.lifecycle.take().unwrap()).is_err() {
+        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::InitializerPreflight);
+        fail(b"state\n");
+    }
     if state.prepare().is_err() {
         rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::InitializerPreflight);
         fail(b"state\n");
@@ -250,7 +258,8 @@ unsafe fn run_with_initial_tls(
             return Err(b"tlsstate\n");
         }
     };
-    let initializers = match preflight_dependency_initializers(graph, objects) {
+    #[allow(unused_mut)]
+    let mut initializers = match preflight_dependency_initializers(graph, objects) {
         Some(plan) => plan,
         None => {
             rollback_initial_tls_state(
@@ -260,6 +269,12 @@ unsafe fn run_with_initial_tls(
             return Err(b"ctorplan\n");
         }
     };
+
+    #[cfg(crabc_general_initial_lifecycle)]
+    if state.attach_lifecycle(initializers.lifecycle.take().unwrap()).is_err() {
+        rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::InitializerPreflight);
+        return Err(b"state\n");
+    }
 
     // A runtime module request has no map path in this package.  Keep the
     // typed DTV-growth rejection explicit before `ARCH_SET_FS`; any failure
@@ -324,22 +339,32 @@ unsafe fn run_with_initial_tls(
 
 /// The complete prevalidated constructor call list for one initial graph.
 ///
-/// It has no object pointers or mutable lifecycle state. Once the values are
-/// copied from RELRO-sealed arrays, dispatch can happen after TLS publication
-/// without another fallible read from the object graph.
+/// The established roots retain a transient init-array list. The lifecycle
+/// feature instead transfers the complete per-object callback owner into the
+/// canonical graph before publication. Both copy from RELRO-sealed arrays,
+/// avoiding further fallible ELF reads after TLS installation.
 struct DependencyInitializerPlan {
+    #[cfg(not(crabc_general_initial_lifecycle))]
     callbacks: [usize; MAX_OBJECTS * MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES],
+    #[cfg(not(crabc_general_initial_lifecycle))]
     count: usize,
+    #[cfg(crabc_general_initial_lifecycle)]
+    lifecycle: Option<super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle>,
 }
 
 impl DependencyInitializerPlan {
     const fn empty() -> Self {
         Self {
+            #[cfg(not(crabc_general_initial_lifecycle))]
             callbacks: [0; MAX_OBJECTS * MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES],
+            #[cfg(not(crabc_general_initial_lifecycle))]
             count: 0,
+            #[cfg(crabc_general_initial_lifecycle)]
+            lifecycle: None,
         }
     }
 
+    #[cfg(not(crabc_general_initial_lifecycle))]
     fn push(&mut self, callback: usize) -> Option<()> {
         let destination = self.callbacks.get_mut(self.count)?;
         *destination = callback;
@@ -350,8 +375,9 @@ impl DependencyInitializerPlan {
 
 /// Builds the sole accepted initial-lifecycle action from graph edges.
 ///
-/// The parser admits only a mapped dependency's bounded `DT_INIT_ARRAY` tag
-/// pair. This preflight adds the remaining runtime facts after relocation:
+/// Without the lifecycle feature the parser admits only a dependency's
+/// bounded `DT_INIT_ARRAY` pair. The lifecycle feature adds dependency legacy
+/// init/fini and fini arrays. Preflight adds runtime facts after relocation:
 /// every dependency is present once in graph-derived postorder and every
 /// pointer is nonzero and contained in that dependency's executable load.
 /// No constructor is called until the entire plan succeeds.
@@ -359,8 +385,16 @@ unsafe fn preflight_dependency_initializers(
     graph: &InitialGraphState,
     objects: &[Object; MAX_OBJECTS],
 ) -> Option<DependencyInitializerPlan> {
+    #[cfg(not(crabc_general_initial_lifecycle))]
     let graph_plan = graph.dependency_first_plan().ok()?;
     let mut plan = DependencyInitializerPlan::empty();
+    #[cfg(crabc_general_initial_lifecycle)]
+    {
+        plan.lifecycle = Some(unsafe {
+            super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle::preflight(graph, objects)?
+        });
+    }
+    #[cfg(not(crabc_general_initial_lifecycle))]
     for &index in graph_plan.indices() {
         let object = objects.get(index)?;
         if !object.mapped
@@ -393,6 +427,15 @@ unsafe fn preflight_dependency_initializers(
 /// in mapped dependencies, and the caller must be in the single initial
 /// startup transaction before application control transfers.
 unsafe fn dispatch_dependency_initializers(plan: &DependencyInitializerPlan) {
+    #[cfg(crabc_general_initial_lifecycle)]
+    {
+        let _ = plan;
+        // Both initial transaction routes attach the complete lifecycle
+        // before reserving publication. No mapped callback runs until the
+        // canonical owner (and any initial TLS attachment) is retained.
+        unsafe { GeneralInitialLoaderState::retained().unwrap().lifecycle().unwrap().initialize() };
+    }
+    #[cfg(not(crabc_general_initial_lifecycle))]
     for &callback in &plan.callbacks[..plan.count] {
         let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(callback) };
         unsafe { callback() };

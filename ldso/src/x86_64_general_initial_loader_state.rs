@@ -19,6 +19,8 @@
 //! the only successor is the non-fallible `Ready` publication. No public
 //! loader view is exposed here; a later private facade must copy from the
 //! acquire-published immutable state rather than borrow transaction storage.
+//! With the general lifecycle feature, its retained callback plans remain
+//! immutable too; only their explicit atomic execution claims may change.
 
 #![allow(dead_code)]
 
@@ -53,6 +55,8 @@ pub(crate) enum GeneralInitialLoaderPhase {
 pub(crate) enum GeneralInitialLoaderStateError {
     InvalidPhase,
     GraphIncomplete,
+    #[cfg(crabc_general_initial_lifecycle)]
+    LifecycleIncomplete,
     PublicationUnavailable,
 }
 
@@ -88,6 +92,8 @@ pub(crate) struct GeneralInitialLoaderState {
     graph: InitialGraphState,
     objects: [Object; MAX_OBJECTS],
     initial_tls_attached: bool,
+    #[cfg(crabc_general_initial_lifecycle)]
+    lifecycle: Option<super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle>,
 }
 
 // The startup transaction is single-threaded. This word nevertheless makes
@@ -133,11 +139,33 @@ impl GeneralInitialLoaderState {
             graph: InitialGraphState::new(main_identity),
             objects,
             initial_tls_attached: false,
+            #[cfg(crabc_general_initial_lifecycle)]
+            lifecycle: None,
         }
     }
 
     pub(crate) const fn phase(&self) -> GeneralInitialLoaderPhase {
         self.phase
+    }
+
+    /// Attaches a fully preflighted callback owner before publication. The
+    /// immutable graph remains unchanged while atomic callback states evolve.
+    #[cfg(crabc_general_initial_lifecycle)]
+    pub(crate) fn attach_lifecycle(
+        &mut self,
+        lifecycle: super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle,
+    ) -> Result<(), GeneralInitialLoaderStateError> {
+        if self.phase != GeneralInitialLoaderPhase::Discovering || self.lifecycle.is_some() {
+            return Err(GeneralInitialLoaderStateError::InvalidPhase);
+        }
+        self.lifecycle = Some(lifecycle);
+        Ok(())
+    }
+
+    #[cfg(crabc_general_initial_lifecycle)]
+    pub(crate) fn lifecycle(&self) -> Option<&super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle> {
+        if self.phase != GeneralInitialLoaderPhase::Ready { return None; }
+        self.lifecycle.as_ref()
     }
 
     pub(crate) fn object_count(&self) -> usize {
@@ -153,6 +181,10 @@ impl GeneralInitialLoaderState {
     ) -> Result<(&mut InitialGraphState, &mut [Object; MAX_OBJECTS]), GeneralInitialLoaderStateError>
     {
         if self.phase != GeneralInitialLoaderPhase::Discovering {
+            return Err(GeneralInitialLoaderStateError::InvalidPhase);
+        }
+        #[cfg(crabc_general_initial_lifecycle)]
+        if self.lifecycle.is_some() {
             return Err(GeneralInitialLoaderStateError::InvalidPhase);
         }
         Ok((&mut self.graph, &mut self.objects))
@@ -218,6 +250,10 @@ impl GeneralInitialLoaderState {
         {
             return Err(GeneralInitialLoaderStateError::GraphIncomplete);
         }
+        #[cfg(crabc_general_initial_lifecycle)]
+        if self.lifecycle.is_none() {
+            return Err(GeneralInitialLoaderStateError::LifecycleIncomplete);
+        }
         self.phase = GeneralInitialLoaderPhase::Prepared;
         Ok(())
     }
@@ -272,6 +308,8 @@ impl GeneralInitialLoaderState {
             *object = EMPTY_OBJECT;
         }
         self.initial_tls_attached = false;
+        #[cfg(crabc_general_initial_lifecycle)]
+        { self.lifecycle = None; }
         self.phase = GeneralInitialLoaderPhase::Vacant;
     }
 
@@ -307,7 +345,8 @@ impl GeneralInitialLoaderState {
             return None;
         }
         // SAFETY: `READY` is release-stored only after the complete static
-        // value above. The state has no mutation path after that store.
+        // value above. Graph/object/plan data have no mutation path after
+        // that store; lifecycle execution changes only atomic state words.
         unsafe {
             Some(
                 &*core::ptr::addr_of!(GENERAL_INITIAL_LOADER_STATE)
@@ -342,7 +381,7 @@ impl GeneralInitialLoaderState {
     }
 
     #[cfg(test)]
-    unsafe fn reset_publication_for_test() {
+    pub(super) unsafe fn reset_publication_for_test() {
         // SAFETY: the test guard excludes all readers/reservers. The stored
         // types have no drop ownership; this only restores the empty process
         // image model for the next isolated unit test.
@@ -414,6 +453,14 @@ mod tests {
             (left, right, shared)
         };
         state.finish_discovery().unwrap();
+        #[cfg(crabc_general_initial_lifecycle)]
+        {
+            let plan = unsafe { super::super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle::preflight(
+                state.graph_during_transaction().unwrap(),
+                state.objects_during_transaction().unwrap(),
+            ) }.unwrap();
+            state.attach_lifecycle(plan).unwrap();
+        }
         (state, left, right, shared)
     }
 

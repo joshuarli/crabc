@@ -61,12 +61,16 @@ pub(crate) enum GeneralInitialTlsStateError {
     Materialization,
     PublicationUnavailable,
     RuntimeV1PublicationUnavailable,
+    #[cfg(crabc_general_initial_lifecycle)]
+    LifecycleIncomplete,
 }
 
 fn map_loader_state_error(error: GeneralInitialLoaderStateError) -> GeneralInitialTlsStateError {
     match error {
         GeneralInitialLoaderStateError::InvalidPhase => GeneralInitialTlsStateError::InvalidPhase,
         GeneralInitialLoaderStateError::GraphIncomplete => GeneralInitialTlsStateError::GraphIncomplete,
+        #[cfg(crabc_general_initial_lifecycle)]
+        GeneralInitialLoaderStateError::LifecycleIncomplete => GeneralInitialTlsStateError::LifecycleIncomplete,
         GeneralInitialLoaderStateError::PublicationUnavailable => {
             GeneralInitialTlsStateError::PublicationUnavailable
         }
@@ -370,6 +374,14 @@ impl GeneralInitialTlsState {
         self.loader
             .objects_during_transaction()
             .map_err(map_loader_state_error)
+    }
+
+    #[cfg(crabc_general_initial_lifecycle)]
+    pub(crate) fn attach_lifecycle(
+        &mut self,
+        lifecycle: super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle,
+    ) -> Result<(), GeneralInitialTlsStateError> {
+        self.loader.attach_lifecycle(lifecycle).map_err(map_loader_state_error)
     }
 
     /// Marks the root graph ready once its recursive discovery completed.
@@ -793,6 +805,13 @@ mod tests {
         state.finish_discovery().unwrap();
         assert!(state.plan_initial_tls().unwrap());
         state.mark_relocated().unwrap();
+        #[cfg(crabc_general_initial_lifecycle)]
+        {
+            let plan = unsafe { super::super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle::preflight(
+                state.graph().unwrap(), state.objects().unwrap(),
+            ) }.unwrap();
+            state.attach_lifecycle(plan).unwrap();
+        }
         state
     }
 

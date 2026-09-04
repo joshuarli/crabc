@@ -24,8 +24,18 @@ and relocates its admitted objects, and rolls them back on a failed
 transaction. Its direct evidence is
 `compat/x86_64/run_ldso_general_initial_graph.sh`; the target-root variant is
 `compat/x86_64/run_ldso_general_initial_graph_target_root.sh`. It does not
-yet select TLS, dlfcn, constructors/destructors, CRT handoff, an installed
+yet select TLS, dlfcn, process finalization, CRT handoff, an installed
 dynamic product, or x86-64 support.
+
+The additive `x86_64-general-initial-lifecycle` integration feature uses that
+same general graph and retains dependency legacy init/fini plus init/fini
+arrays in its canonical owner. Initialization follows dependency order;
+process finalization reverses that order and claims each object once. The
+loader passes its private finalizer address through the conventional x86-64
+`rdx` entry register. It composes with initial TLS but does not yet compose
+the owned CRT/shared-libc executable lifecycle, runtime `dlopen`/`dlclose`,
+worker TLS, or installed dynamic products. See the
+[native lifecycle contract and evidence](../compat/x86_64/general_loader_lifecycle.md).
 
 ## Usage
 

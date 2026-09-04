@@ -1,5 +1,9 @@
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(crabc_general_initial_graph)");
+    println!("cargo::rustc-check-cfg=cfg(crabc_general_initial_lifecycle)");
+    if std::env::var_os("CARGO_FEATURE_X86_64_GENERAL_INITIAL_LIFECYCLE").is_some() {
+        println!("cargo::rustc-cfg=crabc_general_initial_lifecycle");
+    }
     println!("cargo::rustc-check-cfg=cfg(crabc_general_initial_tls_materialization_v1)");
     println!("cargo::rustc-check-cfg=cfg(crabc_general_loader_libc_tls_runtime_v1)");
     println!("cargo::rustc-check-cfg=cfg(crabc_dynamic_main_thread_runtime_v1)");
