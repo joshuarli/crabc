@@ -40,14 +40,15 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertEqual(summary["candidate_external_callable_count"], 1525)
         self.assertEqual(summary["default_static_callable_count"], 1119)
         self.assertEqual(summary["verified_feature_callable_count"], 78)
-        self.assertEqual(summary["unprovided_callable_count"], 328)
+        self.assertEqual(summary["declared_unverified_feature_callable_count"], 23)
+        self.assertEqual(summary["unprovided_callable_count"], 305)
         self.assertEqual(
             summary["deferred_resolution_counts"],
             {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 319,
+                "planned-provider": 296,
             },
         )
         self.assertEqual(

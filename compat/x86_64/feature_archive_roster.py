@@ -53,6 +53,7 @@ class FeatureArchive:
     additive_callables: tuple[str, ...]
     replacement_callables: tuple[str, ...]
     aliases: tuple[ArchiveAlias, ...]
+    feature_selection_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -218,6 +219,8 @@ def parse_feature_archive_roster(
         expected_keys = set(common_keys)
         if state == "verified":
             expected_keys.update({"evidence_record", "dispatch_command"})
+        else:
+            expected_keys.add("feature_selection_source")
         require(set(raw) == expected_keys, f"{location} keys drifted")
 
         runner = raw.get("runner")
@@ -227,6 +230,7 @@ def parse_feature_archive_roster(
 
         evidence_record: str | None = None
         dispatch_command: str | None = None
+        feature_selection_source: str | None = None
         if state == "verified":
             evidence_record = raw.get("evidence_record")
             require(
@@ -237,6 +241,18 @@ def parse_feature_archive_roster(
             require(
                 isinstance(dispatch_command, str) and COMMAND_RE.fullmatch(dispatch_command) is not None,
                 f"{location}.dispatch_command is invalid",
+            )
+        else:
+            feature_selection_source = raw.get("feature_selection_source")
+            require(
+                isinstance(feature_selection_source, str)
+                and feature_selection_source
+                and not Path(feature_selection_source).is_absolute(),
+                f"{location}.feature_selection_source is invalid",
+            )
+            require(
+                ".." not in Path(feature_selection_source).parts,
+                f"{location}.feature_selection_source escapes the repository",
             )
 
         baseline_features = string_list(raw.get("baseline_features"), f"{location}.baseline_features", allow_empty=True)
@@ -286,6 +302,7 @@ def parse_feature_archive_roster(
                 additive_callables=additive_callables,
                 replacement_callables=replacement_callables,
                 aliases=tuple(aliases),
+                feature_selection_source=feature_selection_source,
             )
         )
 
@@ -343,10 +360,25 @@ def validate_ledger_bindings(
         runner_path = ROOT / row.runner
         require(runner_path.is_file() and not runner_path.is_symlink(), f"feature archive {row.identifier} runner is missing")
         runner_source = runner_path.read_text(encoding="utf-8")
-        require(
-            row.identifier in runner_source,
-            f"feature archive {row.identifier} runner does not select its Cargo feature",
-        )
+        if row.feature_selection_source is None:
+            require(
+                row.identifier in runner_source,
+                f"feature archive {row.identifier} runner does not select its Cargo feature",
+            )
+        else:
+            selection_path = ROOT / row.feature_selection_source
+            require(
+                selection_path.is_file() and not selection_path.is_symlink(),
+                f"feature archive {row.identifier} feature selection source is missing",
+            )
+            require(
+                row.feature_selection_source in runner_source,
+                f"feature archive {row.identifier} runner does not route through its feature selection source",
+            )
+            require(
+                row.identifier in selection_path.read_text(encoding="utf-8"),
+                f"feature archive {row.identifier} feature selection source does not select its Cargo feature",
+            )
         if row.state == "verified":
             verified_count += 1
             assert row.evidence_record is not None and row.dispatch_command is not None

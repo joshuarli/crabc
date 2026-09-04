@@ -212,9 +212,9 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             provider_counts,
             {
-                "declared_unverified_feature_archives": 0,
+                "declared_unverified_feature_archives": 23,
                 "default_static": 1119,
-                "unprovided": 328,
+                "unprovided": 305,
                 "verified_feature_archives": 78,
             },
         )
@@ -245,7 +245,35 @@ class HeaderCallableInventoryTests(unittest.TestCase):
 
         self.assertIn("mkdirat", default_static)
         self.assertNotIn("mkdirat", unprovided)
-        self.assertEqual(planned, {})
+        self.assertEqual(set(planned), {"x86-owned-static-runtime"})
+        self.assertTrue(
+            {
+                "abort",
+                "asprintf",
+                "dprintf",
+                "fdopen",
+                "fgetc_unlocked",
+                "flockfile",
+                "fputc_unlocked",
+                "fread_unlocked",
+                "freopen",
+                "ftrylockfile",
+                "funlockfile",
+                "fwrite_unlocked",
+                "getc_unlocked",
+                "getchar_unlocked",
+                "getdelim",
+                "getline",
+                "prctl",
+                "putc_unlocked",
+                "putchar_unlocked",
+                "realpath",
+                "syscall",
+                "vasprintf",
+                "vdprintf",
+            }
+            <= planned["x86-owned-static-runtime"]
+        )
         self.assertEqual(
             verified["x86-filesystem-traversal"],
             {"ftw", "nftw"},
@@ -490,9 +518,14 @@ class HeaderCallableInventoryTests(unittest.TestCase):
 
         partition = report["callable_provider_partition"]
         default_static = set(partition["default_static"]["members"])
+        planned = {
+            member
+            for provider in partition["declared_unverified_feature_archives"]
+            for member in provider["members"]
+        }
         unprovided = set(partition["unprovided"]["members"])
         self.assertFalse(set(expected) & default_static)
-        self.assertTrue(set(expected) <= unprovided)
+        self.assertTrue(set(expected) <= unprovided | planned)
 
     def test_pthread_barrier_provider_block_is_default_static_not_unprovided(self) -> None:
         """Keep the selected barrier ABI in the default archive provider partition."""

@@ -130,6 +130,19 @@ failure retirement; allocated line input covers growth, embedded NULs, EOF,
 and errors. Complete formatting/scanning, wide and memory/cookie streams,
 `popen`, cancellation, and fork-lock recovery remain unqualified.
 
+`x86-owned-static-runtime` is a planned archive profile, routed through this
+runner but selected by `scripts/build_x86_64_owned_sysroot.py`. Its direct
+header-callable additions are the owned `abort`/`syscall`/`prctl`/`realpath`
+support, descriptor-stream lifecycle and lock entries, allocated-line input,
+the eight unlocked byte/block entries, and `asprintf`/`dprintf` plus their
+`va_list` forms. It replaces the selected default stream and byte-buffer
+formatting implementations where `owned_static_stdio.rs` and `owned_printf.rs`
+select a different owner; the feature's allocator, environment, exec,
+permanent-format, and resolver dependencies retain their own feature-provider
+rows. The installed consumer evidence is not a complete callable-provider
+archive audit, so this profile remains planned and does not promote a family,
+the default export roster, or public x86 support.
+
 The aggregate also selects the existing C-owned resolver runtime. The
 `libc_resolver_runtime_probe.c` fixture runs through its sealed installed
 ET_EXEC and static-PIE drivers, including per-thread `h_errno`, hosts/search,

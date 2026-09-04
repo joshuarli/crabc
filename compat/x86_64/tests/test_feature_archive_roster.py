@@ -46,6 +46,8 @@ def row(
     if state == "verified":
         value["evidence_record"] = f"evidence.{identifier}"
         value["dispatch_command"] = identifier
+    else:
+        value["feature_selection_source"] = f"compat/x86_64/run_{identifier}.sh"
     return value
 
 
@@ -55,8 +57,96 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         rows = ROSTER.load_feature_archive_roster()
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
-        self.assertEqual(len(rows), 28)
-        self.assertEqual([item.identifier for item in rows if item.state == "planned"], [])
+        self.assertEqual(len(rows), 29)
+        owned_static = next(item for item in rows if item.identifier == "x86-owned-static-runtime")
+        self.assertEqual(owned_static.state, "planned")
+        self.assertIsNone(owned_static.evidence_record)
+        self.assertIsNone(owned_static.dispatch_command)
+        self.assertEqual(owned_static.runner, "compat/x86_64/run_owned_static_sysroot.sh")
+        self.assertEqual(
+            owned_static.feature_selection_source,
+            "scripts/build_x86_64_owned_sysroot.py",
+        )
+        self.assertEqual(
+            owned_static.baseline_features,
+            (
+                "x86-allocator-observability",
+                "x86-allocator-runtime",
+                "x86-allocator-string-duplication",
+                "x86-environment-runtime",
+                "x86-h-errno",
+                "x86-process-exec",
+                "x86-resolver-runtime",
+                "x86-stdio-permanent-format-scan",
+            ),
+        )
+        self.assertEqual(
+            owned_static.additive_callables,
+            (
+                "abort",
+                "asprintf",
+                "dprintf",
+                "fdopen",
+                "fgetc_unlocked",
+                "flockfile",
+                "fputc_unlocked",
+                "fread_unlocked",
+                "freopen",
+                "ftrylockfile",
+                "funlockfile",
+                "fwrite_unlocked",
+                "getc_unlocked",
+                "getchar_unlocked",
+                "getdelim",
+                "getline",
+                "prctl",
+                "putc_unlocked",
+                "putchar_unlocked",
+                "realpath",
+                "syscall",
+                "vasprintf",
+                "vdprintf",
+            ),
+        )
+        self.assertEqual(
+            owned_static.replacement_callables,
+            (
+                "clearerr",
+                "fclose",
+                "feof",
+                "ferror",
+                "fflush",
+                "fgetc",
+                "fgetpos",
+                "fgets",
+                "fileno",
+                "fopen",
+                "fputc",
+                "fputs",
+                "fread",
+                "fseek",
+                "fseeko",
+                "fsetpos",
+                "ftell",
+                "ftello",
+                "fwrite",
+                "getc",
+                "getchar",
+                "putc",
+                "putchar",
+                "puts",
+                "rewind",
+                "setvbuf",
+                "snprintf",
+                "sprintf",
+                "sscanf",
+                "tmpfile",
+                "ungetc",
+                "vsnprintf",
+                "vsprintf",
+                "vsscanf",
+            ),
+        )
         resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
         self.assertEqual(resolver.state, "verified")
         self.assertEqual(resolver.evidence_record, "static-c-resolver-runtime")
@@ -172,6 +262,30 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         )
         self.assertEqual(composition.additive_callables, ())
         self.assertEqual(composition.replacement_callables, ())
+
+    def test_planned_owned_static_runner_routes_to_the_cargo_selection_source(self) -> None:
+        """Keep planned product evidence distinct from direct feature selection."""
+        owned_static = next(
+            item
+            for item in ROSTER.load_feature_archive_roster()
+            if item.identifier == "x86-owned-static-runtime"
+        )
+        report = ROSTER.validate_ledger_bindings(
+            (owned_static,),
+            static_exports=(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .split(),
+            verified_records={},
+            dispatcher_path=ROOT / "scripts" / "dev-x86_64.sh",
+        )
+        self.assertEqual(
+            report,
+            {
+                "feature_archive_count": 1,
+                "planned_feature_archive_count": 1,
+                "verified_feature_archive_count": 0,
+            },
+        )
 
     def test_dependent_feature_requires_its_exact_cargo_baseline(self) -> None:
         cargo_features = {
