@@ -43,6 +43,7 @@ x86-owned-static-runtime = [
     "x86-environment-runtime",
     "x86-process-exec",
     "x86-stdio-permanent-format-scan",
+    "x86-resolver-runtime",
 ]
 # Legacy C temporary-name generation returns an allocator-owned pathname from
 # tempnam while tmpnam retains its source-compatible static-buffer path. Keep

@@ -125,8 +125,19 @@ across threads, and the existing bounded formatter/scanner. Both installed
 modes and extracted copies must match pinned musl and flush an unclosed
 dynamic stream at ordinary exit. The final image must select the strong
 `__stdio_exit` hook. Scratch files are private to each consumer run.
-`freopen`, complete formatting/scanning, wide and memory/cookie streams,
+Reopen preserves the FILE/buffer identity and tests descriptor replacement and
+failure retirement; allocated line input covers growth, embedded NULs, EOF,
+and errors. Complete formatting/scanning, wide and memory/cookie streams,
 `popen`, cancellation, and fork-lock recovery remain unqualified.
+
+The aggregate also selects the existing C-owned resolver runtime. The
+`libc_resolver_runtime_probe.c` fixture runs through its sealed installed
+ET_EXEC and static-PIE drivers, including per-thread `h_errno`, hosts/search,
+CNAME answers, and missing-name behavior. Each fixture reserves a distinct
+loopback DNS address and uses a private chroot configuration; the concurrent
+isolation check also occupies the former shared endpoint and verifies early
+failure reaps the server. This proves no external DNS behavior or full resolver
+family closure; extracted-package matrix integration remains next.
 
 ## Deliberately unselected
 
