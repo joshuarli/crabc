@@ -11890,22 +11890,22 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "sysroot.owned-artifact family completion",
             "staged_output.replace(output)",
         ):
-            self.assertIn(required, builder)
+            self.assertTrue(required in builder, f"owned sysroot builder omits {required!r}")
         for required in (
             "-nostdinc",
             "audit_header_dependencies",
-            "audit_link_trace",
+            "audit_link_receipt",
             "without-builtins",
             "/usr/lib/crt1.o",
-            "/opt/musl-x86_64/lib/libc.a",
+            "/opt/musl-1.2.6/lib/libc.a",
             "libgcc.a",
             "/lib/ld-musl-x86_64.so.1",
             "GNU_RELRO",
             "GNU_STACK",
             "PIMBCAF",
-            "expect_bootstrap_rejection",
+            "assert_malformed_tls_rejected",
         ):
-            self.assertIn(required, runner)
+            self.assertTrue(required in runner, f"owned sysroot runner omits {required!r}")
         self.assertNotIn("--whole-archive", runner)
         self.assertIn("__udivti3", fixture)
         self.assertIn("owned-static-sysroot", dispatcher)
