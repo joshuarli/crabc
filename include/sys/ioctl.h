@@ -14,48 +14,7 @@ extern "C" {
  * its low 32 bits after the platform C ABI widens it into an argument word. */
 int ioctl(int, int, ...);
 
-/* Linux's generic ioctl request encoding, used by public device headers. */
-#define _IOC_NRBITS 8
-#define _IOC_TYPEBITS 8
-#define _IOC_SIZEBITS 14
-#define _IOC_DIRBITS 2
-#define _IOC_NRMASK ((1 << _IOC_NRBITS) - 1)
-#define _IOC_TYPEMASK ((1 << _IOC_TYPEBITS) - 1)
-#define _IOC_SIZEMASK ((1 << _IOC_SIZEBITS) - 1)
-#define _IOC_DIRMASK ((1 << _IOC_DIRBITS) - 1)
-#define _IOC_NRSHIFT 0
-#define _IOC_TYPESHIFT (_IOC_NRSHIFT + _IOC_NRBITS)
-#define _IOC_SIZESHIFT (_IOC_TYPESHIFT + _IOC_TYPEBITS)
-#define _IOC_DIRSHIFT (_IOC_SIZESHIFT + _IOC_SIZEBITS)
-/* Keep the high direction bit unsigned for read request encodings. */
-#define _IOC_NONE 0U
-#define _IOC_WRITE 1U
-#define _IOC_READ 2U
-#define _IOC(dir, type, nr, size) (((dir) << _IOC_DIRSHIFT) | ((type) << _IOC_TYPESHIFT) | ((nr) << _IOC_NRSHIFT) | ((size) << _IOC_SIZESHIFT))
-#define _IOC_TYPECHECK(type) (sizeof(type))
-#define _IO(type, nr) _IOC(_IOC_NONE, (type), (nr), 0)
-#define _IOR(type, nr, size) _IOC(_IOC_READ, (type), (nr), _IOC_TYPECHECK(size))
-#define _IOW(type, nr, size) _IOC(_IOC_WRITE, (type), (nr), _IOC_TYPECHECK(size))
-#define _IOWR(type, nr, size) _IOC(_IOC_READ | _IOC_WRITE, (type), (nr), _IOC_TYPECHECK(size))
-
-/* Linux generic file-descriptor requests. */
-#define FIONREAD 0x541b
-#define FIONBIO 0x5421
-#define FIOCLEX 0x5451
-#define FIONCLEX 0x5450
-/* Socket urgent-data mark query, consumed by sockatmark(3). */
-#define SIOCATMARK 0x8905
-
-/* Controlling-terminal requests are Linux ABI constants exposed by musl's
- * ioctl vocabulary; they are usable in every feature profile. */
-#define TIOCSCTTY 0x540e
-#define TIOCNOTTY 0x5422
-
-/* Linux network-interface requests. */
-#define SIOCGIFNAME  0x8910
-#define SIOCGIFCONF  0x8912
-#define SIOCGIFINDEX 0x8933
-#define SIOGIFINDEX  SIOCGIFINDEX
+#include <bits/ioctl.h>
 
 #ifdef __cplusplus
 }

@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 HEADER = ROOT / "include" / "sys" / "ioctl.h"
+BITS_HEADER = ROOT / "include" / "bits" / "ioctl.h"
 HEADER_RUNNER = ROOT / "compat" / "x86_64" / "run_ioctl_header_abi.sh"
 C_HEADER_PROBE = ROOT / "compat" / "x86_64" / "ioctl_header_abi_probe.c"
 CXX_HEADER_PROBE = ROOT / "compat" / "x86_64" / "ioctl_header_abi_probe.cpp"
@@ -24,19 +25,22 @@ DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 class IoctlHeaderAbiTests(unittest.TestCase):
     def test_direct_header_and_static_forwarder_keep_the_selected_boundary(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
+        bits_header = BITS_HEADER.read_text(encoding="utf-8")
+        ioctl_surface = header + bits_header
         self.assertIn('#ifdef __cplusplus\nextern "C" {\n#endif', header)
         self.assertIn("int ioctl(int, int, ...);", header)
         self.assertIn("#define __NEED_struct_winsize", header)
         self.assertIn("#include <bits/alltypes.h>", header)
         for phrase in (
             "#define _IOC_READ 2U",
-            "#define _IOWR(type, nr, size)",
-            "#define FIONREAD 0x541b",
+            "#define _IOWR(a, b, c)",
+            "#define FIONREAD 0x541B",
             "#define FIONBIO 0x5421",
             "#define FIOCLEX 0x5451",
             "#define FIONCLEX 0x5450",
         ):
-            self.assertIn(phrase, header)
+            self.assertIn(phrase, ioctl_surface)
+        self.assertIn("#include <bits/ioctl.h>", header)
 
         source = STATIC_SOURCE.read_text(encoding="utf-8")
         for phrase in (
