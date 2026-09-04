@@ -128,10 +128,13 @@ for unselected in __memrchr __strchrnul strdup \
 done
 # Fixed-locale case comparison and collation are separately evidenced aggregate
 # siblings, even though their shared archive roots are materialized.
+# Rust codegen units can contain unrelated TLS-bearing sections. Keep the
+# final image limited to the fixture's reachable functions, not its archive
+# member packaging; the no-TLS and dependency checks below remain mandatory.
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_BYTE_STRINGS_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_byte_strings_probe.c \
+    -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_byte_strings_probe.c \
     compat/x86_64/libc_byte_strings_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
