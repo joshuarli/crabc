@@ -1986,6 +1986,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-getconcurrency",
             "libc-pthread-setconcurrency",
             "libc-rand-r|libc-lrand48",
+            "feature-profile-control-plane-header-abi",
+            "terminal-streams-header-topology",
         )
         expected_groups = tuple(
             group.replace(
@@ -2133,6 +2135,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_linux_5_10_uapi.sh', source)
         self.assertIn('run_header_abi_reference()', source)
         self.assertIn('compat/x86_64/run_header_abi_reference.sh', source)
+        self.assertIn('run_feature_profile_control_plane_header_abi()', source)
+        self.assertIn(
+            'compat/x86_64/run_feature_profile_control_plane_header_abi.sh', source
+        )
+        self.assertIn('run_terminal_streams_header_topology()', source)
+        self.assertIn(
+            'compat/x86_64/run_terminal_streams_header_topology.sh', source
+        )
         self.assertIn('run_public_header_surface()', source)
         self.assertIn('compat/x86_64/run_public_header_surface.sh', source)
         self.assertIn('run_candidate_header_closure()', source)

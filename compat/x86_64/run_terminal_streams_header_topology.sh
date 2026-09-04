@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 direct-header topology matrix for pinned musl 1.2.6.
 #
-# This is intentionally outside the main dispatcher while the header family is
-# still a partial foundation slice.  It proves only selected C/C++ direct
-# include, macro, declaration, and record-layout behavior; it does not select
-# STREAMS, PTY, ioctl, or terminal runtime/provider behavior.
+# It proves only selected C/C++ direct include, macro, declaration, and
+# record-layout behavior; it does not select STREAMS, PTY, ioctl, or terminal
+# runtime/provider behavior.
 set -euo pipefail
 export LC_ALL=C
 

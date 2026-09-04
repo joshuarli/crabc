@@ -63,6 +63,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   header-abi-matrix  check all-header callable and named noncallable ABI evidence
   header-record-layout-matrix  check all-header record byte-layout evidence
   header-declaration-macro-visibility-matrix  check all-header declaration/macro feature-visibility evidence
+  feature-profile-control-plane-header-abi  verify pinned-musl feature-selector declaration boundaries
   header-callable-linkage-audit  audit declared x86 header callables against the static archive
   header-callable-provider-linkage-audit  audit selected default/feature callable archive providers
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
@@ -202,6 +203,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sched-getscheduler-header-abi  compile x86 sched_getscheduler C/C++ declarations
   sched-rr-interval-header-abi  compile x86 sched_rr_get_interval C/C++ declarations
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
+  terminal-streams-header-topology  verify x86 terminal and STREAMS direct-header topology
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
   grantpt-header-abi  compile the staged x86 C/C++ XSI grantpt declaration
   unlockpt-header-abi  compile the staged x86 C/C++ XSI unlockpt declaration
@@ -2626,6 +2628,10 @@ run_header_declaration_macro_visibility_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_header_declaration_macro_visibility_matrix.sh
 }
 
+run_feature_profile_control_plane_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_feature_profile_control_plane_header_abi.sh
+}
+
 run_header_callable_linkage_audit() {
     run_in_container bash /workspace/compat/x86_64/run_header_callable_linkage_audit.sh
 }
@@ -3564,6 +3570,10 @@ run_personality_header_abi() {
 
 run_termios_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_termios_header_abi.sh
+}
+
+run_terminal_streams_header_topology() {
+    run_in_container bash /workspace/compat/x86_64/run_terminal_streams_header_topology.sh
 }
 
 run_ctermid_header_abi() {
@@ -5343,6 +5353,8 @@ case "$command" in
     libc-pthread-getconcurrency) ;;
     libc-pthread-setconcurrency) ;;
     libc-rand-r|libc-lrand48) ;;
+    feature-profile-control-plane-header-abi) ;;
+    terminal-streams-header-topology) ;;
 
     *)
         usage >&2
@@ -5421,6 +5433,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "header-declaration-macro-visibility-matrix takes no arguments"
         ensure_image
         run_header_declaration_macro_visibility_matrix
+        ;;
+    feature-profile-control-plane-header-abi)
+        [ "$#" -eq 0 ] || fail "feature-profile-control-plane-header-abi takes no arguments"
+        ensure_image
+        run_feature_profile_control_plane_header_abi
         ;;
     header-callable-linkage-audit)
         [ "$#" -eq 0 ] || fail "header-callable-linkage-audit takes no arguments"
@@ -6171,6 +6188,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "termios-header-abi takes no arguments"
         ensure_image
         run_termios_header_abi
+        ;;
+    terminal-streams-header-topology)
+        [ "$#" -eq 0 ] || fail "terminal-streams-header-topology takes no arguments"
+        ensure_image
+        run_terminal_streams_header_topology
         ;;
     ctermid-header-abi)
         [ "$#" -eq 0 ] || fail "ctermid-header-abi takes no arguments"
