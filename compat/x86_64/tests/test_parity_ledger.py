@@ -1271,13 +1271,17 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             {entry["command"] for entry in selected["native_evidence"]},
             {
+                "./scripts/dev-x86_64.sh ldso-general-initial-graph",
+                "./scripts/dev-x86_64.sh ldso-general-initial-target-root",
                 "./scripts/dev-x86_64.sh ldso-general-initial-tls",
                 "./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root",
             },
         )
         for owner in (
             "ldso/src/x86_64_general_initial_loader_state.rs",
+            "ldso/src/x86_64_general_initial_graph_source_root.rs",
             "ldso/src/x86_64_general_initial_tls_state.rs",
+            "compat/x86_64/run_ldso_general_initial_graph.sh",
             "compat/x86_64/aarch64_parity_inventory.json",
             "docs/evidence/x86-loader-libc-tls-runtime-v1.md",
         ):

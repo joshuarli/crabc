@@ -1048,7 +1048,10 @@ work and constructor preflight finish before reservation, pre-FS rollback
 restores `Vacant`, and the non-fallible release commit precedes callbacks.
 Kernel-owned main mappings are never transaction rollback targets. This is a
 selected-private `runtime.loader` state slice, not general loader completion
-or a public-support transition.
+or a public-support transition. Its evidence is the existing four direct and
+Cargo target-root general graph/TLS commands: `ldso-general-initial-graph`,
+`ldso-general-initial-target-root`, `ldso-general-initial-tls`, and
+`ldso-general-initial-tls-target-root`.
 
 The separate `ldso-general-initial-tls-materialization` artifact adds initial
 TLS materialization only to that bounded dependency transaction. It assigns

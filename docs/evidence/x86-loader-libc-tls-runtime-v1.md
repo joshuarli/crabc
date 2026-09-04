@@ -149,13 +149,20 @@ targets.
 `ldso/src/x86_64_general_initial_tls_state.rs` is consequently a TLS-only
 registry/allocation sidecar. It attaches its installed TLS record to the common
 owner and contains neither another `InitialGraphState` nor another `Object`
-array. The existing direct and Cargo-root general-TLS runners exercise that
-owner/sidecar boundary together:
+array. The existing direct and Cargo-root general graph and general-TLS
+runners exercise the common owner across both roots:
 
 ```text
+./scripts/dev-x86_64.sh ldso-general-initial-graph
+./scripts/dev-x86_64.sh ldso-general-initial-target-root
 ./scripts/dev-x86_64.sh ldso-general-initial-tls
 ./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root
 ```
+
+The non-TLS pair proves the bounded dependency graph's retained identity,
+object/map provenance, constructor order, and pre-callback cycle/malformed-plan
+rejection. The TLS pair adds the attached registry/allocation sidecar and its
+pre-FS malformed-template/capacity/overflow matrix.
 
 Pinned musl remains the ordinary initial Variant-II layout/value oracle, not
 an oracle for this private owner topology. This selected-private state does not

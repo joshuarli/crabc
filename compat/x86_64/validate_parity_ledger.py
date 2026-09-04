@@ -13049,6 +13049,7 @@ def require_runtime_loader_general_initial_state_slice(family: Mapping[str, Any]
         "common graph/object/map-provenance owner",
         "Vacant -> Discovering -> Prepared -> Reserved -> Ready",
         "TLS-only registry/allocation sidecar",
+        "general-graph and general-TLS runners",
         "All fallible graph work and constructor preflight",
         "reserves before `ARCH_SET_FS`",
         "non-fallible commit before dependency callbacks",
@@ -13071,15 +13072,23 @@ def require_runtime_loader_general_initial_state_slice(family: Mapping[str, Any]
         "ldso/src/x86_64_initial_tls_registry.rs",
         "ldso/src/x86_64_general_initial_loader_state.rs",
         "ldso/src/x86_64_general_initial_graph.rs",
+        "ldso/src/x86_64_general_initial_graph_source_root.rs",
         "ldso/src/x86_64_general_initial_tls_state.rs",
         "ldso/src/x86_64_general_initial_tls_source_root.rs",
         "compat/x86_64/ldso_initial_graph_start.S",
+        "compat/x86_64/ldso_general_initial_graph_main.c",
+        "compat/x86_64/ldso_general_initial_graph_left.c",
+        "compat/x86_64/ldso_general_initial_graph_right.c",
+        "compat/x86_64/ldso_general_initial_graph_shared.c",
+        "compat/x86_64/ldso_general_initial_graph_cycle_marker.h",
         "compat/x86_64/ldso_general_initial_tls_main.c",
         "compat/x86_64/ldso_general_initial_tls_left.c",
         "compat/x86_64/ldso_general_initial_tls_right.c",
         "compat/x86_64/ldso_general_initial_tls_shared.c",
         "compat/x86_64/ldso_general_initial_tls_capacity.c",
         "compat/x86_64/ldso_general_initial_tls_trace.c",
+        "compat/x86_64/run_ldso_general_initial_graph.sh",
+        "compat/x86_64/run_ldso_general_initial_graph_target_root.sh",
         "compat/x86_64/run_ldso_general_initial_tls.sh",
         "compat/x86_64/run_ldso_general_initial_tls_target_root.sh",
         "compat/x86_64/loader-libc-tls-runtime-v1.toml",
@@ -13113,10 +13122,12 @@ def require_runtime_loader_general_initial_state_slice(family: Mapping[str, Any]
     require(
         {entry["command"] for entry in evidence}
         == {
+            "./scripts/dev-x86_64.sh ldso-general-initial-graph",
+            "./scripts/dev-x86_64.sh ldso-general-initial-target-root",
             "./scripts/dev-x86_64.sh ldso-general-initial-tls",
             "./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root",
         },
-        "runtime.loader.general-initial-state must use both existing general-TLS native commands",
+        "runtime.loader.general-initial-state must use all four existing general graph/TLS native commands",
     )
     common_state = (
         ROOT / "ldso" / "src" / "x86_64_general_initial_loader_state.rs"
@@ -13180,7 +13191,28 @@ def require_runtime_loader_general_initial_state_slice(family: Mapping[str, Any]
         < graph.rindex("unsafe { dispatch_dependency_initializers(&initializers) };"),
         "runtime.loader.general-initial-state must publish common state before callbacks",
     )
-    runner = (ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls.sh").read_text(
+    graph_runner = (
+        ROOT / "compat" / "x86_64" / "run_ldso_general_initial_graph.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "CRABC_LDSO_GENERAL_INITIAL_GRAPH_ROOT",
+        "x86_64-general-initial-interpreter",
+        "once-only dependency DT_INIT_ARRAY lifecycle",
+        "cycle-constructor-ran",
+        "general graph did not fail closed",
+    ):
+        require(
+            phrase in graph_runner,
+            f"runtime.loader.general-initial-state graph runner omits {phrase}",
+        )
+    graph_wrapper = (
+        ROOT / "compat" / "x86_64" / "run_ldso_general_initial_graph_target_root.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_LDSO_GENERAL_INITIAL_GRAPH_ROOT=crabc-target" in graph_wrapper,
+        "runtime.loader.general-initial-state graph target-root wrapper must select the Cargo root",
+    )
+    tls_runner = (ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls.sh").read_text(
         encoding="utf-8"
     )
     for phrase in (
@@ -13189,8 +13221,8 @@ def require_runtime_loader_general_initial_state_slice(family: Mapping[str, Any]
         "expect_candidate_rejection_before_fs",
     ):
         require(
-            phrase in runner,
-            f"runtime.loader.general-initial-state runner omits {phrase}",
+            phrase in tls_runner,
+            f"runtime.loader.general-initial-state TLS runner omits {phrase}",
         )
     wrapper = (
         ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls_target_root.sh"

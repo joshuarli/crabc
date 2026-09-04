@@ -19864,7 +19864,7 @@ oracle = [
 
 [[family.verified_slice]]
 id = "runtime.loader.general-initial-state"
-description = "Private native x86 selected-private `runtime.loader` state slice inside still-planned `ldso.dynamic-runtime`. The common graph/object/map-provenance owner in `x86_64_general_initial_loader_state.rs` retains one bounded general initial transaction across both direct general roots, with the explicit Vacant -> Discovering -> Prepared -> Reserved -> Ready lifecycle. All fallible graph work and constructor preflight finish before reservation; the common owner reserves before `ARCH_SET_FS`, restores Vacant on a pre-FS failure, and release-publishes the retained owner only through its non-fallible commit before dependency callbacks. The TLS route has only a TLS-only registry/allocation sidecar, which attaches to the common owner and carries no second graph or object store. The existing source-root and Cargo target-root native general-TLS runners prove the bounded ordinary PT_TLS diamond plus malformed/capacity/overflow rejection; pinned musl remains only the initial Variant-II layout/value oracle, not a private owner oracle. This does not select RuntimeV1 descriptor, libc handoff, dynamic CRT, pthread/new-thread TLS, DTV growth/replacement, runtime mapping/dlopen/unload, a general process or DSO lifecycle, installed product, family promotion, or public x86 support."
+description = "Private native x86 selected-private `runtime.loader` state slice inside still-planned `ldso.dynamic-runtime`. The common graph/object/map-provenance owner in `x86_64_general_initial_loader_state.rs` retains one bounded general initial transaction across both direct general roots, with the explicit Vacant -> Discovering -> Prepared -> Reserved -> Ready lifecycle. All fallible graph work and constructor preflight finish before reservation; the common owner reserves before `ARCH_SET_FS`, restores Vacant on a pre-FS failure, and release-publishes the retained owner only through its non-fallible commit before dependency callbacks. The TLS route has only a TLS-only registry/allocation sidecar, which attaches to the common owner and carries no second graph or object store. The existing source-root and Cargo target-root native general-graph and general-TLS runners prove the bounded non-TLS dependency and ordinary PT_TLS diamonds, including graph constructor/cycle rejection and TLS malformed/capacity/overflow rejection; pinned musl remains only the initial Variant-II layout/value oracle, not a private owner oracle. This does not select RuntimeV1 descriptor, libc handoff, dynamic CRT, pthread/new-thread TLS, DTV growth/replacement, runtime mapping/dlopen/unload, a general process or DSO lifecycle, installed product, family promotion, or public x86 support."
 capabilities = ["runtime.loader"]
 source_owners = [
   "ldso/Cargo.toml",
@@ -19875,15 +19875,23 @@ source_owners = [
   "ldso/src/x86_64_initial_tls_registry.rs",
   "ldso/src/x86_64_general_initial_loader_state.rs",
   "ldso/src/x86_64_general_initial_graph.rs",
+  "ldso/src/x86_64_general_initial_graph_source_root.rs",
   "ldso/src/x86_64_general_initial_tls_state.rs",
   "ldso/src/x86_64_general_initial_tls_source_root.rs",
   "compat/x86_64/ldso_initial_graph_start.S",
+  "compat/x86_64/ldso_general_initial_graph_main.c",
+  "compat/x86_64/ldso_general_initial_graph_left.c",
+  "compat/x86_64/ldso_general_initial_graph_right.c",
+  "compat/x86_64/ldso_general_initial_graph_shared.c",
+  "compat/x86_64/ldso_general_initial_graph_cycle_marker.h",
   "compat/x86_64/ldso_general_initial_tls_main.c",
   "compat/x86_64/ldso_general_initial_tls_left.c",
   "compat/x86_64/ldso_general_initial_tls_right.c",
   "compat/x86_64/ldso_general_initial_tls_shared.c",
   "compat/x86_64/ldso_general_initial_tls_capacity.c",
   "compat/x86_64/ldso_general_initial_tls_trace.c",
+  "compat/x86_64/run_ldso_general_initial_graph.sh",
+  "compat/x86_64/run_ldso_general_initial_graph_target_root.sh",
   "compat/x86_64/run_ldso_general_initial_tls.sh",
   "compat/x86_64/run_ldso_general_initial_tls_target_root.sh",
   "compat/x86_64/loader-libc-tls-runtime-v1.toml",
@@ -19905,10 +19913,12 @@ source_owners = [
 x86_abi_prerequisites = [
   "The Linux x86-64 PT_INTERP entry preserves the original argc/argv/envp/auxv stack and AT_BASE for the private interpreter. The bounded main -> left/right -> shared initial graph retains object identity, parent edges, complete Object records, and map provenance in one common owner; kernel-owned main mapping is never rollback or munmap eligible.",
   "The common owner lifecycle is Vacant -> Discovering -> Prepared -> Reserved -> Ready. All graph mapping/relocation/RELRO, TLS registry/template work, and dependency constructor preflight are fallible before Reserved; `ARCH_SET_FS` occurs only after reservation, failure before its non-fallible commit restores Vacant, and readers acquire only Ready. The TLS sidecar retains registry/allocation attachment only and duplicates neither InitialGraphState nor the Object array.",
-  "The direct general-TLS roots admit only the already-scoped ELF64 PT_TLS/Variant-II, DTPMOD64/DTPOFF64, and `ARCH_SET_FS` route. This selected state does not create a public loader ABI, RuntimeV1 descriptor, dynamic process lifecycle, runtime mapping, or DSO unload contract.",
+  "The direct general roots admit only the already-scoped non-TLS dependency graph and ELF64 PT_TLS/Variant-II, DTPMOD64/DTPOFF64, and `ARCH_SET_FS` route. This selected state does not create a public loader ABI, RuntimeV1 descriptor, dynamic process lifecycle, runtime mapping, or DSO unload contract.",
 ]
 x86_header_prerequisites = ["No installed x86 loader, RuntimeV1, dlfcn, pthread, TLS, libc.so, CRT, sysroot, or public C declaration is selected. The common owner and TLS sidecar are private freestanding loader-state evidence only."]
 native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh ldso-general-initial-graph", scope = "Native x86 source-root evidence builds the private arbitrary bounded non-TLS main -> left/right -> shared dependency graph. It proves common-owner graph identity, complete object/map provenance, dependency-first constructor order, and pre-callback cycle or malformed-plan rejection. It does not select TLS, a general loader, installed dynamic product, promotion, or public support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh ldso-general-initial-target-root", scope = "Native x86 Cargo target-root evidence rebuilds only the feature-gated private non-TLS general interpreter, verifies its ET_DYN/no-DT_NEEDED/no-PT_TLS shape, and reruns the bounded graph positive and pre-callback rejection matrix. It does not install an interpreter or select a general runtime, product, family promotion, or public support." },
   { state = "verified", command = "./scripts/dev-x86_64.sh ldso-general-initial-tls", scope = "Native x86 source-root evidence builds the private general-TLS interpreter and bounded PT_TLS main -> left/right -> shared diamond, compares ordinary initial Variant-II layout/value with pinned musl, and rejects malformed PT_TLS, unsupported relocation, capacity, and overflow paths before FS installation. It exercises the common-owner lifecycle and TLS sidecar without selecting a general loader, RuntimeV1, installed dynamic product, promotion, or public support." },
   { state = "verified", command = "./scripts/dev-x86_64.sh ldso-general-initial-tls-target-root", scope = "Native x86 Cargo target-root evidence rebuilds only the feature-gated private general-TLS interpreter, verifies its ET_DYN/no-DT_NEEDED/no-interpreter-PT_TLS shape, and reruns the bounded positive and pre-FS negative matrix. It does not install an interpreter or select a general runtime, product, family promotion, or public support." },
 ]
