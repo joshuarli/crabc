@@ -275,7 +275,9 @@ aarch64_builtin="$(run_compiler "$AARCH64_CC" -print-resource-dir)/include"
 aarch64_builtin="$(realpath "$aarch64_builtin")"
 [ -d "$aarch64_builtin" ] || fail "AArch64 compiler builtin include root is missing"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-sysmacros-header-source-form.XXXXXX)"
+scratch_root="$ROOT_DIR/.work/x86_64/tmp"
+mkdir -p "$scratch_root"
+work_dir="$(mktemp -d "$scratch_root/crabc-x86-64-sysmacros-header-source-form.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 
 check_exact_x86_form

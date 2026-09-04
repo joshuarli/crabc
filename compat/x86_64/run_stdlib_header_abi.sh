@@ -563,7 +563,9 @@ candidate_compiler_builtin_include="$(realpath "$candidate_compiler_builtin_incl
 [ "$candidate_compiler_builtin_include" != "$MUSL_ROOT/include" ] ||
     fail "candidate compiler builtin include aliases pinned musl"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-stdlib-header.XXXXXX)"
+scratch_root="$ROOT_DIR/.work/x86_64/tmp"
+mkdir -p "$scratch_root"
+work_dir="$(mktemp -d "$scratch_root/crabc-x86-64-stdlib-header.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 failures=0
 

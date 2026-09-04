@@ -29,16 +29,159 @@
 # build.
 set -euo pipefail
 
-readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly PLATFORM="linux/amd64"
 readonly IMAGE="${CRABC_X86_64_CORE_IMAGE:-crabc-core-evidence:x86_64}"
-readonly TARGET_VOLUME="${CRABC_X86_64_CORE_TARGET_VOLUME:-crabc-core-evidence-target-x86_64}"
-readonly CARGO_VOLUME="${CRABC_X86_64_CORE_CARGO_VOLUME:-crabc-core-evidence-cargo-x86_64}"
 readonly DOCKERFILE="$ROOT_DIR/docker/Dockerfile.x86_64"
+readonly WORK_BOUNDARY="$ROOT_DIR/.work/x86_64"
+normalize_absolute_path() {
+    local path="${1#/}"
+    local component
+    local last_index
+    local normalized=""
+    local -a components=()
+
+    while [ -n "$path" ]; do
+        if [[ "$path" == */* ]]; then
+            component="${path%%/*}"
+            path="${path#*/}"
+        else
+            component="$path"
+            path=""
+        fi
+        case "$component" in
+            ""|.)
+                ;;
+            ..)
+                if [ "${#components[@]}" -gt 0 ]; then
+                    last_index=$((${#components[@]} - 1))
+                    unset "components[$last_index]"
+                fi
+                ;;
+            *)
+                components+=("$component")
+                ;;
+        esac
+    done
+
+    for component in "${components[@]}"; do
+        normalized="$normalized/$component"
+    done
+    printf '%s\n' "${normalized:-/}"
+}
+
+resolve_existing_directory() {
+    local candidate="$1"
+    local existing="$candidate"
+    local missing_component
+    local missing_suffix=""
+    local physical_existing
+
+    # Resolve every existing prefix physically before making the missing tail.
+    # This catches a symlink below .work before `mkdir -p` could follow it.
+    while [ ! -e "$existing" ] && [ ! -L "$existing" ]; do
+        missing_component="${existing##*/}"
+        missing_suffix="/$missing_component$missing_suffix"
+        existing="${existing%/*}"
+        if [ -z "$existing" ]; then
+            existing="/"
+        fi
+    done
+    if ! physical_existing="$(cd -P "$existing" 2>/dev/null && pwd)"; then
+        return 1
+    fi
+    if [ -z "$missing_suffix" ]; then
+        printf '%s\n' "$physical_existing"
+    elif [ "$physical_existing" = "/" ]; then
+        printf '%s\n' "$missing_suffix"
+    else
+        printf '%s%s\n' "$physical_existing" "$missing_suffix"
+    fi
+}
+
+path_is_within_work_boundary() {
+    [ "$1" = "$WORK_BOUNDARY" ] || [[ "$1" == "$WORK_BOUNDARY/"* ]]
+}
+
+configuration_error() {
+    printf 'ERROR: %s\n' "$*" >&2
+    return 1
+}
+
+resolve_bounded_directory() {
+    local name="$1"
+    local configured_path="$2"
+    local relative_base="$3"
+    local candidate
+    local resolved
+
+    if [[ "/$configured_path/" == */../* ]]; then
+        configuration_error "$name must not contain '..' path components: $configured_path"
+        return 1
+    fi
+    if [[ "$configured_path" == *:* ]]; then
+        configuration_error "$name must be a host directory path, not Docker mount syntax: $configured_path"
+        return 1
+    fi
+    if [[ "$configured_path" = /* ]]; then
+        candidate="$configured_path"
+    else
+        candidate="$relative_base/$configured_path"
+    fi
+    candidate="$(normalize_absolute_path "$candidate")"
+    if ! resolved="$(resolve_existing_directory "$candidate")"; then
+        configuration_error "$name must name a directory: $candidate"
+        return 1
+    fi
+    if ! path_is_within_work_boundary "$resolved"; then
+        configuration_error "$name must resolve below $WORK_BOUNDARY: $resolved"
+        return 1
+    fi
+    printf '%s\n' "$resolved"
+}
+
+resolve_container_bind_directory() {
+    local name="$1"
+    local configured_path="$2"
+    local relative_base="$3"
+
+    # A bare word is Docker's named-volume syntax. Require an explicit host
+    # path marker for overrides, then apply the same physical boundary check.
+    if [[ "$configured_path" != /* && "$configured_path" != .* ]]; then
+        configuration_error "$name must be an explicit host path; named Docker volumes are not allowed: $configured_path"
+        return 1
+    fi
+    resolve_bounded_directory "$name" "$configured_path" "$relative_base"
+}
+
+if ! resolved_work_boundary="$(resolve_existing_directory "$WORK_BOUNDARY")"; then
+    exit 2
+fi
+if [ "$resolved_work_boundary" != "$WORK_BOUNDARY" ]; then
+    configuration_error "x86 work boundary must be a physical checkout directory"
+    exit 2
+fi
+WORK_DIR="$(resolve_bounded_directory CRABC_X86_64_WORK_DIR "${CRABC_X86_64_WORK_DIR:-$WORK_BOUNDARY}" "$ROOT_DIR")" || exit 2
+TARGET_VOLUME="$(resolve_container_bind_directory CRABC_X86_64_CORE_TARGET_VOLUME "${CRABC_X86_64_CORE_TARGET_VOLUME:-$WORK_DIR/target}" "$WORK_DIR")" || exit 2
+CARGO_VOLUME="$(resolve_container_bind_directory CRABC_X86_64_CORE_CARGO_VOLUME "${CRABC_X86_64_CORE_CARGO_VOLUME:-$WORK_DIR/cargo}" "$WORK_DIR")" || exit 2
+readonly WORK_DIR TARGET_VOLUME CARGO_VOLUME
+TMP_DIR="$(resolve_bounded_directory TMPDIR "$WORK_DIR/tmp" "$WORK_DIR")" || exit 2
+REPORT_DIR="$(resolve_bounded_directory REPORT_DIR "$WORK_DIR/reports" "$WORK_DIR")" || exit 2
+readonly TMP_DIR REPORT_DIR
+
+prepare_work_dir() {
+    mkdir -p "$TARGET_VOLUME" "$CARGO_VOLUME" "$TMP_DIR" "$REPORT_DIR"
+}
 
 usage() {
     cat <<'EOF'
 Usage: ./scripts/dev-x86_64.sh <command>
+
+Mutable build state stays below this checkout's .work/x86_64 directory.
+CRABC_X86_64_WORK_DIR may select a descendant. Target and Cargo overrides
+must be explicit host paths within that boundary; named Docker volumes,
+parent traversal, and symlink escapes are rejected. Legacy container /tmp
+writes are bound to the same local scratch tree.
 
 Native Linux/x86-64 staged-foundation evidence commands:
   campaign-status  emit the validated native x86 campaign report
@@ -2490,16 +2633,23 @@ ensure_image() {
 }
 
 run_in_container() {
+    prepare_work_dir
+    # Older fixtures spell /tmp explicitly. This compatibility bind contains
+    # their writes too; new runners use the repository-local TMPDIR directly.
     docker run --rm --init \
         --platform "$PLATFORM" \
         --workdir /workspace \
-        --env CARGO_HOME=/opt/cargo \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/opt/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
         "$IMAGE" "$@"
 }
 
@@ -2507,17 +2657,22 @@ run_in_container() {
 # namespace. Keeping network-none at this command boundary makes its lack of
 # external resolver and database behavior structural.
 run_in_network_none_container() {
+    prepare_work_dir
     docker run --rm --init \
         --platform "$PLATFORM" \
         --network none \
         --workdir /workspace \
-        --env CARGO_HOME=/opt/cargo \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/opt/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
         "$IMAGE" "$@"
 }
 
@@ -2525,17 +2680,22 @@ run_in_network_none_container() {
 # the shared runner makes each additional authority explicit at its one call
 # site rather than widening every native x86 command.
 run_in_chroot_cap_container() {
+    prepare_work_dir
     docker run --rm --init \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --workdir /workspace \
-        --env CARGO_HOME=/opt/cargo \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/opt/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
         "$IMAGE" "$@"
 }
 
@@ -2544,23 +2704,28 @@ run_in_chroot_cap_container() {
 # grant off the shared runner and all other artifact commands does not select a
 # general namespace-management capability.
 run_in_uts_cap_container() {
+    prepare_work_dir
     docker run --rm --init \
         --platform "$PLATFORM" \
         --cap-add=SYS_ADMIN \
         --workdir /workspace \
-        --env CARGO_HOME=/opt/cargo \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/opt/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
         "$IMAGE" "$@"
 }
 
 run_core_tests() {
     run_in_container bash -ceu '
-        target_dir="$(mktemp -d /tmp/crabc-x86-64-core.XXXXXX)"
+        target_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-core.XXXXXX")"
         CARGO_TARGET_DIR="$target_dir" cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-core --lib --no-default-features -- --test-threads=1
 
@@ -4486,7 +4651,7 @@ run_fs_credentials_reference() {
 
 run_libc_syscall_probe() {
     run_in_container bash -ceu '
-        probe=/tmp/crabc-x86-libc-syscall-probe
+        probe="$TMPDIR/crabc-x86-libc-syscall-probe"
         rustc --edition=2021 --target x86_64-unknown-linux-musl \
             /workspace/compat/x86_64/libc_syscall_probe.rs -o "$probe"
         "$probe"
@@ -5086,7 +5251,7 @@ run_libc_signal_foundation_probe() {
 
 run_ldso_relocation_tests() {
     run_in_container bash -ceu '
-        test_binary=/tmp/crabc-x86-64-ldso-relocation
+        test_binary="$TMPDIR/crabc-x86-64-ldso-relocation"
         rustup run nightly-2026-07-24 rustc --edition=2021 --test \
             /workspace/ldso/src/x86_64_relocation.rs -o "$test_binary"
         "$test_binary" --test-threads=1

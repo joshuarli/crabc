@@ -10,7 +10,9 @@ fail() { printf 'ERROR: syslog header ABI: %s\n' "$*" >&2; exit 1; }
 [ "$#" -eq 0 ] || fail "takes no arguments"
 [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ] || fail "requires native Linux/x86-64"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-work_dir="$(mktemp -d /tmp/crabc-syslog-header.XXXXXX)"
+scratch_root="$ROOT_DIR/.work/x86_64/tmp"
+mkdir -p "$scratch_root"
+work_dir="$(mktemp -d "$scratch_root/crabc-syslog-header.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 run_cc() {
     env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH \

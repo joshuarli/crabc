@@ -158,5 +158,11 @@ types, interfaces, state transitions, permissions, tests, and explanations.
   and intentional differences before treating an implementation as a port.
 - Preserve unrelated dirty work. Do not run formatters, linters, pre-commit
   hooks, or push a remote unless the user explicitly asks.
+- Keep development worktrees, scratch files, extracted sources, build/cache
+  state, and generated evidence under the checkout's ignored `.work/` tree.
+  Use `.work/x86_64/` for x86 runtime work. Override tools' temporary paths;
+  do not create new work under `/tmp` or outside the checkout. Existing
+  architecture-qualified evidence paths remain provenance, not permission
+  to create new external scratch directories.
 - A completed feature needs coherent tests, ledger/documentation updates, and
   a commit when requested.
