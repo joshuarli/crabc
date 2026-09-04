@@ -1467,7 +1467,7 @@ comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 762, m
 identity_difference_counts = { candidate_only = 7016, reference_only = 1709 }
 source_form_difference_count = 2567
 source_form_difference_row_count = 432
-source_form_only_difference_row_count = 71
+source_form_only_difference_row_count = 85
 scope = "Derived from the checked compiler-generated declaration-form report, this all-header direct-public-include C11/C++17 matrix compares named function, typedef, record, enum, variable, and macro identities only for comparable rows. It preserves same-identity source-form differences as separately accounted context, records every current comparable identity gap, and accounts for project-only and oracle-not-applicable rows through checked candidate fact summaries and digests. It excludes declaration-form equality, macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, and public support."
 
 [callable_feature_visibility_matrix]
