@@ -1982,6 +1982,10 @@ four-byte unsigned x86 `gid_t`, syscall macro 123, and unmangled C++ linkage.
 This is declaration-only evidence for the separately selected filesystem-GID
 artifact; it does not select `setfsuid`, credential mutation policy, account
 data, process-wide synchronization, or a general C-process ABI.
+Its `libc-setfsgid` static gate retains the workspace `-C link-dead-code`
+setting and pins `-C codegen-units=512` to audit isolated archive-member
+topology for the selected one-symbol direct-syscall closure; this is not a
+general release-profile claim.
 
 `credential-observation-header-abi` compiles project-first and pinned-musl
 C/C++ `<unistd.h>` declarations for unconditional `getgroups` and GNU-only

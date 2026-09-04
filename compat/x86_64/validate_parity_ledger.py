@@ -20617,6 +20617,7 @@ def require_setfsgid_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/libc_setfsgid_probe.c",
         "compat/x86_64/libc_setfsgid_start.S",
         "compat/x86_64/run_libc_setfsgid.sh",
+        ".cargo/config.toml",
         "compat/x86_64/aarch64_parity_inventory.py",
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/tests/test_aarch64_parity_inventory.py",
@@ -20667,6 +20668,17 @@ def require_setfsgid_artifact(family: Mapping[str, Any]) -> None:
             for item in prerequisites
         ),
         "static-c-setfsgid must retain its raw/C differential",
+    )
+    require(
+        any(
+            "-C codegen-units=512" in item
+            and "workspace `-C link-dead-code` setting" in item
+            and "isolated archive-member topology" in item
+            and "one-symbol direct-syscall closure" in item
+            and "release-profile" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsgid must retain its isolated archive-member topology",
     )
     headers = nonempty_strings(
         artifact["x86_header_prerequisites"], "static-c-setfsgid.x86_header_prerequisites"
@@ -20744,10 +20756,32 @@ def require_setfsgid_artifact(family: Mapping[str, Any]) -> None:
                 "all-ones query",
                 "current-effective-ID",
                 "stale errno",
+                "-C codegen-units=512",
+                "workspace `-C link-dead-code` setting",
+                "isolated archive-member topology",
                 "credential-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
             )
         ),
         "static-c-setfsgid evidence must retain its closed static regression",
+    )
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_setfsgid.sh").read_text(
+        encoding="utf-8"
+    )
+    for phrase in (
+        "-C codegen-units=512",
+        "isolated archive-member topology",
+        "one-symbol direct-syscall closure",
+        "release-profile",
+    ):
+        require(phrase in runner, f"static-c-setfsgid runner omits {phrase}")
+    require(
+        "-C link-dead-code=no" not in runner,
+        "static-c-setfsgid must retain the workspace link-dead-code setting",
+    )
+    cargo_config = (ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8")
+    require(
+        'rustflags = ["-C", "link-dead-code"]' in cargo_config,
+        "static-c-setfsgid requires the workspace link-dead-code setting",
     )
 
 

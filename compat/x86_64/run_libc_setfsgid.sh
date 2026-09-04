@@ -5,6 +5,12 @@
 # `-nostdlib -static` candidate. It proves musl's one-symbol wrapper around
 # Linux syscall 123, including the unusual previous-filesystem-GID result and
 # stale errno on ordinary returns, without selecting a broader credential API.
+#
+# The audited archive retains the workspace `-C link-dead-code` setting and
+# pins `-C codegen-units=512`. That separates the selected wrapper from the
+# scheduler leaf while preserving ordinary archive extraction, so this gate
+# proves the isolated archive-member topology for the selected one-symbol direct-syscall closure
+# rather than arbitrary release-profile builds.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -116,7 +122,8 @@ fi
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+    -C relocation-model=static -C code-model=small -C panic=abort \
+    -C codegen-units=512
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"

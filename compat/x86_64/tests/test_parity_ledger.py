@@ -31296,6 +31296,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/libc_setfsgid_probe.c",
             "compat/x86_64/libc_setfsgid_start.S",
             "compat/x86_64/run_libc_setfsgid.sh",
+            ".cargo/config.toml",
         ):
             self.assertIn(owner, artifact["source_owners"])
         self.assertNotIn("include/sys/types.h", artifact["source_owners"])
@@ -31351,13 +31352,30 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for prerequisite in prerequisites
             )
         )
+        self.assertTrue(
+            any(
+                "-C codegen-units=512" in prerequisite
+                and "workspace `-C link-dead-code` setting" in prerequisite
+                and "isolated archive-member topology" in prerequisite
+                and "release-profile" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
         self.assertIn("sys/fsuid.h", artifact["x86_header_prerequisites"][0])
         self.assertIn("bits/alltypes.h", artifact["x86_header_prerequisites"][0])
-        self.assertNotIn("sys/types.h", artifact["x86_header_prerequisites"][0])
+        self.assertIn(
+            "sys/types.h umbrella leak", artifact["x86_header_prerequisites"][0]
+        )
         self.assertIn("SYS_setfsgid=123", artifact["x86_header_prerequisites"][0])
         self.assertIn(
             "libc/src/c_abi/x86_64/setfsgid.rs", family["source_owners"]
         )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        scope = evidence[0]["scope"]
+        self.assertIn("-C codegen-units=512", scope)
+        self.assertIn("workspace `-C link-dead-code` setting", scope)
+        self.assertIn("isolated archive-member topology", scope)
 
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]

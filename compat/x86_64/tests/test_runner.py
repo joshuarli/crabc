@@ -37234,10 +37234,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "candidate unexpectedly pulls",
             "bits/alltypes.h",
             "leaked <sys/types.h>",
+            "-C codegen-units=512",
+            "isolated archive-member topology",
+            "one-symbol direct-syscall closure",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("#include <sys/types.h>", probe)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn("-C link-dead-code=no", artifact_runner)
+        self.assertIn(
+            'rustflags = ["-C", "link-dead-code"]',
+            (ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8"),
+        )
         self.assertIn("setfsgid", static_exports)
         self.assertIn('id = "static-c-setfsgid"', parity_ledger)
         self.assertIn(
