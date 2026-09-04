@@ -187,6 +187,10 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs"),
     Path("libc/src/c_abi/x86_64/posix_spawnattr_getschedparam.rs"),
     Path("libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs"),
+    # These exact spawn-attribute signal-field entries are separately
+    # evidenced; admitting the leaf does not select spawn execution or a
+    # directory-wide process-runtime boundary.
+    Path("libc/src/c_abi/x86_64/posix_spawnattr_signal_fields.rs"),
     Path("libc/src/c_abi/x86_64/posix_spawnattr_setschedparam.rs"),
     Path("libc/src/c_abi/x86_64/bsearch.rs"),
     Path("libc/src/c_abi/x86_64/linear_search.rs"),
@@ -354,6 +358,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/math_tanh.rs"),
     Path("libc/src/c_abi/x86_64/pthread_affinity.rs"),
     Path("libc/src/c_abi/x86_64/pthread_attr.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_attr_lifecycle.rs"),
     Path("libc/src/c_abi/x86_64/pthread_atfork.rs"),
     Path("libc/src/c_abi/x86_64/pthread_barrierattr_pshared.rs"),
     # This exact complete barrier port remains a separately evidenced static
@@ -374,9 +379,11 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/pthread_setconcurrency.rs"),
     Path("libc/src/c_abi/x86_64/pthread_spin_init.rs"),
     Path("libc/src/c_abi/x86_64/rand_r.rs"),
+    Path("libc/src/c_abi/x86_64/lrand48.rs"),
     Path("libc/src/c_abi/x86_64/stack_chk_fail.rs"),
     Path("libc/src/c_abi/x86_64/stdio_format_scan.rs"),
     Path("libc/src/c_abi/x86_64/stdio_standard.rs"),
+    Path("libc/src/c_abi/x86_64/stateful_byte_strings.rs"),
     Path("libc/src/c_abi/x86_64/strtok.rs"),
     Path("libc/src/c_abi/x86_64/wide_character.rs"),
 }
