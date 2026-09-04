@@ -1753,6 +1753,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    mman-mcl-onfault-header-source-form) ;;", source)
         self.assertIn("    mount-header-source-form) ;;", source)
         self.assertIn("    klog-header-source-form) ;;", source)
+        self.assertIn("    cachectl-header-source-form) ;;", source)
         self.assertIn("    pthread-header-source-form) ;;", source)
         self.assertIn("    ioctl-header-source-form) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
@@ -2008,6 +2009,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "mman-mcl-onfault-header-source-form",
             "mount-header-source-form",
             "klog-header-source-form",
+            "cachectl-header-source-form",
             "ioctl-header-source-form",
             "fcntl-event-header-topology",
         )
@@ -2180,6 +2182,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_klog_header_source_form()', source)
         self.assertIn(
             'compat/x86_64/run_klog_header_source_form.sh', source
+        )
+        self.assertIn('run_cachectl_header_source_form()', source)
+        self.assertIn(
+            'compat/x86_64/run_cachectl_header_source_form.sh', source
         )
         self.assertIn('run_pthread_header_source_form()', source)
         self.assertIn(

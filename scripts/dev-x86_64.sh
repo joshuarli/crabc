@@ -81,6 +81,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   reboot-header-source-form  verify x86 <sys/reboot.h> pinned-musl macro form
   mount-header-source-form  verify x86 <sys/mount.h> pinned-musl source form
   klog-header-source-form  verify x86 <sys/klog.h> pinned-musl macro surface
+  cachectl-header-source-form  verify x86 <sys/cachectl.h> pinned-musl macro forms
   fcntl-event-header-topology  verify x86 fcntl/event direct-header topology
   math-tgmath-source-form  verify x86 math/tgmath source forms and frozen AArch64 arm
   mman-mcl-onfault-header-source-form  verify x86 MCL_ONFAULT header form and frozen AArch64 arm
@@ -2719,6 +2720,10 @@ run_mount_header_source_form() {
 
 run_klog_header_source_form() {
     run_in_container bash /workspace/compat/x86_64/run_klog_header_source_form.sh
+}
+
+run_cachectl_header_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_cachectl_header_source_form.sh
 }
 
 run_fcntl_event_header_topology() {
@@ -5431,6 +5436,7 @@ case "$command" in
     mman-mcl-onfault-header-source-form) ;;
     mount-header-source-form) ;;
     klog-header-source-form) ;;
+    cachectl-header-source-form) ;;
     ioctl-header-source-form) ;;
     fcntl-event-header-topology) ;;
 
@@ -5611,6 +5617,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "klog-header-source-form takes no arguments"
         ensure_image
         run_klog_header_source_form
+        ;;
+    cachectl-header-source-form)
+        [ "$#" -eq 0 ] || fail "cachectl-header-source-form takes no arguments"
+        ensure_image
+        run_cachectl_header_source_form
         ;;
     fcntl-event-header-topology)
         [ "$#" -eq 0 ] || fail "fcntl-event-header-topology takes no arguments"
