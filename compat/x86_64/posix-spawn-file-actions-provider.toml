@@ -34,8 +34,8 @@ source_owners = [
   "compat/x86_64/posix_spawn_file_actions_header_abi_probe.cpp",
   "compat/x86_64/run_posix_spawn_file_actions_header_abi.sh",
   "compat/x86_64/libc_posix_spawn_file_actions_probe.c",
-  "compat/x86_64/libc_posix_spawn_file_actions_start.S",
   "compat/x86_64/run_libc_posix_spawn_file_actions.sh",
+  "compat/x86_64/tests/test_libc_posix_spawn_file_actions.py",
   "scripts/check_structure.py",
 ]
 focused_evidence_command = "bash compat/x86_64/run_libc_posix_spawn_file_actions.sh"
@@ -44,7 +44,7 @@ negative_scope = "This package owns only the seven caller-owned posix_spawn_file
 expected_transition = "One private verified artifact is added under planned libc.posix-runtime. The coordinator may add the seven-name aggregate evidence and feature archive disposition; no frozen capability state, default static export surface, family status, promotion state, or public-support boundary changes."
 evidence = [
   "pinned-musl/project spawn.h C/C++ declaration and layout matrix",
-  "pinned-musl versus true-static crabc lifecycle differential",
+  "pinned-musl versus mixed-runtime crabc lifecycle differential",
   "musl fdop allocation, prepend-link, pathname-copy, invalid-descriptor, and destruction semantics",
-  "archive/ELF dependency and peer-execution closure",
+  "selected action/allocator archive-member closure with pinned-musl residual runtime",
 ]

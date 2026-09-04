@@ -141,11 +141,15 @@ unsafe fn allocate_operation(
         ptr::addr_of_mut!((*operation).mode).write(mode);
         if has_path {
             let destination = (operation.cast::<u8>()).add(FDOP_PATH_OFFSET);
-            ptr::copy_nonoverlapping(
-                path.cast::<u8>(),
-                destination,
-                path_bytes,
-            );
+            // Keep the musl byte copy explicit: core's checked bulk-copy
+            // wrapper would retain a panic dependency in this C ABI archive's
+            // debug evidence build.
+            let mut index = 0usize;
+            while index < path_bytes {
+                let byte = ptr::read(path.cast::<u8>().add(index));
+                ptr::write(destination.add(index), byte);
+                index += 1;
+            }
         }
     }
     Ok(operation)
@@ -159,12 +163,14 @@ unsafe fn prepend_operation(
     // SAFETY: the caller supplies one valid initialized file-actions record
     // and one live operation allocated by `allocate_operation`.
     unsafe {
-        let old_head = (*file_actions).actions.cast::<FdOp>();
-        (*operation).next = old_head;
+        let old_head = ptr::addr_of!((*file_actions).actions)
+            .read()
+            .cast::<FdOp>();
+        ptr::addr_of_mut!((*operation).next).write(old_head);
         if !old_head.is_null() {
-            (*old_head).prev = operation;
+            ptr::addr_of_mut!((*old_head).prev).write(operation);
         }
-        (*file_actions).actions = operation.cast::<c_void>();
+        ptr::addr_of_mut!((*file_actions).actions).write(operation.cast::<c_void>());
     }
 }
 
@@ -367,11 +373,12 @@ pub unsafe extern "C" fn posix_spawn_file_actions_destroy(
     // SAFETY: the C ABI requires one valid initialized file-actions record;
     // each linked operation was allocated by this module's malloc boundary.
     unsafe {
-        let mut operation = (*file_actions.cast::<PosixSpawnFileActions>())
-            .actions
+        let file_actions = file_actions.cast::<PosixSpawnFileActions>();
+        let mut operation = ptr::addr_of!((*file_actions).actions)
+            .read()
             .cast::<FdOp>();
         while !operation.is_null() {
-            let next = (*operation).next;
+            let next = ptr::addr_of!((*operation).next).read();
             cabi_free(operation.cast::<c_void>());
             operation = next;
         }

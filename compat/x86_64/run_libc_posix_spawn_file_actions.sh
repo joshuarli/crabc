@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 private POSIX spawn file-actions lifecycle evidence.
 #
-# The pinned-musl reference and the freestanding candidate exercise only the
-# caller-owned action-record lifecycle.  The candidate links the opt-in
-# x86-posix-spawn-file-actions archive, whose six allocating functions compose
-# the existing x86 allocator wrapper.  No spawn execution path is selected.
+# This is deliberately a mixed-runtime differential. The pinned-musl
+# reference and the candidate exercise only the caller-owned action-record
+# lifecycle. The candidate owns the opt-in action provider plus the selected
+# allocator wrapper, errno owner, and bundled mimalloc object; pinned musl
+# supplies startup and the process primitives still outside the staged x86
+# runtime. No spawn execution path or pinned-musl action/allocator object is
+# selected.
 set -euo pipefail
 export LC_ALL=C
 
@@ -31,9 +34,11 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-posix-spawn-file-actions.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
-archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
+full_archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
+selected_archive="$work_dir/libcrabc-posix-spawn-file-actions.a"
 reference="$work_dir/musl-spawn-file-actions-reference"
 candidate="$work_dir/crabc-spawn-file-actions-candidate"
+link_map="$work_dir/candidate.map"
 candidate_symbols="$work_dir/candidate-symbols"
 candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
@@ -50,18 +55,55 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --features x86-posix-spawn-file-actions \
     --target x86_64-unknown-linux-musl -- \
     -C relocation-model=static -C code-model=small -C panic=abort
-[ -f "$archive" ] || fail "cargo did not emit the feature archive"
+[ -f "$full_archive" ] || fail "cargo did not emit the feature archive"
 
 mapfile -t action_members < <(
-    archive_member_for_symbol "$archive" __crabc_x86_posix_spawn_file_actions_v1
+    archive_member_for_symbol "$full_archive" __crabc_x86_posix_spawn_file_actions_v1
 )
+mapfile -t init_members < <(
+    archive_member_for_symbol "$full_archive" posix_spawn_file_actions_init
+)
+mapfile -t allocator_members < <(
+    archive_member_for_symbol "$full_archive" __crabc_x86_allocator_runtime_v1
+)
+mapfile -t errno_members < <(
+    archive_member_for_symbol "$full_archive" __errno_location
+)
+mapfile -t backend_members < <(ar t "$full_archive" | grep -- '-static\.o$')
 [ "${#action_members[@]}" -eq 1 ] || fail "provider witness has ambiguous ownership"
-action_member="${action_members[0]}"
-mkdir "$work_dir/action-owner"
-( cd "$work_dir/action-owner" && ar x "$archive" "$action_member" )
+[ "${#init_members[@]}" -eq 1 ] || fail "file-actions init has ambiguous ownership"
+[ "${#allocator_members[@]}" -eq 1 ] || fail "allocator wrapper has ambiguous ownership"
+[ "${#errno_members[@]}" -eq 1 ] || fail "errno has ambiguous ownership"
+[ "${#backend_members[@]}" -eq 1 ] || fail "allocator backend has ambiguous ownership"
+[ "${action_members[0]}" != "${init_members[0]}" ] \
+    || fail "action provider and init unexpectedly share one object"
+[ "${action_members[0]}" != "${allocator_members[0]}" ] \
+    || fail "action provider and allocator unexpectedly share one object"
+[ "${action_members[0]}" != "${errno_members[0]}" ] \
+    || fail "action provider and errno unexpectedly share one object"
+[ "${init_members[0]}" != "${allocator_members[0]}" ] \
+    || fail "file-actions init and allocator unexpectedly share one object"
+[ "${init_members[0]}" != "${errno_members[0]}" ] \
+    || fail "file-actions init and errno unexpectedly share one object"
+[ "${allocator_members[0]}" != "${errno_members[0]}" ] \
+    || fail "allocator and errno unexpectedly share one object"
+
+mkdir "$work_dir/selected-members"
+(
+    cd "$work_dir/selected-members"
+    ar x "$full_archive" "${action_members[0]}" "${init_members[0]}" \
+        "${allocator_members[0]}" "${errno_members[0]}" "${backend_members[0]}"
+    ar crs "$selected_archive" "${action_members[0]}" "${init_members[0]}" \
+        "${allocator_members[0]}" "${errno_members[0]}" "${backend_members[0]}"
+)
+mapfile -t selected_members < <(ar t "$selected_archive")
+if [ "${selected_members[*]}" != "${action_members[0]} ${init_members[0]} ${allocator_members[0]} ${errno_members[0]} ${backend_members[0]}" ]; then
+    fail "selected archive member set drifted during extraction"
+fi
+
 mapfile -t action_symbols < <(
     nm -g --defined-only --format=posix \
-        "$work_dir/action-owner/$action_member" |
+        "$work_dir/selected-members/${action_members[0]}" |
         awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' | sort -u
 )
 expected_action_symbols=(
@@ -80,11 +122,9 @@ if [ "${action_symbols[*]}" != "${expected_action_symbols[*]}" ]; then
 fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
-    -DCRABC_POSIX_SPAWN_FILE_ACTIONS_FREESTANDING \
-    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
-    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    -Wl,--gc-sections compat/x86_64/libc_posix_spawn_file_actions_probe.c \
-    compat/x86_64/libc_posix_spawn_file_actions_start.S "$archive" \
+    -I"$ROOT_DIR/include" -static -fno-pie -no-pie -fno-builtin \
+    -fno-stack-protector -Wl,-Map,"$link_map" \
+    compat/x86_64/libc_posix_spawn_file_actions_probe.c "$selected_archive" \
     -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -99,6 +139,14 @@ for symbol in posix_spawn_file_actions_init posix_spawn_file_actions_destroy \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks $symbol"
 done
+if grep -Eq 'libc\.a\((aligned_alloc|calloc|free|libc_calloc|lite_malloc|malloc|malloc_usable_size|memalign|posix_memalign|realloc|reallocarray|replaced|valloc)\.lo\)' \
+    "$link_map"; then
+    fail "candidate selected a pinned-musl allocator implementation"
+fi
+if grep -Eq 'libc\.a\(posix_spawn_file_actions_(init|addclose|adddup2|addopen|addchdir|addfchdir|destroy)\.lo\)' \
+    "$link_map"; then
+    fail "candidate selected a pinned-musl file-actions implementation"
+fi
 if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
     fail "candidate has unresolved symbols"
 fi
@@ -111,6 +159,8 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
     "$candidate_disassembly"; then
     fail "candidate retains dynamic TLS"
 fi
+grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_program_headers" \
+    || fail "candidate lacks the selected allocator and errno static TLS image"
 if grep -Eq 'crabc_core|sha_crypt' "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
@@ -118,5 +168,5 @@ if grep -Eq '[[:space:]](posix_spawn|posix_spawnp|fork|vfork|clone|execve|posix_
     "$candidate_symbols"; then
     fail "candidate leaked an execution or separately owned spawn entry"
 fi
-env -i LC_ALL=C TZ=UTC "$candidate" || fail "freestanding candidate failed"
+env -i LC_ALL=C TZ=UTC "$candidate" || fail "mixed-runtime candidate failed"
 printf 'x86 static libc spawn file-actions lifecycle: PASS\n'
