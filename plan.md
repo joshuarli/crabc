@@ -26,6 +26,14 @@ leaf tasks. The user authorizes revising task boundaries and planning process
 to accelerate delivery; no approval is needed merely to widen a coherent
 in-scope batch. This does not authorize new product scope or weaker final gates.
 
+The user delegates workflow decisions to the implementer. Treat these documents
+as editable execution guidance, not a fixed sequence of paperwork. Prioritize
+ordinary installed applications and complete runtime/allocator behavior; revise
+task boundaries, sequencing, duplicated checks, and obsolete intermediate gates
+when that shortens the path. Preserve the final behavioral, provenance, purity,
+and performance requirements, and correct stale contracts rather than repeatedly
+working around them. No approval round trip is needed for these in-scope choices.
+
 Use focused tests during development and run expensive aggregate, model, corpus,
 or performance suites at meaningful integration or milestone checkpoints.
 Do not rerun unchanged suites for every local edit or documentation commit.
@@ -92,11 +100,13 @@ allocator launcher's checked `.work/` containment, then establish target-qualifi
 baseline and milestone gates. Imported AArch64 M0/M1 closure and partial M2
 records are preserved evidence, not x86 completion.
 
-Close each milestone completely before advancing to its dependent milestone.
-In particular, M3 requires all eight M2 components complete with no remaining
-conditions and clean native gate evidence. Work independent components in
-parallel where ownership permits. Never substitute additional trace counts,
-documentation, selected leaves, or a partial-gate exit for component closure.
+Milestones are qualification boundaries, not blanket implementation barriers.
+Work against stable interfaces and actual dependencies: dependent implementation
+and integrated regressions may proceed while prerequisite qualification finishes.
+M3 cannot be declared complete until all eight M2 components qualify. Work
+independent components in parallel where ownership permits. Never substitute
+additional trace counts, documentation, selected leaves, or a partial-gate exit
+for component closure.
 
 ### Shared runtime/allocator boundary
 

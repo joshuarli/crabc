@@ -1973,8 +1973,8 @@ commands, plus `python3 compat/allocator/run.py --check --architecture x86_64
 allocator-m1` is the separate native x86 M1 command: it validates the x86
 contract, runs the private native baseline and finite C/Rust witnesses, and
 writes target-specific x86 evidence. Its executable availability is not a
-transferred AArch64 result or whole-engine parity. Native x86 M2 remains
-unavailable.
+transferred AArch64 result or whole-engine parity. `allocator-m2` is available
+and reports its remaining incomplete components; current qualification is in §26.
 
 The allocator launcher uses the checked `.work/allocator-x86_64/` boundary,
 separate from runtime build/cache state. Its optional
@@ -2071,9 +2071,11 @@ The requirements below define closure. The live status of each milestone is
 recorded in [§26](#26-native-mimalloc-live-ledger); do not infer completion
 from a bounded witness or an implemented source-map item.
 
-M0–M2 close first. The architecture-convergence requirements in §10 are part
-of the dependent engine/lifecycle milestones, not a competing instruction to
-finish M5 work before establishing native x86 foundations.
+M0–M2 qualify before dependent milestones can be declared complete. This is
+not a ban on implementing dependent code against stable interfaces while
+qualification proceeds; follow `plan.md`'s actual-dependency scheduling.
+The architecture-convergence requirements in §10 belong to the dependent
+engine/lifecycle milestones, not a separate prerequisite campaign.
 
 ## Milestone 0 — pin, scope, inventory, skeleton
 
