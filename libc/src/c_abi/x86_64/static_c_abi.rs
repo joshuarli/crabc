@@ -500,7 +500,9 @@ mod process_context;
 // The legacy dependency-free archive keeps its bounded fixed-storage owner so
 // unrelated selected-static artifacts remain self-contained. The dedicated
 // opt-in environment gate instead composes musl-shaped ownership with the
-// already evidenced x86 allocator wrapper.
+// already evidenced x86 allocator wrapper. `x86-owned-static-runtime` selects
+// that gate as one aggregate prerequisite, without widening either default or
+// standalone environment fixture.
 #[cfg(not(feature = "x86-environment-runtime"))]
 #[path = "environment.rs"]
 mod environment;
@@ -514,8 +516,10 @@ mod environment;
 // environment/PATH/mmap closure, `execv` adds only its environment forwarding,
 // `execvp` adds its intended PATH/environment closure but not mmap, and only
 // the variadic forms add mmap. Source modularity preserves dependency
-// ownership; arbitrary release archive topology is not claimed. None of these
-// leaves implies fork, vfork, or spawn.
+// ownership; arbitrary release archive topology is not claimed. The owned
+// static aggregate selects this existing direct-exec block only for its
+// environment/fork/exec composition; the standalone exec fixture remains
+// independently gated. None of these leaves implies fork, vfork, or spawn.
 #[cfg(feature = "x86-process-exec")]
 #[path = "process_exec.rs"]
 mod process_exec;
