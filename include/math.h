@@ -188,20 +188,26 @@ long double acoshl(long double);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 double drem(double, double);
 float dremf(float, float);
+/*
+ * Musl's x86 header exposes these interfaces only to GNU. Preserve the
+ * existing non-x86 spelling while keeping a BSD feature request from leaking
+ * GNU-only declarations into the staged x86 public surface.
+ */
+#if !defined(__x86_64__) || defined(_GNU_SOURCE)
 double exp10(double);
 float exp10f(float);
 long double exp10l(long double);
 double pow10(double);
 float pow10f(float);
 long double pow10l(long double);
+#endif
 double scalb(double, double);
 float scalbf(float, float);
+#if !defined(__x86_64__) || defined(_GNU_SOURCE)
 void sincos(double, double *, double *);
 void sincosf(float, float *, float *);
 void sincosl(long double, long double *, long double *);
-double nan(const char *);
-float nanf(const char *);
-long double nanl(const char *);
+#endif
 int finite(double);
 int finitef(float);
 double significand(double);
@@ -291,7 +297,9 @@ long double lgammal(long double);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 double      lgamma_r(double, int *);
 float       lgammaf_r(float, int *);
+#if !defined(__x86_64__) || defined(_GNU_SOURCE)
 long double lgammal_r(long double, int *);
+#endif
 #endif
 long long   llrint(double);
 long long   llrintf(float);

@@ -256,8 +256,13 @@ int pthread_attr_getschedpolicy(const pthread_attr_t *, int *);
 int pthread_attr_setschedparam(pthread_attr_t *, const struct sched_param *);
 int pthread_attr_getschedparam(const pthread_attr_t *, struct sched_param *);
 
+/* Musl owns these signal operations in direct <signal.h>, not <pthread.h>.
+ * Retain the established non-x86 spelling while keeping the x86 direct-include
+ * boundary and its C++ linkage inventory source-faithful. */
+#if !defined(__x86_64__)
 int pthread_sigmask(int, const sigset_t *__restrict, sigset_t *__restrict);
 int pthread_kill(pthread_t, int);
+#endif
 
 #ifdef _GNU_SOURCE
 struct cpu_set_t;

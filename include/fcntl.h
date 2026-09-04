@@ -170,8 +170,13 @@ struct flock {
 int posix_fadvise(int, off_t, off_t, int);
 int posix_fallocate(int, off_t, off_t);
 
-#ifdef _GNU_SOURCE
-#if defined(__x86_64__)
+#if defined(__x86_64__) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
+/*
+ * Musl puts this compatibility vocabulary, including `lockf`, in the common
+ * GNU/BSD profile. Keep its x86 boundary separate from the following GNU-only
+ * file-owner and handle records: BSD must not accidentally acquire those
+ * latter declarations just to receive the shared POSIX-compatible surface.
+ */
 #define AT_NO_AUTOMOUNT 0x800
 #define AT_STATX_SYNC_TYPE 0x6000
 #define AT_STATX_SYNC_AS_STAT 0x0000
@@ -223,6 +228,8 @@ int posix_fallocate(int, off_t, off_t);
 #define DN_MULTISHOT 0x80000000
 int lockf(int, int, off_t);
 #endif
+
+#ifdef _GNU_SOURCE
 #define F_OWNER_TID 0
 #define F_OWNER_PID 1
 #define F_OWNER_PGRP 2
