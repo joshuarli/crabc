@@ -132,6 +132,10 @@ int remap_file_pages(void *, size_t, int, size_t, int);
 #define MS_SYNC 4
 #define MCL_CURRENT 1
 #define MCL_FUTURE 2
+/* Select musl's public literal only for the staged x86 header surface. */
+#if defined(__x86_64__)
+#define MCL_ONFAULT 4
+#endif
 #define POSIX_MADV_NORMAL 0
 #define POSIX_MADV_RANDOM 1
 #define POSIX_MADV_SEQUENTIAL 2

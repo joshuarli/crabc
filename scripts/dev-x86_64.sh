@@ -82,6 +82,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   klog-header-source-form  verify x86 <sys/klog.h> pinned-musl macro surface
   fcntl-event-header-topology  verify x86 fcntl/event direct-header topology
   math-tgmath-source-form  verify x86 math/tgmath source forms and frozen AArch64 arm
+  mman-mcl-onfault-header-source-form  verify x86 MCL_ONFAULT header form and frozen AArch64 arm
   sys-io-header-abi  verify x86 sys/io.h inline port-I/O C/C++ ABI and object code
   timeval-transitive-header-abi  verify selected timeval-dependent header layouts across C/C++ profiles
   sys-time-direct-header-abi  verify selected direct sys/time.h C/C++ ABI profiles and C linkage
@@ -2699,6 +2700,10 @@ run_reboot_header_source_form() {
 
 run_math_tgmath_source_form() {
     run_in_container bash /workspace/compat/x86_64/run_math_tgmath_source_form.sh
+}
+
+run_mman_mcl_onfault_header_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_mman_mcl_onfault_header_source_form.sh
 }
 
 run_mount_header_source_form() {
@@ -5406,6 +5411,7 @@ case "$command" in
     reboot-header-source-form) ;;
     stdio-header-source-form) ;;
     math-tgmath-source-form) ;;
+    mman-mcl-onfault-header-source-form) ;;
     mount-header-source-form) ;;
     klog-header-source-form) ;;
     fcntl-event-header-topology) ;;
@@ -5567,6 +5573,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "math-tgmath-source-form takes no arguments"
         ensure_image
         run_math_tgmath_source_form
+        ;;
+    mman-mcl-onfault-header-source-form)
+        [ "$#" -eq 0 ] || fail "mman-mcl-onfault-header-source-form takes no arguments"
+        ensure_image
+        run_mman_mcl_onfault_header_source_form
         ;;
     mount-header-source-form)
         [ "$#" -eq 0 ] || fail "mount-header-source-form takes no arguments"
