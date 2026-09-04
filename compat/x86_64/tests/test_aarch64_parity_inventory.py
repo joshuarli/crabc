@@ -212,11 +212,18 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             if row["id"] == "libc.text-math-locale-stdio"
         )
         self.assertEqual(text_math["verified_slice_count"], 7)
-        self.assertEqual(text_math["verified_artifact_count"], 76)
+        self.assertEqual(text_math["verified_artifact_count"], 77)
         self.assertIn(
             {
                 "family": "libc.text-math-locale-stdio",
                 "id": "static-c-uchar-stateful",
+            },
+            report["selected_private_artifacts"],
+        )
+        self.assertIn(
+            {
+                "family": "libc.text-math-locale-stdio",
+                "id": "static-c-stdio-permanent-format-scan",
             },
             report["selected_private_artifacts"],
         )
@@ -317,7 +324,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            377,
+            378,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),

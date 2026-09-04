@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 50)
-        self.assertEqual(report["verified_artifact_count"], 377)
+        self.assertEqual(report["verified_artifact_count"], 378)
         self.assertEqual(report["feature_archive_count"], 28)
         self.assertEqual(report["verified_feature_archive_count"], 28)
         self.assertEqual(report["planned_feature_archive_count"], 0)
