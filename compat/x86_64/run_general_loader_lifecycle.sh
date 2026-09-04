@@ -5,6 +5,19 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly FIXTURES="$ROOT/compat/x86_64"
 [ "$(uname -sm)" = 'Linux x86_64' ]
 case "${TMPDIR:-}" in "$ROOT"/.work/*) ;; *) exit 2 ;; esac
+python3 -B - "$ROOT" "$TMPDIR" <<'PY'
+from pathlib import Path
+import sys
+root, temporary = map(Path, sys.argv[1:])
+try:
+    valid = (temporary.is_dir() and temporary.resolve(strict=True) == temporary
+             and temporary.is_relative_to(root / ".work"))
+except OSError:
+    valid = False
+if not valid:
+    print("lifecycle TMPDIR must be an existing physical checkout .work directory", file=sys.stderr)
+    raise SystemExit(2)
+PY
 bash "$FIXTURES/run_musl_oracle.sh"
 work="$(mktemp -d "$TMPDIR/general-loader-lifecycle.XXXXXX")"
 readonly work
