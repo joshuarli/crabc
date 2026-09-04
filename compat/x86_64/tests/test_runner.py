@@ -11750,8 +11750,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "__funcs_on_exit",
             "fn __stdio_exit()",
             "weak_alias(dummy, __stdio_exit)",
-            "does not flush streams",
-            "stdio finalization",
+            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]',
+            'super::stdio_standard::flush_all_on_exit()',
+            'unsafe { __stdio_exit() };',
             "pub unsafe extern \"C\" fn exit",
             "immediate_termination::_Exit(127)",
         ):
@@ -19685,7 +19686,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "putchar",
             "ungetc",
         )
-        self.assertIn('#[path = "stdio_standard.rs"]', static_root)
+        self.assertIn(
+            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "stdio_standard.rs")]',
+            static_root,
+        )
+        self.assertIn(
+            '#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_static_stdio.rs")]',
+            static_root,
+        )
         for symbol in data_symbols:
             self.assertIn(f"pub static mut {symbol}:", implementation)
             self.assertIn(symbol, static_export_names)
