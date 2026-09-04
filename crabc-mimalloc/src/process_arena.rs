@@ -99,7 +99,6 @@ const PAIR_SET: u8 = 1;
 // byte-based. This is not an options implementation or a mutable substitute
 // for one.
 const DEFAULT_ARENA_RESERVE: usize = GIB;
-const DEFAULT_SMALL_ARENA_RESERVE: usize = 4 * ARENA_MIN_SIZE;
 
 /// Process-static sidecar for one source-managed arena backing.
 ///
@@ -1421,41 +1420,14 @@ fn default_os_arena_reservation(
     if requested_size > MAX_ALLOC_SIZE {
         return Err(ProcessSharedArenaReserveError::RequestTooLarge);
     }
-    let with_page_headroom = requested_size
-        .checked_add(ARENA_MAX_CHUNK_OBJ_SIZE)
-        .ok_or(ProcessSharedArenaReserveError::SizeOverflow)?;
-    let required_size = invariants::align_up(with_page_headroom, ARENA_MAX_CHUNK_OBJ_SIZE)
-        .ok_or(ProcessSharedArenaReserveError::SizeOverflow)?;
-
-    // `src/arena.c` reduces the option before clamping only on targets that
-    // cannot reserve virtual address space. Linux/AArch64 has that facility,
-    // but retain the source decision so this policy has no hidden platform
-    // assumption beyond the frozen `MemoryConfig` observation.
-    let base_size = if config.has_virtual_reserve() {
-        DEFAULT_ARENA_RESERVE
-    } else {
-        DEFAULT_ARENA_RESERVE / 4
-    };
-    let base_size = invariants::align_up(base_size, ARENA_SLICE_SIZE)
-        .ok_or(ProcessSharedArenaReserveError::SizeOverflow)?;
-    let primary_size = base_size
-        .max(required_size)
-        .max(ARENA_MIN_SIZE)
-        .min(ARENA_MAX_SIZE);
-    if primary_size < required_size {
-        return Err(ProcessSharedArenaReserveError::RequestTooLarge);
-    }
-    // `MI_DEFAULT_ARENA_EAGER_COMMIT == 2` and
-    // `MI_DEFAULT_ALLOW_LARGE_OS_PAGES == 0`: source eagerly maps only when
-    // the live Linux configuration reports overcommit.
-    let access = if config.has_overcommit() {
-        MapAccess::Committed
-    } else {
-        MapAccess::Reserved
-    };
-    let fallback_size = (primary_size > DEFAULT_SMALL_ARENA_RESERVE
-        && DEFAULT_SMALL_ARENA_RESERVE > required_size)
-        .then_some(DEFAULT_SMALL_ARENA_RESERVE);
+    // Keep this historical first-arena entry's frozen inputs while sharing
+    // the complete source reservation geometry with the process-policy path.
+    let plan = crate::arena::ArenaReservationPlan::new(
+        config, 0, requested_size, DEFAULT_ARENA_RESERVE, 2, false,
+    ).ok_or(ProcessSharedArenaReserveError::RequestTooLarge)?;
+    let primary_size = plan.primary_size;
+    let fallback_size = plan.fallback_size;
+    let access = plan.access;
 
     // The ordinary reservation entry retains the one-arena structural proof,
     // including source slice rounding and the metadata-alignment requirement.

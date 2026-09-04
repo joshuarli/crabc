@@ -61,6 +61,10 @@ use crate::types::{
     MemoryKind, Page, Subprocess, Theap, ThreadSequence,
 };
 
+#[path = "arena_selection.rs"]
+mod selection;
+pub(crate) use selection::{ArenaReservationPlan, ArenaSearch};
+
 // Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
 // an arena-local delay because the one-thread slice has no source subprocess
 // global-expiry owner or registry iteration policy yet.
