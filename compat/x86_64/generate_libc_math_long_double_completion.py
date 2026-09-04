@@ -83,7 +83,7 @@ def compiler_environment() -> dict[str, str]:
     return environment
 
 
-def checked_compiler(command: str) -> str:
+def checked_compiler(command: str, *, environment: dict[str, str] | None = None) -> str:
     """Require the exact pinned musl-GCC wrapper, version, and target."""
     compiler = Path(command).resolve()
     if not compiler.is_file():
@@ -94,7 +94,7 @@ def checked_compiler(command: str) -> str:
             "pinned compiler wrapper digest mismatch: "
             f"expected {EXPECTED_COMPILER_WRAPPER_DIGEST}, got {digest}"
         )
-    environment = compiler_environment()
+    environment = compiler_environment() if environment is None else environment
     version_lines = subprocess.run(
         [str(compiler), "--version"],
         check=True,

@@ -9,12 +9,21 @@ import hashlib
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
+sys.dont_write_bytecode = True
 from generate_libc_math_long_double_completion import (
     ROOT, EXPECTED_MUSL_TREE_DIGEST, normalized_tree_digest,
-    checked_compiler, compiler_environment, COMPILE_FLAGS,
+    checked_compiler, COMPILE_FLAGS,
 )
+sys.path.insert(0, str(ROOT / "scripts"))
+import build_x86_64_owned_sysroot as producer
+
+
+def generation_environment():
+    """Use physical checkout-owned state, never ambient tempfile selection."""
+    return producer.deterministic_environment()
 
 ADAPTER = r"""
 #include <stdint.h>
@@ -69,7 +78,8 @@ def main():
     source_root = args.musl_source.resolve()
     if normalized_tree_digest(source_root) != EXPECTED_MUSL_TREE_DIGEST:
         raise SystemExit("pinned musl tree digest mismatch")
-    compiler = checked_compiler(args.cc)
+    environment = generation_environment()
+    compiler = checked_compiler(args.cc, environment=environment)
     original = (source_root / "src/stdio/vfprintf.c").read_text()
     macros = original[original.index("#define MAX"):original.index("/* State machine")]
     numeric = original[original.index("static const char xdigits"):original.index("static int getint")]
@@ -77,7 +87,7 @@ def main():
     # the contiguous upstream block are eliminated by the pinned compiler.
     includes, adapter = ADAPTER.split("typedef struct", 1)
     source = includes + macros + "typedef struct" + adapter + numeric + ENTRY
-    with tempfile.TemporaryDirectory(prefix="owned-printf-float.") as temporary:
+    with tempfile.TemporaryDirectory(prefix="owned-printf-float.", dir=environment["TMPDIR"]) as temporary:
         unit = Path(temporary) / "owned_printf_float.c"
         assembly = Path(temporary) / "owned_printf_float.s"
         unit.write_text(source)
@@ -85,7 +95,7 @@ def main():
         # literals. Use PC-relative PIC addressing for the owned static-PIE
         # product as well as ET_EXEC; numerical optimization flags are shared.
         subprocess.run([compiler, *COMPILE_FLAGS, "-fPIC", "-S", str(unit), "-o", str(assembly)],
-            check=True, env=compiler_environment())
+            check=True, env=environment)
         text = assembly.read_text()
     text = re.sub(r"(?<![A-Za-z0-9_.])\.L([A-Za-z0-9_.$]+)",
         r".Lcrabc_owned_printf_float_\1", text)
