@@ -6492,10 +6492,29 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/atomic.rs: selected static mutex/condition "
                 f"helper is missing {required!r}"
             )
-    if "#[no_mangle]" in atomic_text:
+    # The mutex/condition helpers stay private, but C11 permits callers to
+    # take the address of these six stdatomic macro-backed operations after
+    # explicitly undefining their macros.  Keep that deliberately narrow ABI
+    # admission exact so a future helper cannot become an accidental export.
+    atomic_exports = set(
+        re.findall(
+            r'#\[no_mangle\]\s*pub(?:\s+unsafe)?\s+extern\s+"C"\s+fn\s+(\w+)',
+            atomic_text,
+        )
+    )
+    expected_atomic_exports = {
+        "atomic_flag_clear",
+        "atomic_flag_clear_explicit",
+        "atomic_flag_test_and_set",
+        "atomic_flag_test_and_set_explicit",
+        "atomic_signal_fence",
+        "atomic_thread_fence",
+    }
+    if atomic_exports != expected_atomic_exports:
         errors.append(
-            "libc/src/c_abi/x86_64/atomic.rs: mutex/condition atomic helpers must "
-            "remain private Rust helpers rather than public C exports"
+            "libc/src/c_abi/x86_64/atomic.rs: only the reviewed addressable "
+            "stdatomic ABI may be public; expected "
+            f"{sorted(expected_atomic_exports)!r}, found {sorted(atomic_exports)!r}"
         )
 
     pthread_mutex_source = (
