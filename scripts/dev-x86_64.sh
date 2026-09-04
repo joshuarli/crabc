@@ -103,6 +103,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   stat-header-abi  compile the staged x86 C/C++ sys/stat header layouts
   utime-header-abi  compile the staged x86 C/C++ utime header ABI/linkage slice
   pthread-c11-header-abi  verify staged x86 pthread/C11-thread C/C++ header ABI profiles
+  pthread-header-source-form  verify x86 <pthread.h> pinned-musl direct source forms
   atomic-addressable-abi  verify addressable C11 atomic flag/fence symbols
   pthread-cancellation-header-abi  verify staged x86 deferred pthread-cancellation C/C++ header ABI profiles
   pthread-spin-destroy-header-abi  verify x86 pthread_spin_destroy C/C++ declaration and linkage
@@ -2799,6 +2800,10 @@ run_pthread_c11_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_pthread_c11_header_abi.sh
 }
 
+run_pthread_header_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_pthread_header_source_form.sh
+}
+
 run_atomic_addressable_abi() {
     run_in_container bash /workspace/compat/x86_64/run_atomic_addressable_abi.sh
 }
@@ -5256,6 +5261,7 @@ case "$command" in
     timer-settime-header-abi) ;;
     fopen64-header-abi) ;;
     pthread-spin-destroy-header-abi|pthread-spin-operations-header-abi) ;;
+    pthread-header-source-form) ;;
     sys-io-header-abi) ;;
     tcp-header-abi) ;;
     stddef-header-abi) ;;
@@ -5699,6 +5705,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "pthread-c11-header-abi takes no arguments"
         ensure_image
         run_pthread_c11_header_abi
+        ;;
+    pthread-header-source-form)
+        [ "$#" -eq 0 ] || fail "pthread-header-source-form takes no arguments"
+        ensure_image
+        run_pthread_header_source_form
         ;;
     atomic-addressable-abi)
         [ "$#" -eq 0 ] || fail "atomic-addressable-abi takes no arguments"

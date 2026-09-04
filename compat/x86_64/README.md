@@ -299,6 +299,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ftw-header-abi
 ./scripts/dev-x86_64.sh utime-header-abi
 ./scripts/dev-x86_64.sh pthread-c11-header-abi
+./scripts/dev-x86_64.sh pthread-header-source-form
 ./scripts/dev-x86_64.sh pthread-spin-destroy-header-abi
 ./scripts/dev-x86_64.sh ctype-header-abi
 ./scripts/dev-x86_64.sh locale-profile-header-abi
@@ -824,6 +825,16 @@ every `pthread_rwlock_*` and `pthread_rwlockattr_*` signature plus all seven
 requires their unmangled C linkage. Both are compile-only partial evidence:
 they do not select archive linkage, pthread behavior, header-family completion,
 or public x86 support.
+
+`pthread-header-source-form` is the separate seven-profile direct-header gate
+for pinned-musl 1.2.6 `<pthread.h>` source forms. It compares raw C11/C++17
+candidate and oracle preprocessing, checks the direct `features.h`,
+`bits/alltypes.h`, `sched.h`, and `time.h` topology, preserves the
+`sched_param` source-owned layout, proves C++ C linkage, and witnesses that
+`pthread_sigmask` and `pthread_kill` are absent from direct `<pthread.h>` but
+owned by direct `<signal.h>` only in musl-enabled profiles. It is header-only
+evidence: it does not select pthread/TLS runtime behavior, header-family
+completion, or public x86 support.
 
 `public-header-surface` adds the separate all-public-header inventory needed
 before that bounded gate set can grow into a completion contract. It derives

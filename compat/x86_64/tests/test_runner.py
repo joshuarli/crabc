@@ -1753,6 +1753,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    mman-mcl-onfault-header-source-form) ;;", source)
         self.assertIn("    mount-header-source-form) ;;", source)
         self.assertIn("    klog-header-source-form) ;;", source)
+        self.assertIn("    pthread-header-source-form) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
         self.assertIn("    stddef-header-abi) ;;", source)
         self.assertIn(
@@ -1848,6 +1849,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "timer-settime-header-abi",
             "fopen64-header-abi",
             "pthread-spin-destroy-header-abi|pthread-spin-operations-header-abi",
+            "pthread-header-source-form",
             "sys-io-header-abi",
             "tcp-header-abi",
             "stddef-header-abi",
@@ -2176,6 +2178,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_klog_header_source_form()', source)
         self.assertIn(
             'compat/x86_64/run_klog_header_source_form.sh', source
+        self.assertIn('run_pthread_header_source_form()', source)
+        self.assertIn(
+            'compat/x86_64/run_pthread_header_source_form.sh', source
         )
         self.assertIn('run_fcntl_event_header_topology()', source)
         self.assertIn(

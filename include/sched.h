@@ -1,13 +1,11 @@
 #ifndef _SCHED_H
 #define _SCHED_H
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) /* pinned-musl 1.2.6 x86-64 sched_param source form */
 #include <features.h>
-
 #define __NEED_struct_timespec
 #define __NEED_pid_t
 #define __NEED_time_t
@@ -17,10 +15,23 @@ extern "C" {
 #endif
 
 #include <bits/alltypes.h>
+
+struct sched_param {
+	int sched_priority;
+	int __reserved1;
+#if _REDIR_TIME64
+	long __reserved2[4];
 #else
+	struct {
+		time_t __reserved1;
+		long __reserved2;
+	} __reserved2[2];
+#endif
+	int __reserved3;
+};
+#else /* frozen AArch64 public header */
 #include <sys/types.h>
 #include <time.h>
-#endif
 
 /* This reserve is public ABI, even though the currently implemented
  * scheduling calls consume only sched_priority.  Keep the musl 1.2.6
@@ -39,6 +50,7 @@ struct sched_param {
 #endif
     int __reserved3;
 };
+#endif
 
 #define SCHED_OTHER 0
 #define SCHED_FIFO 1
