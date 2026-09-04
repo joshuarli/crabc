@@ -15,6 +15,9 @@ the existing errno, environment, auxv, security, termination, and shared
 `process_exit.rs` registration owners. There is no fixture-success callback
 in this libc composition. The legacy source-root mode remains unchanged.
 
+Run `./scripts/dev-x86_64.sh general-dynamic-lifecycle` from the checkout.
+The dispatcher supplies the pinned native environment and contained scratch.
+
 ## Durable handoff and ordering
 
 The 72-byte RuntimeV1 descriptor is unchanged. Its validated main-resident
