@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "671394a47cda36cd4af62587642797bc37c0a190857687b51a85c40fa08a94ad"
+    "source_abi_report_sha256": "82c7e1cc2edd65c62af8b4b2bd7af044c6495102d7cbf581de8dd21fa741cf8e"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -100,24 +100,19 @@
   "rows": [
     {
       "candidate": {
-        "count": 352,
+        "count": 351,
         "kind_counts": {
           "function": 73,
-          "macro": 238,
+          "macro": 237,
           "record": 14,
           "typedef": 23,
           "variable": 4
         },
-        "sha256": "525459cc88ad5f5432a5a8d84996af76af4f4f64c5768fdb405a952d171d7a4a"
+        "sha256": "a3dd1b72ffe9320b624cec2c345f1ab4c81e8862991977ee055c2b984d945cc8"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "aio.h",
       "matched_identity_count": 351,
       "profile": "c11-gnu",
@@ -134,29 +129,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 15,
+      "separately_accounted_source_form_difference_count": 3,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 351,
+        "count": 350,
         "kind_counts": {
           "function": 73,
-          "macro": 238,
+          "macro": 237,
           "record": 13,
           "typedef": 23,
           "variable": 4
         },
-        "sha256": "c8b53e36d79a75686e850674dae76f77703ff2c2bae5271bc12794d093fb8072"
+        "sha256": "10edb4c68c66a028a6a8f615713669ddb22a057ed2248832304c9c505b29871b"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "aio.h",
       "matched_identity_count": 350,
       "profile": "cxx17-gnu",
@@ -173,19 +163,19 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 15,
+      "separately_accounted_source_form_difference_count": 3,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 117,
+        "count": 104,
         "kind_counts": {
           "function": 20,
-          "macro": 86,
+          "macro": 73,
           "record": 5,
           "typedef": 6
         },
-        "sha256": "287d92268b76048dfe1d06df0a3c7fd7ec593d809ff458f8704b0d5686aa1271"
+        "sha256": "0dd907ded4b9b2c501fa09fc10dbc335f6b3d98daa8e47df73101bf7b76514ce"
       },
       "candidate_status": "ok",
       "comparison": "oracle-not-applicable",
@@ -197,24 +187,19 @@
     },
     {
       "candidate": {
-        "count": 278,
+        "count": 277,
         "kind_counts": {
           "function": 57,
-          "macro": 190,
+          "macro": 189,
           "record": 12,
           "typedef": 18,
           "variable": 1
         },
-        "sha256": "406beae60b7915a1b38c39e3baaa7ff917519ff2c9cd95ec2e6cbf6b6dc40da2"
+        "sha256": "f2bf530b5c9619ebe0f4045b90c8bcffe06a0e5dcc2b63aea75c748d261ffd48"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "aio.h",
       "matched_identity_count": 277,
       "profile": "c11-posix-2008",
@@ -231,29 +216,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 2,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 308,
+        "count": 307,
         "kind_counts": {
           "function": 67,
-          "macro": 207,
+          "macro": 206,
           "record": 12,
           "typedef": 18,
           "variable": 4
         },
-        "sha256": "396d6b946092fc6ed7a168801776893f94fdf4de55df64ffff171a22b3db5900"
+        "sha256": "59c5f2868557fda86f81dcc8e46b3c9e24004948e9f32a48a1846b96e7365bbd"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "aio.h",
       "matched_identity_count": 307,
       "profile": "c11-xopen-700",
@@ -270,29 +250,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 14,
+      "separately_accounted_source_form_difference_count": 2,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 321,
+        "count": 320,
         "kind_counts": {
           "function": 69,
-          "macro": 212,
+          "macro": 211,
           "record": 14,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "d93a1ff9002718323bc8b3ddf0b40bfac442bcf758558fdaaacce322fdb697f5"
+        "sha256": "f1c1b175b58b211fa0dfc56a0857d0b2ffa2f29db59d1cba8328236a4fe30c72"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "aio.h",
       "matched_identity_count": 320,
       "profile": "c11-bsd",
@@ -309,29 +284,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 15,
+      "separately_accounted_source_form_difference_count": 3,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 351,
+        "count": 350,
         "kind_counts": {
           "function": 73,
-          "macro": 238,
+          "macro": 237,
           "record": 13,
           "typedef": 23,
           "variable": 4
         },
-        "sha256": "c8b53e36d79a75686e850674dae76f77703ff2c2bae5271bc12794d093fb8072"
+        "sha256": "10edb4c68c66a028a6a8f615713669ddb22a057ed2248832304c9c505b29871b"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "aio.h",
       "matched_identity_count": 350,
       "profile": "cxx17-strict",
@@ -348,7 +318,7 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 15,
+      "separately_accounted_source_form_difference_count": 3,
       "source_form_comparison": "mismatch"
     },
     {
@@ -18515,15 +18485,15 @@
     },
     {
       "candidate": {
-        "count": 364,
+        "count": 363,
         "kind_counts": {
           "function": 164,
-          "macro": 164,
+          "macro": 163,
           "record": 10,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "ab2db39eb95cef080c73555e60dbf13e2eb6f9aaa42b69406605ce0b5ac1dea2"
+        "sha256": "ac3068b385441ac96887be1ada8481c53ebc794fda2c2c385df5483c85497c90"
       },
       "candidate_only": [
         {
@@ -18533,10 +18503,6 @@
         {
           "kind": "function",
           "name": "pthread_sigmask"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -18557,20 +18523,20 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 34,
+      "separately_accounted_source_form_difference_count": 22,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 362,
+        "count": 361,
         "kind_counts": {
           "function": 164,
-          "macro": 163,
+          "macro": 162,
           "record": 9,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "3781638ee7358eb70cb52d496146c81afe1fe5747b8f329608ca36a7ba9fa2f1"
+        "sha256": "2efacae7fbd26374d5168bb66d0a934ab614b58cb967470912b98eb0d8209328"
       },
       "candidate_only": [
         {
@@ -18580,10 +18546,6 @@
         {
           "kind": "function",
           "name": "pthread_sigmask"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -18604,19 +18566,19 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 33,
+      "separately_accounted_source_form_difference_count": 21,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 252,
+        "count": 239,
         "kind_counts": {
           "function": 120,
-          "macro": 107,
+          "macro": 94,
           "record": 6,
           "typedef": 19
         },
-        "sha256": "ad8cb4a99387455621df9d6c81ce2a311f0e74f64f2774437d9387f4ee8138b1"
+        "sha256": "44dd833a1211b2cf7ddd303c0357f9ed2305ffd45e9a757b5a735ed494756d70"
       },
       "candidate_only": [
         {
@@ -18626,58 +18588,6 @@
         {
           "kind": "function",
           "name": "pthread_sigmask"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_RAW"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_PROCESS_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_SGI_CYCLE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_TAI"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_THREAD_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "TIMER_ABSTIME"
         }
       ],
       "candidate_status": "ok",
@@ -18697,20 +18607,20 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 23,
+      "separately_accounted_source_form_difference_count": 22,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 280,
+        "count": 279,
         "kind_counts": {
           "function": 137,
-          "macro": 112,
+          "macro": 111,
           "record": 9,
           "typedef": 21,
           "variable": 1
         },
-        "sha256": "d33b574021127e1a7a6b9aa37298efb1b4c20bad0160d7e44ec25f3aa6d99433"
+        "sha256": "7b5af10b4c9e0bbf686c2eea42cb4530c26a0d025b375085af2aac28940050ad"
       },
       "candidate_only": [
         {
@@ -18720,10 +18630,6 @@
         {
           "kind": "function",
           "name": "pthread_sigmask"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -18744,20 +18650,20 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 33,
+      "separately_accounted_source_form_difference_count": 22,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 285,
+        "count": 284,
         "kind_counts": {
           "function": 139,
-          "macro": 112,
+          "macro": 111,
           "record": 9,
           "typedef": 21,
           "variable": 4
         },
-        "sha256": "280c6bf285c97c01b73dc7aeebe9dbca1eeea451e74f712491e19b3e72a03ff1"
+        "sha256": "8faf986fd3eca530676f61025232388d6c043bfe7f5202cda734f95408c9a7ce"
       },
       "candidate_only": [
         {
@@ -18767,10 +18673,6 @@
         {
           "kind": "function",
           "name": "pthread_sigmask"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -18791,20 +18693,20 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 34,
+      "separately_accounted_source_form_difference_count": 22,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 289,
+        "count": 288,
         "kind_counts": {
           "function": 141,
-          "macro": 114,
+          "macro": 113,
           "record": 9,
           "typedef": 21,
           "variable": 4
         },
-        "sha256": "50a2509b3ada74e8de8e7bd746b4d7263a1e0ac5eecd8df157dca7a42d858a8f"
+        "sha256": "b29c9dd6ffbda5f7b7fe7e4bed925025c1728c7ca7d8a68305103749ae7e0ab7"
       },
       "candidate_only": [
         {
@@ -18814,10 +18716,6 @@
         {
           "kind": "function",
           "name": "pthread_sigmask"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -18838,20 +18736,20 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 34,
+      "separately_accounted_source_form_difference_count": 22,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 362,
+        "count": 361,
         "kind_counts": {
           "function": 164,
-          "macro": 163,
+          "macro": 162,
           "record": 9,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "3781638ee7358eb70cb52d496146c81afe1fe5747b8f329608ca36a7ba9fa2f1"
+        "sha256": "2efacae7fbd26374d5168bb66d0a934ab614b58cb967470912b98eb0d8209328"
       },
       "candidate_only": [
         {
@@ -18861,10 +18759,6 @@
         {
           "kind": "function",
           "name": "pthread_sigmask"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -18885,7 +18779,7 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 33,
+      "separately_accounted_source_form_difference_count": 21,
       "source_form_comparison": "mismatch"
     },
     {
@@ -31805,24 +31699,19 @@
     },
     {
       "candidate": {
-        "count": 218,
+        "count": 217,
         "kind_counts": {
           "function": 32,
-          "macro": 139,
+          "macro": 138,
           "record": 7,
           "typedef": 36,
           "variable": 4
         },
-        "sha256": "7c512c9b0ffc4498cb59cb69dc22b4cfb7c635ce1d578476b867d68b7f29a786"
+        "sha256": "4697e18e793b40afd7ccfaa380afdbbbd323d2389621c9c3a3fe1462a94f1e64"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/acct.h",
       "matched_identity_count": 217,
       "profile": "c11-gnu",
@@ -31839,29 +31728,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 218,
+        "count": 217,
         "kind_counts": {
           "function": 32,
-          "macro": 139,
+          "macro": 138,
           "record": 7,
           "typedef": 36,
           "variable": 4
         },
-        "sha256": "bd6d9724d2cef98669bd9ed878f5bd53b40e80de1c93e9ccef2431c0069e0138"
+        "sha256": "fed40d42566b7df3dea8d9384959413988bdee2a2ecfc86aa5a87a766d9b9de6"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/acct.h",
       "matched_identity_count": 217,
       "profile": "cxx17-gnu",
@@ -31878,76 +31762,23 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 175,
+        "count": 162,
         "kind_counts": {
           "function": 11,
-          "macro": 128,
+          "macro": 115,
           "record": 4,
           "typedef": 32
         },
-        "sha256": "b7f569b19c89e9e6fce1372365686eb8bb45b3fe8f0de4efa82a3dbcad6a3361"
+        "sha256": "d3600a4319826b2c611e9bb216546fa9242ee6f68f0ae3c5d7d2f81a1c9c7cf2"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_RAW"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_PROCESS_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_SGI_CYCLE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_TAI"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_THREAD_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "TIMER_ABSTIME"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/acct.h",
       "matched_identity_count": 162,
       "profile": "c11-strict",
@@ -31963,29 +31794,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 2,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 209,
+        "count": 208,
         "kind_counts": {
           "function": 28,
-          "macro": 137,
+          "macro": 136,
           "record": 7,
           "typedef": 36,
           "variable": 1
         },
-        "sha256": "b620383e6381920ac3232047a54cfb4bb6b391a360c49f03ba36e638008bff1c"
+        "sha256": "e0c7368608246fe2fe11f44a2c2efa867ad9c14e265c76c5f3f65363b6b9ea65"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/acct.h",
       "matched_identity_count": 208,
       "profile": "c11-posix-2008",
@@ -32002,29 +31828,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 214,
+        "count": 213,
         "kind_counts": {
           "function": 30,
-          "macro": 137,
+          "macro": 136,
           "record": 7,
           "typedef": 36,
           "variable": 4
         },
-        "sha256": "0bfaa97911033d4ea9f52f8e56a99e0c7d75ae868b0bd07fef85586869ad01fb"
+        "sha256": "7849bd8011b5e4a20569f4d9ae189603647afca68abd52232f60f26f2ef0c158"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/acct.h",
       "matched_identity_count": 213,
       "profile": "c11-xopen-700",
@@ -32041,29 +31862,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 218,
+        "count": 217,
         "kind_counts": {
           "function": 32,
-          "macro": 139,
+          "macro": 138,
           "record": 7,
           "typedef": 36,
           "variable": 4
         },
-        "sha256": "7c512c9b0ffc4498cb59cb69dc22b4cfb7c635ce1d578476b867d68b7f29a786"
+        "sha256": "4697e18e793b40afd7ccfaa380afdbbbd323d2389621c9c3a3fe1462a94f1e64"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/acct.h",
       "matched_identity_count": 217,
       "profile": "c11-bsd",
@@ -32080,29 +31896,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 218,
+        "count": 217,
         "kind_counts": {
           "function": 32,
-          "macro": 139,
+          "macro": 138,
           "record": 7,
           "typedef": 36,
           "variable": 4
         },
-        "sha256": "bd6d9724d2cef98669bd9ed878f5bd53b40e80de1c93e9ccef2431c0069e0138"
+        "sha256": "fed40d42566b7df3dea8d9384959413988bdee2a2ecfc86aa5a87a766d9b9de6"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/acct.h",
       "matched_identity_count": 217,
       "profile": "cxx17-strict",
@@ -32119,7 +31930,7 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
@@ -58574,15 +58385,15 @@
     },
     {
       "candidate": {
-        "count": 275,
+        "count": 274,
         "kind_counts": {
           "function": 49,
-          "macro": 203,
+          "macro": 202,
           "record": 9,
           "typedef": 10,
           "variable": 4
         },
-        "sha256": "c877a4760910459da07c20d4e1a02c10278bca4278f3ef2740c2aaba7a1c2a17"
+        "sha256": "2f044d9a84155d42ce285088ff1d6a8003366e5e80177af9eeaa8a264fd84840"
       },
       "candidate_only": [
         {
@@ -58592,10 +58403,6 @@
         {
           "kind": "macro",
           "name": "_CRABC_SYS_TIMERFD_H"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -58621,20 +58428,20 @@
         }
       ],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 275,
+        "count": 274,
         "kind_counts": {
           "function": 49,
-          "macro": 203,
+          "macro": 202,
           "record": 9,
           "typedef": 10,
           "variable": 4
         },
-        "sha256": "7ac5ca5f68ee50719a7649519d3e9dc7cd1c94de45ecf720725546b65d725d11"
+        "sha256": "9fc5eef5f0300406d3a8e4c44a12dce7ee5baf0cf31874f33a4d7a042e981c7a"
       },
       "candidate_only": [
         {
@@ -58644,10 +58451,6 @@
         {
           "kind": "macro",
           "name": "_CRABC_SYS_TIMERFD_H"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -58673,73 +58476,21 @@
         }
       ],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 154,
+        "count": 141,
         "kind_counts": {
           "function": 19,
-          "macro": 125,
+          "macro": 112,
           "record": 4,
           "typedef": 6
         },
-        "sha256": "f84c198714592e71825a4993745c4828dbc4e3ada9a23ff9a87c4508b51e5a77"
+        "sha256": "d7ba8d9c31bee032bd5ccd8fd5e6eed0f507334294b05415cb18716f8ef2c6a6"
       },
       "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_RAW"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_PROCESS_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_SGI_CYCLE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_TAI"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_THREAD_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "TIMER_ABSTIME"
-        },
         {
           "kind": "macro",
           "name": "_BITS_FCNTL_H"
@@ -58771,20 +58522,20 @@
         }
       ],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 2,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 184,
+        "count": 183,
         "kind_counts": {
           "function": 36,
-          "macro": 132,
+          "macro": 131,
           "record": 6,
           "typedef": 9,
           "variable": 1
         },
-        "sha256": "095fa0559c03682aa732ba005186b7cf9be3f758a139f507e5a2960419a17585"
+        "sha256": "ecd35cb6dcfc4100b86573be7c0e746360344d575e8d3f91e9f658fc90bcd064"
       },
       "candidate_only": [
         {
@@ -58794,10 +58545,6 @@
         {
           "kind": "macro",
           "name": "_CRABC_SYS_TIMERFD_H"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -58823,20 +58570,20 @@
         }
       ],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 189,
+        "count": 188,
         "kind_counts": {
           "function": 38,
-          "macro": 132,
+          "macro": 131,
           "record": 6,
           "typedef": 9,
           "variable": 4
         },
-        "sha256": "96ee503a446216d4ac5b58a59c122496d965cd503cb19efd69ecb272566e85af"
+        "sha256": "6be5337da9a505a804711a0c637d4f03286755700afdf60746d88713b3a19ce0"
       },
       "candidate_only": [
         {
@@ -58846,10 +58593,6 @@
         {
           "kind": "macro",
           "name": "_CRABC_SYS_TIMERFD_H"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -58875,20 +58618,20 @@
         }
       ],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 194,
+        "count": 193,
         "kind_counts": {
           "function": 40,
-          "macro": 135,
+          "macro": 134,
           "record": 6,
           "typedef": 9,
           "variable": 4
         },
-        "sha256": "f62631061fe695df9a0442d0093be300a2deb7701d2bfe3a8b14120e83d64ea0"
+        "sha256": "0bdad779b248b06ea87236955c9c594165f43478bae70f2d530244c5346d5130"
       },
       "candidate_only": [
         {
@@ -58898,10 +58641,6 @@
         {
           "kind": "macro",
           "name": "_CRABC_SYS_TIMERFD_H"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -59127,20 +58866,20 @@
         }
       ],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
-        "count": 275,
+        "count": 274,
         "kind_counts": {
           "function": 49,
-          "macro": 203,
+          "macro": 202,
           "record": 9,
           "typedef": 10,
           "variable": 4
         },
-        "sha256": "7ac5ca5f68ee50719a7649519d3e9dc7cd1c94de45ecf720725546b65d725d11"
+        "sha256": "9fc5eef5f0300406d3a8e4c44a12dce7ee5baf0cf31874f33a4d7a042e981c7a"
       },
       "candidate_only": [
         {
@@ -59150,10 +58889,6 @@
         {
           "kind": "macro",
           "name": "_CRABC_SYS_TIMERFD_H"
-        },
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
         }
       ],
       "candidate_status": "ok",
@@ -59179,7 +58914,7 @@
         }
       ],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 13,
+      "separately_accounted_source_form_difference_count": 1,
       "source_form_comparison": "mismatch"
     },
     {
@@ -72136,24 +71871,19 @@
     },
     {
       "candidate": {
-        "count": 133,
+        "count": 132,
         "kind_counts": {
           "function": 56,
-          "macro": 54,
+          "macro": 53,
           "record": 6,
           "typedef": 13,
           "variable": 4
         },
-        "sha256": "1352cd5f6da528534d8549ec38907b80610e172f6d08a39ab49bd5be9c8ea1a2"
+        "sha256": "d03d7969cf14faa8697e51bff3dd2aedffe3f7c1d8339afabd70261b23d0e820"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "threads.h",
       "matched_identity_count": 132,
       "profile": "c11-gnu",
@@ -72170,29 +71900,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 131,
+        "count": 130,
         "kind_counts": {
           "function": 56,
-          "macro": 52,
+          "macro": 51,
           "record": 5,
           "typedef": 14,
           "variable": 4
         },
-        "sha256": "df582b2c719a776e13c864968395635d3d7880ca04edeedd6138c6e6bb985ab7"
+        "sha256": "5234288bf6648a0664dbe625062397eea5d26e67845348cc83d587599d7a1292"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "threads.h",
       "matched_identity_count": 130,
       "profile": "cxx17-gnu",
@@ -72209,76 +71934,23 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 90,
+        "count": 77,
         "kind_counts": {
           "function": 35,
-          "macro": 43,
+          "macro": 30,
           "record": 3,
           "typedef": 9
         },
-        "sha256": "5732dfc8c79ca65e7eaadfa94dbb84a194f77e4558fe405a3486eb974f588ed6"
+        "sha256": "ce584de18513237d993f7d48ad3439a9f2e079fd8857300804d78df349919432"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_RAW"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_PROCESS_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_SGI_CYCLE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_TAI"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_THREAD_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "TIMER_ABSTIME"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "threads.h",
       "matched_identity_count": 77,
       "profile": "c11-strict",
@@ -72294,29 +71966,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 124,
+        "count": 123,
         "kind_counts": {
           "function": 52,
-          "macro": 52,
+          "macro": 51,
           "record": 6,
           "typedef": 13,
           "variable": 1
         },
-        "sha256": "b93486eadfb79762359405a4b4f0f1cde0dd988402d4b1e238af4612949af5da"
+        "sha256": "a1074d1084cd741f04749a5a521663dc2d86e6beda7d58dca5950233c11474cb"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "threads.h",
       "matched_identity_count": 123,
       "profile": "c11-posix-2008",
@@ -72333,29 +72000,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 11,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 129,
+        "count": 128,
         "kind_counts": {
           "function": 54,
-          "macro": 52,
+          "macro": 51,
           "record": 6,
           "typedef": 13,
           "variable": 4
         },
-        "sha256": "f064c7277ecdf19760d5ae03b7b3198ecf305dff160f5e2a750c91f356ab564c"
+        "sha256": "5e99d1d91e37be29e34816b5e9bb8710e01cea8d7eb78eafb27955dfa36c869e"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "threads.h",
       "matched_identity_count": 128,
       "profile": "c11-xopen-700",
@@ -72372,29 +72034,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 133,
+        "count": 132,
         "kind_counts": {
           "function": 56,
-          "macro": 54,
+          "macro": 53,
           "record": 6,
           "typedef": 13,
           "variable": 4
         },
-        "sha256": "1352cd5f6da528534d8549ec38907b80610e172f6d08a39ab49bd5be9c8ea1a2"
+        "sha256": "d03d7969cf14faa8697e51bff3dd2aedffe3f7c1d8339afabd70261b23d0e820"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "threads.h",
       "matched_identity_count": 132,
       "profile": "c11-bsd",
@@ -72411,29 +72068,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 131,
+        "count": 130,
         "kind_counts": {
           "function": 56,
-          "macro": 52,
+          "macro": 51,
           "record": 5,
           "typedef": 14,
           "variable": 4
         },
-        "sha256": "df582b2c719a776e13c864968395635d3d7880ca04edeedd6138c6e6bb985ab7"
+        "sha256": "5234288bf6648a0664dbe625062397eea5d26e67845348cc83d587599d7a1292"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "threads.h",
       "matched_identity_count": 130,
       "profile": "cxx17-strict",
@@ -72450,29 +72102,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 92,
+        "count": 91,
         "kind_counts": {
           "function": 31,
-          "macro": 45,
+          "macro": 44,
           "record": 5,
           "typedef": 7,
           "variable": 4
         },
-        "sha256": "3f155ddf755a3cbc0680ef89a8e8751f24ffbbdfa1e44039387345008e604f30"
+        "sha256": "54660b37aa94d2e7efa174ba8faeee4d15f1ddbf266aece991c9672578960902"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "time.h",
       "matched_identity_count": 91,
       "profile": "c11-gnu",
@@ -72489,29 +72136,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 92,
+        "count": 91,
         "kind_counts": {
           "function": 31,
-          "macro": 45,
+          "macro": 44,
           "record": 5,
           "typedef": 7,
           "variable": 4
         },
-        "sha256": "00a9dc18778ab8dfe61571764172fa4e0b2f619b54620e23bd7b0105de997acb"
+        "sha256": "10644ca2185bdc7c70cf44ec3e3e3de2b7020ea257e784bbb5d5aeaba445d0b9"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "time.h",
       "matched_identity_count": 91,
       "profile": "cxx17-gnu",
@@ -72528,76 +72170,23 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 49,
+        "count": 36,
         "kind_counts": {
           "function": 10,
-          "macro": 34,
+          "macro": 21,
           "record": 2,
           "typedef": 3
         },
-        "sha256": "9de1198db891226aa26e6acab9045ca3cd204fba5c9b06c6f021ef009b3f2ae8"
+        "sha256": "e3a659fc30b5220a05a2748c25e4b1c2852ae9f86c45625532db20f672871773"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_BOOTTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_MONOTONIC_RAW"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_PROCESS_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_ALARM"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_REALTIME_COARSE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_SGI_CYCLE"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_TAI"
-        },
-        {
-          "kind": "macro",
-          "name": "CLOCK_THREAD_CPUTIME_ID"
-        },
-        {
-          "kind": "macro",
-          "name": "TIMER_ABSTIME"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "time.h",
       "matched_identity_count": 36,
       "profile": "c11-strict",
@@ -72613,29 +72202,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 1,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 83,
+        "count": 82,
         "kind_counts": {
           "function": 27,
-          "macro": 43,
+          "macro": 42,
           "record": 5,
           "typedef": 7,
           "variable": 1
         },
-        "sha256": "56eec50e1b1c201f280326e088a888b2dcb8bcc86d0b5d9c391d331c90211b52"
+        "sha256": "9d88c1bf1028560a7f5e2a742a2a5727d9fef9ef1e27fc55d80168e5a7f349c4"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "time.h",
       "matched_identity_count": 82,
       "profile": "c11-posix-2008",
@@ -72652,29 +72236,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 11,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 88,
+        "count": 87,
         "kind_counts": {
           "function": 29,
-          "macro": 43,
+          "macro": 42,
           "record": 5,
           "typedef": 7,
           "variable": 4
         },
-        "sha256": "5eb353ac14f6f82848809ff0e2898933a6dda1b82a1508c9071baa761be7edcb"
+        "sha256": "57c2d15f02148809d287809a6259421f8a9c1afff1528864745aeb31ff4b74ef"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "time.h",
       "matched_identity_count": 87,
       "profile": "c11-xopen-700",
@@ -72691,29 +72270,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 92,
+        "count": 91,
         "kind_counts": {
           "function": 31,
-          "macro": 45,
+          "macro": 44,
           "record": 5,
           "typedef": 7,
           "variable": 4
         },
-        "sha256": "3f155ddf755a3cbc0680ef89a8e8751f24ffbbdfa1e44039387345008e604f30"
+        "sha256": "54660b37aa94d2e7efa174ba8faeee4d15f1ddbf266aece991c9672578960902"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "time.h",
       "matched_identity_count": 91,
       "profile": "c11-bsd",
@@ -72730,29 +72304,24 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 92,
+        "count": 91,
         "kind_counts": {
           "function": 31,
-          "macro": 45,
+          "macro": 44,
           "record": 5,
           "typedef": 7,
           "variable": 4
         },
-        "sha256": "00a9dc18778ab8dfe61571764172fa4e0b2f619b54620e23bd7b0105de997acb"
+        "sha256": "10644ca2185bdc7c70cf44ec3e3e3de2b7020ea257e784bbb5d5aeaba445d0b9"
       },
-      "candidate_only": [
-        {
-          "kind": "macro",
-          "name": "_TIMEVAL_DEFINED"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "time.h",
       "matched_identity_count": 91,
       "profile": "cxx17-strict",
@@ -72769,8 +72338,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 12,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -76029,10 +75598,10 @@
     "runtime": false
   },
   "summary": {
-    "candidate_only_identity_count": 7016,
+    "candidate_only_identity_count": 6915,
     "candidate_only_identity_kind_counts": {
       "function": 165,
-      "macro": 6094,
+      "macro": 5993,
       "record": 50,
       "typedef": 707
     },
@@ -76040,20 +75609,20 @@
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 762,
-      "mismatch": 518,
+      "matched": 789,
+      "mismatch": 491,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "518 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+      "491 comparable pinned header/profile rows have declaration or macro identity visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "matched_identity_count": 293655,
-    "mismatch_row_count": 518,
-    "oracle_not_applicable_candidate_fact_count": 117,
+    "mismatch_row_count": 491,
+    "oracle_not_applicable_candidate_fact_count": 104,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
     "pinned_row_count": 1281,
@@ -76072,13 +75641,13 @@
     "row_count": 1337,
     "source_form_comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 691,
-      "mismatch": 589,
+      "matched": 705,
+      "mismatch": 575,
       "oracle-not-applicable": 1
     },
-    "source_form_difference_count": 2511,
-    "source_form_difference_row_count": 418,
-    "source_form_only_difference_row_count": 71
+    "source_form_difference_count": 2080,
+    "source_form_difference_row_count": 404,
+    "source_form_only_difference_row_count": 84
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {

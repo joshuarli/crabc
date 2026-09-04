@@ -104,13 +104,13 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 762,
-                "mismatch": 518,
+                "matched": 789,
+                "mismatch": 491,
                 "oracle-not-applicable": 1,
             },
         )
-        self.assertEqual(report["summary"]["source_form_difference_count"], 2511)
-        self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 71)
+        self.assertEqual(report["summary"]["source_form_difference_count"], 2080)
+        self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 84)
         mismatches = [row for row in report["rows"] if row["comparison"] == "mismatch"]
         self.assertTrue(mismatches)
         for row in mismatches:

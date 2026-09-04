@@ -397,6 +397,30 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                 self.assertEqual(row["difference"]["incompatible_count"], 0)
                 self.assertEqual(row["difference"]["reference_only_count"], 0)
 
+    def test_time_header_matches_pinned_musl_source_forms(self) -> None:
+        """Keep time feature visibility and declaration forms source-faithful."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        profiles = {
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-bsd",
+            "cxx17-strict",
+        }
+        rows = [row for row in checked["rows"] if row["header"] == "time.h"]
+
+        self.assertEqual({row["profile"] for row in rows}, profiles)
+        for row in rows:
+            with self.subTest(profile=row["profile"]):
+                self.assertEqual(row["candidate_status"], "ok")
+                self.assertEqual(row["reference_status"], "ok")
+                self.assertEqual(row["comparison"], "matched")
+                self.assertEqual(row["difference"]["candidate_only_count"], 0)
+                self.assertEqual(row["difference"]["incompatible_count"], 0)
+                self.assertEqual(row["difference"]["reference_only_count"], 0)
+
     def test_cpio_file_type_literals_match_pinned_musl_source_forms(self) -> None:
         """Keep the historical cpio file-type macro tokens exact across profiles."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
@@ -1221,23 +1245,6 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         signal_form_debt = frozenset({"sigaction", "sigevent"})
         signal_form_debt_with_fpstate = signal_form_debt | {"_fpstate"}
         resource_form_debt = frozenset({"RUSAGE_CHILDREN"})
-        time_form_debt = frozenset(
-            {
-                "asctime_r",
-                "clock_getres",
-                "clock_gettime",
-                "clock_nanosleep",
-                "clock_settime",
-                "gmtime_r",
-                "localtime_r",
-                "strftime",
-                "strftime_l",
-                "strptime",
-                "timer_create",
-                "timer_settime",
-            }
-        )
-        posix_time_form_debt = time_form_debt - {"strptime"}
         signal_profiles_with_fpstate = frozenset(
             {"c11-bsd", "c11-gnu", "cxx17-gnu", "cxx17-strict"}
         )
@@ -1269,17 +1276,14 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             },
             **{
                 ("aio.h", profile): signal_form_debt_with_fpstate
-                | time_form_debt
                 for profile in signal_profiles_with_fpstate
             },
             **{
-                ("aio.h", "c11-posix-2008"): signal_form_debt
-                | posix_time_form_debt,
-                ("aio.h", "c11-xopen-700"): signal_form_debt
-                | time_form_debt,
+                ("aio.h", profile): signal_form_debt
+                for profile in signal_profiles_without_fpstate
             },
         }
-        aio_candidate_only = frozenset({"_TIMEVAL_DEFINED"})
+        aio_candidate_only = frozenset()
 
         matched = 0
         mismatched = 0
