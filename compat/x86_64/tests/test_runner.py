@@ -1990,6 +1990,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "terminal-streams-header-topology",
             "link-header-source-form",
             "reboot-header-source-form",
+            "fcntl-event-header-topology",
         )
         expected_groups = tuple(
             group.replace(
@@ -2152,6 +2153,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_reboot_header_source_form()', source)
         self.assertIn(
             'compat/x86_64/run_reboot_header_source_form.sh', source
+        )
+        self.assertIn('run_fcntl_event_header_topology()', source)
+        self.assertIn(
+            'compat/x86_64/run_fcntl_event_header_topology.sh', source
         )
         self.assertIn('run_public_header_surface()', source)
         self.assertIn('compat/x86_64/run_public_header_surface.sh', source)
