@@ -889,6 +889,24 @@ mod allocator {
 #[path = "allocator_string_duplication.rs"]
 mod allocator_string_duplication;
 
+// One closed foreign-free static-final-link composition needs the public
+// variadic syscall/prctl shims, musl-shaped pathname canonicalization, and
+// SIGABRT termination sequence.  Keep all four owners behind the aggregate
+// feature so the completed default and earlier private allocator fixtures
+// retain their established archive and export contracts.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_static_syscall.rs"]
+mod owned_static_syscall;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_static_prctl.rs"]
+mod owned_static_prctl;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_static_realpath.rs"]
+mod owned_static_realpath;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_static_abort.rs"]
+mod owned_static_abort;
+
 // This is a separate dependency-backed password-hash compatibility leaf. Its
 // temporary MCF allocation bridges only to the final link's C allocation
 // symbols; it does not enable the x86 allocator backend, allocator lifecycle,

@@ -8,16 +8,20 @@
 # allocations; its strong owner and selected-private capability remain the
 # separate allocator-observability slice.
 #
-# The bundled mimalloc v3.3.2 backend retains an exact eleven-object pinned
-# musl support tail. That tail is deliberately non-product: deterministic backend allocation failure remains intentionally unproved.
-# This does not
-# claim full allocator lifecycle, allocator-family completion, a static
-# sysroot, product closure, promotion, or public x86 support.
+# The candidate's accepted mimalloc backend and every runtime-support owner
+# link from crabc alone.  Pinned musl executes only the separate reference
+# process: no musl archive member may enter the final candidate link.  This
+# does not claim full allocator lifecycle, allocator-family completion, a
+# static sysroot, product closure, promotion, or public x86 support.
 set -euo pipefail
+
+# The abort contract intentionally exercises terminating SIGABRT dispositions.
+# Keep those process-isolated children from depositing host-owned core files
+# beside the checkout when the pinned container permits core dumping.
+ulimit -c 0
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly MUSL_LIBC=/opt/musl-1.2.6/lib/libc.a
 readonly EXIT_MARKER=ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT
 
 fail() {
@@ -100,11 +104,10 @@ case "$(uname -m)" in
     x86_64|amd64) ;;
     *) fail "requires native x86-64" ;;
 esac
-for tool in ar awk cargo cmp cp grep nm objcopy objdump readelf rustup sed sort; do
+for tool in ar awk cargo cmp grep nm objdump readelf rustup sed sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
-[ -f "$MUSL_LIBC" ] || fail "missing pinned musl static libc"
 
 if command -v ld.lld >/dev/null 2>&1; then
     link_editor=ld.lld
@@ -117,7 +120,7 @@ fi
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-allocator-basic-runtime-v1.XXXXXX)"
+work_dir="$(mktemp -d "${TMPDIR:?x86 runner must provide repository-local TMPDIR}/crabc-x86-64-libc-allocator-basic-runtime-v1.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 crt_dir="$work_dir/crt"
 cargo_target="$work_dir/cargo-target"
@@ -135,18 +138,14 @@ candidate_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
-actual_musl_members="$work_dir/actual-musl-members"
-expected_musl_members="$work_dir/expected-musl-members"
-backend_musl_libc="$work_dir/pinned-musl-backend-support.a"
-musl_patch_dir="$work_dir/musl-program-name-bridge"
-patched_musl_symbols="$work_dir/patched-musl-libc-symbols"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_allocator_basic_runtime_v1_probe.c \
     >/dev/null 2>"$header_trace"
-for header in errno.h malloc.h pthread.h stdint.h stdlib.h sys/wait.h features.h signal.h \
-    unistd.h bits/alltypes.h bits/signal.h; do
+for header in errno.h malloc.h pthread.h stdint.h stdlib.h sys/mman.h sys/prctl.h \
+    sys/syscall.h sys/wait.h features.h signal.h unistd.h bits/alltypes.h \
+    bits/signal.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use project $header"
 done
@@ -185,7 +184,7 @@ for object in crt1 crti crtn; do
 done
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --release --locked \
-    -p crabc-libc --lib --features x86-allocator-observability \
+    -p crabc-libc --lib --features x86-owned-static-runtime \
     --target x86_64-unknown-linux-musl -- \
     -C relocation-model=static -C code-model=small -C panic=abort -C lto=off \
     -C codegen-units=256
@@ -290,35 +289,13 @@ done
     -ftls-model=local-exec -I"$ROOT_DIR/include" \
     -c compat/x86_64/libc_allocator_basic_runtime_v1_probe.c -o "$probe_object"
 
-# `libc.lo` keeps only the backend's required `__libc`/`__hwcap` state. The
-# candidate owns the program-name globals, so weaken only those duplicate musl
-# definitions in a candidate-local support archive.
-cp "$MUSL_LIBC" "$backend_musl_libc"
-mkdir "$musl_patch_dir"
-(
-    cd "$musl_patch_dir"
-    ar x "$MUSL_LIBC" libc.lo
-    objcopy --weaken-symbol=__progname --weaken-symbol=__progname_full libc.lo
-    readelf --symbols --wide libc.lo >"$patched_musl_symbols"
-    for symbol in __progname __progname_full; do
-        awk -v symbol="$symbol" \
-            '$8 == symbol && $4 == "OBJECT" && $5 == "WEAK" { found = 1 }
-             END { exit(found ? 0 : 1) }' "$patched_musl_symbols" \
-            || fail "patched musl libc.lo did not weaken ${symbol}"
-    done
-    for symbol in __libc __hwcap; do
-        awk -v symbol="$symbol" \
-            '$8 == symbol && $4 == "OBJECT" && $5 == "GLOBAL" { found = 1 }
-             END { exit(found ? 0 : 1) }' "$patched_musl_symbols" \
-            || fail "patched musl libc.lo lost ${symbol}"
-    done
-    ar rcs "$backend_musl_libc" libc.lo
-)
-
+# This is the closure judge: the candidate sees its CRT, probe, and one
+# feature-composed crabc archive only.  The pinned musl archive is permitted
+# solely in the separately executed reference process above.
 "$link_editor" -static --no-dynamic-linker --no-undefined \
     -z relro -z now -e _start -Map="$link_map" \
     "$crt_dir/crt1.o" "$crt_dir/crti.o" "$probe_object" \
-    --start-group "$archive" "$backend_musl_libc" --end-group \
+    --start-group "$archive" --end-group \
     "$crt_dir/crtn.o" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -333,7 +310,8 @@ for symbol in _start __crabc_x86_allocator_runtime_v1 \
     posix_memalign memalign valloc malloc_usable_size mi_malloc_aligned \
     mi_zalloc mi_realloc_aligned mi_free mi_usable_size pthread_create \
     pthread_join pthread_atfork fork atexit exit __funcs_on_exit waitpid _exit \
-    mmap munmap clock_gettime; do
+    mmap munmap clock_gettime syscall prctl realpath abort strdup strndup \
+    strchrnul; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate lacks ${symbol}"
 done
@@ -347,6 +325,10 @@ for symbol in "${expected_wrapper_symbols[@]}"; do
 done
 assert_elf_function_binding "$candidate_symbols" malloc_usable_size GLOBAL \
     "candidate observer"
+for symbol in syscall prctl realpath abort strdup strndup; do
+    assert_elf_function_binding "$candidate_symbols" "$symbol" GLOBAL \
+        "owned static support"
+done
 for symbol in __progname __progname_full; do
     awk -v symbol="$symbol" \
         '$4 == "OBJECT" && $5 == "GLOBAL" && $8 == symbol { found = 1 }
@@ -378,45 +360,20 @@ fi
 grep -Eq '\$0x39(,|[[:space:]]|$)' "$candidate_disassembly" \
     || fail "candidate lacks the selected public x86 fork syscall"
 
-# The three named symbols previously lived in the support tail. Their map
-# ownership must remain crabc-local, not broaden the residual musl provider.
+# Preserve the old allocator-runtime ownership ratchet: all three support
+# symbols remain crabc-local after the foreign tail is removed.
 for symbol in fputs sleep __stack_chk_fail; do
     assert_crabc_backend_support_owner "$archive" "$link_map" "$symbol"
 done
 
-awk -v archive="${backend_musl_libc}(" '
-    index($0, archive) {
-        member = substr($0, index($0, archive) + length(archive))
-        sub(/\).*/, "", member)
-        print member
-    }
-' "$link_map" | sort -u >"$actual_musl_members"
-printf '%s\n' \
-    __lock.lo \
-    abort.lo \
-    abort_lock.lo \
-    block.lo \
-    libc.lo \
-    prctl.lo \
-    realpath.lo \
-    strchrnul.lo \
-    strdup.lo \
-    syscall.lo \
-    syscall_ret.lo | sort -u >"$expected_musl_members"
-if ! cmp -s "$expected_musl_members" "$actual_musl_members"; then
-    diff -u "$expected_musl_members" "$actual_musl_members" >&2 || true
-    fail "pinned-musl backend-support member boundary drifted"
-fi
-if grep -Eq '^(aligned_alloc|calloc|free|malloc|malloc_usable_size|memalign|posix_memalign|realloc|reallocarray|valloc)\.lo$' \
-    "$actual_musl_members"; then
-    fail "candidate selected a pinned-musl allocator implementation"
-fi
-if grep -Eq '^malloc_usable_size\.lo$' "$actual_musl_members"; then
-    fail "candidate selected a pinned-musl observer implementation"
-fi
-if grep -Eq '(^|/)(__libc_start_main|__init_tls|pthread_|fork|wait|exit|crt|clone|mmap|munmap|clock_gettime)\.lo$' \
-    "$actual_musl_members"; then
-    fail "candidate selected a pinned-musl runtime implementation"
+for symbol in syscall prctl realpath abort strdup strndup strchrnul; do
+    mapfile -t owners < <(archive_member_for_symbol "$archive" "$symbol")
+    [ "${#owners[@]}" -eq 1 ] \
+        || fail "owned static support must have exactly one crabc ${symbol} owner"
+done
+if grep -Eqi 'pinned-musl|/opt/musl|(^|/)libc\.a\([^)]*\.lo\)' \
+    "$link_map" "$candidate_headers" "$candidate_dynamic"; then
+    fail "candidate selected a foreign musl support object"
 fi
 
 set +e

@@ -15,8 +15,12 @@
 #include <errno.h>
 #include <malloc.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/mman.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -517,6 +521,373 @@ static int worker_and_joined_fork_probe(void)
     return 0;
 }
 
+static int strings_equal(const char *left, const char *right)
+{
+    for (;;) {
+        if (*left != *right)
+            return 0;
+        if (*left == '\0')
+            return 1;
+        ++left;
+        ++right;
+    }
+}
+
+static int append_text(char *output, size_t capacity, size_t *length,
+    const char *suffix)
+{
+    while (*suffix != '\0') {
+        if (*length + 1 >= capacity)
+            return 0;
+        output[(*length)++] = *suffix++;
+    }
+    output[*length] = '\0';
+    return 1;
+}
+
+static int append_decimal(char *output, size_t capacity, size_t *length,
+    unsigned long value)
+{
+    char reverse[3 * sizeof(value)];
+    size_t count = 0;
+
+    do {
+        reverse[count++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    while (count != 0) {
+        if (*length + 1 >= capacity)
+            return 0;
+        output[(*length)++] = reverse[--count];
+    }
+    output[*length] = '\0';
+    return 1;
+}
+
+static int append_path(char *output, size_t capacity, const char *base,
+    const char *suffix)
+{
+    size_t length = 0;
+
+    output[0] = '\0';
+    return append_text(output, capacity, &length, base) &&
+        append_text(output, capacity, &length, suffix);
+}
+
+static void remove_realpath_fixture(const char *root, const char *target,
+    const char *nested, const char *link, const char *absolute_link,
+    const char *trailing_link, const char *loop)
+{
+    (void)syscall(SYS_unlink, link);
+    (void)syscall(SYS_unlink, absolute_link);
+    (void)syscall(SYS_unlink, trailing_link);
+    (void)syscall(SYS_unlink, loop);
+    (void)syscall(SYS_rmdir, nested);
+    (void)syscall(SYS_rmdir, target);
+    (void)syscall(SYS_rmdir, root);
+}
+
+/* This is deliberately run below a disposable child: it creates a tiny
+ * symlink graph in the repository-local .work tree and exercises abort's
+ * terminal signal paths.  No surviving process or filesystem state is part
+ * of the allocator runtime fixture's contract. */
+static int realpath_support_probe(void)
+{
+    char root[192];
+    char target[224];
+    char nested[256];
+    char link[224];
+    char absolute_link[224];
+    char trailing_link[224];
+    char loop[224];
+    char traversal[288];
+    char trailing_traversal[288];
+    char missing[224];
+    char caller_result[4096];
+    char expected[4096];
+    char expected_nested[4096];
+    char cwd[4096];
+    char long_name[4097];
+    char *allocated = NULL;
+    size_t root_length = 0;
+    size_t expected_length = 0;
+    size_t expected_nested_length = 0;
+    size_t sentinel_length;
+    int result = 0;
+
+    root[0] = '\0';
+    if (!append_text(root, sizeof(root), &root_length,
+            ".work/x86_64/owned-static-runtime-") ||
+        !append_decimal(root, sizeof(root), &root_length,
+            (unsigned long)syscall(SYS_getpid)) ||
+        !append_path(target, sizeof(target), root, "/target") ||
+        !append_path(nested, sizeof(nested), target, "/nested") ||
+        !append_path(link, sizeof(link), root, "/link") ||
+        !append_path(absolute_link, sizeof(absolute_link), root, "/absolute") ||
+        !append_path(trailing_link, sizeof(trailing_link), root, "/trailing") ||
+        !append_path(loop, sizeof(loop), root, "/loop") ||
+        !append_path(traversal, sizeof(traversal), root,
+            "/link/../target/.") ||
+        !append_path(trailing_traversal, sizeof(trailing_traversal),
+            trailing_link, "/nested") ||
+        !append_path(missing, sizeof(missing), root, "/missing"))
+        return 1;
+
+    if (syscall(SYS_mkdir, root, 0700L) != 0)
+        return 2;
+    if (syscall(SYS_mkdir, target, 0700L) != 0) {
+        result = 3;
+        goto cleanup;
+    }
+    if (syscall(SYS_mkdir, nested, 0700L) != 0) {
+        result = 4;
+        goto cleanup;
+    }
+    if (syscall(SYS_symlink, "target/nested/..", link) != 0) {
+        result = 5;
+        goto cleanup;
+    }
+    if (syscall(SYS_symlink, "loop", loop) != 0) {
+        result = 6;
+        goto cleanup;
+    }
+
+    expected[0] = '\0';
+    if (syscall(SYS_getcwd, cwd, sizeof(cwd)) < 0 ||
+        !append_text(expected, sizeof(expected), &expected_length, cwd) ||
+        !append_text(expected, sizeof(expected), &expected_length, "/") ||
+        !append_text(expected, sizeof(expected), &expected_length, root) ||
+        !append_text(expected, sizeof(expected), &expected_length, "/target")) {
+        result = 7;
+        goto cleanup;
+    }
+    expected_nested[0] = '\0';
+    if (!append_text(expected_nested, sizeof(expected_nested),
+            &expected_nested_length, expected) ||
+        !append_text(expected_nested, sizeof(expected_nested),
+            &expected_nested_length, "/nested")) {
+        result = 8;
+        goto cleanup;
+    }
+    if (syscall(SYS_symlink, expected, absolute_link) != 0) {
+        result = 9;
+        goto cleanup;
+    }
+    if (syscall(SYS_symlink, "target/", trailing_link) != 0) {
+        result = 10;
+        goto cleanup;
+    }
+
+    errno = 0;
+    if (realpath(traversal, caller_result) != caller_result ||
+        !strings_equal(caller_result, expected)) {
+        result = 11;
+        goto cleanup;
+    }
+    errno = 0;
+    allocated = realpath(traversal, NULL);
+    if (allocated == NULL || !strings_equal(allocated, expected)) {
+        result = 12;
+        goto cleanup;
+    }
+    free(allocated);
+    allocated = NULL;
+
+    errno = 0;
+    if (realpath(absolute_link, caller_result) != caller_result ||
+        !strings_equal(caller_result, expected)) {
+        result = 13;
+        goto cleanup;
+    }
+    errno = 0;
+    if (realpath(trailing_traversal, caller_result) != caller_result ||
+        !strings_equal(caller_result, expected_nested)) {
+        result = 14;
+        goto cleanup;
+    }
+
+    caller_result[0] = '\0';
+    sentinel_length = 0;
+    if (!append_text(caller_result, sizeof(caller_result), &sentinel_length,
+            "caller-buffer-unchanged")) {
+        result = 15;
+        goto cleanup;
+    }
+    errno = 0;
+    if (realpath(missing, caller_result) != NULL || errno != ENOENT ||
+        !strings_equal(caller_result, "caller-buffer-unchanged")) {
+        result = 16;
+        goto cleanup;
+    }
+    errno = 0;
+    if (realpath(loop, NULL) != NULL || errno != ELOOP) {
+        result = 17;
+        goto cleanup;
+    }
+    errno = 0;
+    if (realpath(missing, NULL) != NULL || errno != ENOENT) {
+        result = 18;
+        goto cleanup;
+    }
+    errno = 0;
+    if (realpath("", caller_result) != NULL || errno != ENOENT ||
+        !strings_equal(caller_result, "caller-buffer-unchanged")) {
+        result = 19;
+        goto cleanup;
+    }
+    errno = 0;
+    if (realpath(NULL, caller_result) != NULL || errno != EINVAL ||
+        !strings_equal(caller_result, "caller-buffer-unchanged")) {
+        result = 20;
+        goto cleanup;
+    }
+    for (size_t index = 0; index + 1 < sizeof(long_name); ++index)
+        long_name[index] = 'x';
+    long_name[sizeof(long_name) - 1] = '\0';
+    errno = 0;
+    if (realpath(long_name, caller_result) != NULL || errno != ENAMETOOLONG ||
+        !strings_equal(caller_result, "caller-buffer-unchanged")) {
+        result = 21;
+        goto cleanup;
+    }
+
+cleanup:
+    free(allocated);
+    remove_realpath_fixture(root, target, nested, link, absolute_link,
+        trailing_link, loop);
+    return result;
+}
+
+static int syscall_support_probe(void)
+{
+    unsigned char *mapping;
+    long result;
+
+    result = syscall(SYS_getpid);
+    if (result <= 0 || result != (long)getpid())
+        return 1;
+    errno = EDOM;
+    if (syscall(-1L) != -1 || errno != ENOSYS)
+        return 2;
+
+    mapping = (unsigned char *)(uintptr_t)syscall(SYS_mmap, 0L, 4096L,
+        (long)(PROT_READ | PROT_WRITE), (long)(MAP_PRIVATE | MAP_ANONYMOUS),
+        -1L, 0L);
+    if (mapping == (void *)(intptr_t)-1)
+        return 3;
+    mapping[0] = 0x51;
+    mapping[4095] = 0x15;
+    if (mapping[0] != 0x51 || mapping[4095] != 0x15 ||
+        syscall(SYS_munmap, mapping, 4096L) != 0)
+        return 4;
+    return 0;
+}
+
+static int prctl_support_probe(void)
+{
+    char original[16];
+    char observed[16] = { 0 };
+    static const char selected_name[] = "crabc-owned";
+
+    /* The name operations consume only their pointer argument.  Omit the
+     * trailing words so the candidate exercises the SysV variadic register
+     * shim without asking the kernel to validate irrelevant garbage. */
+    if (prctl(PR_GET_NAME, original) != 0)
+        return 1;
+    if (prctl(PR_SET_NAME, selected_name) != 0)
+        return 2;
+    if (prctl(PR_GET_NAME, observed) != 0 ||
+        !strings_equal(observed, selected_name))
+        return 3;
+    if (prctl(PR_SET_NAME, original) != 0)
+        return 4;
+    if (prctl(PR_GET_NO_NEW_PRIVS, 0L, 0L, 0L, 0L) < 0)
+        return 5;
+    errno = EDOM;
+    if (prctl(-1) != -1 || errno != EINVAL)
+        return 6;
+    return 0;
+}
+
+static void abort_returning_handler(int signal_number)
+{
+    (void)signal_number;
+}
+
+static int abort_case(int mode)
+{
+    pid_t child;
+    int status;
+
+    child = fork();
+    if (child < 0)
+        return 1;
+    if (child == 0) {
+        if (mode == 1) {
+            sigset_t blocked;
+
+            if (sigemptyset(&blocked) != 0 || sigaddset(&blocked, SIGABRT) != 0 ||
+                sigprocmask(SIG_BLOCK, &blocked, NULL) != 0)
+                _exit(201);
+        } else if (mode == 2) {
+            if (signal(SIGABRT, SIG_IGN) == SIG_ERR)
+                _exit(202);
+        } else if (mode == 3) {
+            if (signal(SIGABRT, abort_returning_handler) == SIG_ERR)
+                _exit(203);
+        }
+        abort();
+    }
+    if (waitpid(child, &status, 0) != child || !WIFSIGNALED(status) ||
+        WTERMSIG(status) != SIGABRT)
+        return 2;
+    return 0;
+}
+
+static int abort_support_probe(void)
+{
+    for (int mode = 0; mode != 4; ++mode) {
+        if (abort_case(mode) != 0)
+            return mode + 1;
+    }
+    return 0;
+}
+
+static int owned_static_runtime_support_body(void)
+{
+    int result;
+
+    result = syscall_support_probe();
+    if (result != 0)
+        return result;
+    result = prctl_support_probe();
+    if (result != 0)
+        return 20 + result;
+    result = realpath_support_probe();
+    if (result != 0)
+        return 40 + result;
+    result = abort_support_probe();
+    if (result != 0)
+        return 60 + result;
+    return 0;
+}
+
+static int owned_static_runtime_support_probe(void)
+{
+    pid_t child;
+    int status;
+
+    child = fork();
+    if (child < 0)
+        return 1;
+    if (child == 0)
+        _exit(owned_static_runtime_support_body());
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+        WEXITSTATUS(status) != 0)
+        return 2;
+    return 0;
+}
+
 static long raw_stdout_write(const void *buffer, size_t length)
 {
     long result;
@@ -564,5 +935,8 @@ int main(void)
     result = basic_error_probe();
     if (result != 0)
         return result;
+    result = owned_static_runtime_support_probe();
+    if (result != 0)
+        return 70 + result;
     return worker_and_joined_fork_probe();
 }
