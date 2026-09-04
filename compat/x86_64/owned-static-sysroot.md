@@ -134,8 +134,12 @@ dynamic stream at ordinary exit. The final image must select the strong
 `__stdio_exit` hook. Scratch files are private to each consumer run.
 Reopen preserves the FILE/buffer identity and tests descriptor replacement and
 failure retirement; allocated line input covers growth, embedded NULs, EOF,
-and errors. Wide and memory/cookie streams,
-`popen`, cancellation, and fork-lock recovery remain unqualified.
+and errors. Each stdio job also links `owned_stdio_backends_probe.c`: 29 binary
+records compare fixed/growing memory streams, cookie callbacks, short/error
+writes, descriptor buffering, and formatter error state with pinned musl.
+The separately receipted binary must flush its unclosed cookie stream at
+ordinary exit. Wide streams, `popen`, cancellation, and fork-lock recovery
+remain unqualified.
 
 `owned_static_printf_probe.c` additionally covers positional integer/string/
 count/pointer/errno/hex-float formatting and FILE, descriptor, allocated, and
@@ -152,7 +156,7 @@ scansets, widths, suppression, positional arguments, integer and binary32/64/80
 conversion, errno, fenv, and stream lookahead/EOF/error state. Allocation checks
 exercise `%m` growth, cleanup, partial failure, and ENOMEM; each process owns
 its scratch and restores its resource limit. Wide formatting/scanning remains
-explicitly unsupported. The 24 bounded jobs now cover 36 installed binaries.
+explicitly unsupported. The 24 bounded jobs now cover 40 installed binaries.
 
 `x86-owned-static-runtime` is a planned archive profile, routed through this
 runner but selected by `scripts/build_x86_64_owned_sysroot.py`. Its direct
