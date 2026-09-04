@@ -433,6 +433,12 @@ mod pthread_tsd;
 mod pthread_mutex;
 #[path = "pthread_spin_destroy.rs"]
 mod pthread_spin_destroy;
+// The spin acquisition/release operations compose the existing four-byte
+// pthread_spin_init/destroy records with the private x86 atomic helper. They
+// remain opt-in until their isolated pinned-musl/static closure is evidenced.
+#[cfg(feature = "x86-pthread-spin-operations")]
+#[path = "pthread_spin_operations.rs"]
+mod pthread_spin_operations;
 #[path = "pthread_cond.rs"]
 mod pthread_cond;
 #[path = "pthread_rwlock.rs"]

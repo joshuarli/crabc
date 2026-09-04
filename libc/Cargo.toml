@@ -115,6 +115,11 @@ x86-a64l = []
 # alias body. Keep both names opt-in so the default archive stays free of
 # legacy netdb setter symbols and no resolver/database state is implied.
 x86-netdb-setent = []
+# Pinned musl's three spin-object operations share one exact atomic state
+# machine with the separately evidenced init/destroy leaves. Keep the
+# acquisition/release extension opt-in so the frozen selected-static archive
+# does not silently acquire synchronization entry points.
+x86-pthread-spin-operations = []
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core" }
