@@ -337,7 +337,15 @@ def assert_native_target() -> None:
 
 
 def validate_output_path(path: Path) -> Path:
-    output = path.expanduser().resolve()
+    # Preserve the requested spelling until it has been checked. Resolving
+    # first would hide a symlink from remove_owned_output's replacement guard.
+    output = path.expanduser().absolute()
+    try:
+        resolved = output.resolve()
+    except (OSError, RuntimeError) as error:
+        raise BuildError("--output has an unsafe filesystem path") from error
+    if resolved != output:
+        raise BuildError("--output must not cross a symlink or contain traversal")
     if output in {Path("/"), ROOT, ROOT.parent}:
         raise BuildError("--output must name a dedicated directory")
     if output.parent == output:

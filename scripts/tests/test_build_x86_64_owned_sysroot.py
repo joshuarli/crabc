@@ -38,6 +38,22 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             builder.ROOT / ".work/x86_64/owned-static-sysroot",
         )
 
+    def test_output_validation_rejects_symlink_and_traversal_before_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            destination = root / "installed"
+            destination.mkdir()
+            sentinel = destination / "keep"
+            sentinel.write_bytes(b"existing output\n")
+            alias = root / "alias"
+            alias.symlink_to(destination, target_is_directory=True)
+            for path in (alias, alias / "child", destination / ".." / "installed"):
+                with self.subTest(path=path):
+                    with self.assertRaises(builder.BuildError):
+                        builder.validate_output_path(path)
+                    self.assertEqual(sentinel.read_bytes(), b"existing output\n")
+            self.assertEqual(builder.validate_output_path(destination), destination)
+
     @staticmethod
     def write_elf64_relocatable(
         path: Path,
