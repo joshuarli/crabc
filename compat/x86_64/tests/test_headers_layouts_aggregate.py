@@ -76,6 +76,32 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
             facts, self.assessment_contract()
         )
 
+    def reports_with_green_header_dimensions(self):
+        """Keep real routing facts while making only generic header rows green."""
+
+        reports = copy.deepcopy(AGGREGATE.load_context()[-1])
+        by_id = {
+            entry["id"]: entry
+            for entry in reports
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+        }
+        declaration = by_id["declaration-macro-visibility"]["summary"]
+        callable_visibility = by_id["callable-visibility"]["summary"]
+        prototype = by_id["prototype-layout"]["summary"]
+        record_layout = by_id["record-byte-layout"]["summary"]
+        assert isinstance(declaration, dict)
+        assert isinstance(callable_visibility, dict)
+        assert isinstance(prototype, dict)
+        assert isinstance(record_layout, dict)
+        declaration["mismatch_row_count"] = 0
+        declaration["source_form_difference_count"] = 0
+        callable_visibility["mismatch_row_count"] = 0
+        prototype["mismatch_row_count"] = 0
+        comparisons = record_layout["comparison_counts"]
+        assert isinstance(comparisons, dict)
+        comparisons["mismatch"] = 0
+        return reports
+
     def test_current_assessment_is_finite_planned_header_evidence(self) -> None:
         report = self.current_report()
         AGGREGATE.validate_report(report)
@@ -132,7 +158,10 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         )
         self.assertEqual(downstream["deferred_callable_count"], 328)
         self.assertTrue(downstream["routing_exact"])
+        self.assertEqual(downstream["provider_archive_evidence_state"], "incomplete")
+        self.assertTrue(downstream["final_provider_archive_closure_available"])
         self.assertFalse(downstream["final_provider_archive_closure_complete"])
+        self.assertTrue(downstream["selected_provider_linkage_audit_available"])
         self.assertFalse(downstream["selected_provider_linkage_audit_complete"])
         generic_reports = report["generic_reports"]
         assert isinstance(generic_reports, list)
@@ -283,6 +312,85 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
             "archive_extraction_complete",
             AGGREGATE.HeaderFoundationCompletionFacts.__dataclass_fields__,
         )
+
+    def test_unavailable_provider_metadata_cannot_block_a_built_header_assessment(self) -> None:
+        """The assessment builder admits only header facts, not C-ABI metadata."""
+
+        reports = self.reports_with_green_header_dimensions()
+
+        def unavailable(foundation):
+            provider_audit = foundation.pop("selected_callable_provider_linkage_audit")
+            assert isinstance(provider_audit, dict)
+            disposition = foundation["callable_disposition"]
+            assert isinstance(disposition, dict)
+            disposition.pop("final_provider_archive_closure_complete")
+            # This is downstream provider metadata, not a routing fact.
+            disposition["unprovided_callable_count"] = "unavailable"
+
+        def complete(foundation):
+            provider_audit = foundation["selected_callable_provider_linkage_audit"]
+            disposition = foundation["callable_disposition"]
+            assert isinstance(provider_audit, dict)
+            assert isinstance(disposition, dict)
+            provider_audit["full_callable_closure"] = True
+            disposition["final_provider_archive_closure_complete"] = True
+
+        variants = (
+            ("unavailable", unavailable, "unavailable", False),
+            ("incomplete", lambda _foundation: None, "incomplete", True),
+            ("complete", complete, "complete", True),
+        )
+        expected_assessment = None
+        for name, mutate, expected_state, expected_available in variants:
+            with self.subTest(provider_evidence=name):
+                foundation = AGGREGATE.load_toml(AGGREGATE.FOUNDATION_PATH)
+                mutate(foundation)
+                facts, assessment = AGGREGATE.build_header_completion_assessment(
+                    foundation, reports
+                )
+                self.assertTrue(assessment["complete"])
+                if expected_assessment is None:
+                    expected_assessment = assessment
+                else:
+                    self.assertEqual(assessment, expected_assessment)
+
+                downstream = AGGREGATE.downstream_provider_archive_obligations(
+                    foundation, facts, self.assessment_contract()
+                )
+                self.assertEqual(
+                    downstream["provider_archive_evidence_state"], expected_state
+                )
+                self.assertEqual(
+                    downstream["selected_provider_linkage_audit_available"],
+                    expected_available,
+                )
+                self.assertEqual(
+                    downstream["final_provider_archive_closure_available"],
+                    expected_available,
+                )
+                if not expected_available:
+                    self.assertFalse(
+                        downstream["selected_provider_linkage_audit_complete"]
+                    )
+                    self.assertFalse(
+                        downstream["final_provider_archive_closure_complete"])
+                else:
+                    expected_complete = expected_state == "complete"
+                    self.assertEqual(
+                        downstream["selected_provider_linkage_audit_complete"],
+                        expected_complete,
+                    )
+                    self.assertEqual(
+                        downstream["final_provider_archive_closure_complete"],
+                        expected_complete,
+                    )
+
+        broken_routing = AGGREGATE.load_toml(AGGREGATE.FOUNDATION_PATH)
+        disposition = broken_routing["callable_disposition"]
+        assert isinstance(disposition, dict)
+        disposition["report"] = "compat/x86_64/generated/missing-disposition.json"
+        with self.assertRaisesRegex(AGGREGATE.AggregateError, "callable disposition"):
+            AGGREGATE.build_header_completion_assessment(broken_routing, reports)
 
     def test_provider_success_cannot_compensate_for_a_header_mismatch(self) -> None:
         # The predicate has no provider/archive input. Even a hypothetical

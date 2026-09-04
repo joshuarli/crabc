@@ -1245,6 +1245,23 @@ def assess_header_foundation_completion(
     }
 
 
+def build_header_completion_assessment(
+    foundation: Mapping[str, Any], reports: Sequence[Mapping[str, Any]]
+) -> tuple[HeaderFoundationCompletionFacts, dict[str, Any]]:
+    """Build header-only facts and their assessment from checked evidence.
+
+    This boundary intentionally does not load the provider audit or its final
+    archive-closure metadata.  Missing or unavailable downstream evidence can
+    therefore be reported separately, but cannot prevent a valid header
+    assessment from being built.  The callable disposition remains mandatory
+    because it supplies the header-owned exact-routing facts.
+    """
+
+    contract = header_completion_assessment_contract(foundation)
+    facts = header_completion_facts(foundation, reports, contract)
+    return facts, assess_header_foundation_completion(facts, contract)
+
+
 def header_blocker_counts(
     facts: HeaderFoundationCompletionFacts,
     contract: HeaderCompletionAssessmentContract,
@@ -1274,41 +1291,67 @@ def downstream_provider_archive_obligations(
     facts: HeaderFoundationCompletionFacts,
     contract: HeaderCompletionAssessmentContract,
 ) -> dict[str, Any]:
-    """Report the deferred C-ABI closure without admitting it to assessment."""
+    """Report the deferred C-ABI closure without admitting it to assessment.
+
+    The header-owned disposition table is still mandatory: it is the source
+    of the exact ownership-routing facts above.  Its downstream final-closure
+    field and the separate selected-provider audit are intentionally optional
+    observations here.  An absent, stale, or malformed downstream observation
+    must render this downstream view explicitly unavailable, never invalidate
+    a header assessment that was already built from valid header evidence.
+    """
 
     disposition = foundation.get("callable_disposition")
     provider_audit = foundation.get("selected_callable_provider_linkage_audit")
     require(isinstance(disposition, Mapping), "header foundation callable disposition is invalid")
-    require(isinstance(provider_audit, Mapping), "header foundation selected provider audit is invalid")
-    final_provider_archive_closure_complete = disposition.get(
+    final_provider_archive_closure = disposition.get(
         "final_provider_archive_closure_complete"
     )
-    selected_provider_linkage_audit_complete = provider_audit.get("full_callable_closure")
-    require(
-        isinstance(final_provider_archive_closure_complete, bool),
-        "header foundation final provider/archive closure state is invalid",
+    selected_provider_linkage_audit = (
+        provider_audit.get("full_callable_closure")
+        if isinstance(provider_audit, Mapping)
+        else None
     )
-    require(
-        isinstance(selected_provider_linkage_audit_complete, bool),
-        "header foundation selected provider linkage-audit state is invalid",
+    final_provider_archive_closure_available = isinstance(
+        final_provider_archive_closure, bool
     )
-    require(
-        nonnegative_count(
-            disposition.get("unprovided_callable_count"),
-            "header foundation deferred callable count",
-        )
-        == len(facts.expected_deferred_callable_names),
-        "header foundation deferred callable count is stale",
+    selected_provider_linkage_audit_available = isinstance(
+        selected_provider_linkage_audit, bool
     )
+    final_provider_archive_closure_complete = (
+        final_provider_archive_closure
+        if final_provider_archive_closure_available
+        else False
+    )
+    selected_provider_linkage_audit_complete = (
+        selected_provider_linkage_audit
+        if selected_provider_linkage_audit_available
+        else False
+    )
+    if not (
+        final_provider_archive_closure_available
+        and selected_provider_linkage_audit_available
+    ):
+        state = "unavailable"
+    elif (
+        final_provider_archive_closure_complete
+        and selected_provider_linkage_audit_complete
+    ):
+        state = "complete"
+    else:
+        state = "incomplete"
     return {
         "archive_extraction_is_header_completion_requirement": False,
         "deferred_callable_count": len(facts.expected_deferred_callable_names),
         "deferred_owner_group_count": len(facts.deferred_owner_groups),
+        "final_provider_archive_closure_available": final_provider_archive_closure_available,
         "final_provider_archive_closure_complete": final_provider_archive_closure_complete,
         "linkage_owner_family": contract.deferred_linkage_owner_family,
         "linkage_owner_obligation": contract.deferred_linkage_owner_obligation,
+        "provider_archive_evidence_state": state,
         "routing_exact": exact_callable_ownership_routing(facts, contract),
         "runtime_semantics_are_header_completion_requirement": False,
+        "selected_provider_linkage_audit_available": selected_provider_linkage_audit_available,
         "selected_provider_linkage_audit_complete": selected_provider_linkage_audit_complete,
         "static_export_complement_is_header_completion_requirement": False,
         "unprovided_callable_count_is_header_completion_requirement": False,
@@ -1321,8 +1364,7 @@ def build_report() -> dict[str, Any]:
     completion = foundation.get("completion")
     require(isinstance(completion, Mapping), "header foundation completion is invalid")
     assessment_contract = header_completion_assessment_contract(foundation)
-    facts = header_completion_facts(foundation, reports, assessment_contract)
-    header_completion = assess_header_foundation_completion(facts, assessment_contract)
+    facts, header_completion = build_header_completion_assessment(foundation, reports)
     return {
         "abi_facet_count": len(string_list(control["abi_facets"], "aggregate control abi_facets")),
         "accounting_complete": True,

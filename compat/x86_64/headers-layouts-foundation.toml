@@ -98,7 +98,7 @@ required_dimensions = ["installed-surface", "declaration-identity", "declaration
 deferred_linkage_owner_family = "libc.c-abi-compat"
 deferred_linkage_owner_obligation = "final-callable-provider-archive-closure"
 explicit_nonrequirements = ["archive-extraction", "final-provider-archive-closure", "promotion-public-support", "runtime-semantics", "selected-provider-linkage-audit", "static-export-complement", "unprovided-callable-count"]
-description = "The aggregate's pure `header-foundation-v1` assessment requires the installed surface, declaration identity and source forms, callable visibility, prototype/named declarations, record layouts, and exact callable ownership routing. It reports but does not require the finite deferred provider/archive complement, selected-provider linkage audit, static-export complement, archive extraction, runtime semantics, promotion, or public support."
+description = "The aggregate's pure `header-foundation-v1` assessment requires the installed surface, declaration identity and source forms, callable visibility, prototype/named declarations, record layouts, and exact callable ownership routing. It reports but does not require the finite deferred provider/archive complement, selected-provider linkage audit, static-export complement, archive extraction, runtime semantics, promotion, or public support. A false or unavailable downstream provider/archive observation remains separately visible and cannot block this assessment."
 
 # This control closes Phase 0 accounting over the current finite header
 # evidence without treating its intentionally red reports as a waiver. It
@@ -112,6 +112,9 @@ id = "x86-headers-layouts-accounting-control"
 state = "partial-verified"
 owner = "libc.headers-layouts"
 command = "./scripts/dev-x86_64.sh headers-layouts-aggregate"
+# This artifact is generated evidence. When this assessment's schema or named
+# inputs change, first refresh its native writers, then run this aggregate with
+# `--write` and `--check`; never hand-edit the report or its count prose.
 generated_report = "compat/x86_64/generated/headers_layouts_aggregate/report.json"
 required_result = "checked-header-foundation-assessment-report"
 direct_manifest = "compat/x86_64/headers-layouts.toml"
