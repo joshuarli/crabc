@@ -7734,6 +7734,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         static_startup = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
         ).read_text(encoding="utf-8")
+        process_exit = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_exit.rs"
+        ).read_text(encoding="utf-8")
         probe = (
             ROOT / "compat" / "x86_64" / "libc_pthread_atfork_probe.c"
         ).read_text(encoding="utf-8")
@@ -7794,8 +7797,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "slot.control.load(Ordering::Acquire) != 0",
         ):
             self.assertIn(required, pthread_create_join)
-        for required in ("fn atexit", "fn __funcs_on_exit", "fn exit"):
-            self.assertIn(required, static_startup)
+        self.assertIn('#[path = "process_exit.rs"]', static_startup)
+        self.assertIn(
+            "pub use process_exit::{atexit, __cxa_atexit, __cxa_finalize, __funcs_on_exit};",
+            static_startup,
+        )
+        for required in ("fn atexit", "fn __funcs_on_exit"):
+            self.assertIn(required, process_exit)
+        self.assertIn("fn exit", static_startup)
 
         for required in (
             "check_parent_child_and_exit_order",
@@ -11711,6 +11720,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         static_startup = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
         ).read_text(encoding="utf-8")
+        process_exit = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_exit.rs"
+        ).read_text(encoding="utf-8")
         probe = (
             ROOT / "compat" / "x86_64" / "libc_crt_static_tls_probe.c"
         ).read_text(encoding="utf-8")
@@ -11744,10 +11756,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "__libc_start_main",
             "static_tls::is_ready()",
             "rtld_fini.is_some()",
-            "ATEXIT_CAPACITY: usize = 32",
-            "__cxa_atexit",
-            "__cxa_finalize",
-            "__funcs_on_exit",
             "fn __stdio_exit()",
             "weak_alias(dummy, __stdio_exit)",
             '#[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]',
@@ -11757,6 +11765,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "immediate_termination::_Exit(127)",
         ):
             self.assertIn(required, static_startup)
+        self.assertIn('#[path = "process_exit.rs"]', static_startup)
+        self.assertIn(
+            "pub use process_exit::{atexit, __cxa_atexit, __cxa_finalize, __funcs_on_exit};",
+            static_startup,
+        )
+        for required in (
+            "ATEXIT_CAPACITY: usize = 32",
+            "__cxa_atexit",
+            "__cxa_finalize",
+            "__funcs_on_exit",
+        ):
+            self.assertIn(required, process_exit)
 
         for required in (
             "__thread",
