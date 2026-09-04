@@ -40,3 +40,6 @@ x86_64-general-initial-tls-runtime-v1-interpreter = []
 # null-owned-handoff shape; it does not select the fixed owned-CRT carrier,
 # loader finalizers, or a dynamic product.
 x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter = []
+# Installed initial-graph product: same graph/lifecycle and RuntimeV1, plus
+# loader-owned worker materialization (no runtime module growth or unload).
+x86_64-owned-dynamic-runtime = ["x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"]

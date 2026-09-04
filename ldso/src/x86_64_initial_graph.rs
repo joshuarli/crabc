@@ -72,6 +72,9 @@ mod x86_64_initial_tls_registry;
 #[cfg(crabc_general_initial_tls_materialization_v1)]
 #[path = "x86_64_general_initial_tls_state.rs"]
 mod x86_64_general_initial_tls_state;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_initial_worker_tls.rs"]
+mod x86_64_initial_worker_tls;
 #[cfg(crabc_general_initial_graph)]
 use x86_64_initial_graph_state::ObjectIdentity;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
@@ -2097,6 +2100,17 @@ unsafe fn initial_tls_runtime_v1_registry(
 unsafe fn install_initial_tls(
     objects: &[Object; MAX_OBJECTS],
 ) -> Option<InstalledInitialTls> {
+    let installed = unsafe { materialize_initial_tls(objects, 0) }?;
+    if syscall2(SYS_ARCH_PRCTL, ARCH_SET_FS, installed.thread_pointer as i64) < 0 {
+        let _ = syscall2(SYS_MUNMAP, installed.mapping as i64, installed.mapping_byte_len as i64);
+        return None;
+    }
+    Some(installed)
+}
+
+/// Materialize a checked initial module layout without changing the caller's
+/// FS. Startup and worker construction use this same template/DTV owner.
+unsafe fn materialize_initial_tls(objects: &[Object; MAX_OBJECTS], ownership_prefix: usize) -> Option<InstalledInitialTls> {
     let mut total_tls_size = 0usize;
     let mut tp_alignment = core::mem::align_of::<usize>();
     let mut module_count = 0usize;
@@ -2125,6 +2139,7 @@ unsafe fn install_initial_tls(
         .checked_add(TLS_DTV_BYTE_LEN)?
         .checked_add(TLS_MODULE_SIZE_TABLE_BYTE_LEN)?;
     let raw_mapping_size = total_tls_size
+        .checked_add(ownership_prefix)?
         .checked_add(reserved_after_tp)?
         // `align_down` may discard almost one complete TP-alignment unit.
         .checked_add(tp_alignment)?;
@@ -2147,7 +2162,7 @@ unsafe fn install_initial_tls(
     let thread_pointer = align_down_usize(unaligned_tp, tp_alignment);
     let tls_start = thread_pointer.checked_sub(total_tls_size)?;
     let dtv_end = thread_pointer.checked_add(reserved_after_tp)?;
-    if tls_start < block || dtv_end > mapping_end {
+    if tls_start < block.checked_add(ownership_prefix)? || dtv_end > mapping_end {
         let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
         return None;
     }
@@ -2190,10 +2205,6 @@ unsafe fn install_initial_tls(
         }
         core::ptr::write_unaligned(dtv.add(object.tls_module_id), destination as usize);
         core::ptr::write_unaligned(module_sizes.add(object.tls_module_id), object.tls_memsz);
-    }
-    if syscall2(SYS_ARCH_PRCTL, ARCH_SET_FS, thread_pointer as i64) < 0 {
-        let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
-        return None;
     }
     Some(InstalledInitialTls {
         mapping: mapping as *mut u8,

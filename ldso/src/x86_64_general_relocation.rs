@@ -179,6 +179,16 @@ unsafe fn word_value(
     kind: u32, index: usize, addend: i64,
 ) -> Option<u64> {
     let object = &objects[owner];
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if index != 0 {
+        if let Some(address) = x86_64_initial_worker_tls::runtime_function(unsafe { symbol_name(object, index) }?) {
+            let requested = unsafe { definition(objects, owner, index) }?;
+            return (matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT)
+                && addend == 0 && requested.section == 0 && requested.binding == 1
+                && requested.visibility == 0 && matches!(requested.kind, 0 | 2))
+                .then_some(address);
+        }
+    }
     if index != 0 && is_private_runtime_symbol(unsafe { symbol_name(object, index) }?) {
         // Preserve the existing exact weak/main-only data-wire admission;
         // this path must not turn the private descriptor into global scope.
