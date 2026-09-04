@@ -178,6 +178,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   poll-header-abi  compile the staged x86 C/C++ poll header layouts
   select-header-abi  compile the staged x86 C/C++ sys/select header layouts
   fcntl-header-abi compile the staged x86 C/C++ fcntl header layouts
+  file-handles-header-abi verify x86 GNU <fcntl.h> file-handle C/C++ ABI
   descriptor-advice-header-abi verify x86 C/C++ descriptor-advice header profiles
   filesystem-capacity-header-abi verify x86 C/C++ filesystem-capacity header profiles
   vector-io-header-abi verify x86 C/C++ vector-I/O header profiles
@@ -438,6 +439,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-lchown  run the static x86 crabc-libc lchown leaf
   libc-hasmntopt  run the static x86 crabc-libc hasmntopt leaf
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
+  libc-file-handles  run the opt-in static x86 file-handle syscall slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-environment  run the static x86 crabc-libc environment-mutation slice
   libc-secure-environment  run the static x86 crabc-libc GNU secure-environment slice
@@ -3430,6 +3432,10 @@ run_fcntl_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_fcntl_header_abi.sh
 }
 
+run_file_handles_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_file_handles_header_abi.sh
+}
+
 run_flock_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_flock_header_abi.sh
 }
@@ -4663,6 +4669,10 @@ run_libc_mktemp_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_mktemp.sh
 }
 
+run_libc_file_handles_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_file_handles.sh
+}
+
 run_libc_mkfifo_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_mkfifo.sh
 }
@@ -5113,6 +5123,7 @@ case "$command" in
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
     sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    file-handles-header-abi|libc-file-handles) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
     tee-header-abi|splice-header-abi) ;;
     sync-file-range-header-abi|copy-file-range-header-abi) ;;
@@ -6019,6 +6030,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "fcntl-header-abi takes no arguments"
         ensure_image
         run_fcntl_header_abi
+        ;;
+    file-handles-header-abi)
+        [ "$#" -eq 0 ] || fail "file-handles-header-abi takes no arguments"
+        ensure_image
+        run_file_handles_header_abi
         ;;
     flock-header-abi)
         [ "$#" -eq 0 ] || fail "flock-header-abi takes no arguments"
@@ -7198,6 +7214,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-mktemp takes no arguments"
         ensure_image
         run_libc_mktemp_probe
+        ;;
+    libc-file-handles)
+        [ "$#" -eq 0 ] || fail "libc-file-handles takes no arguments"
+        ensure_image
+        run_libc_file_handles_probe
         ;;
     libc-process-context)
         [ "$#" -eq 0 ] || fail "libc-process-context takes no arguments"

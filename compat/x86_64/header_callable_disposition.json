@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "b27b13b1858a5057b5badc6aecd46687eedb0bcf68bf91effde2e780597a1c57",
+    "callable_inventory_sha256": "ba2873dd135a637a540da2825d29e52ecfb7870d0349688c480edcd024a033ee",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "513585c57d9241466be93f97a5c92cc52ab6c847717397475a6ef7f7ff0c9762",
+    "parity_ledger_sha256": "7acf667a52bc7c60ae2dee2a90179937fe2f1e8b4d84e9119001fdce9786eadc",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "missing_reference_declaration_groups": [],
@@ -1388,8 +1388,6 @@
           "mq_timedsend",
           "mq_unlink",
           "mremap",
-          "name_to_handle_at",
-          "open_by_handle_at",
           "openlog",
           "openpty",
           "posix_openpt",
@@ -1644,6 +1642,13 @@
         ]
       },
       {
+        "id": "x86-file-handles",
+        "members": [
+          "name_to_handle_at",
+          "open_by_handle_at"
+        ]
+      },
+      {
         "id": "x86-resolver-runtime",
         "members": [
           "__res_state",
@@ -1765,7 +1770,7 @@
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 345
+      "planned-provider": 343
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1776,8 +1781,8 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 354,
-    "verified_feature_callable_count": 52
+    "unprovided_callable_count": 352,
+    "verified_feature_callable_count": 54
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {

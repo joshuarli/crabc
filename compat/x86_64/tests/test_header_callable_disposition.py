@@ -39,15 +39,15 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         summary = report["summary"]
         self.assertEqual(summary["candidate_external_callable_count"], 1525)
         self.assertEqual(summary["default_static_callable_count"], 1119)
-        self.assertEqual(summary["verified_feature_callable_count"], 52)
-        self.assertEqual(summary["unprovided_callable_count"], 354)
+        self.assertEqual(summary["verified_feature_callable_count"], 54)
+        self.assertEqual(summary["unprovided_callable_count"], 352)
         self.assertEqual(
             summary["deferred_resolution_counts"],
             {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 345,
+                "planned-provider": 343,
             },
         )
         self.assertEqual(
@@ -77,6 +77,25 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertEqual(posix_runtime["resolution"], "planned-provider")
         self.assertIn("statx", posix_runtime["members"])
         self.assertNotIn("statx", report["primary_disposition"]["default_static"]["members"])
+
+    def test_file_handles_are_verified_opt_in_providers_not_deferred_defaults(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: row
+            for row in report["primary_disposition"]["verified_feature_archives"]
+        }
+        file_handles = providers["x86-file-handles"]
+        self.assertEqual(
+            file_handles["members"],
+            ["name_to_handle_at", "open_by_handle_at"],
+        )
+        deferred_members = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        self.assertNotIn("name_to_handle_at", deferred_members)
+        self.assertNotIn("open_by_handle_at", deferred_members)
 
     def test_structural_dispositions_and_atomic_providers_stay_distinct(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

@@ -124,8 +124,8 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
                 "callable_provider_counts": {
                     "declared_unverified_feature_archives": 0,
                     "default_static": 1119,
-                    "unprovided": 354,
-                    "verified_feature_archives": 52,
+                    "unprovided": 352,
+                    "verified_feature_archives": 54,
                 },
                 "complete": False,
                 "extraction_status_counts": {"extracted": 1119},

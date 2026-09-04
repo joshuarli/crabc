@@ -1347,8 +1347,6 @@
         "mq_unlink",
         "mremap",
         "mtx_timedlock",
-        "name_to_handle_at",
-        "open_by_handle_at",
         "open_memstream",
         "open_wmemstream",
         "openlog",
@@ -1602,6 +1600,17 @@
           "setitimer"
         ],
         "runner": "compat/x86_64/run_libc_interval_timers.sh",
+        "state": "verified"
+      },
+      {
+        "aliases": [],
+        "evidence_record": "static-c-file-handles",
+        "id": "x86-file-handles",
+        "members": [
+          "name_to_handle_at",
+          "open_by_handle_at"
+        ],
+        "runner": "compat/x86_64/run_libc_file_handles.sh",
         "state": "verified"
       },
       {
@@ -417382,7 +417391,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "513585c57d9241466be93f97a5c92cc52ab6c847717397475a6ef7f7ff0c9762",
+    "parity_ledger_sha256": "7acf667a52bc7c60ae2dee2a90179937fe2f1e8b4d84e9119001fdce9786eadc",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -436197,8 +436206,8 @@
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
       "default_static": 1119,
-      "unprovided": 354,
-      "verified_feature_archives": 52
+      "unprovided": 352,
+      "verified_feature_archives": 54
     },
     "candidate_external_callable_count": 1525,
     "candidate_public_header_count": 191,

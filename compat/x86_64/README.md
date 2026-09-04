@@ -333,6 +333,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh poll-header-abi
 ./scripts/dev-x86_64.sh select-header-abi
 ./scripts/dev-x86_64.sh fcntl-header-abi
+./scripts/dev-x86_64.sh file-handles-header-abi
 ./scripts/dev-x86_64.sh flock-header-abi
 ./scripts/dev-x86_64.sh sendfile-header-abi
 ./scripts/dev-x86_64.sh tee-header-abi
@@ -541,6 +542,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-getpass
 ./scripts/dev-x86_64.sh mktemp-header-abi
 ./scripts/dev-x86_64.sh libc-mktemp
+./scripts/dev-x86_64.sh libc-file-handles
 ./scripts/dev-x86_64.sh libc-process-context
 ./scripts/dev-x86_64.sh libc-environment
 ./scripts/dev-x86_64.sh libc-secure-environment
@@ -1726,8 +1728,8 @@ work, and `libc.c-abi-compat` retains final provider selection, ordinary
 archive extraction, behavior, and C-ABI closure.
 
 `header-callable-disposition` regenerates the compiler-derived callable
-inventory, then checks that its 1,119 default-static, 52 verified
-feature-provider, and 354 deferred names form one exact primary partition.
+inventory, then checks that its 1,119 default-static, 54 verified
+feature-provider, and 352 deferred names form one exact primary partition.
 Its deferred groups distinguish planned semantic providers from compiler
 builtins, consumer-supplied callbacks, and oracle-declared no-provider names;
 the project-only addressable atomic names are now selected default-static
@@ -1736,11 +1738,11 @@ declaration parity, family promotion, final C-ABI closure, or public x86
 support.
 
 `header-callable-provider-linkage-audit` separately uses the checked inventory
-to ordinarily extract the 1,119 current default-static and 52 verified
+to ordinarily extract the 1,119 current default-static and 54 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 354-name unprovided complement remains explicit:
+selection and behavior. Its 352-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 
@@ -4801,6 +4803,19 @@ or filesystem policy, descriptor/directory and file-handle authority, a Rust
 temporary API, dynamic runtime, family completion, promotion, and public x86
 support.
 
+`file-handles-header-abi` and `libc-file-handles` are the paired private GNU
+file-handle checks. The header gate compares pinned-musl and project C/C++
+`<fcntl.h>` declarations, GNU visibility, `MAX_HANDLE_SZ`, and the
+caller-owned variable-tail `struct file_handle` layout; strict non-GNU probes
+must reject the declarations. The runtime gate compares pinned musl with an
+opt-in `x86-file-handles` `-nostdlib -static` archive that adds exactly
+`name_to_handle_at` and `open_by_handle_at`, leaving the default export roster
+unchanged. It checks x86 syscall 303/304 register transfer and pointer/error
+paths while preserving filesystem support, mount selection, and permission
+outcomes as kernel authority. It provides no file-handle allocation, pathname
+or mount policy, generic filesystem confinement, Rust facade, family
+completion, promotion, or public x86 support.
+
 `libc-process-context` is a separately recorded static
 `verified_artifact` gate over that archive, not the `process.control`
 capability. Its project-header C body first executes through pinned musl and
@@ -7442,6 +7457,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-qsort`,
 `libc-getpass`,
 `libc-mktemp`,
+`libc-file-handles`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-posix-exit`, `libc-posix-spawnattr-init`, `libc-callback-algorithms`,
 `libc-search-hash-table`,

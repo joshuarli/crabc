@@ -1807,6 +1807,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
             "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
             "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "file-handles-header-abi|libc-file-handles",
             "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
             "tee-header-abi|splice-header-abi",
             "sync-file-range-header-abi|copy-file-range-header-abi",
@@ -2077,6 +2078,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-mkfifoat", source)
         self.assertIn("mktemp-header-abi", source)
         self.assertIn("libc-mktemp", source)
+        self.assertIn("file-handles-header-abi", source)
+        self.assertIn("libc-file-handles", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-environment", source)
         self.assertIn("libc-secure-environment", source)
@@ -2197,6 +2200,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_select_header_abi.sh', source)
         self.assertIn('run_fcntl_header_abi()', source)
         self.assertIn('compat/x86_64/run_fcntl_header_abi.sh', source)
+        self.assertIn('run_file_handles_header_abi()', source)
+        self.assertIn(
+            'compat/x86_64/run_file_handles_header_abi.sh', source
+        )
         self.assertIn('run_descriptor_advice_header_abi()', source)
         self.assertIn(
             'compat/x86_64/run_descriptor_advice_header_abi.sh', source
@@ -3575,6 +3582,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-mktemp)\n        [ "$#" -eq 0 ] || fail "libc-mktemp takes no arguments"',
+            source,
+        )
+        self.assertIn('run_file_handles_header_abi()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_file_handles_header_abi.sh', source
+        )
+        self.assertIn('run_libc_file_handles_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_file_handles.sh', source
+        )
+        self.assertIn(
+            '    libc-file-handles)\n        [ "$#" -eq 0 ] || fail "libc-file-handles takes no arguments"',
             source,
         )
         self.assertIn('run_libc_process_context_probe()', source)
@@ -13009,6 +13028,96 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, header_cxx)
         self.assertIn("mktemp-header-abi", runner)
         self.assertIn("libc-mktemp", runner)
+
+    def test_libc_static_c_abi_file_handles_stay_opt_in_and_pointer_owned(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "file_handles.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_file_handles_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_file_handles.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_file_handles_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[cfg(feature = "x86-file-handles")]', static_root)
+        self.assertIn('#[path = "file_handles.rs"]', static_root)
+        self.assertNotIn("name_to_handle_at", static_exports)
+        self.assertNotIn("open_by_handle_at", static_exports)
+        self.assertEqual(
+            set(
+                re.findall(
+                    r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                    source,
+                )
+            ),
+            {"name_to_handle_at", "open_by_handle_at"},
+        )
+        for required in (
+            "src/linux/name_to_handle_at.c",
+            "src/linux/open_by_handle_at.c",
+            "caller-owned",
+            "variable-sized",
+            "raw_syscall::SYS_NAME_TO_HANDLE_AT",
+            "raw_syscall::SYS_OPEN_BY_HANDLE_AT",
+            "raw_syscall::syscall5",
+            "raw_syscall::syscall3",
+            "r10",
+            "r8",
+            "# Safety",
+        ):
+            self.assertIn(required, source)
+        for forbidden in ("crabc_core", "crabc_mimalloc", "alloc::", "std::"):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "MAX_HANDLE_SZ",
+            "SYS_name_to_handle_at == 303",
+            "SYS_open_by_handle_at == 304",
+            "acceptable_unsupported",
+            "FIXTURE_EOPNOTSUPP",
+            "FIXTURE_ENOSYS",
+            "FIXTURE_EOVERFLOW",
+            "name_to_handle_at(FIXTURE_AT_FDCWD, (const char *)0",
+            "open_by_handle_at(-1, (struct file_handle *)0",
+            "CRABC_FILE_HANDLES_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+
+        for required in (
+            "run_file_handles_header_abi.sh",
+            "--features x86-file-handles",
+            "static_c_abi_exports.txt",
+            "assert_feature_archive_surface",
+            "name_to_handle_at open_by_handle_at",
+            "-nostdlib -static",
+            "$0x12f",
+            "$0x130",
+            "%r10",
+            "%r8",
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "file_handles_header_abi_probe.c",
+            "file_handles_header_abi_probe.cpp",
+            "file_handles_header_hidden_probe.c",
+            "file_handles_header_hidden_probe.cpp",
+            "_GNU_SOURCE",
+            "outside GNU profile",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("file-handles-header-abi", runner)
+        self.assertIn("libc-file-handles", runner)
 
     def test_libc_static_c_abi_process_context_artifact_stays_narrow(self) -> None:
         static_root = (

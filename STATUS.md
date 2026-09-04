@@ -626,6 +626,19 @@ API. `tmpnam`, `tempnam`, all `mkstemp`/`mkdtemp` forms, `tmpfile`, file-handle
 APIs, entropy/crypto policy, generic filesystem policy, family completion,
 promotion, and public x86 support remain excluded.
 
+`./scripts/dev-x86_64.sh file-handles-header-abi` and
+`./scripts/dev-x86_64.sh libc-file-handles` record one separate private
+`static-c-file-handles` artifact inside still-planned `libc.posix-runtime`.
+The GNU C/C++ header gate fixes the 8-byte align-4 variable-tail
+`struct file_handle` declaration, while the opt-in `x86-file-handles` static
+candidate adds exactly `name_to_handle_at` and `open_by_handle_at` without
+changing the frozen default archive. The pinned-musl differential proves the
+Linux 5.10 x86 syscall 303/304 boundary, including r10/r8 transfer and
+caller-owned pointer/error behavior; filesystem support, mount selection, and
+permission results remain kernel authority. It does not allocate or retain
+handles, provide a Rust file-handle API or confinement policy, complete the
+filesystem family, promote x86, or establish public x86 support.
+
 The x86 qualification lane has one bounded same-object static
 `memfd_create`/errno differential and one consumed five-transaction POSIX/ABI
 admission inventory covering the selected process-context, process-signal,

@@ -3400,10 +3400,10 @@ def validate_header_layout_foundation_manifest(
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 52,
-            "verified_feature_profile_count": 23,
+            "verified_feature_callable_count": 54,
+            "verified_feature_profile_count": 24,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 354,
+            "unprovided_callable_count": 352,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3466,9 +3466,9 @@ def validate_header_layout_foundation_manifest(
             "report": "compat/x86_64/header_callable_disposition.json",
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 52,
+            "verified_feature_callable_count": 54,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 354,
+            "unprovided_callable_count": 352,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
             "missing_reference_declaration_routing_complete": True,
@@ -6728,8 +6728,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
         "still-planned `libc.headers-layouts`",
         "all 1,525 current names",
         "1,119 default-static",
-        "52 verified feature-provider",
-        "354 exact deferred-owner records",
+        "54 verified feature-provider",
+        "352 exact deferred-owner records",
         "zero current pinned-musl missing declaration records",
         "not declaration parity",
         "does not perform archive extraction",
@@ -6770,7 +6770,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "354 deferred providers" in scope
+        and "352 deferred providers" in scope
         and "zero missing reference declaration names" in scope
         and "not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
@@ -6799,7 +6799,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 345,
+                "planned-provider": 343,
             },
             "final_provider_archive_closure_complete": False,
             "header_declaration_parity_complete": False,
@@ -6810,8 +6810,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 354,
-            "verified_feature_callable_count": 52,
+            "unprovided_callable_count": 352,
+            "verified_feature_callable_count": 54,
         },
         "header callable disposition summary drifted",
     )
@@ -6873,11 +6873,11 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "isolated exact Cargo requests",
         "ordinary archive extraction",
         "1,119 current default-static",
-        "52 verified feature-provider",
+        "54 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "354-name unprovided complement",
+        "352-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -23320,6 +23320,344 @@ def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
         "libc-mktemp)",
         "run_mktemp_header_abi()",
         "run_libc_mktemp_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_file_handles_artifact(family: Mapping[str, Any]) -> None:
+    """Keep GNU file-handle authority opt-in and outside filesystem promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-file-handles"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-file-handles artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-file-handles must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-file-handles must remain a private artifact without capability promotion",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-file-handles needs a description")
+    for phrase in (
+        "Private native x86 opt-in GNU file-handle C ABI artifact",
+        "still-planned `libc.posix-runtime`",
+        "src/linux/name_to_handle_at.c::name_to_handle_at",
+        "src/linux/open_by_handle_at.c::open_by_handle_at",
+        "syscall 303/304",
+        "`x86-file-handles` adds exactly `name_to_handle_at` and `open_by_handle_at`",
+        "frozen default selected-static archive remains unchanged",
+        "8-byte align-4 header",
+        "`handle_bytes` at offset 0",
+        "`handle_type` at offset 4",
+        "`f_handle` tail at offset 8",
+        "pathname, handle capacity/type, mount-id output, mount descriptor, flag, filesystem, and capability/permission authority",
+        "r10/r8 syscall-word transfer",
+        "does not allocate, copy, parse, retain, or validate file handles",
+        "Rust facade",
+        "general filesystem runtime",
+        "complete the family",
+        "promote x86",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-file-handles description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-file-handles.source_owners"
+        )
+    )
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/file_handles.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/file_handles_header_abi_probe.c",
+        "compat/x86_64/file_handles_header_abi_probe.cpp",
+        "compat/x86_64/file_handles_header_hidden_probe.c",
+        "compat/x86_64/file_handles_header_hidden_probe.cpp",
+        "compat/x86_64/run_file_handles_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_file_handles_probe.c",
+        "compat/x86_64/libc_file_handles_start.S",
+        "compat/x86_64/run_libc_file_handles.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_feature_archive_roster.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-file-handles source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-file-handles.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "name_to_handle_at" in item
+            and "edi/rsi/rdx/rcx/r8" in item
+            and "rdi/rsi/rdx/r10/r8" in item
+            and "syscall 303" in item
+            and "syscall 304" in item
+            for item in prerequisites
+        ),
+        "static-c-file-handles must retain the SysV/raw x86 register boundary",
+    )
+    require(
+        any(
+            "src/linux/name_to_handle_at.c::name_to_handle_at" in item
+            and "src/linux/open_by_handle_at.c::open_by_handle_at" in item
+            and "-4095..=-1" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-file-handles must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "8 bytes, align 4" in item
+            and "byte 0" in item
+            and "byte 4" in item
+            and "byte 8" in item
+            and "caller-allocated" in item
+            for item in prerequisites
+        ),
+        "static-c-file-handles must retain the variable-tail record contract",
+    )
+    require(
+        any(
+            "static_c_abi_exports.txt" in item
+            and "exactly `name_to_handle_at` and `open_by_handle_at`" in item
+            and "syscall 303/304" in item
+            and "r10/r8" in item
+            for item in prerequisites
+        ),
+        "static-c-file-handles must retain its exact feature archive delta",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-file-handles.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "GNU C11 and C++17" in item
+            and "MAX_HANDLE_SZ=128" in item
+            and "SYS_name_to_handle_at=303" in item
+            and "SYS_open_by_handle_at=304" in item
+            and "Strict non-GNU C and C++ probes must reject both declarations" in item
+            for item in headers
+        ),
+        "static-c-file-handles must retain its GNU header visibility/layout boundary",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-file-handles native evidence is invalid")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-file-handles"},
+        "static-c-file-handles must use the closed libc-file-handles command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-file-handles evidence needs a scope")
+    for phrase in (
+        "`--features x86-file-handles`",
+        "true `-nostdlib -static` candidate",
+        "frozen default selected-static export surface",
+        "exactly name_to_handle_at/open_by_handle_at",
+        "syscall 303/304",
+        "r10 and r8",
+        "EOPNOTSUPP, ENOSYS, EPERM, and EOVERFLOW",
+        "rather than fabricated success",
+        "Rust APIs",
+        "default archive",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-file-handles evidence omits {phrase}",
+        )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    for symbol in ("name_to_handle_at", "open_by_handle_at"):
+        require(
+            symbol not in exports,
+            f"static-c-file-handles must keep {symbol} out of the default static archive",
+        )
+
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "file_handles.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/linux/name_to_handle_at.c",
+        "src/linux/open_by_handle_at.c",
+        "caller-owned",
+        "variable-sized",
+        "r10",
+        "r8",
+        "raw_syscall::SYS_NAME_TO_HANDLE_AT",
+        "raw_syscall::SYS_OPEN_BY_HANDLE_AT",
+        "raw_syscall::syscall5",
+        "raw_syscall::syscall3",
+        "pub unsafe extern \"C\" fn name_to_handle_at",
+        "pub unsafe extern \"C\" fn open_by_handle_at",
+        "# Safety",
+    ):
+        require(snippet in source, f"file-handle implementation omits {snippet}")
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(
+        exported == {"name_to_handle_at", "open_by_handle_at"},
+        "file-handle implementation must export exactly the two opt-in spellings",
+    )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "alloc::", "std::"):
+        require(
+            forbidden not in source,
+            f"file-handle implementation selects {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_file_handles.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_file_handles_header_abi.sh",
+        "--features x86-file-handles",
+        "static_c_abi_exports.txt",
+        "name_to_handle_at open_by_handle_at",
+        "-nostdlib -static",
+        "assert_feature_archive_surface",
+        "candidate has unresolved symbols",
+        "candidate retains a dynamic TLS model",
+        "$0x12f",
+        "$0x130",
+        "%r10",
+        "%r8",
+    ):
+        require(snippet in runner, f"file-handle runner omits {snippet}")
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_file_handles_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "FIXTURE_EOPNOTSUPP",
+        "FIXTURE_ENOSYS",
+        "FIXTURE_EOVERFLOW",
+        "acceptable_unsupported",
+        "MAX_HANDLE_SZ",
+        "SYS_name_to_handle_at == 303",
+        "SYS_open_by_handle_at == 304",
+        "name_to_handle_at(FIXTURE_AT_FDCWD, (const char *)0",
+        "open_by_handle_at(-1, (struct file_handle *)0",
+        "CRABC_FILE_HANDLES_FREESTANDING",
+    ):
+        require(snippet in probe, f"file-handle probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "file_handles_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "file_handles_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for header, path_text, alignment in (
+        (header_c, "file_handles_header_abi_probe.c", "_Alignof(struct file_handle) == 4"),
+        (header_cxx, "file_handles_header_abi_probe.cpp", "alignof(struct file_handle) == 4"),
+    ):
+        for snippet in (
+            "name_to_handle_signature",
+            "open_by_handle_signature",
+            "sizeof(struct file_handle) == 8",
+            alignment,
+            "offsetof(struct file_handle, f_handle) == 8",
+            "SYS_name_to_handle_at == 303",
+            "SYS_open_by_handle_at == 304",
+        ):
+            require(snippet in header, f"{path_text} omits {snippet}")
+    for path_text in (
+        "file_handles_header_hidden_probe.c",
+        "file_handles_header_hidden_probe.cpp",
+    ):
+        hidden = (ROOT / "compat" / "x86_64" / path_text).read_text(
+            encoding="utf-8"
+        )
+        require(
+            "_POSIX_C_SOURCE 200809L" in hidden
+            and "name_to_handle_at" in hidden
+            and "open_by_handle_at" in hidden,
+            f"{path_text} must retain its non-GNU negative probe",
+        )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-file-handles needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/linux/name_to_handle_at.c::name_to_handle_at" in entry["role"]
+            and "src/linux/open_by_handle_at.c::open_by_handle_at" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-file-handles must retain its pinned-musl oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "name_to_handle_at=303" in entry["role"]
+            and "open_by_handle_at=304" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-file-handles must retain its Linux syscall oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "file-handles-header-abi)",
+        "libc-file-handles)",
+        "run_file_handles_header_abi()",
+        "run_libc_file_handles_probe()",
+        "run_file_handles_header_abi.sh",
+        "run_libc_file_handles.sh",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -77280,6 +77618,7 @@ def validate_ledger(
     require_unistd_header_trace_ownership(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_lchmod_unsupported_slice(by_id["libc.posix-runtime"])
+    require_file_handles_artifact(by_id["libc.posix-runtime"])
     require_mkfifo_artifact(by_id["libc.posix-runtime"])
     require_mkfifoat_artifact(by_id["libc.posix-runtime"])
     require_mkdirat_artifact(by_id["libc.posix-runtime"])

@@ -55,7 +55,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         rows = ROSTER.load_feature_archive_roster()
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
-        self.assertEqual(len(rows), 23)
+        self.assertEqual(len(rows), 24)
         self.assertEqual([item.identifier for item in rows if item.state == "planned"], [])
         resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
         self.assertEqual(resolver.state, "verified")
@@ -79,6 +79,15 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(interval_timers.evidence_record, "static-c-interval-timers")
         self.assertEqual(interval_timers.dispatch_command, "libc-interval-timers")
         self.assertEqual(interval_timers.additive_callables, ("getitimer", "setitimer"))
+        file_handles = next(
+            item for item in rows if item.identifier == "x86-file-handles"
+        )
+        self.assertEqual(file_handles.evidence_record, "static-c-file-handles")
+        self.assertEqual(file_handles.dispatch_command, "libc-file-handles")
+        self.assertEqual(
+            file_handles.additive_callables,
+            ("name_to_handle_at", "open_by_handle_at"),
+        )
         spin_operations = next(
             item
             for item in rows

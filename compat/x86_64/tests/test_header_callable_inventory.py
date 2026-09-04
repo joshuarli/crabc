@@ -252,6 +252,10 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(verified["x86-ualarm"], {"ualarm"})
         self.assertEqual(verified["x86-interval-timers"], {"getitimer", "setitimer"})
         self.assertEqual(
+            verified["x86-file-handles"],
+            {"name_to_handle_at", "open_by_handle_at"},
+        )
+        self.assertEqual(
             verified["x86-pthread-spin-operations"],
             {"pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"},
         )
@@ -268,7 +272,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             },
         )
         self.assertEqual(verified["x86-crypt-allocator-composition"], set())
-        self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"} & unprovided)
+        self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "name_to_handle_at", "open_by_handle_at", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"} & unprovided)
         self.assertIn("fputws", unprovided)
 
     def test_ftw_and_gnu_namespace_declarations_match_pinned_visibility(self) -> None:
