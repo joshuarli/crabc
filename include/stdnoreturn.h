@@ -1,5 +1,5 @@
-#ifndef _CRABC_STDNORETURN_H
-#define _CRABC_STDNORETURN_H
+#ifndef _STDNORETURN_H
+#define _STDNORETURN_H
 
 #ifndef __cplusplus
 #include <features.h>

@@ -1,6 +1,3 @@
-#ifndef _BITS_SETJMP_H
-#define _BITS_SETJMP_H
-
 /* Linux/x86-64 machine context saved by setjmp and restored by longjmp. */
 #if defined(__x86_64__)
 #if !defined(__LP64__) || !defined(__BYTE_ORDER__) || \
@@ -10,6 +7,4 @@
 #endif
 
 typedef unsigned long __jmp_buf[8];
-#endif
-
 #endif

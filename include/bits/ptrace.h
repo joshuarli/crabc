@@ -1,6 +1,3 @@
-#ifndef _CRABC_BITS_PTRACE_H
-#define _CRABC_BITS_PTRACE_H
-
 /* Linux/x86-64 ptrace extensions from musl 1.2.6
  * `arch/x86_64/bits/ptrace.h`.  Other active crabc targets intentionally
  * receive no x86-only commands from this internal header. */
@@ -18,6 +15,4 @@
 #define PT_SYSEMU PTRACE_SYSEMU
 #define PT_SYSEMU_SINGLESTEP PTRACE_SYSEMU_SINGLESTEP
 #define PT_STEPBLOCK PTRACE_SINGLEBLOCK
-#endif
-
 #endif

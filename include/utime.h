@@ -1,5 +1,5 @@
-#ifndef _CRABC_UTIME_H
-#define _CRABC_UTIME_H
+#ifndef _UTIME_H
+#define _UTIME_H
 
 #if defined(__x86_64__)
 #include <features.h>

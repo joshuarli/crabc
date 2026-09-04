@@ -1,6 +1,3 @@
-#ifndef _CRABC_BITS_IO_H
-#define _CRABC_BITS_IO_H
-
 /* Linux/x86-64 port-I/O inline contract from pinned musl 1.2.6
  * `arch/x86_64/bits/io.h` (MIT).  These are intentionally direct inline
  * instructions, not crabc-libc exports: callers need the relevant Linux I/O
@@ -85,6 +82,4 @@ static __inline void insl(unsigned short __port, void *__buf, unsigned long __n)
 		      : "+D" (__buf), "+c" (__n)
 		      : "d" (__port));
 }
-#endif
-
 #endif

@@ -1,6 +1,3 @@
-#ifndef _BITS_STATFS_H
-#define _BITS_STATFS_H
-
 /*
  * Linux `statfs` is an architecture ABI record.  x86-64 uses musl's generic
  * LP64 layout; keeping it in the conventional bits leaf makes the public
@@ -13,5 +10,3 @@ struct statfs {
 	fsid_t f_fsid;
 	unsigned long f_namelen, f_frsize, f_flags, f_spare[4];
 };
-
-#endif

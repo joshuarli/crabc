@@ -1,5 +1,5 @@
-#ifndef _CRABC_SYS_FILE_H
-#define _CRABC_SYS_FILE_H
+#ifndef _SYS_FILE_H
+#define _SYS_FILE_H
 
 #define LOCK_SH 1
 #define LOCK_EX 2

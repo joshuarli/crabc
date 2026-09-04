@@ -1,5 +1,5 @@
-#ifndef _CRABC_SYS_SYSCALL_H
-#define _CRABC_SYS_SYSCALL_H
+#ifndef _SYS_SYSCALL_H
+#define _SYS_SYSCALL_H
 
 #if defined(__x86_64__)
 /*

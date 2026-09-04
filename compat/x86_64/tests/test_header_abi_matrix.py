@@ -1607,6 +1607,48 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                     f"{header_name}:{row['profile']} must differ from musl in no facts",
                 )
 
+    def test_x86_header_slice_preserves_pinned_musl_guard_forms(self) -> None:
+        """Keep the targeted x86 public wrappers and private leaves source-faithful."""
+        guarded = {
+            "setjmp.h": "_SETJMP_H",
+            "stdnoreturn.h": "_STDNORETURN_H",
+            "sys/file.h": "_SYS_FILE_H",
+            "sys/io.h": "_SYS_IO_H",
+            "sys/ptrace.h": "_SYS_PTRACE_H",
+            "sys/statfs.h": "_SYS_STATFS_H",
+            "sys/syscall.h": "_SYS_SYSCALL_H",
+            "utime.h": "_UTIME_H",
+        }
+        unguarded = {
+            "bits/setjmp.h",
+            "bits/io.h",
+            "sys/kd.h",
+            "sys/poll.h",
+            "bits/ptrace.h",
+            "sys/soundcard.h",
+            "bits/statfs.h",
+            "sys/vfs.h",
+            "sys/vt.h",
+            "syscall.h",
+        }
+
+        for header_name, guard in guarded.items():
+            source = (ROOT / "include" / header_name).read_text(encoding="utf-8")
+            with self.subTest(header=header_name):
+                self.assertTrue(
+                    source.startswith(f"#ifndef {guard}\n#define {guard}\n"),
+                    f"{header_name} must use musl's {guard} include guard",
+                )
+
+        for header_name in unguarded:
+            source = (ROOT / "include" / header_name).read_text(encoding="utf-8")
+            with self.subTest(header=header_name):
+                self.assertNotRegex(
+                    source,
+                    r"(?m)^#ifndef\s+",
+                    f"{header_name} must preserve musl's unguarded source form",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
