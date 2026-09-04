@@ -40,7 +40,7 @@ TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 ORACLE = "Pinned musl 1.2.6"
 REPORT_SCHEMA = "crabc.x86_64-headers-layouts-aggregate-report/v1"
-FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v16"
+FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v17"
 DIRECT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
 FAMILY = "libc.headers-layouts"
 DISPATCHER = "./scripts/dev-x86_64.sh"
@@ -50,6 +50,7 @@ EVIDENCE_TABLES = (
     "feature_visibility_matrix",
     "callable_feature_visibility_matrix",
     "prototype_layout_matrix",
+    "record_layout_matrix",
     "callable_disposition",
     "selected_callable_provider_linkage_audit",
     "selected_header_install_projection",
@@ -91,6 +92,12 @@ GENERIC_REPORTS = (
         "generated_report",
     ),
     (
+        "record-byte-layout",
+        "record_layout_matrix",
+        "crabc.x86_64-header-record-layout-matrix-report/v1",
+        "generated_report",
+    ),
+    (
         "callable-disposition",
         "callable_disposition",
         "crabc.x86_64-header-callable-disposition-report/v1",
@@ -107,10 +114,13 @@ TRACKED_INPUTS = (
     "compat/x86_64/header_callable_disposition.toml",
     "compat/x86_64/header_callable_visibility_matrix.toml",
     "compat/x86_64/header_abi_matrix.toml",
+    "compat/x86_64/header_record_layout_matrix.toml",
+    "compat/x86_64/header_record_layout_matrix.py",
     "compat/x86_64/header_declaration_macro_visibility_matrix.toml",
     "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
     "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
     "compat/x86_64/generated/header_abi_matrix/report.json",
+    "compat/x86_64/generated/header_record_layout_matrix/report.json",
     "compat/x86_64/header_callable_disposition.json",
 )
 EXECUTION_SOURCE_INPUTS = (
@@ -649,17 +659,25 @@ def blockers(foundation: Mapping[str, Any], reports: Sequence[Mapping[str, Any]]
     declaration = by_id["declaration-macro-visibility"]["summary"]
     callable_visibility = by_id["callable-visibility"]["summary"]
     prototype = by_id["prototype-layout"]["summary"]
+    record_layout = by_id["record-byte-layout"]["summary"]
     disposition = by_id["callable-disposition"]["summary"]
     require(isinstance(declaration, Mapping), "declaration summary is invalid")
     require(isinstance(callable_visibility, Mapping), "callable visibility summary is invalid")
     require(isinstance(prototype, Mapping), "prototype summary is invalid")
+    require(isinstance(record_layout, Mapping), "record byte-layout summary is invalid")
     require(isinstance(disposition, Mapping), "callable disposition summary is invalid")
+    record_layout_comparisons = record_layout.get("comparison_counts")
+    require(
+        isinstance(record_layout_comparisons, Mapping),
+        "record byte-layout comparison summary is invalid",
+    )
     counts = {
         "callable_provider_unprovided": int(disposition.get("unprovided_callable_count", -1)),
         "callable_visibility_mismatch_rows": int(callable_visibility.get("mismatch_row_count", -1)),
         "declaration_identity_mismatch_rows": int(declaration.get("mismatch_row_count", -1)),
         "declaration_source_form_differences": int(declaration.get("source_form_difference_count", -1)),
         "prototype_or_named_declaration_mismatch_rows": int(prototype.get("mismatch_row_count", -1)),
+        "record_byte_layout_mismatch_rows": int(record_layout_comparisons.get("mismatch", -1)),
     }
     require(all(value >= 0 for value in counts.values()), "generic blocker count is invalid")
     completion = foundation.get("completion")

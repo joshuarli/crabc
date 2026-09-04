@@ -61,6 +61,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   header-callable-visibility-matrix  check all-header callable feature-visibility evidence
   header-callable-disposition  check all-header callable ownership routing evidence
   header-abi-matrix  check all-header callable and named noncallable ABI evidence
+  header-record-layout-matrix  check all-header record byte-layout evidence
   header-declaration-macro-visibility-matrix  check all-header declaration/macro feature-visibility evidence
   header-callable-linkage-audit  audit declared x86 header callables against the static archive
   header-callable-provider-linkage-audit  audit selected default/feature callable archive providers
@@ -2603,6 +2604,10 @@ run_header_callable_disposition() {
 
 run_header_abi_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_header_abi_matrix.sh
+}
+
+run_header_record_layout_matrix() {
+    run_in_container bash /workspace/compat/x86_64/run_header_record_layout_matrix.sh
 }
 
 run_header_declaration_macro_visibility_matrix() {
@@ -5183,6 +5188,7 @@ case "$command" in
     header-callable-visibility-matrix) ;;
     header-callable-disposition) ;;
     header-abi-matrix) ;;
+    header-record-layout-matrix) ;;
     header-declaration-macro-visibility-matrix) ;;
     header-callable-linkage-audit) ;;
     header-callable-provider-linkage-audit) ;;
@@ -5353,6 +5359,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "header-abi-matrix takes no arguments"
         ensure_image
         run_header_abi_matrix
+        ;;
+    header-record-layout-matrix)
+        [ "$#" -eq 0 ] || fail "header-record-layout-matrix takes no arguments"
+        ensure_image
+        run_header_record_layout_matrix
         ;;
     header-declaration-macro-visibility-matrix)
         [ "$#" -eq 0 ] || fail "header-declaration-macro-visibility-matrix takes no arguments"

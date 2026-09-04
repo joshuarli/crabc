@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-record-layout-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "1672737efe400d3fb95d2fc77dd7c29cfbc7f6cb687fe5aa1234b6e9ace3a6fb",
+    "callable_inventory_sha256": "c957a1b1cef124f245d099095e5b7fc04a3949c801264c418f0c9642d8d031e3",
     "compiler": "clang",
     "header_record_layout_matrix_contract_sha256": "e7fc69edb51a58bfe817812a5aa8f482915c47fdac79027be109bc05b9aeb7b8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -367414,26 +367414,15 @@
     {
       "candidate": {
         "applicable_record_count": 3,
-        "not_applicable_categories": {
-          "incomplete": 1
+        "not_applicable_categories": {},
+        "not_applicable_field_categories": {
+          "bit-field": 2
         },
-        "not_applicable_field_categories": {},
-        "not_applicable_record_count": 1,
-        "record_count": 4
+        "not_applicable_record_count": 0,
+        "record_count": 3
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
-        {
-          "alias": null,
-          "alignment": null,
-          "applicability": "not-applicable",
-          "fields": [],
-          "key": "struct:sigevent",
-          "name": "sigevent",
-          "reason": "incomplete",
-          "size": null,
-          "tag": "struct"
-        },
         {
           "alias": null,
           "alignment": 8,
@@ -367687,102 +367676,51 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "tm_sec",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
+              "type": "time_t"
+            },
+            {
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 64,
+              "reason": "bit-field",
               "type": "int"
             },
             {
               "applicability": "applicable",
-              "name": "tm_min",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_hour",
+              "name": "tv_nsec",
               "offset": 8,
               "offset_bits": 64,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mday",
-              "offset": 12,
-              "offset_bits": 96,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mon",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_year",
-              "offset": 20,
-              "offset_bits": 160,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_wday",
-              "offset": 24,
-              "offset_bits": 192,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_yday",
-              "offset": 28,
-              "offset_bits": 224,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_isdst",
-              "offset": 32,
-              "offset_bits": 256,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_gmtoff",
-              "offset": 40,
-              "offset_bits": 320,
               "type": "long"
             },
             {
-              "applicability": "applicable",
-              "name": "tm_zone",
-              "offset": 48,
-              "offset_bits": 384,
-              "type": "const char *"
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 128,
+              "reason": "bit-field",
+              "type": "int"
             }
           ],
-          "key": "struct:tm",
-          "name": "tm",
-          "size": 56,
+          "key": "struct:timespec",
+          "name": "timespec",
+          "size": 16,
           "tag": "struct"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:tm"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 2,
-        "reference_only": [
-          "struct:timespec"
-        ],
-        "reference_only_count": 1
+        "matched_count": 3,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/stat.h",
       "profile": "c11-gnu",
@@ -368090,26 +368028,15 @@
     {
       "candidate": {
         "applicable_record_count": 3,
-        "not_applicable_categories": {
-          "incomplete": 1
+        "not_applicable_categories": {},
+        "not_applicable_field_categories": {
+          "bit-field": 2
         },
-        "not_applicable_field_categories": {},
-        "not_applicable_record_count": 1,
-        "record_count": 4
+        "not_applicable_record_count": 0,
+        "record_count": 3
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
-        {
-          "alias": null,
-          "alignment": null,
-          "applicability": "not-applicable",
-          "fields": [],
-          "key": "struct:sigevent",
-          "name": "sigevent",
-          "reason": "incomplete",
-          "size": null,
-          "tag": "struct"
-        },
         {
           "alias": null,
           "alignment": 8,
@@ -368363,102 +368290,51 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "tm_sec",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
+              "type": "time_t"
+            },
+            {
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 64,
+              "reason": "bit-field",
               "type": "int"
             },
             {
               "applicability": "applicable",
-              "name": "tm_min",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_hour",
+              "name": "tv_nsec",
               "offset": 8,
               "offset_bits": 64,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mday",
-              "offset": 12,
-              "offset_bits": 96,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mon",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_year",
-              "offset": 20,
-              "offset_bits": 160,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_wday",
-              "offset": 24,
-              "offset_bits": 192,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_yday",
-              "offset": 28,
-              "offset_bits": 224,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_isdst",
-              "offset": 32,
-              "offset_bits": 256,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_gmtoff",
-              "offset": 40,
-              "offset_bits": 320,
               "type": "long"
             },
             {
-              "applicability": "applicable",
-              "name": "tm_zone",
-              "offset": 48,
-              "offset_bits": 384,
-              "type": "const char *"
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 128,
+              "reason": "bit-field",
+              "type": "int"
             }
           ],
-          "key": "struct:tm",
-          "name": "tm",
-          "size": 56,
+          "key": "struct:timespec",
+          "name": "timespec",
+          "size": 16,
           "tag": "struct"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:tm"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 2,
-        "reference_only": [
-          "struct:timespec"
-        ],
-        "reference_only_count": 1
+        "matched_count": 3,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/stat.h",
       "profile": "cxx17-gnu",
@@ -368765,26 +368641,68 @@
     },
     {
       "candidate": {
-        "applicable_record_count": 0,
+        "applicable_record_count": 1,
         "not_applicable_categories": {},
-        "not_applicable_field_categories": {},
+        "not_applicable_field_categories": {
+          "bit-field": 2
+        },
         "not_applicable_record_count": 0,
-        "record_count": 0
+        "record_count": 1
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
-      "candidate_records": [],
+      "candidate_records": [
+        {
+          "alias": null,
+          "alignment": 8,
+          "applicability": "applicable",
+          "fields": [
+            {
+              "applicability": "applicable",
+              "name": "tv_sec",
+              "offset": 0,
+              "offset_bits": 0,
+              "type": "time_t"
+            },
+            {
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 64,
+              "reason": "bit-field",
+              "type": "int"
+            },
+            {
+              "applicability": "applicable",
+              "name": "tv_nsec",
+              "offset": 8,
+              "offset_bits": 64,
+              "type": "long"
+            },
+            {
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 128,
+              "reason": "bit-field",
+              "type": "int"
+            }
+          ],
+          "key": "struct:timespec",
+          "name": "timespec",
+          "size": 16,
+          "tag": "struct"
+        }
+      ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 0,
-        "reference_only": [
-          "struct:timespec"
-        ],
-        "reference_only_count": 1
+        "matched_count": 1,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/stat.h",
       "profile": "c11-strict",
@@ -368846,26 +368764,15 @@
     {
       "candidate": {
         "applicable_record_count": 1,
-        "not_applicable_categories": {
-          "incomplete": 1
+        "not_applicable_categories": {},
+        "not_applicable_field_categories": {
+          "bit-field": 2
         },
-        "not_applicable_field_categories": {},
-        "not_applicable_record_count": 1,
-        "record_count": 2
+        "not_applicable_record_count": 0,
+        "record_count": 1
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
-        {
-          "alias": null,
-          "alignment": null,
-          "applicability": "not-applicable",
-          "fields": [],
-          "key": "struct:sigevent",
-          "name": "sigevent",
-          "reason": "incomplete",
-          "size": null,
-          "tag": "struct"
-        },
         {
           "alias": null,
           "alignment": 8,
@@ -368873,102 +368780,51 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "tm_sec",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
+              "type": "time_t"
+            },
+            {
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 64,
+              "reason": "bit-field",
               "type": "int"
             },
             {
               "applicability": "applicable",
-              "name": "tm_min",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_hour",
+              "name": "tv_nsec",
               "offset": 8,
               "offset_bits": 64,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mday",
-              "offset": 12,
-              "offset_bits": 96,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mon",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_year",
-              "offset": 20,
-              "offset_bits": 160,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_wday",
-              "offset": 24,
-              "offset_bits": 192,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_yday",
-              "offset": 28,
-              "offset_bits": 224,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_isdst",
-              "offset": 32,
-              "offset_bits": 256,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "__tm_gmtoff",
-              "offset": 40,
-              "offset_bits": 320,
               "type": "long"
             },
             {
-              "applicability": "applicable",
-              "name": "__tm_zone",
-              "offset": 48,
-              "offset_bits": 384,
-              "type": "const char *"
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 128,
+              "reason": "bit-field",
+              "type": "int"
             }
           ],
-          "key": "struct:tm",
-          "name": "tm",
-          "size": 56,
+          "key": "struct:timespec",
+          "name": "timespec",
+          "size": 16,
           "tag": "struct"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:tm"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 0,
-        "reference_only": [
-          "struct:timespec"
-        ],
-        "reference_only_count": 1
+        "matched_count": 1,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/stat.h",
       "profile": "c11-posix-2008",
@@ -369030,26 +368886,15 @@
     {
       "candidate": {
         "applicable_record_count": 1,
-        "not_applicable_categories": {
-          "incomplete": 1
+        "not_applicable_categories": {},
+        "not_applicable_field_categories": {
+          "bit-field": 2
         },
-        "not_applicable_field_categories": {},
-        "not_applicable_record_count": 1,
-        "record_count": 2
+        "not_applicable_record_count": 0,
+        "record_count": 1
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
-        {
-          "alias": null,
-          "alignment": null,
-          "applicability": "not-applicable",
-          "fields": [],
-          "key": "struct:sigevent",
-          "name": "sigevent",
-          "reason": "incomplete",
-          "size": null,
-          "tag": "struct"
-        },
         {
           "alias": null,
           "alignment": 8,
@@ -369057,102 +368902,51 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "tm_sec",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
+              "type": "time_t"
+            },
+            {
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 64,
+              "reason": "bit-field",
               "type": "int"
             },
             {
               "applicability": "applicable",
-              "name": "tm_min",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_hour",
+              "name": "tv_nsec",
               "offset": 8,
               "offset_bits": 64,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mday",
-              "offset": 12,
-              "offset_bits": 96,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mon",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_year",
-              "offset": 20,
-              "offset_bits": 160,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_wday",
-              "offset": 24,
-              "offset_bits": 192,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_yday",
-              "offset": 28,
-              "offset_bits": 224,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_isdst",
-              "offset": 32,
-              "offset_bits": 256,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "__tm_gmtoff",
-              "offset": 40,
-              "offset_bits": 320,
               "type": "long"
             },
             {
-              "applicability": "applicable",
-              "name": "__tm_zone",
-              "offset": 48,
-              "offset_bits": 384,
-              "type": "const char *"
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 128,
+              "reason": "bit-field",
+              "type": "int"
             }
           ],
-          "key": "struct:tm",
-          "name": "tm",
-          "size": 56,
+          "key": "struct:timespec",
+          "name": "timespec",
+          "size": 16,
           "tag": "struct"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:tm"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 0,
-        "reference_only": [
-          "struct:timespec"
-        ],
-        "reference_only_count": 1
+        "matched_count": 1,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/stat.h",
       "profile": "c11-xopen-700",
@@ -369214,26 +369008,15 @@
     {
       "candidate": {
         "applicable_record_count": 1,
-        "not_applicable_categories": {
-          "incomplete": 1
+        "not_applicable_categories": {},
+        "not_applicable_field_categories": {
+          "bit-field": 2
         },
-        "not_applicable_field_categories": {},
-        "not_applicable_record_count": 1,
-        "record_count": 2
+        "not_applicable_record_count": 0,
+        "record_count": 1
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
-        {
-          "alias": null,
-          "alignment": null,
-          "applicability": "not-applicable",
-          "fields": [],
-          "key": "struct:sigevent",
-          "name": "sigevent",
-          "reason": "incomplete",
-          "size": null,
-          "tag": "struct"
-        },
         {
           "alias": null,
           "alignment": 8,
@@ -369241,102 +369024,51 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "tm_sec",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
+              "type": "time_t"
+            },
+            {
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 64,
+              "reason": "bit-field",
               "type": "int"
             },
             {
               "applicability": "applicable",
-              "name": "tm_min",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_hour",
+              "name": "tv_nsec",
               "offset": 8,
               "offset_bits": 64,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mday",
-              "offset": 12,
-              "offset_bits": 96,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mon",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_year",
-              "offset": 20,
-              "offset_bits": 160,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_wday",
-              "offset": 24,
-              "offset_bits": 192,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_yday",
-              "offset": 28,
-              "offset_bits": 224,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_isdst",
-              "offset": 32,
-              "offset_bits": 256,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_gmtoff",
-              "offset": 40,
-              "offset_bits": 320,
               "type": "long"
             },
             {
-              "applicability": "applicable",
-              "name": "tm_zone",
-              "offset": 48,
-              "offset_bits": 384,
-              "type": "const char *"
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 128,
+              "reason": "bit-field",
+              "type": "int"
             }
           ],
-          "key": "struct:tm",
-          "name": "tm",
-          "size": 56,
+          "key": "struct:timespec",
+          "name": "timespec",
+          "size": 16,
           "tag": "struct"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:tm"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 0,
-        "reference_only": [
-          "struct:timespec"
-        ],
-        "reference_only_count": 1
+        "matched_count": 1,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/stat.h",
       "profile": "c11-bsd",
@@ -369398,26 +369130,15 @@
     {
       "candidate": {
         "applicable_record_count": 3,
-        "not_applicable_categories": {
-          "incomplete": 1
+        "not_applicable_categories": {},
+        "not_applicable_field_categories": {
+          "bit-field": 2
         },
-        "not_applicable_field_categories": {},
-        "not_applicable_record_count": 1,
-        "record_count": 4
+        "not_applicable_record_count": 0,
+        "record_count": 3
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
-        {
-          "alias": null,
-          "alignment": null,
-          "applicability": "not-applicable",
-          "fields": [],
-          "key": "struct:sigevent",
-          "name": "sigevent",
-          "reason": "incomplete",
-          "size": null,
-          "tag": "struct"
-        },
         {
           "alias": null,
           "alignment": 8,
@@ -369671,102 +369392,51 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "tm_sec",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
+              "type": "time_t"
+            },
+            {
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 64,
+              "reason": "bit-field",
               "type": "int"
             },
             {
               "applicability": "applicable",
-              "name": "tm_min",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_hour",
+              "name": "tv_nsec",
               "offset": 8,
               "offset_bits": 64,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mday",
-              "offset": 12,
-              "offset_bits": 96,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_mon",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_year",
-              "offset": 20,
-              "offset_bits": 160,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_wday",
-              "offset": 24,
-              "offset_bits": 192,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_yday",
-              "offset": 28,
-              "offset_bits": 224,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_isdst",
-              "offset": 32,
-              "offset_bits": 256,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tm_gmtoff",
-              "offset": 40,
-              "offset_bits": 320,
               "type": "long"
             },
             {
-              "applicability": "applicable",
-              "name": "tm_zone",
-              "offset": 48,
-              "offset_bits": 384,
-              "type": "const char *"
+              "applicability": "not-applicable",
+              "name": null,
+              "offset": null,
+              "offset_bits": 128,
+              "reason": "bit-field",
+              "type": "int"
             }
           ],
-          "key": "struct:tm",
-          "name": "tm",
-          "size": 56,
+          "key": "struct:timespec",
+          "name": "timespec",
+          "size": 16,
           "tag": "struct"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:tm"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 2,
-        "reference_only": [
-          "struct:timespec"
-        ],
-        "reference_only_count": 1
+        "matched_count": 3,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "sys/stat.h",
       "profile": "cxx17-strict",
@@ -418942,7 +418612,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -419068,7 +418738,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -419194,7 +418864,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -419320,7 +418990,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -419446,7 +419116,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -419572,7 +419242,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -419698,7 +419368,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -419809,13 +419479,13 @@
     },
     {
       "candidate": {
-        "applicable_record_count": 3,
+        "applicable_record_count": 2,
         "not_applicable_categories": {
           "anonymous-only": 1
         },
         "not_applicable_field_categories": {},
         "not_applicable_record_count": 1,
-        "record_count": 4
+        "record_count": 3
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
@@ -419824,7 +419494,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -419837,47 +419507,22 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "it_interval",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
-              "type": "struct timeval"
+              "type": "time_t"
             },
             {
               "applicability": "applicable",
-              "name": "it_value",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "struct timeval"
+              "name": "tv_usec",
+              "offset": 8,
+              "offset_bits": 64,
+              "type": "suseconds_t"
             }
           ],
-          "key": "struct:itimerval",
-          "name": "itimerval",
-          "size": 32,
-          "tag": "struct"
-        },
-        {
-          "alias": null,
-          "alignment": 4,
-          "applicability": "applicable",
-          "fields": [
-            {
-              "applicability": "applicable",
-              "name": "tz_minuteswest",
-              "offset": 0,
-              "offset_bits": 0,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tz_dsttime",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            }
-          ],
-          "key": "struct:timezone",
-          "name": "timezone",
-          "size": 8,
+          "key": "struct:timeval",
+          "name": "timeval",
+          "size": 16,
           "tag": "struct"
         },
         {
@@ -419939,7 +419584,7 @@
               "name": "ut_exit",
               "offset": 332,
               "offset_bits": 2656,
-              "type": "struct (unnamed at /workspace/include/utmpx.h:19:5)"
+              "type": "struct (unnamed at /workspace/include/utmpx.h:30:5)"
             },
             {
               "applicability": "applicable",
@@ -419984,20 +419629,15 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:itimerval",
-          "struct:timezone"
-        ],
-        "candidate_only_count": 2,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "struct:timeval"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "utmpx.h",
       "profile": "c11-gnu",
@@ -420155,13 +419795,13 @@
     },
     {
       "candidate": {
-        "applicable_record_count": 3,
+        "applicable_record_count": 2,
         "not_applicable_categories": {
           "anonymous-only": 1
         },
         "not_applicable_field_categories": {},
         "not_applicable_record_count": 1,
-        "record_count": 4
+        "record_count": 3
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
@@ -420170,7 +419810,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -420183,47 +419823,22 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "it_interval",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
-              "type": "struct timeval"
+              "type": "time_t"
             },
             {
               "applicability": "applicable",
-              "name": "it_value",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "struct timeval"
+              "name": "tv_usec",
+              "offset": 8,
+              "offset_bits": 64,
+              "type": "suseconds_t"
             }
           ],
-          "key": "struct:itimerval",
-          "name": "itimerval",
-          "size": 32,
-          "tag": "struct"
-        },
-        {
-          "alias": null,
-          "alignment": 4,
-          "applicability": "applicable",
-          "fields": [
-            {
-              "applicability": "applicable",
-              "name": "tz_minuteswest",
-              "offset": 0,
-              "offset_bits": 0,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tz_dsttime",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            }
-          ],
-          "key": "struct:timezone",
-          "name": "timezone",
-          "size": 8,
+          "key": "struct:timeval",
+          "name": "timeval",
+          "size": 16,
           "tag": "struct"
         },
         {
@@ -420285,7 +419900,7 @@
               "name": "ut_exit",
               "offset": 332,
               "offset_bits": 2656,
-              "type": "struct (unnamed at /workspace/include/utmpx.h:19:5)"
+              "type": "struct (unnamed at /workspace/include/utmpx.h:30:5)"
             },
             {
               "applicability": "applicable",
@@ -420330,20 +419945,15 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:itimerval",
-          "struct:timezone"
-        ],
-        "candidate_only_count": 2,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "struct:timeval"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "utmpx.h",
       "profile": "cxx17-gnu",
@@ -420516,7 +420126,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -420529,22 +420139,22 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "it_interval",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
-              "type": "struct timeval"
+              "type": "time_t"
             },
             {
               "applicability": "applicable",
-              "name": "it_value",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "struct timeval"
+              "name": "tv_usec",
+              "offset": 8,
+              "offset_bits": 64,
+              "type": "suseconds_t"
             }
           ],
-          "key": "struct:itimerval",
-          "name": "itimerval",
-          "size": 32,
+          "key": "struct:timeval",
+          "name": "timeval",
+          "size": 16,
           "tag": "struct"
         },
         {
@@ -420606,7 +420216,7 @@
               "name": "ut_exit",
               "offset": 332,
               "offset_bits": 2656,
-              "type": "struct (unnamed at /workspace/include/utmpx.h:19:5)"
+              "type": "struct (unnamed at /workspace/include/utmpx.h:30:5)"
             },
             {
               "applicability": "applicable",
@@ -420651,19 +420261,15 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:itimerval"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "struct:timeval"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "utmpx.h",
       "profile": "c11-strict",
@@ -420836,7 +420442,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -420849,22 +420455,22 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "it_interval",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
-              "type": "struct timeval"
+              "type": "time_t"
             },
             {
               "applicability": "applicable",
-              "name": "it_value",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "struct timeval"
+              "name": "tv_usec",
+              "offset": 8,
+              "offset_bits": 64,
+              "type": "suseconds_t"
             }
           ],
-          "key": "struct:itimerval",
-          "name": "itimerval",
-          "size": 32,
+          "key": "struct:timeval",
+          "name": "timeval",
+          "size": 16,
           "tag": "struct"
         },
         {
@@ -420926,7 +420532,7 @@
               "name": "ut_exit",
               "offset": 332,
               "offset_bits": 2656,
-              "type": "struct (unnamed at /workspace/include/utmpx.h:19:5)"
+              "type": "struct (unnamed at /workspace/include/utmpx.h:30:5)"
             },
             {
               "applicability": "applicable",
@@ -420971,19 +420577,15 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:itimerval"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "struct:timeval"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "utmpx.h",
       "profile": "c11-posix-2008",
@@ -421156,7 +420758,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -421169,22 +420771,22 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "it_interval",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
-              "type": "struct timeval"
+              "type": "time_t"
             },
             {
               "applicability": "applicable",
-              "name": "it_value",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "struct timeval"
+              "name": "tv_usec",
+              "offset": 8,
+              "offset_bits": 64,
+              "type": "suseconds_t"
             }
           ],
-          "key": "struct:itimerval",
-          "name": "itimerval",
-          "size": 32,
+          "key": "struct:timeval",
+          "name": "timeval",
+          "size": 16,
           "tag": "struct"
         },
         {
@@ -421246,7 +420848,7 @@
               "name": "ut_exit",
               "offset": 332,
               "offset_bits": 2656,
-              "type": "struct (unnamed at /workspace/include/utmpx.h:19:5)"
+              "type": "struct (unnamed at /workspace/include/utmpx.h:30:5)"
             },
             {
               "applicability": "applicable",
@@ -421291,19 +420893,15 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:itimerval"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "struct:timeval"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "utmpx.h",
       "profile": "c11-xopen-700",
@@ -421461,13 +421059,13 @@
     },
     {
       "candidate": {
-        "applicable_record_count": 3,
+        "applicable_record_count": 2,
         "not_applicable_categories": {
           "anonymous-only": 1
         },
         "not_applicable_field_categories": {},
         "not_applicable_record_count": 1,
-        "record_count": 4
+        "record_count": 3
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
@@ -421476,7 +421074,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -421489,47 +421087,22 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "it_interval",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
-              "type": "struct timeval"
+              "type": "time_t"
             },
             {
               "applicability": "applicable",
-              "name": "it_value",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "struct timeval"
+              "name": "tv_usec",
+              "offset": 8,
+              "offset_bits": 64,
+              "type": "suseconds_t"
             }
           ],
-          "key": "struct:itimerval",
-          "name": "itimerval",
-          "size": 32,
-          "tag": "struct"
-        },
-        {
-          "alias": null,
-          "alignment": 4,
-          "applicability": "applicable",
-          "fields": [
-            {
-              "applicability": "applicable",
-              "name": "tz_minuteswest",
-              "offset": 0,
-              "offset_bits": 0,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tz_dsttime",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            }
-          ],
-          "key": "struct:timezone",
-          "name": "timezone",
-          "size": 8,
+          "key": "struct:timeval",
+          "name": "timeval",
+          "size": 16,
           "tag": "struct"
         },
         {
@@ -421591,7 +421164,7 @@
               "name": "ut_exit",
               "offset": 332,
               "offset_bits": 2656,
-              "type": "struct (unnamed at /workspace/include/utmpx.h:19:5)"
+              "type": "struct (unnamed at /workspace/include/utmpx.h:30:5)"
             },
             {
               "applicability": "applicable",
@@ -421636,20 +421209,15 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:itimerval",
-          "struct:timezone"
-        ],
-        "candidate_only_count": 2,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "struct:timeval"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "utmpx.h",
       "profile": "c11-bsd",
@@ -421807,13 +421375,13 @@
     },
     {
       "candidate": {
-        "applicable_record_count": 3,
+        "applicable_record_count": 2,
         "not_applicable_categories": {
           "anonymous-only": 1
         },
         "not_applicable_field_categories": {},
         "not_applicable_record_count": 1,
-        "record_count": 4
+        "record_count": 3
       },
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
@@ -421822,7 +421390,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:19:1",
+          "key": "struct-anonymous:30:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -421835,47 +421403,22 @@
           "fields": [
             {
               "applicability": "applicable",
-              "name": "it_interval",
+              "name": "tv_sec",
               "offset": 0,
               "offset_bits": 0,
-              "type": "struct timeval"
+              "type": "time_t"
             },
             {
               "applicability": "applicable",
-              "name": "it_value",
-              "offset": 16,
-              "offset_bits": 128,
-              "type": "struct timeval"
+              "name": "tv_usec",
+              "offset": 8,
+              "offset_bits": 64,
+              "type": "suseconds_t"
             }
           ],
-          "key": "struct:itimerval",
-          "name": "itimerval",
-          "size": 32,
-          "tag": "struct"
-        },
-        {
-          "alias": null,
-          "alignment": 4,
-          "applicability": "applicable",
-          "fields": [
-            {
-              "applicability": "applicable",
-              "name": "tz_minuteswest",
-              "offset": 0,
-              "offset_bits": 0,
-              "type": "int"
-            },
-            {
-              "applicability": "applicable",
-              "name": "tz_dsttime",
-              "offset": 4,
-              "offset_bits": 32,
-              "type": "int"
-            }
-          ],
-          "key": "struct:timezone",
-          "name": "timezone",
-          "size": 8,
+          "key": "struct:timeval",
+          "name": "timeval",
+          "size": 16,
           "tag": "struct"
         },
         {
@@ -421937,7 +421480,7 @@
               "name": "ut_exit",
               "offset": 332,
               "offset_bits": 2656,
-              "type": "struct (unnamed at /workspace/include/utmpx.h:19:5)"
+              "type": "struct (unnamed at /workspace/include/utmpx.h:30:5)"
             },
             {
               "applicability": "applicable",
@@ -421982,20 +421525,15 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "struct:itimerval",
-          "struct:timezone"
-        ],
-        "candidate_only_count": 2,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "struct:timeval"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "utmpx.h",
       "profile": "cxx17-strict",
@@ -424841,25 +424379,25 @@
   },
   "summary": {
     "candidate_field_categories": {
-      "bit-field": 709,
+      "bit-field": 723,
       "flexible-tail": 59,
       "non-addressable-field": 10
     },
     "candidate_public_header_count": 191,
     "candidate_record_categories": {
       "anonymous-only": 1015,
-      "incomplete": 217
+      "incomplete": 211
     },
-    "candidate_record_count": 5539,
+    "candidate_record_count": 5530,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 1075,
-      "mismatch": 205,
+      "matched": 1089,
+      "mismatch": 191,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "205 comparable header/profile rows have record-byte-layout differences",
+      "191 comparable header/profile rows have record-byte-layout differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record-byte-layouts remain partial until every applicable named record and field is matched",

@@ -48,10 +48,19 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         self.assertEqual(report["direct_probe_count"], 55)
         self.assertEqual(report["profile_obligation_count"], 21)
         self.assertEqual(report["language_profile_count"], 7)
-        self.assertEqual(report["abi_facet_count"], 24)
+        self.assertEqual(report["abi_facet_count"], 25)
         self.assertEqual(report["linkage_owner_count"], 3)
         self.assertIn("declaration-macro-identity", report["blockers"])
         self.assertIn("callable-provider-closure", report["blockers"])
+        blocker_counts = report["blocker_counts"]
+        assert isinstance(blocker_counts, dict)
+        self.assertEqual(blocker_counts["record_byte_layout_mismatch_rows"], 191)
+        generic_reports = report["generic_reports"]
+        assert isinstance(generic_reports, list)
+        self.assertIn(
+            "record-byte-layout",
+            {entry["id"] for entry in generic_reports if isinstance(entry, dict)},
+        )
 
     def test_control_rejects_false_completion_or_omitted_coverage(self) -> None:
         report = self.checked_report()
@@ -91,6 +100,11 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
 
         self.assertIn("compat/x86_64/headers_layouts_aggregate.py", paths)
         self.assertIn("compat/x86_64/run_headers_layouts_aggregate.sh", paths)
+        self.assertIn("compat/x86_64/header_record_layout_matrix.toml", paths)
+        self.assertIn("compat/x86_64/header_record_layout_matrix.py", paths)
+        self.assertIn(
+            "compat/x86_64/generated/header_record_layout_matrix/report.json", paths
+        )
         self.assertTrue(set(AGGREGATE.runner_paths()).issubset(paths))
 
     def test_accounted_incomplete_linkage_audit_is_explicit(self) -> None:
@@ -139,6 +153,7 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         self.assertTrue(all(path.endswith(".sh") for path in runners))
         self.assertTrue(all(not path.startswith("/") and ".." not in Path(path).parts for path in runners))
         self.assertIn("compat/x86_64/run_header_abi_matrix.sh", runners)
+        self.assertIn("compat/x86_64/run_header_record_layout_matrix.sh", runners)
         self.assertIn("compat/x86_64/run_time_header_abi.sh", runners)
 
     def test_checked_output_rejects_drift(self) -> None:

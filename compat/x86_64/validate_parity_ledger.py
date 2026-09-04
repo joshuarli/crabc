@@ -40,6 +40,11 @@ from header_abi_matrix import (  # noqa: E402
     load_contract as load_header_abi_matrix_contract,
     validate_checked_report as validate_header_abi_matrix_report,
 )
+from header_record_layout_matrix import (  # noqa: E402
+    RecordLayoutMatrixError,
+    load_contract as load_header_record_layout_matrix_contract,
+    validate_checked_report as validate_header_record_layout_matrix_report,
+)
 from header_declaration_macro_visibility_matrix import (  # noqa: E402
     HeaderDeclarationMacroVisibilityMatrixError,
     canonical_json as canonical_declaration_macro_visibility_json,
@@ -91,6 +96,15 @@ HEADER_ABI_MATRIX_REPORT_PATH = (
     ROOT / "compat" / "x86_64" / "generated" / "header_abi_matrix" / "report.json"
 )
 HEADER_ABI_MATRIX_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_header_abi_matrix.sh"
+HEADER_RECORD_LAYOUT_MATRIX_CONTRACT_PATH = (
+    ROOT / "compat" / "x86_64" / "header_record_layout_matrix.toml"
+)
+HEADER_RECORD_LAYOUT_MATRIX_REPORT_PATH = (
+    ROOT / "compat" / "x86_64" / "generated" / "header_record_layout_matrix" / "report.json"
+)
+HEADER_RECORD_LAYOUT_MATRIX_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_header_record_layout_matrix.sh"
+)
 HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_CONTRACT_PATH = (
     ROOT / "compat" / "x86_64" / "header_declaration_macro_visibility_matrix.toml"
 )
@@ -170,7 +184,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v16"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v17"
 EXPECTED_HEADER_LAYOUTS_AGGREGATE_COMMAND = "./scripts/dev-x86_64.sh headers-layouts-aggregate"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -406,13 +420,50 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 13036,
+        "candidate_only_count": 7016,
         "incompatible_count": 2567,
         "reference_only_count": 1709,
     },
     "mismatch_row_count": 603,
     "pinned_public_header_count": 183,
     "profile_count": 7,
+    "row_count": 1337,
+}
+EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_COMMAND = (
+    "./scripts/dev-x86_64.sh header-record-layout-matrix"
+)
+EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_SUMMARY = {
+    "candidate_field_categories": {
+        "bit-field": 723,
+        "flexible-tail": 59,
+        "non-addressable-field": 10,
+    },
+    "candidate_public_header_count": 191,
+    "candidate_record_categories": {"anonymous-only": 1015, "incomplete": 211},
+    "candidate_record_count": 5530,
+    "comparison_counts": {
+        "candidate-only-pending-c-abi-policy": 56,
+        "matched": 1089,
+        "mismatch": 191,
+        "oracle-not-applicable": 1,
+    },
+    "complete": False,
+    "incomplete_reasons": [
+        "191 comparable header/profile rows have record-byte-layout differences",
+        "1 pinned-musl header/profile rows are oracle-not-applicable",
+        "56 project-only header/profile rows remain pending C ABI policy",
+        "record-byte-layouts remain partial until every applicable named record and field is matched",
+        "archive linkage, runtime behavior, family promotion, and public support remain outside this matrix",
+    ],
+    "pinned_public_header_count": 183,
+    "profile_count": 7,
+    "reference_field_categories": {
+        "bit-field": 723,
+        "flexible-tail": 59,
+        "non-addressable-field": 10,
+    },
+    "reference_record_categories": {"anonymous-only": 986, "incomplete": 209},
+    "reference_record_count": 5106,
     "row_count": 1337,
 }
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_COMMAND = (
@@ -425,31 +476,30 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 13036,
+    "candidate_only_identity_count": 7016,
     "candidate_only_identity_kind_counts": {
-        "function": 807,
-        "macro": 9727,
-        "record": 216,
-        "typedef": 2244,
-        "variable": 42,
+        "function": 165,
+        "macro": 6094,
+        "record": 50,
+        "typedef": 707,
     },
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 748,
-        "mismatch": 532,
+        "matched": 762,
+        "mismatch": 518,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "532 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "518 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "matched_identity_count": 293655,
-    "mismatch_row_count": 532,
+    "mismatch_row_count": 518,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -475,7 +525,7 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     },
     "source_form_difference_count": 2567,
     "source_form_difference_row_count": 432,
-    "source_form_only_difference_row_count": 71,
+    "source_form_only_difference_row_count": 85,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -553,6 +603,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "feature-visibility",
         "callable-feature-visibility",
         "callable-prototype-layout",
+        "record-byte-layout-matrix",
         "callable-linkage-ownership",
         "legacy-direct-layout-inputs",
         "static-c-cxx-composition",
@@ -567,6 +618,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "feature-visibility",
         "callable-feature-visibility",
         "callable-prototype-layout",
+        "record-byte-layout-matrix",
         "callable-linkage-ownership",
     ),
     "project-only-extensions": (
@@ -577,6 +629,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "feature-visibility",
         "callable-feature-visibility",
         "callable-prototype-layout",
+        "record-byte-layout-matrix",
         "callable-linkage-ownership",
     ),
 }
@@ -862,6 +915,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "all-pinned-and-project-only-public-headers",
         "libc.headers-layouts",
         ("generated-x86-prototype-layout-matrix",),
+    ),
+    "record-byte-layout-matrix": (
+        "partial-verified",
+        "all-pinned-and-project-only-public-headers",
+        "libc.headers-layouts",
+        ("all-header-record-byte-layout-matrix",),
     ),
     "callable-linkage-ownership": (
         "partial-verified",
@@ -2690,23 +2749,23 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 1619,
+            "candidate_only_callable_count": 423,
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1151,
-                "mismatch": 129,
+                "matched": 1186,
+                "mismatch": 94,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "129 comparable pinned header/profile rows have callable visibility differences",
+                "94 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
             "matched_callable_count": 34639,
-            "mismatch_row_count": 129,
+            "mismatch_row_count": 94,
             "oracle_not_applicable_candidate_visible_callable_count": 21,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
@@ -2862,6 +2921,131 @@ def require_header_abi_matrix(manifest: Mapping[str, Any]) -> int:
         "header ABI matrix is absent from the native dispatcher",
     )
     return int(summary["row_count"])
+
+
+def require_header_record_layout_matrix(manifest: Mapping[str, Any]) -> int:
+    """Bind finite record-byte-layout facts without promoting headers."""
+
+    matrix = manifest["record_layout_matrix"]
+    require(
+        isinstance(matrix, Mapping),
+        "header-foundation record byte-layout matrix must be a table",
+    )
+    require(
+        set(matrix)
+        == {
+            "id",
+            "state",
+            "contract",
+            "generated_report",
+            "command",
+            "required_result",
+            "profiles",
+            "pinned_public_header_count",
+            "candidate_public_header_count",
+            "record_count",
+            "comparison_counts",
+            "candidate_record_count",
+            "reference_record_count",
+            "candidate_record_categories",
+            "reference_record_categories",
+            "candidate_field_categories",
+            "reference_field_categories",
+            "scope",
+        },
+        "header-foundation record byte-layout matrix keys drifted",
+    )
+    require(
+        matrix["id"] == "all-header-record-byte-layout-matrix"
+        and matrix["state"] == "partial-verified"
+        and matrix["required_result"] == "checked-finite-report",
+        "header-foundation record byte-layout matrix identity drifted",
+    )
+    contract_path = repository_path(
+        str(matrix["contract"]), "header-foundation record byte-layout matrix contract"
+    )
+    report_path = repository_path(
+        str(matrix["generated_report"]), "header-foundation record byte-layout matrix report"
+    )
+    require(
+        contract_path == HEADER_RECORD_LAYOUT_MATRIX_CONTRACT_PATH
+        and report_path == HEADER_RECORD_LAYOUT_MATRIX_REPORT_PATH,
+        "header-foundation record byte-layout matrix paths drifted",
+    )
+    require(
+        matrix["command"] == EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_COMMAND,
+        "header-foundation record byte-layout matrix command drifted",
+    )
+    require(
+        tuple(string_list(matrix["profiles"], "header-foundation record byte-layout matrix profiles"))
+        == EXPECTED_HEADER_FOUNDATION_CLOSURE_PROFILES,
+        "header-foundation record byte-layout matrix profile roster drifted",
+    )
+    summary = EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_SUMMARY
+    require(
+        matrix["pinned_public_header_count"] == EXPECTED_PUBLIC_HEADER_COUNT
+        and matrix["candidate_public_header_count"]
+        == EXPECTED_PUBLIC_HEADER_COUNT + len(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY)
+        and matrix["record_count"] == EXPECTED_CANDIDATE_HEADER_CLOSURE_RECORD_COUNT
+        and matrix["comparison_counts"] == summary["comparison_counts"]
+        and matrix["candidate_record_count"] == summary["candidate_record_count"]
+        and matrix["reference_record_count"] == summary["reference_record_count"]
+        and matrix["candidate_record_categories"] == summary["candidate_record_categories"]
+        and matrix["reference_record_categories"] == summary["reference_record_categories"]
+        and matrix["candidate_field_categories"] == summary["candidate_field_categories"]
+        and matrix["reference_field_categories"] == summary["reference_field_categories"],
+        "header-foundation record byte-layout matrix count contract drifted",
+    )
+    scope = matrix["scope"]
+    require(
+        isinstance(scope, str)
+        and "complete named records" in scope
+        and "named field offsets" in scope
+        and "non-addressable" in scope
+        and "archive linkage, runtime behavior, family promotion, or public support" in scope,
+        "header-foundation record byte-layout matrix must retain its partial scope",
+    )
+
+    try:
+        contract = load_header_record_layout_matrix_contract()
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        require(isinstance(report, Mapping), "checked record byte-layout matrix report must be a table")
+        validate_header_record_layout_matrix_report(report, contract)
+    except (RecordLayoutMatrixError, OSError, json.JSONDecodeError) as error:
+        raise LedgerError(f"record byte-layout matrix input is invalid: {error}") from error
+    require(
+        contract.generated_report == report_path
+        and contract.public_headers == PUBLIC_HEADER_INVENTORY_PATH
+        and contract.callable_inventory
+        == ROOT / "compat" / "x86_64" / "header_callable_inventory.json",
+        "record byte-layout matrix contract inputs drifted",
+    )
+    report_summary = report["summary"]
+    require(
+        report_summary == EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_SUMMARY,
+        "record byte-layout matrix finite baseline drifted",
+    )
+
+    require(
+        HEADER_RECORD_LAYOUT_MATRIX_RUNNER_PATH.is_file(),
+        "record byte-layout matrix runner is missing",
+    )
+    runner = HEADER_RECORD_LAYOUT_MATRIX_RUNNER_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        "header_record_layout_matrix.py",
+        "--check",
+        "pinned musl",
+        "Linux 5.10",
+        "checked partial 1,337-row matrix",
+        "requires native Linux",
+    ):
+        require(phrase in runner, f"record byte-layout matrix runner omits {phrase}")
+    dispatch = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    require(
+        "header-record-layout-matrix)" in dispatch,
+        "record byte-layout matrix is absent from the native dispatcher",
+    )
+    return int(report_summary["row_count"])
 
 
 def require_header_declaration_macro_visibility_matrix(
@@ -3081,6 +3265,7 @@ def validate_header_layout_foundation_manifest(
         "feature_visibility_matrix",
         "callable_feature_visibility_matrix",
         "prototype_layout_matrix",
+        "record_layout_matrix",
         "callable_disposition",
         "selected_callable_provider_linkage_audit",
         "selected_header_install_projection",
@@ -3124,6 +3309,7 @@ def validate_header_layout_foundation_manifest(
             "feature_visibility_matrix": True,
             "callable_feature_visibility_matrix": True,
             "prototype_layout_matrix": True,
+            "record_layout_matrix": True,
             "abi_facet_matrix": False,
             "callable_disposition": True,
             "selected_callable_provider_linkage_audit": True,
@@ -3165,6 +3351,7 @@ def validate_header_layout_foundation_manifest(
             "feature_visibility_matrix": True,
             "callable_feature_visibility_matrix": True,
             "prototype_layout_matrix": True,
+            "record_layout_matrix": True,
             "abi_facet_matrix": False,
             "callable_disposition": True,
             "selected_callable_provider_linkage_audit": True,
@@ -3446,6 +3633,10 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/header_abi_matrix.py",
         "compat/x86_64/generated/header_abi_matrix/report.json",
         "compat/x86_64/run_header_abi_matrix.sh",
+        "compat/x86_64/header_record_layout_matrix.toml",
+        "compat/x86_64/header_record_layout_matrix.py",
+        "compat/x86_64/generated/header_record_layout_matrix/report.json",
+        "compat/x86_64/run_header_record_layout_matrix.sh",
         "compat/x86_64/header_declaration_macro_visibility_matrix.toml",
         "compat/x86_64/header_declaration_macro_visibility_matrix.py",
         "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
@@ -3501,6 +3692,7 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/tests/test_header_callable_provider_linkage_audit.py",
         "compat/x86_64/tests/test_header_callable_visibility_matrix.py",
         "compat/x86_64/tests/test_header_abi_matrix.py",
+        "compat/x86_64/tests/test_header_record_layout_matrix.py",
         "compat/x86_64/tests/test_wchar_uchar_header_source.py",
         "compat/x86_64/tests/test_header_declaration_macro_visibility_matrix.py",
         "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
@@ -3639,6 +3831,7 @@ def validate_header_layout_foundation_manifest(
         "feature_visibility_matrix",
         "callable_feature_visibility_matrix",
         "prototype_layout_matrix",
+        "record_layout_matrix",
         "callable_disposition",
         "selected_callable_provider_linkage_audit",
         "selected_header_install_projection",
@@ -3982,6 +4175,7 @@ def validate_header_layout_foundation_manifest(
     )
     callable_visibility_matrix_row_count = require_header_callable_visibility_matrix(manifest)
     prototype_layout_matrix_row_count = require_header_abi_matrix(manifest)
+    record_layout_matrix_row_count = require_header_record_layout_matrix(manifest)
 
     profiles = manifest["language_profile"]
     require(
@@ -6131,6 +6325,7 @@ def validate_header_layout_foundation_manifest(
         "callable_feature_visibility_matrix_row_count": callable_visibility_matrix_row_count,
         "feature_visibility_matrix_row_count": feature_visibility_matrix_row_count,
         "prototype_layout_matrix_row_count": prototype_layout_matrix_row_count,
+        "record_layout_matrix_row_count": record_layout_matrix_row_count,
         "language_profile_count": len(profile_ids),
         "profile_obligation_count": len(obligation_keys),
         "profile_matrix_row_count": profile_matrix_row_count,
@@ -6410,13 +6605,13 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "532 current comparable declaration-or-macro identity mismatch rows",
-        "748 matched identity rows",
+        "518 current comparable declaration-or-macro identity mismatch rows",
+        "762 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "2,448 same-identity source-form differences across 432 rows",
-        "71 form-only rows",
+        "2,567 same-identity source-form differences across 432 rows",
+        "85 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"declaration/macro visibility artifact description omits {phrase}")
@@ -6484,7 +6679,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "129 current comparable callable name/class mismatch rows",
+        "94 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6816,6 +7011,69 @@ def require_all_header_prototype_layout_artifact(
         and "source-form differences" in scope
         and "not ABI-classification, record-byte-layout, archive, runtime, promotion, or public-support evidence" in scope,
         "prototype/layout artifact evidence scope drifted",
+    )
+
+
+def require_all_header_record_byte_layout_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep partial record byte-layout evidence below header-family closure."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "all-header-record-byte-layout-matrix"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one all-header record byte-layout artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
+        "191 current comparable record-byte-layout mismatch rows",
+        "1,089 matched rows",
+        "one current oracle-not-applicable `aio.h:c11-strict` row",
+        "56 project-only header/profile rows",
+        "complete named record sizes, alignments, and named field offsets",
+        "incomplete, anonymous-only, bit-field, flexible-tail, and non-addressable",
+        "does not prove declaration-form equality, archive linkage, runtime behavior, family promotion, or public x86 support",
+    ):
+        require(phrase in description, f"record byte-layout artifact description omits {phrase}")
+    owners = set(
+        string_list(artifact["source_owners"], "all-header record byte-layout artifact source owners")
+    )
+    for owner in (
+        "compat/x86_64/header_callable_inventory.toml",
+        "compat/x86_64/header_callable_inventory.py",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_record_layout_matrix.toml",
+        "compat/x86_64/header_record_layout_matrix.py",
+        "compat/x86_64/generated/header_record_layout_matrix/report.json",
+        "compat/x86_64/run_header_record_layout_matrix.sh",
+        "compat/x86_64/tests/test_header_record_layout_matrix.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"record byte-layout artifact must own {owner}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        [entry["command"] for entry in evidence] == [EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_COMMAND],
+        "record byte-layout artifact must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    require(
+        isinstance(scope, str)
+        and "red byte-layout differences" in scope
+        and "not archive, runtime, promotion, or public-support evidence" in scope,
+        "record byte-layout artifact evidence scope drifted",
     )
 
 
@@ -76693,6 +76951,7 @@ def validate_ledger(
         by_id["libc.headers-layouts"]
     )
     require_all_header_prototype_layout_artifact(by_id["libc.headers-layouts"])
+    require_all_header_record_byte_layout_artifact(by_id["libc.headers-layouts"])
     require_selected_header_install_projection_artifact(by_id["libc.headers-layouts"])
     require_installed_header_tree_closure_artifact(by_id["libc.headers-layouts"])
     if header_layout_foundation_manifest is None:
@@ -77360,6 +77619,9 @@ def validate_ledger(
         ],
         "header_foundation_prototype_layout_matrix_row_count": header_layout_foundation_report[
             "prototype_layout_matrix_row_count"
+        ],
+        "header_foundation_record_layout_matrix_row_count": header_layout_foundation_report[
+            "record_layout_matrix_row_count"
         ],
         "header_foundation_language_profile_count": header_layout_foundation_report[
             "language_profile_count"

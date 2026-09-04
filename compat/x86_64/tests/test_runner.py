@@ -1738,6 +1738,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    header-callable-visibility-matrix) ;;", source)
         self.assertIn("    header-callable-disposition) ;;", source)
         self.assertIn("    header-abi-matrix) ;;", source)
+        self.assertIn("    header-record-layout-matrix) ;;", source)
         self.assertIn("    header-declaration-macro-visibility-matrix) ;;", source)
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    ftw-header-abi) ;;", source)
@@ -1875,6 +1876,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "header-callable-visibility-matrix",
             "header-callable-disposition",
             "header-abi-matrix",
+            "header-record-layout-matrix",
             "header-declaration-macro-visibility-matrix",
             "header-callable-linkage-audit",
             "header-callable-provider-linkage-audit",
