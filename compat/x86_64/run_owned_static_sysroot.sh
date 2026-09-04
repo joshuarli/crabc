@@ -763,6 +763,11 @@ run_static_mode() {
 
     case "$consumer_kind" in
         tls) ;;
+        pthread)
+            probe=libc_pthread_tls_aggregate_probe.c
+            expected_output=''
+            minimum_tls_alignment=1
+            ;;
         allocator)
             probe=libc_allocator_basic_runtime_v1_probe.c
             expected_output=ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT
@@ -904,6 +909,12 @@ run_static_mode() {
         run_static_mode "$installed_root" "$mode" "$mode_root/scan" \
             "$label scanning" scanf "$printf_matrix_reference.scan"
     fi
+    if [ "$consumer_kind" = tls ]; then
+        # Exercise the composed worker/once/TSD/synchronization body through
+        # the installed CRT, not the legacy fixture's private startup object.
+        run_static_mode "$installed_root" "$mode" "$mode_root/pthread" \
+            "$label pthread composition" pthread
+    fi
     assert_malformed_tls_rejected "$candidate" "$label"
     sha256sum "$candidate" | awk '{ print $1 }' >"$mode_root/candidate.sha256"
 }
@@ -1025,7 +1036,7 @@ compare_consumer_matrix_runs() {
     # the serial/parallel comparison an additional determinism check rather
     # than just a timing report, while both passes reuse the same cold-built
     # primary and extracted trees.
-    for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
+    for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
         cmp "$serial_primary/$mode_root/candidate.sha256" \
             "$parallel_primary/$mode_root/candidate.sha256" ||
             fail "${mode_root} primary output differs between serial and parallel consumers"
@@ -1293,6 +1304,13 @@ env -i "$header_consumer/scanf-reference" "$header_consumer/scan-stream" \
 assert_scanf_matrix_records "$printf_matrix_reference.scan" "pinned-musl scanf reference"
 [ ! -e "$header_consumer/scan-stream" ] || fail "scanf reference retained its temporary stream"
 
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_pthread_tls_aggregate_probe.c" \
+    -o "$header_consumer/pthread-reference"
+timeout 20s env -i "$header_consumer/pthread-reference" >"$header_consumer/pthread-reference-output" ||
+    fail "pinned-musl pthread composition reference failed"
+[ ! -s "$header_consumer/pthread-reference-output" ] || fail "pthread reference emitted unexpected output"
+
 common_compile=(
     gcc -std=c11 -D_GNU_SOURCE -fno-pie -ffreestanding -fno-builtin
     -fno-stack-protector -ftls-model=local-exec -nostdinc
@@ -1347,6 +1365,11 @@ audit_header_dependencies "$header_consumer/printf-float.d" "$primary" \
     -o "$header_consumer/scanf.o"
 audit_header_dependencies "$header_consumer/scanf.d" "$primary" \
     "$ROOT_DIR/compat/x86_64/owned_static_scanf_probe.c"
+"${common_compile[@]}" -MD -MF "$header_consumer/pthread.d" \
+    -c "$ROOT_DIR/compat/x86_64/libc_pthread_tls_aggregate_probe.c" \
+    -o "$header_consumer/pthread.o"
+audit_header_dependencies "$header_consumer/pthread.d" "$primary" \
+    "$ROOT_DIR/compat/x86_64/libc_pthread_tls_aggregate_probe.c"
 grep -Fq "$primary/usr/include/errno.h" "$dependency_file" ||
     fail "consumer dependency trace did not resolve installed errno.h"
 grep -Fq "$primary/usr/include/pthread.h" "$dependency_file" ||
@@ -1381,7 +1404,7 @@ if [ "$consumer_benchmark" = 1 ]; then
         "$primary_consumer" "$extracted_consumer" \
         "$work_dir/consumer-matrix-serial-logs" "$work_dir/consumer-matrix-logs"
 fi
-for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
+for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"

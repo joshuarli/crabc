@@ -101,6 +101,13 @@ compiler-protected code in the initial thread and worker. A child corrupts
 only its own guard and must fault through the owned failure handler; core
 dumps are disabled for this negative test.
 
+Each TLS job also links `libc_pthread_tls_aggregate_probe.c` through the installed
+CRT in both modes and the extracted package. Two workers compose errno isolation,
+mutex/condition handoff, rwlock exclusion, once publication, and clear-before-call
+TSD destructors before join. This reuses the existing differential body without
+its private startup object. Attributes, C11 adapters, cancellation, fork repair,
+and dynamic TLS still need their broader installed composition evidence.
+
 The existing `libc_allocator_basic_runtime_v1_probe.c` also runs through both
 installed modes and the extracted package: allocation/reallocation/alignment
 and failure behavior, worker teardown, allocation across a joined-worker fork,
@@ -145,7 +152,7 @@ scansets, widths, suppression, positional arguments, integer and binary32/64/80
 conversion, errno, fenv, and stream lookahead/EOF/error state. Allocation checks
 exercise `%m` growth, cleanup, partial failure, and ENOMEM; each process owns
 its scratch and restores its resource limit. Wide formatting/scanning remains
-explicitly unsupported. The 24 bounded jobs now cover 32 installed binaries.
+explicitly unsupported. The 24 bounded jobs now cover 36 installed binaries.
 
 `x86-owned-static-runtime` is a planned archive profile, routed through this
 runner but selected by `scripts/build_x86_64_owned_sysroot.py`. Its direct
