@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "5dca875ca017b5a20d576bbc5c8f72a7f56e5b2a53acd3087f6ba798796aa9b7"
+    "source_abi_report_sha256": "4a2b3b018cc51258ccf4eadb240327b6919a92db1236248b27491f8be25c316d"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -2786,7 +2786,7 @@
         "kind_counts": {
           "macro": 22
         },
-        "sha256": "44be1dc36f2d1ea786230485ab46370974f0cfb90a882342be7563575551dd2b"
+        "sha256": "4f6a0c0c000d9b46a2ddab54c4d29f592f3c6e084afd2c1743e35ed474597c78"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -2803,8 +2803,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2812,7 +2812,7 @@
         "kind_counts": {
           "macro": 22
         },
-        "sha256": "44be1dc36f2d1ea786230485ab46370974f0cfb90a882342be7563575551dd2b"
+        "sha256": "4f6a0c0c000d9b46a2ddab54c4d29f592f3c6e084afd2c1743e35ed474597c78"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -2829,8 +2829,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2838,7 +2838,7 @@
         "kind_counts": {
           "macro": 22
         },
-        "sha256": "44be1dc36f2d1ea786230485ab46370974f0cfb90a882342be7563575551dd2b"
+        "sha256": "4f6a0c0c000d9b46a2ddab54c4d29f592f3c6e084afd2c1743e35ed474597c78"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -2855,8 +2855,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2864,7 +2864,7 @@
         "kind_counts": {
           "macro": 22
         },
-        "sha256": "44be1dc36f2d1ea786230485ab46370974f0cfb90a882342be7563575551dd2b"
+        "sha256": "4f6a0c0c000d9b46a2ddab54c4d29f592f3c6e084afd2c1743e35ed474597c78"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -2881,8 +2881,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2890,7 +2890,7 @@
         "kind_counts": {
           "macro": 22
         },
-        "sha256": "44be1dc36f2d1ea786230485ab46370974f0cfb90a882342be7563575551dd2b"
+        "sha256": "4f6a0c0c000d9b46a2ddab54c4d29f592f3c6e084afd2c1743e35ed474597c78"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -2907,8 +2907,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2916,7 +2916,7 @@
         "kind_counts": {
           "macro": 22
         },
-        "sha256": "44be1dc36f2d1ea786230485ab46370974f0cfb90a882342be7563575551dd2b"
+        "sha256": "4f6a0c0c000d9b46a2ddab54c4d29f592f3c6e084afd2c1743e35ed474597c78"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -2933,8 +2933,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -2942,7 +2942,7 @@
         "kind_counts": {
           "macro": 22
         },
-        "sha256": "44be1dc36f2d1ea786230485ab46370974f0cfb90a882342be7563575551dd2b"
+        "sha256": "4f6a0c0c000d9b46a2ddab54c4d29f592f3c6e084afd2c1743e35ed474597c78"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -2959,8 +2959,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -76072,13 +76072,13 @@
     "row_count": 1337,
     "source_form_comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 677,
-      "mismatch": 603,
+      "matched": 684,
+      "mismatch": 596,
       "oracle-not-applicable": 1
     },
-    "source_form_difference_count": 2567,
-    "source_form_difference_row_count": 432,
-    "source_form_only_difference_row_count": 85
+    "source_form_difference_count": 2539,
+    "source_form_difference_row_count": 425,
+    "source_form_only_difference_row_count": 78
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {

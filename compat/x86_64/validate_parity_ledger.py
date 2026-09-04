@@ -408,23 +408,23 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 677,
-        "mismatch": 603,
+        "matched": 684,
+        "mismatch": 596,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "603 comparable header/profile rows have prototype or named declaration-form differences",
+        "596 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
         "candidate_only_count": 7016,
-        "incompatible_count": 2567,
+        "incompatible_count": 2539,
         "reference_only_count": 1709,
     },
-    "mismatch_row_count": 603,
+    "mismatch_row_count": 596,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -519,13 +519,13 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 677,
-        "mismatch": 603,
+        "matched": 684,
+        "mismatch": 596,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 2567,
-    "source_form_difference_row_count": 432,
-    "source_form_only_difference_row_count": 85,
+    "source_form_difference_count": 2539,
+    "source_form_difference_row_count": 425,
+    "source_form_only_difference_row_count": 78,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -6610,8 +6610,8 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "2,567 same-identity source-form differences across 432 rows",
-        "85 form-only rows",
+        "2,539 same-identity source-form differences across 425 rows",
+        "78 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"declaration/macro visibility artifact description omits {phrase}")
@@ -6976,7 +6976,7 @@ def require_all_header_prototype_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "603 current comparable prototype or named source-form mismatch rows",
+        "596 current comparable prototype or named source-form mismatch rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",

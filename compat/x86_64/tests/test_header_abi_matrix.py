@@ -397,6 +397,31 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                 self.assertEqual(row["difference"]["incompatible_count"], 0)
                 self.assertEqual(row["difference"]["reference_only_count"], 0)
 
+    def test_cpio_file_type_literals_match_pinned_musl_source_forms(self) -> None:
+        """Keep the historical cpio file-type macro tokens exact across profiles."""
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        profiles = {
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-bsd",
+            "cxx17-strict",
+        }
+        names = {"C_ISBLK", "C_ISCHR", "C_ISDIR", "C_ISFIFO"}
+        rows = [row for row in checked["rows"] if row["header"] == "cpio.h"]
+        self.assertEqual({row["profile"] for row in rows}, profiles)
+        for row in rows:
+            with self.subTest(profile=row["profile"]):
+                difference = row["difference"]
+                for field in ("candidate_only", "incompatible", "reference_only"):
+                    self.assertEqual(
+                        [fact for fact in difference[field] if fact["name"] in names],
+                        [],
+                        f"cpio.h:{row['profile']} {field} file-type macro facts",
+                    )
+
     def test_quota_header_has_no_owned_pinned_musl_fact_differences(self) -> None:
         """Keep quota-header completion distinct from inherited stdint.h differences."""
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

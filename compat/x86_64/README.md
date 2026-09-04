@@ -1751,7 +1751,7 @@ behavior, family promotion, or public x86 support.
 `header-abi-matrix` adds a separate checked Clang-derived 1,337-row report for
 function source declaration forms and emitted linkage spellings plus named
 typedefs, record shapes, enum values, variables, and macro replacement forms.
-Its current 603 comparable red source-form rows, one
+Its current 596 comparable red source-form rows, one
 `aio.h:c11-strict` oracle-not-applicable row, and 56 project-only rows are
 evidence to review—not parity waivers or ABI classifications. It excludes byte
 layouts, anonymous declarations, inline behavior, archive linkage, runtime,
@@ -1772,8 +1772,8 @@ header cross-product. It compares only named `(kind, name)` declaration and
 macro visibility across all 1,337 rows: 518 current identity-mismatch rows,
 762 matched rows, while the one `aio.h:c11-strict` oracle-not-applicable row
 and 56 project-only rows retain checked candidate fact summaries and digests.
-Its 2,567 same-identity source-form
-differences across 432 rows—including 85 form-only rows—remain separately
+Its 2,539 same-identity source-form
+differences across 425 rows—including 78 form-only rows—remain separately
 accounted and are not an ABI-equality claim. This is generic feature-visibility
 evidence only; declaration-form equality, layouts, linkage, runtime, family
 promotion, and public x86 support remain outside it.

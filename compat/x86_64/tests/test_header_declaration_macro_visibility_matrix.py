@@ -109,8 +109,8 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
                 "oracle-not-applicable": 1,
             },
         )
-        self.assertEqual(report["summary"]["source_form_difference_count"], 2567)
-        self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 85)
+        self.assertEqual(report["summary"]["source_form_difference_count"], 2539)
+        self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 78)
         mismatches = [row for row in report["rows"] if row["comparison"] == "mismatch"]
         self.assertTrue(mismatches)
         for row in mismatches:
