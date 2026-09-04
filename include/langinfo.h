@@ -6,11 +6,10 @@ extern "C" {
 #endif
 
 #include <features.h>
+#include <nl_types.h>
 
 #define __NEED_locale_t
 #include <bits/alltypes.h>
-
-typedef int nl_item;
 
 #define ABDAY_1 0x20000
 #define ABDAY_2 0x20001
@@ -70,12 +69,12 @@ typedef int nl_item;
 
 #define CODESET 14
 
+#define CRNCYSTR 0x4000F
+
 #define RADIXCHAR 0x10000
 #define THOUSEP 0x10001
 #define YESEXPR 0x50000
 #define NOEXPR 0x50001
-#define CRNCYSTR 0x4000f
-
 #define _NL_LOCALE_NAME(cat) (((cat)<<16) | 0xffff)
 
 #if defined(_GNU_SOURCE)
@@ -87,7 +86,7 @@ typedef int nl_item;
 #define NOSTR 0x50003
 #endif
 
-char *nl_langinfo(int);
+char *nl_langinfo(nl_item);
 char *nl_langinfo_l(nl_item, locale_t);
 
 #ifdef __cplusplus
