@@ -2,7 +2,7 @@
 # Native Linux/x86-64 <stdlib.h> feature-profile ABI matrix.
 #
 # Pinned musl 1.2.6 is the declaration, feature-visibility, C++ C-linkage,
-# and C++ null-pointer oracle.  The candidate uses raw GCC with only project
+# C++ null-pointer, and wait-status macro-form oracle. The candidate uses raw GCC with only project
 # headers and compiler builtin headers, so an ambient system libc header cannot
 # hide a project-profile mismatch.  This is compile-only evidence: it selects
 # no crabc-libc archive, C runtime, CRT, loader, sysroot, or public x86 support.
@@ -495,6 +495,33 @@ run_one_cxx_null_witness() {
     done
 }
 
+run_wait_status_macro_surface() {
+    local profile="$1" tree compiler include_root
+    local -a profile_args language_args
+
+    mapfile -d '' -t profile_args < <(profile_arguments "$profile")
+    if profile_is_cxx "$profile"; then
+        language_args=(-x c++ -std=c++17 -nostdinc++)
+    else
+        language_args=(-x c -std=c11)
+    fi
+    for tree in reference candidate; do
+        case "$tree" in
+            reference) compiler="$ORACLE_CC"; include_root="$MUSL_ROOT/include" ;;
+            candidate) compiler="$CANDIDATE_CC"; include_root="$PROJECT_INCLUDE" ;;
+        esac
+        run_compiler "$compiler" "${language_args[@]}" "${profile_args[@]}" \
+            -nostdinc -I "$include_root" -isystem "$candidate_compiler_builtin_include" \
+            -dM -E -include stdlib.h - < /dev/null > "$work_dir/$tree-$profile.macros"
+        awk '/^#define (WNOHANG|WUNTRACED|WEXITSTATUS|WTERMSIG|WSTOPSIG|WIFEXITED|WIFSIGNALED|WIFSTOPPED|WCOREDUMP|WIFCONTINUED)(\(|[[:space:]])/' \
+            "$work_dir/$tree-$profile.macros" | sort > "$work_dir/$tree-$profile.wait-macros"
+    done
+    if ! diff -u "$work_dir/reference-$profile.wait-macros" \
+        "$work_dir/candidate-$profile.wait-macros"; then
+        record_linkage_mismatch "$profile wait-status macro forms differ from pinned musl"
+    fi
+}
+
 run_cxx_null_witness() {
     local profile="$1"
 
@@ -512,7 +539,7 @@ run_cxx_null_witness() {
 
 [ "$#" -eq 0 ] || fail "usage: $0"
 require_native_linux_x86_64
-for tool in awk env grep mktemp nm realpath sed uname; do
+for tool in awk diff env grep mktemp nm realpath sed sort uname; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -554,6 +581,7 @@ for profile in "${PROFILES[@]}"; do
 done
 for profile in "${PROFILES[@]}"; do
     run_cxx_null_witness "$profile"
+    run_wait_status_macro_surface "$profile"
 done
 
 if [ "$failures" -ne 0 ]; then

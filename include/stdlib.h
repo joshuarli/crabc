@@ -45,7 +45,11 @@ size_t __ctype_get_mb_cur_max(void);
 #define WSTOPSIG(s) WEXITSTATUS(s)
 #endif
 #ifndef WIFEXITED
+#if defined(__x86_64__)
+#define WIFEXITED(s) (!WTERMSIG(s))
+#else
 #define WIFEXITED(s) (!(s & 0x7f))
+#endif
 #endif
 #ifndef WIFSIGNALED
 #define WIFSIGNALED(s) (((s)&0xffff)-1U < 0xffu)

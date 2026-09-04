@@ -125,6 +125,9 @@ static_assert(WEXITSTATUS(0x1234) == 0x12 && WTERMSIG(0x127f) == 0x7f &&
     WSTOPSIG(0x137f) == 0x13, "musl wait-status extraction");
 static_assert(WIFEXITED(0x1200) && !WIFEXITED(0x127f),
     "musl WIFEXITED status partition");
+// A macro argument is an expression, including operators below bitwise AND.
+static_assert(WIFEXITED(0x100 | 0) && !WIFEXITED(0x100 | 1),
+    "WIFEXITED must preserve argument expression precedence");
 static_assert(!WIFSTOPPED(0x007f),
     "musl WIFSTOPPED rejects a stop status with no stopping signal");
 static_assert(WIFSTOPPED(0x137f),
