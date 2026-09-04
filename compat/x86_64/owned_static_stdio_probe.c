@@ -139,7 +139,7 @@ static void *writer(void *argument)
     for (int i = 0; i < 100; ++i) {
         flockfile(shared);
         if (ftrylockfile(shared)) abort();
-        if (fputc(byte, shared) != byte || fputc('\n', shared) != '\n') abort();
+        if (putc_unlocked(byte, shared) != byte || fputc_unlocked('\n', shared) != '\n') abort();
         funlockfile(shared);
         funlockfile(shared);
     }
@@ -149,6 +149,17 @@ static void *writer(void *argument)
 int main(int argc, char **argv)
 {
     if (argc != 3) return 1;
+    /* First stdin operation uses the unlocked entry before lazy FILE buffer
+     * initialization, with a deterministic descriptor and exclusive access. */
+    int saved_input = dup(STDIN_FILENO);
+    int input = open(argv[1], O_RDWR | O_CREAT | O_TRUNC, 0600);
+    if (saved_input < 0 || input < 0 || write(input, "unlocked", 8) != 8
+        || lseek(input, 0, SEEK_SET) || dup2(input, STDIN_FILENO) < 0) return 67;
+    char unlocked[8];
+    if (getc_unlocked(stdin) != 'u' || fread_unlocked(unlocked, 1, 7, stdin) != 7
+        || memcmp(unlocked, "nlocked", 7) || getchar_unlocked() != EOF) return 68;
+    clearerr(stdin);
+    if (dup2(saved_input, STDIN_FILENO) < 0 || close(saved_input) || close(input)) return 69;
     int regression = stream_regressions(argv[1]);
     if (regression) return 100 + regression;
     FILE *a = fopen(argv[1], "w+e");
@@ -158,7 +169,7 @@ int main(int argc, char **argv)
     if (descriptor_flags < 0 || !(descriptor_flags & FD_CLOEXEC)) return 3;
     char storage[37];
     if (setvbuf(a, storage, _IOFBF, sizeof storage)) return 4;
-    if (fputs("first\nsecond\n", a) < 0 || fwrite("xyz", 1, 3, b) != 3) return 5;
+    if (fputs("first\nsecond\n", a) < 0 || fwrite_unlocked("xyz", 1, 3, b) != 3) return 5;
     if (ftell(a) != 13 || fflush(NULL) || fseek(a, 0, SEEK_SET)) return 6;
     char line[32];
     if (!fgets(line, sizeof line, a) || strcmp(line, "first\n")) return 7;

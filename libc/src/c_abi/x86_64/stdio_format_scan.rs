@@ -1,9 +1,12 @@
 //! Bounded byte-string formatting and scanning for the static Linux/x86-64 C ABI.
 //!
-//! With `x86-owned-static-runtime`, descriptor streams from the owned engine
-//! also enter the existing grammar, and a recursive FILE lock spans the whole
-//! formatting/scanning call. The permanent-only restrictions below describe
-//! the unchanged private fixture feature; the grammar limits apply to both.
+//! With `x86-owned-static-runtime`, `owned_printf` selects the shared owned
+//! byte-buffer/FILE/descriptor/allocation formatter: positional arguments,
+//! integer/string/count/pointer/%m and binary64 hexadecimal conversion. It
+//! still excludes decimal floating, long-double and wide conversion. Owned
+//! scanning retains its existing grammar and a recursive FILE lock spans each
+//! stream call. The narrower formatting/permanent-stream restrictions below
+//! describe the unchanged private fixture feature, not the owned formatter.
 //!
 //! This target-local leaf owns the byte-buffer entries `snprintf`,
 //! `vsnprintf`, `sprintf`, `vsprintf`, `sscanf`, and `vsscanf`, plus the
@@ -107,6 +110,10 @@ use super::{errno, error_strings};
 use super::stdio_standard;
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 use stdio_standard::StandardStream;
+
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_printf.rs"]
+mod owned_printf;
 
 const EINVAL: c_int = 22;
 const ERANGE: c_int = 34;
@@ -320,7 +327,13 @@ impl StreamOutput {
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 impl FormatSink for StreamOutput {
     unsafe fn byte(&mut self, byte: u8) {
-        if unsafe { stdio_standard::write_byte(self.stream, byte) } < 0 {
+        #[cfg(feature = "x86-owned-static-runtime")]
+        if self.failed { return; }
+        #[cfg(feature = "x86-owned-static-runtime")]
+        let status = unsafe { stdio_standard::write_formatted_byte(self.stream, byte) };
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        let status = unsafe { stdio_standard::write_byte(self.stream, byte) };
+        if status < 0 {
             self.failed = true;
         }
         match self.count.checked_add(1) {
@@ -331,6 +344,8 @@ impl FormatSink for StreamOutput {
     unsafe fn bytes(&mut self, source: *const u8, length: usize) {
         let mut index = 0usize;
         while index < length {
+            #[cfg(feature = "x86-owned-static-runtime")]
+            if self.failed { break; }
             unsafe { self.byte(source.add(index).read()) };
             index += 1;
         }
@@ -338,6 +353,8 @@ impl FormatSink for StreamOutput {
     unsafe fn repeated(&mut self, byte: u8, length: usize) {
         let mut index = 0usize;
         while index < length {
+            #[cfg(feature = "x86-owned-static-runtime")]
+            if self.failed { break; }
             unsafe { self.byte(byte) };
             index += 1;
         }
@@ -346,8 +363,8 @@ impl FormatSink for StreamOutput {
     fn overflowed(&self) -> bool { self.overflowed }
     fn set_overflowed(&mut self) { self.overflowed = true; }
     fn failed(&self) -> bool { self.failed }
-    fn allow_float(&self) -> bool { false }
-    fn allow_errno_message(&self) -> bool { false }
+    fn allow_float(&self) -> bool { cfg!(feature = "x86-owned-static-runtime") }
+    fn allow_errno_message(&self) -> bool { cfg!(feature = "x86-owned-static-runtime") }
 }
 
 #[inline]
@@ -744,6 +761,7 @@ unsafe fn write_hex_float(
     }
 }
 
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 unsafe fn format_to_sink<S: FormatSink>(
     output: &mut S,
     format: *const c_char,
@@ -943,12 +961,23 @@ unsafe fn format_to_buffer(
     format: *const c_char,
     args: &mut VaList<'_>,
 ) -> c_int {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        if capacity != 0 { unsafe { destination.write(0); } }
+        let mut output = Output::new(destination.cast::<u8>(), capacity);
+        let result = unsafe { owned_printf::format(&mut output, format, args) };
+        unsafe { output.finish(); }
+        return result;
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    {
     let mut output = Output::new(destination.cast::<u8>(), capacity);
     let valid = unsafe { format_to_sink(&mut output, format, args) };
     if !valid && !output.overflowed {
         return -1;
     }
     unsafe { output.finish() }
+    }
 }
 
 /// Format the selected grammar into a bounded caller-owned byte buffer.
@@ -1023,6 +1052,7 @@ pub unsafe extern "C" fn sprintf(
 }
 
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 unsafe fn format_to_stream(
     stream: *mut StandardStream,
     format: *const c_char,
@@ -1044,6 +1074,11 @@ unsafe fn format_to_stream(
         return -1;
     }
     output.count as c_int
+}
+
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn format_to_stream(stream: *mut StandardStream, format: *const c_char, args: &mut VaList<'_>) -> c_int {
+    unsafe { owned_printf::format_stream(stream, format, args) }
 }
 
 /// Format to the permanently owned standard output stream.

@@ -843,6 +843,57 @@ pub(crate) unsafe fn write_byte(stream: *mut StandardStream, byte: u8) -> c_int 
     unsafe { write_byte_held(stream, byte) }
 }
 
+/// Runs the source-mapped vfprintf FILE transition under one recursive lock.
+/// The closure cannot retain the temporary buffer, whose pointer never leaves
+/// this module. All normal returns restore buffering and the prior sticky
+/// error even if parsing or descriptor output failed.
+/// # Safety
+/// `stream` is live; `format` accesses this stream only through held helpers
+/// and does not close, reopen, or reconfigure it during the callback.
+pub(crate) unsafe fn with_formatted_stream(stream: *mut StandardStream, format: impl FnOnce() -> c_int) -> c_int {
+    unsafe {
+        let _guard = StreamGuard::acquire(stream);
+        let old_error = (*stream).flags & F_ERR;
+        (*stream).flags &= !F_ERR;
+        if !is_writable(stream) || !prepare_write(stream) {
+            (*stream).flags |= F_ERR | old_error;
+            return EOF;
+        }
+        let mut temporary = [0u8; 80];
+        let old_buffer = (*stream).buffer;
+        let unbuffered = (*stream).capacity == 0;
+        if unbuffered {
+            (*stream).buffer = temporary.as_mut_ptr();
+            (*stream).capacity = temporary.len();
+            (*stream).write_position = (*stream).buffer;
+        }
+        let mut result = format();
+        if unbuffered {
+            // musl calls __stdio_write even for an empty formatted result;
+            // unlike ordinary fflush, that validates the output descriptor.
+            if (*stream).write_position == (*stream).buffer {
+                if c_ssize_status(raw_syscall::syscall3(raw_syscall::SYS_WRITE,
+                    (*stream).file_descriptor as i64, (*stream).buffer as i64, 0)) < 0 {
+                    mark_error(stream);
+                }
+            }
+            if flush_output_held(stream) < 0 { result = EOF; }
+            (*stream).buffer = old_buffer;
+            (*stream).capacity = 0;
+            (*stream).write_position = old_buffer;
+        }
+        if (*stream).flags & F_ERR != 0 { result = EOF; }
+        (*stream).flags |= old_error;
+        result
+    }
+}
+
+/// # Safety
+/// The caller holds the live stream's lock through with_formatted_stream.
+pub(crate) unsafe fn write_formatted_byte(stream: *mut StandardStream, byte: u8) -> c_int {
+    unsafe { write_byte_held(stream, byte) }
+}
+
 // The caller owns the stream lock across the complete output operation.
 unsafe fn write_byte_held(stream: *mut StandardStream, byte: u8) -> c_int {
     if !unsafe { is_selected_stream(stream) } {
@@ -966,6 +1017,11 @@ pub unsafe extern "C" fn fread(
     stream: *mut StandardStream,
 ) -> usize {
     let _guard = unsafe { StreamGuard::acquire(stream) };
+    unsafe { fread_held(destination, size, count, stream) }
+}
+
+// The caller exclusively owns the initialized stream through the transfer.
+unsafe fn fread_held(destination: *mut c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
     if size == 0 || count == 0 {
         return 0;
     }
@@ -1049,6 +1105,11 @@ pub unsafe extern "C" fn fwrite(
     stream: *mut StandardStream,
 ) -> usize {
     let _guard = unsafe { StreamGuard::acquire(stream) };
+    unsafe { fwrite_held(source, size, count, stream) }
+}
+
+// The caller exclusively owns the initialized stream through the transfer.
+unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
     if size == 0 || count == 0 {
         return 0;
     }
@@ -1080,6 +1141,66 @@ pub unsafe extern "C" fn fwrite(
         written += 1;
     }
     written / size
+}
+
+/// # Safety
+/// `stream` is live and the caller has exclusive access, either by holding
+/// flockfile or by excluding every concurrent user, including initialization.
+#[no_mangle]
+pub unsafe extern "C" fn fgetc_unlocked(stream: *mut StandardStream) -> c_int {
+    unsafe { initialize_buffer(stream); read_byte_held(stream) }
+}
+
+/// # Safety
+/// The live stream and exclusive-access obligations are those of fgetc_unlocked.
+#[no_mangle]
+pub unsafe extern "C" fn getc_unlocked(stream: *mut StandardStream) -> c_int {
+    unsafe { fgetc_unlocked(stream) }
+}
+
+/// # Safety
+/// stdin is open and the caller exclusively owns its access and initialization.
+#[no_mangle]
+pub unsafe extern "C" fn getchar_unlocked() -> c_int {
+    unsafe { fgetc_unlocked(ptr::addr_of_mut!(STDIN_STREAM)) }
+}
+
+/// # Safety
+/// The caller exclusively owns this live stream, including lazy initialization,
+/// until the write completes; holding flockfile satisfies this requirement.
+#[no_mangle]
+pub unsafe extern "C" fn fputc_unlocked(character: c_int, stream: *mut StandardStream) -> c_int {
+    unsafe { initialize_buffer(stream); write_byte_held(stream, character as u8) }
+}
+
+/// # Safety
+/// The live stream and exclusive-access obligations are those of fputc_unlocked.
+#[no_mangle]
+pub unsafe extern "C" fn putc_unlocked(character: c_int, stream: *mut StandardStream) -> c_int {
+    unsafe { fputc_unlocked(character, stream) }
+}
+
+/// # Safety
+/// stdout is open and the caller exclusively owns its access and initialization.
+#[no_mangle]
+pub unsafe extern "C" fn putchar_unlocked(character: c_int) -> c_int {
+    unsafe { fputc_unlocked(character, ptr::addr_of_mut!(STDOUT_STREAM)) }
+}
+
+/// # Safety
+/// `destination` is writable for size*count bytes, disjoint from FILE storage;
+/// the caller exclusively owns the live stream, including initialization.
+#[no_mangle]
+pub unsafe extern "C" fn fread_unlocked(destination: *mut c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
+    unsafe { initialize_buffer(stream); fread_held(destination, size, count, stream) }
+}
+
+/// # Safety
+/// `source` is readable for size*count bytes; the caller exclusively owns the
+/// live stream, including initialization, until the transfer completes.
+#[no_mangle]
+pub unsafe extern "C" fn fwrite_unlocked(source: *const c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
+    unsafe { initialize_buffer(stream); fwrite_held(source, size, count, stream) }
 }
 
 /// # Safety
