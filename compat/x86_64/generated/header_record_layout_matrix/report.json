@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-record-layout-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "d8e49e7d6d1a6d39c079d8b5a663b44ff9cc441d34435f784ce4d5bc2858f28b",
+    "callable_inventory_sha256": "933444511a01f07834af14626cbb7ec741d84f4ebb64843d6156924703ef615e",
     "compiler": "clang",
     "header_record_layout_matrix_contract_sha256": "e7fc69edb51a58bfe817812a5aa8f482915c47fdac79027be109bc05b9aeb7b8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -51145,7 +51145,7 @@
               "name": "r_state",
               "offset": 24,
               "offset_bits": 192,
-              "type": "enum (unnamed at /workspace/include/link.h:48:5)"
+              "type": "enum (unnamed at /workspace/include/link.h:44:2)"
             },
             {
               "applicability": "applicable",
@@ -51499,7 +51499,7 @@
               "name": "r_state",
               "offset": 24,
               "offset_bits": 192,
-              "type": "enum (unnamed at /workspace/include/link.h:48:5)"
+              "type": "enum (unnamed at /workspace/include/link.h:44:2)"
             },
             {
               "applicability": "applicable",
@@ -51853,7 +51853,7 @@
               "name": "r_state",
               "offset": 24,
               "offset_bits": 192,
-              "type": "enum (unnamed at /workspace/include/link.h:48:5)"
+              "type": "enum (unnamed at /workspace/include/link.h:44:2)"
             },
             {
               "applicability": "applicable",
@@ -52207,7 +52207,7 @@
               "name": "r_state",
               "offset": 24,
               "offset_bits": 192,
-              "type": "enum (unnamed at /workspace/include/link.h:48:5)"
+              "type": "enum (unnamed at /workspace/include/link.h:44:2)"
             },
             {
               "applicability": "applicable",
@@ -52561,7 +52561,7 @@
               "name": "r_state",
               "offset": 24,
               "offset_bits": 192,
-              "type": "enum (unnamed at /workspace/include/link.h:48:5)"
+              "type": "enum (unnamed at /workspace/include/link.h:44:2)"
             },
             {
               "applicability": "applicable",
@@ -52915,7 +52915,7 @@
               "name": "r_state",
               "offset": 24,
               "offset_bits": 192,
-              "type": "enum (unnamed at /workspace/include/link.h:48:5)"
+              "type": "enum (unnamed at /workspace/include/link.h:44:2)"
             },
             {
               "applicability": "applicable",
@@ -53269,7 +53269,7 @@
               "name": "r_state",
               "offset": 24,
               "offset_bits": 192,
-              "type": "enum (unnamed at /workspace/include/link.h:48:5)"
+              "type": "enum (unnamed at /workspace/include/link.h:44:2)"
             },
             {
               "applicability": "applicable",
@@ -122777,7 +122777,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:35:1",
+          "key": "struct-anonymous:25:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -122825,7 +122825,7 @@
               "name": "__reserved2",
               "offset": 8,
               "offset_bits": 64,
-              "type": "struct (unnamed at /workspace/include/sched.h:35:5)[2]"
+              "type": "struct (unnamed at /workspace/include/sched.h:25:2)[2]"
             },
             {
               "applicability": "applicable",
@@ -122953,7 +122953,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:35:1",
+          "key": "struct-anonymous:25:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -123001,7 +123001,7 @@
               "name": "__reserved2",
               "offset": 8,
               "offset_bits": 64,
-              "type": "struct (unnamed at /workspace/include/sched.h:35:5)[2]"
+              "type": "struct (unnamed at /workspace/include/sched.h:25:2)[2]"
             },
             {
               "applicability": "applicable",
@@ -123129,7 +123129,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:35:1",
+          "key": "struct-anonymous:25:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -123159,7 +123159,7 @@
               "name": "__reserved2",
               "offset": 8,
               "offset_bits": 64,
-              "type": "struct (unnamed at /workspace/include/sched.h:35:5)[2]"
+              "type": "struct (unnamed at /workspace/include/sched.h:25:2)[2]"
             },
             {
               "applicability": "applicable",
@@ -123269,7 +123269,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:35:1",
+          "key": "struct-anonymous:25:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -123299,7 +123299,7 @@
               "name": "__reserved2",
               "offset": 8,
               "offset_bits": 64,
-              "type": "struct (unnamed at /workspace/include/sched.h:35:5)[2]"
+              "type": "struct (unnamed at /workspace/include/sched.h:25:2)[2]"
             },
             {
               "applicability": "applicable",
@@ -123409,7 +123409,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:35:1",
+          "key": "struct-anonymous:25:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -123439,7 +123439,7 @@
               "name": "__reserved2",
               "offset": 8,
               "offset_bits": 64,
-              "type": "struct (unnamed at /workspace/include/sched.h:35:5)[2]"
+              "type": "struct (unnamed at /workspace/include/sched.h:25:2)[2]"
             },
             {
               "applicability": "applicable",
@@ -123549,7 +123549,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:35:1",
+          "key": "struct-anonymous:25:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -123579,7 +123579,7 @@
               "name": "__reserved2",
               "offset": 8,
               "offset_bits": 64,
-              "type": "struct (unnamed at /workspace/include/sched.h:35:5)[2]"
+              "type": "struct (unnamed at /workspace/include/sched.h:25:2)[2]"
             },
             {
               "applicability": "applicable",
@@ -123689,7 +123689,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:35:1",
+          "key": "struct-anonymous:25:1",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -123737,7 +123737,7 @@
               "name": "__reserved2",
               "offset": 8,
               "offset_bits": 64,
-              "type": "struct (unnamed at /workspace/include/sched.h:35:5)[2]"
+              "type": "struct (unnamed at /workspace/include/sched.h:25:2)[2]"
             },
             {
               "applicability": "applicable",

@@ -3943,14 +3943,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 984,
-                "mismatch": 296,
+                "matched": 1189,
+                "mismatch": 91,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 4518, "reference_only": 884},
+            {"candidate_only": 147, "reference_only": 21},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3970,8 +3970,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 887,
-                "mismatch": 393,
+                "matched": 1124,
+                "mismatch": 156,
                 "oracle-not-applicable": 1,
             },
         )
@@ -5119,13 +5119,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "296 current comparable declaration-or-macro identity mismatch rows",
-            "984 matched identity rows",
+            "91 current comparable declaration-or-macro identity mismatch rows",
+            "1,189 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "1,918 same-identity source-form differences across 302 rows",
-            "97 form-only rows",
+            "187 same-identity source-form differences across 86 rows",
+            "65 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])

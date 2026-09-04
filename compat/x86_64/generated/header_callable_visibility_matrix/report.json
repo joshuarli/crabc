@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "d8e49e7d6d1a6d39c079d8b5a663b44ff9cc441d34435f784ce4d5bc2858f28b",
+    "callable_inventory_sha256": "933444511a01f07834af14626cbb7ec741d84f4ebb64843d6156924703ef615e",
     "matrix_contract_sha256": "335eeba75e30e98d996a35f079d1e7b2da36df2ebd3be023ab85253049ac0113",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -2540,20 +2540,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
+      "candidate_callable_count": 8,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "fcntl.h",
-      "matched_callable_count": 7,
+      "matched_callable_count": 8,
       "profile": "c11-bsd",
       "reference_callable_count": 8,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "lockf"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -4081,15 +4076,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 38,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "link.h",
       "matched_callable_count": 38,
       "profile": "c11-gnu",
@@ -4098,15 +4088,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 38,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "link.h",
       "matched_callable_count": 38,
       "profile": "cxx17-gnu",
@@ -4115,15 +4100,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 38,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "link.h",
       "matched_callable_count": 38,
       "profile": "c11-strict",
@@ -4132,15 +4112,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 38,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "link.h",
       "matched_callable_count": 38,
       "profile": "c11-posix-2008",
@@ -4149,15 +4124,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 38,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "link.h",
       "matched_callable_count": 38,
       "profile": "c11-xopen-700",
@@ -4166,15 +4136,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 38,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "link.h",
       "matched_callable_count": 38,
       "profile": "c11-bsd",
@@ -4183,15 +4148,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 39,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "offsetof"
-        }
-      ],
+      "candidate_callable_count": 38,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "link.h",
       "matched_callable_count": 38,
       "profile": "cxx17-strict",
@@ -5282,51 +5242,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 243,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "exp10"
-        },
-        {
-          "classification": "external",
-          "name": "exp10f"
-        },
-        {
-          "classification": "external",
-          "name": "exp10l"
-        },
-        {
-          "classification": "external",
-          "name": "lgammal_r"
-        },
-        {
-          "classification": "external",
-          "name": "pow10"
-        },
-        {
-          "classification": "external",
-          "name": "pow10f"
-        },
-        {
-          "classification": "external",
-          "name": "pow10l"
-        },
-        {
-          "classification": "external",
-          "name": "sincos"
-        },
-        {
-          "classification": "external",
-          "name": "sincosf"
-        },
-        {
-          "classification": "external",
-          "name": "sincosl"
-        }
-      ],
+      "candidate_callable_count": 233,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "math.h",
       "matched_callable_count": 233,
       "profile": "c11-bsd",
@@ -7363,19 +7282,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 191,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pthread_kill"
-        },
-        {
-          "classification": "external",
-          "name": "pthread_sigmask"
-        }
-      ],
+      "candidate_callable_count": 189,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "pthread.h",
       "matched_callable_count": 189,
       "profile": "c11-gnu",
@@ -7384,19 +7294,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 190,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pthread_kill"
-        },
-        {
-          "classification": "external",
-          "name": "pthread_sigmask"
-        }
-      ],
+      "candidate_callable_count": 188,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "pthread.h",
       "matched_callable_count": 188,
       "profile": "cxx17-gnu",
@@ -7405,19 +7306,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 124,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pthread_kill"
-        },
-        {
-          "classification": "external",
-          "name": "pthread_sigmask"
-        }
-      ],
+      "candidate_callable_count": 122,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "pthread.h",
       "matched_callable_count": 122,
       "profile": "c11-strict",
@@ -7426,19 +7318,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 141,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pthread_kill"
-        },
-        {
-          "classification": "external",
-          "name": "pthread_sigmask"
-        }
-      ],
+      "candidate_callable_count": 139,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "pthread.h",
       "matched_callable_count": 139,
       "profile": "c11-posix-2008",
@@ -7447,19 +7330,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 143,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pthread_kill"
-        },
-        {
-          "classification": "external",
-          "name": "pthread_sigmask"
-        }
-      ],
+      "candidate_callable_count": 141,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "pthread.h",
       "matched_callable_count": 141,
       "profile": "c11-xopen-700",
@@ -7468,19 +7342,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 145,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pthread_kill"
-        },
-        {
-          "classification": "external",
-          "name": "pthread_sigmask"
-        }
-      ],
+      "candidate_callable_count": 143,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "pthread.h",
       "matched_callable_count": 143,
       "profile": "c11-bsd",
@@ -7489,19 +7354,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 190,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "pthread_kill"
-        },
-        {
-          "classification": "external",
-          "name": "pthread_sigmask"
-        }
-      ],
+      "candidate_callable_count": 188,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "pthread.h",
       "matched_callable_count": 188,
       "profile": "cxx17-strict",
@@ -8445,20 +8301,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 17,
+      "candidate_callable_count": 18,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "semaphore.h",
-      "matched_callable_count": 17,
+      "matched_callable_count": 18,
       "profile": "c11-bsd",
       "reference_callable_count": 18,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "lockf"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -10667,31 +10518,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-gnu",
@@ -10700,31 +10530,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stropts.h",
       "matched_callable_count": 2,
       "profile": "cxx17-gnu",
@@ -10733,31 +10542,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-strict",
@@ -10766,31 +10554,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-posix-2008",
@@ -10799,31 +10566,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-xopen-700",
@@ -10832,31 +10578,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-bsd",
@@ -10865,31 +10590,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "stropts.h",
       "matched_callable_count": 2,
       "profile": "cxx17-strict",
@@ -11413,20 +11117,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 55,
+      "candidate_callable_count": 56,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/epoll.h",
-      "matched_callable_count": 55,
+      "matched_callable_count": 56,
       "profile": "c11-bsd",
       "reference_callable_count": 56,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "lockf"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -11586,20 +11285,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 20,
+      "candidate_callable_count": 21,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/eventfd.h",
-      "matched_callable_count": 20,
+      "matched_callable_count": 21,
       "profile": "c11-bsd",
       "reference_callable_count": 21,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "lockf"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -11759,20 +11453,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
+      "candidate_callable_count": 8,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/fcntl.h",
-      "matched_callable_count": 7,
+      "matched_callable_count": 8,
       "profile": "c11-bsd",
       "reference_callable_count": 8,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "lockf"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -12016,20 +11705,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 21,
+      "candidate_callable_count": 22,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/inotify.h",
-      "matched_callable_count": 21,
+      "matched_callable_count": 22,
       "profile": "c11-bsd",
       "reference_callable_count": 22,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "lockf"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -14436,20 +14120,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 18,
+      "candidate_callable_count": 19,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/signalfd.h",
-      "matched_callable_count": 18,
+      "matched_callable_count": 19,
       "profile": "c11-bsd",
       "reference_callable_count": 19,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "lockf"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -14885,31 +14564,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-gnu",
@@ -14918,31 +14576,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/stropts.h",
       "matched_callable_count": 2,
       "profile": "cxx17-gnu",
@@ -14951,31 +14588,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-strict",
@@ -14984,31 +14600,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-posix-2008",
@@ -15017,31 +14612,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-xopen-700",
@@ -15050,31 +14624,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/stropts.h",
       "matched_callable_count": 2,
       "profile": "c11-bsd",
@@ -15083,31 +14636,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 7,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "_IO"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOC"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOR"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOW"
-        },
-        {
-          "classification": "macro",
-          "name": "_IOWR"
-        }
-      ],
+      "candidate_callable_count": 2,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/stropts.h",
       "matched_callable_count": 2,
       "profile": "cxx17-strict",
@@ -15848,20 +15380,15 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 41,
+      "candidate_callable_count": 42,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/timerfd.h",
-      "matched_callable_count": 41,
+      "matched_callable_count": 42,
       "profile": "c11-bsd",
       "reference_callable_count": 42,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "lockf"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -16045,75 +15572,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 17,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "cfgetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfgetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfmakeraw"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetspeed"
-        },
-        {
-          "classification": "external",
-          "name": "tcdrain"
-        },
-        {
-          "classification": "external",
-          "name": "tcflow"
-        },
-        {
-          "classification": "external",
-          "name": "tcflush"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetsid"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetwinsize"
-        },
-        {
-          "classification": "external",
-          "name": "tcsendbreak"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetwinsize"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/ttydefaults.h",
       "matched_callable_count": 1,
       "profile": "c11-gnu",
@@ -16122,75 +15584,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 17,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "cfgetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfgetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfmakeraw"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetspeed"
-        },
-        {
-          "classification": "external",
-          "name": "tcdrain"
-        },
-        {
-          "classification": "external",
-          "name": "tcflow"
-        },
-        {
-          "classification": "external",
-          "name": "tcflush"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetsid"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetwinsize"
-        },
-        {
-          "classification": "external",
-          "name": "tcsendbreak"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetwinsize"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/ttydefaults.h",
       "matched_callable_count": 1,
       "profile": "cxx17-gnu",
@@ -16199,67 +15596,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 15,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "cfgetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfgetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "tcdrain"
-        },
-        {
-          "classification": "external",
-          "name": "tcflow"
-        },
-        {
-          "classification": "external",
-          "name": "tcflush"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetsid"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetwinsize"
-        },
-        {
-          "classification": "external",
-          "name": "tcsendbreak"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetwinsize"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/ttydefaults.h",
       "matched_callable_count": 1,
       "profile": "c11-strict",
@@ -16268,67 +15608,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 15,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "cfgetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfgetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "tcdrain"
-        },
-        {
-          "classification": "external",
-          "name": "tcflow"
-        },
-        {
-          "classification": "external",
-          "name": "tcflush"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetsid"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetwinsize"
-        },
-        {
-          "classification": "external",
-          "name": "tcsendbreak"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetwinsize"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/ttydefaults.h",
       "matched_callable_count": 1,
       "profile": "c11-posix-2008",
@@ -16337,67 +15620,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 15,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "cfgetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfgetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "tcdrain"
-        },
-        {
-          "classification": "external",
-          "name": "tcflow"
-        },
-        {
-          "classification": "external",
-          "name": "tcflush"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetsid"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetwinsize"
-        },
-        {
-          "classification": "external",
-          "name": "tcsendbreak"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetwinsize"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/ttydefaults.h",
       "matched_callable_count": 1,
       "profile": "c11-xopen-700",
@@ -16406,75 +15632,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 17,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "cfgetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfgetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfmakeraw"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetspeed"
-        },
-        {
-          "classification": "external",
-          "name": "tcdrain"
-        },
-        {
-          "classification": "external",
-          "name": "tcflow"
-        },
-        {
-          "classification": "external",
-          "name": "tcflush"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetsid"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetwinsize"
-        },
-        {
-          "classification": "external",
-          "name": "tcsendbreak"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetwinsize"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/ttydefaults.h",
       "matched_callable_count": 1,
       "profile": "c11-bsd",
@@ -16483,75 +15644,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 17,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "cfgetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfgetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfmakeraw"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetispeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetospeed"
-        },
-        {
-          "classification": "external",
-          "name": "cfsetspeed"
-        },
-        {
-          "classification": "external",
-          "name": "tcdrain"
-        },
-        {
-          "classification": "external",
-          "name": "tcflow"
-        },
-        {
-          "classification": "external",
-          "name": "tcflush"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetsid"
-        },
-        {
-          "classification": "external",
-          "name": "tcgetwinsize"
-        },
-        {
-          "classification": "external",
-          "name": "tcsendbreak"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetattr"
-        },
-        {
-          "classification": "external",
-          "name": "tcsetwinsize"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "candidate_callable_count": 1,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/ttydefaults.h",
       "matched_callable_count": 1,
       "profile": "cxx17-strict",
@@ -17880,51 +16976,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 404,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "exp10"
-        },
-        {
-          "classification": "external",
-          "name": "exp10f"
-        },
-        {
-          "classification": "external",
-          "name": "exp10l"
-        },
-        {
-          "classification": "external",
-          "name": "lgammal_r"
-        },
-        {
-          "classification": "external",
-          "name": "pow10"
-        },
-        {
-          "classification": "external",
-          "name": "pow10f"
-        },
-        {
-          "classification": "external",
-          "name": "pow10l"
-        },
-        {
-          "classification": "external",
-          "name": "sincos"
-        },
-        {
-          "classification": "external",
-          "name": "sincosf"
-        },
-        {
-          "classification": "external",
-          "name": "sincosl"
-        }
-      ],
+      "candidate_callable_count": 394,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "tgmath.h",
       "matched_callable_count": 394,
       "profile": "c11-bsd",
@@ -19134,23 +18189,21 @@
     "public_support": false
   },
   "summary": {
-    "candidate_only_callable_count": 217,
+    "candidate_only_callable_count": 0,
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-retained-pending-c-abi-policy": 56,
-      "matched": 1235,
-      "mismatch": 45,
+      "matched": 1280,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "45 comparable pinned header/profile rows have callable visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
-    "matched_callable_count": 34684,
-    "mismatch_row_count": 45,
+    "matched_callable_count": 34692,
+    "mismatch_row_count": 0,
     "oracle_not_applicable_candidate_visible_callable_count": 21,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -19159,7 +18212,7 @@
     "project_only_callable_count": 407,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_callable_count": 8,
+    "reference_only_callable_count": 0,
     "row_count": 1337
   },
   "target": "x86_64-unknown-linux-musl"

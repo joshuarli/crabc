@@ -93,7 +93,7 @@ MATRIX = load_module("header_callable_visibility_matrix_test", MATRIX_PATH)
 
 
 class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
-    def test_checked_matrix_is_a_finite_callable_only_red_baseline(self) -> None:
+    def test_checked_matrix_ratchets_the_full_comparable_callable_surface(self) -> None:
         contract = MATRIX.load_contract()
         report = MATRIX.build_file_report(contract)
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
@@ -116,12 +116,13 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1235,
-                "mismatch": 45,
+                "matched": 1280,
                 "oracle-not-applicable": 1,
             },
         )
-        self.assertEqual(report["summary"]["candidate_only_callable_count"], 217)
+        self.assertEqual(report["summary"]["candidate_only_callable_count"], 0)
+        self.assertEqual(report["summary"]["reference_only_callable_count"], 0)
+        self.assertEqual(report["summary"]["mismatch_row_count"], 0)
         self.assertFalse(report["summary"]["complete"])
         self.assertFalse(report["scope"]["prototype_or_macro_replacement_equality"])
         self.assertFalse(report["scope"]["noncallable_abi"])
