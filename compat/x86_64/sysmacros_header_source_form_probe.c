@@ -1,0 +1,17 @@
+/* Direct Linux/x86-64 sys/sysmacros.h source-form probe. */
+
+#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)
+#error "this probe requires native Linux/x86-64 LP64"
+#endif
+
+#include <sys/sysmacros.h>
+
+_Static_assert(major(makedev(0x12345U, 0x6789abU)) == 0x12345U,
+    "x86 major/makedev round trip");
+_Static_assert(minor(makedev(0x12345U, 0x6789abU)) == 0x6789abU,
+    "x86 minor/makedev round trip");
+
+int crabc_x86_sysmacros_header_source_form_probe(void)
+{
+    return (int)minor(makedev(0x12345U, 0x6789abU));
+}

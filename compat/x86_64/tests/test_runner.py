@@ -1754,6 +1754,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    mount-header-source-form) ;;", source)
         self.assertIn("    klog-header-source-form) ;;", source)
         self.assertIn("    cachectl-header-source-form) ;;", source)
+        self.assertIn("    sysmacros-header-source-form) ;;", source)
         self.assertIn("    pthread-header-source-form) ;;", source)
         self.assertIn("    ioctl-header-source-form) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
@@ -2011,6 +2012,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "klog-header-source-form",
             "cachectl-header-source-form",
             "syslog-header-abi",
+            "sysmacros-header-source-form",
             "ioctl-header-source-form",
             "fcntl-event-header-topology",
         )

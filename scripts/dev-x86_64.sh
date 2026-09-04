@@ -83,6 +83,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   klog-header-source-form  verify x86 <sys/klog.h> pinned-musl macro surface
   cachectl-header-source-form  verify x86 <sys/cachectl.h> pinned-musl macro forms
   syslog-header-abi  verify syslog profiles, C linkage, and SYSLOG_NAMES consumers
+  sysmacros-header-source-form  verify x86 <sys/sysmacros.h> macro forms and frozen AArch64 arm
   fcntl-event-header-topology  verify x86 fcntl/event direct-header topology
   math-tgmath-source-form  verify x86 math/tgmath source forms and frozen AArch64 arm
   mman-mcl-onfault-header-source-form  verify x86 MCL_ONFAULT header form and frozen AArch64 arm
@@ -2725,6 +2726,10 @@ run_klog_header_source_form() {
 
 run_cachectl_header_source_form() {
     run_in_container bash /workspace/compat/x86_64/run_cachectl_header_source_form.sh
+}
+
+run_sysmacros_header_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_sysmacros_header_source_form.sh
 }
 
 run_fcntl_event_header_topology() {
@@ -5443,6 +5448,7 @@ case "$command" in
     klog-header-source-form) ;;
     cachectl-header-source-form) ;;
     syslog-header-abi) ;;
+    sysmacros-header-source-form) ;;
     ioctl-header-source-form) ;;
     fcntl-event-header-topology) ;;
 
@@ -5628,6 +5634,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "cachectl-header-source-form takes no arguments"
         ensure_image
         run_cachectl_header_source_form
+        ;;
+    sysmacros-header-source-form)
+        [ "$#" -eq 0 ] || fail "sysmacros-header-source-form takes no arguments"
+        ensure_image
+        run_sysmacros_header_source_form
         ;;
     fcntl-event-header-topology)
         [ "$#" -eq 0 ] || fail "fcntl-event-header-topology takes no arguments"
