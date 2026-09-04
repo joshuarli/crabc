@@ -1,0 +1,50 @@
+# Linux/x86-64 private POSIX spawn file-actions lifecycle work package.
+schema = "crabc.x86_64-posix-spawn-file-actions-provider/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+oracle = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+
+[work_package]
+target_family = "libc.posix-runtime"
+target_capability = "process.control"
+target_verified_slice = "static-c-posix-spawn-file-actions"
+blocker = "Resolves the seven-name caller-owned POSIX spawn file-actions lifecycle block with real fdop allocation, pathname copying, ordered links, descriptor validation, and destruction; spawn execution remains a separate blocker."
+musl_source_mapping = [
+  "src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init",
+  "src/process/posix_spawn_file_actions_addclose.c::posix_spawn_file_actions_addclose",
+  "src/process/posix_spawn_file_actions_adddup2.c::posix_spawn_file_actions_adddup2",
+  "src/process/posix_spawn_file_actions_addopen.c::posix_spawn_file_actions_addopen",
+  "src/process/posix_spawn_file_actions_addchdir.c::posix_spawn_file_actions_addchdir_np",
+  "src/process/posix_spawn_file_actions_addfchdir.c::posix_spawn_file_actions_addfchdir_np",
+  "src/process/posix_spawn_file_actions_destroy.c::posix_spawn_file_actions_destroy",
+]
+prerequisites = ["oracle.musl-toolchain", "x86-allocator-runtime"]
+dependent_work = [
+  "libc.posix-runtime spawn execution and process-control closure",
+  "x86 static product qualification",
+]
+source_owners = [
+  "compat/x86_64/posix-spawn-file-actions-provider.toml",
+  "libc/Cargo.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/posix_spawn_file_actions_init.rs",
+  "libc/src/c_abi/x86_64/posix_spawn_file_actions.rs",
+  "include/spawn.h",
+  "compat/x86_64/posix_spawn_file_actions_header_abi_probe.c",
+  "compat/x86_64/posix_spawn_file_actions_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_spawn_file_actions_header_abi.sh",
+  "compat/x86_64/libc_posix_spawn_file_actions_probe.c",
+  "compat/x86_64/libc_posix_spawn_file_actions_start.S",
+  "compat/x86_64/run_libc_posix_spawn_file_actions.sh",
+  "scripts/check_structure.py",
+]
+focused_evidence_command = "bash compat/x86_64/run_libc_posix_spawn_file_actions.sh"
+header_evidence_command = "bash compat/x86_64/run_posix_spawn_file_actions_header_abi.sh"
+negative_scope = "This package owns only the seven caller-owned posix_spawn_file_actions_t lifecycle names. It excludes posix_spawn/posix_spawnp execution, fork/vfork/clone, exec, cancellation, atfork state, child supervision, spawn attributes, signal and scheduler policy, allocator completion, environment lifecycle, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support. Destruction follows musl and leaves the freed head pointer uncleared; callers must reinitialize before reuse."
+expected_transition = "One private verified artifact is added under planned libc.posix-runtime. The coordinator may add the seven-name aggregate evidence and feature archive disposition; no frozen capability state, default static export surface, family status, promotion state, or public-support boundary changes."
+evidence = [
+  "pinned-musl/project spawn.h C/C++ declaration and layout matrix",
+  "pinned-musl versus true-static crabc lifecycle differential",
+  "musl fdop allocation, prepend-link, pathname-copy, invalid-descriptor, and destruction semantics",
+  "archive/ELF dependency and peer-execution closure",
+]

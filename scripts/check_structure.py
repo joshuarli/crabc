@@ -192,6 +192,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     # directory-wide process-runtime boundary.
     Path("libc/src/c_abi/x86_64/posix_spawnattr_signal_fields.rs"),
     Path("libc/src/c_abi/x86_64/posix_spawnattr_setschedparam.rs"),
+    # This opt-in provider owns only the six allocating file-action records;
+    # initialization remains the separately evidenced dependency-free leaf.
+    Path("libc/src/c_abi/x86_64/posix_spawn_file_actions.rs"),
     Path("libc/src/c_abi/x86_64/bsearch.rs"),
     Path("libc/src/c_abi/x86_64/linear_search.rs"),
     Path("libc/src/c_abi/x86_64/intrusive_queue.rs"),

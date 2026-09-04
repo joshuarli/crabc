@@ -37,6 +37,11 @@ x86-filesystem-traversal = []
 # setenv/putenv vector and string bookkeeping. Keep it opt-in so existing
 # dependency-free selected-static artifacts do not silently acquire it.
 x86-environment-runtime = ["x86-allocator-runtime"]
+# Private Linux/x86-64 POSIX spawn file-actions lifecycle evidence.  The
+# operation records own real pathname copies and therefore compose with the
+# already evidenced x86 C allocator wrapper; keeping this opt-in leaves the
+# dependency-free selected-static archive unchanged.
+x86-posix-spawn-file-actions = ["x86-allocator-runtime"]
 # Complete the distinct strong AArch64 allocator-observation entry only for
 # its closed capability gate. This implies the private allocation backend but
 # does not widen the earlier basic-wrapper artifact's exact object surface.
