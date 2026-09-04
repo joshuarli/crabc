@@ -271,7 +271,14 @@ impl VmOptions {
         mut environment: impl FnMut(VmOption) -> VmOptionEnvironment<'environment>,
     ) {
         for option in VmOption::ALL {
-            self.initialize_one(option, environment(option));
+            // The source iterates descriptors but only calls `mi_option_init`
+            // for an `UNINIT` entry. Do not even observe the environment for
+            // a source-set/defaulted slot: an observation can be fallible and
+            // must not become an unowned side effect after its descriptor is
+            // already terminal.
+            if self.state(option) == VmOptionState::Uninitialized {
+                self.initialize_one(option, environment(option));
+            }
         }
     }
 
@@ -596,6 +603,25 @@ mod tests {
         options.initialize_one(VmOption::PurgeDelay, VmOptionEnvironment::Value(b"1000"));
         assert_eq!(options.value(VmOption::PurgeDelay), Some(-1));
         assert_eq!(options.state(VmOption::PurgeDelay), VmOptionState::Initialized);
+    }
+
+    #[test]
+    fn vm_options_initialize_all_does_not_observe_preinitialized_descriptors() {
+        let mut options = VmOptions::uninitialized();
+        options.set(VmOption::AllowThp, 0);
+        let mut observed = 0usize;
+        options.initialize_all(|option| {
+            assert_ne!(
+                option,
+                VmOption::AllowThp,
+                "a source-set descriptor must not invoke its environment observer"
+            );
+            observed += 1;
+            VmOptionEnvironment::Absent
+        });
+        assert_eq!(observed, VmOption::ALL.len() - 1);
+        assert!(options.all_resolved());
+        assert_eq!(options.value(VmOption::AllowThp), Some(0));
     }
 
     #[test]
