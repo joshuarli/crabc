@@ -134,8 +134,12 @@ and errors. Complete formatting/scanning, wide and memory/cookie streams,
 count/pointer/errno/hex-float formatting and FILE, descriptor, allocated, and
 caller-buffer destinations. Its 71-record binary matrix must match pinned
 musl in both modes and extracted copies; defined invalid-format checks remain
-candidate-specific. Decimal, long-double, and wide formatting remain separate
-completion work.
+candidate-specific. Each formatting job also links a separately receipted
+`owned_static_printf_float_probe.c` binary: 1,920 records compare decimal and
+hex binary64/binary80 output, errno, floating exceptions, and all four rounding
+modes with pinned musl. It covers spilled/positional arguments and FILE,
+descriptor, allocated, and caller-buffer destinations with private scratch.
+Wide formatting and complete scanning remain separate completion work.
 
 `x86-owned-static-runtime` is a planned archive profile, routed through this
 runner but selected by `scripts/build_x86_64_owned_sysroot.py`. Its direct

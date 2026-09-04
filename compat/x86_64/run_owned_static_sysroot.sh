@@ -603,12 +603,13 @@ assert_malformed_tls_rejected() {
 assert_printf_matrix_records() {
     local records_path="$1"
     local label="$2"
+    local numeric="${3:-0}"
 
     # The positional-printf probe deliberately writes binary records instead
     # of formatting its own evidence.  Check its framing independently before
     # comparing bytes with musl so a truncated record cannot look like a
     # superficial output mismatch.
-    python3 - "$records_path" "$label" <<'PY'
+    python3 - "$records_path" "$label" "$numeric" <<'PY'
 from pathlib import Path
 import struct
 import sys
@@ -616,32 +617,36 @@ import sys
 
 path = Path(sys.argv[1])
 label = sys.argv[2]
+numeric = sys.argv[3] == "1"
 try:
     data = path.read_bytes()
 except OSError as error:
     raise SystemExit(f"{label} positional-printf matrix is unreadable: {error}") from error
 
-header = struct.Struct("=ii")
+header = struct.Struct("=iiii" if numeric else "=ii")
 offset = 0
 records = 0
 while offset < len(data):
     if len(data) - offset < header.size:
         raise SystemExit(f"{label} positional-printf matrix has a truncated record header")
-    count, _error = header.unpack_from(data, offset)
+    count = header.unpack_from(data, offset)[0]
     offset += header.size
-    if count >= 512:
+    if count < -1 or (not numeric and count >= 512):
         raise SystemExit(
             f"{label} positional-printf matrix has an out-of-contract count: {count}"
         )
-    payload_size = count if count > 0 else 0
+    payload_size = min(20032, max(0, count) + 1) if numeric else max(0, count)
     if len(data) - offset < payload_size:
         raise SystemExit(f"{label} positional-printf matrix has a truncated payload")
+    if numeric and data[offset + payload_size - 1] != 0:
+        raise SystemExit(f"{label} numeric printf record lacks its terminating NUL")
     offset += payload_size
     records += 1
 
-if records != 71:
+expected = 1920 if numeric else 71
+if records != expected:
     raise SystemExit(
-        f"{label} positional-printf matrix has {records} records, expected 71"
+        f"{label} printf matrix has {records} records, expected {expected}"
     )
 PY
 }
@@ -778,6 +783,12 @@ run_static_mode() {
             [ -f "$printf_matrix_reference" ] ||
                 fail "${label} positional-printf matrix reference is missing"
             ;;
+        printf-float)
+            probe=owned_static_printf_float_probe.c
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/float-stream")
+            [ -f "$printf_matrix_reference" ] || fail "${label} numeric reference is missing"
+            ;;
         *) fail "unknown installed consumer: $consumer_kind" ;;
     esac
 
@@ -819,9 +830,21 @@ run_static_mode() {
     assert_final_static_image "$candidate" "$mode" "$mode_root/file-header" \
         "$mode_root/program-headers" "$mode_root/dynamic" "$mode_root/symbols" \
         "$mode_root/relocations" "$minimum_tls_alignment"
-    candidate_output="$(env -i "$candidate" "${candidate_arguments[@]}")" || fail "${label} candidate failed"
-    [ "$candidate_output" = "$expected_output" ] ||
-        fail "${label} candidate output drifted: $candidate_output"
+    if [ "$consumer_kind" = printf-float ]; then
+        # Binary fenv/rounding records must never pass through shell command
+        # substitution, which discards NUL bytes. The probe owns this job's
+        # private pathname and unlinks its stream after opening it.
+        env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/numeric-records" ||
+            fail "${label} numeric candidate failed"
+        assert_printf_matrix_records "$mode_root/numeric-records" "$label" 1
+        cmp "$printf_matrix_reference" "$mode_root/numeric-records" ||
+            fail "${label} numeric/fenv records differ from pinned musl"
+        [ ! -e "$mode_root/float-stream" ] || fail "${label} retained its temporary stream"
+    else
+        candidate_output="$(env -i "$candidate" "${candidate_arguments[@]}")" || fail "${label} candidate failed"
+        [ "$candidate_output" = "$expected_output" ] ||
+            fail "${label} candidate output drifted: $candidate_output"
+    fi
     if [ "$consumer_kind" = stdio ]; then
         nm --defined-only "$candidate" >"$mode_root/defined-symbols"
         grep -Eq '[[:space:]]T[[:space:]]+__stdio_exit$' "$mode_root/defined-symbols" ||
@@ -842,6 +865,10 @@ run_static_mode() {
         assert_printf_matrix_records "$mode_root/printf-matrix-output" "$label"
         cmp "$printf_matrix_reference" "$mode_root/printf-matrix-output" ||
             fail "${label} positional-printf matrix differs from pinned musl"
+        # Keep all formatting evidence in one scheduled component job; the
+        # numerical binary has its own installed link receipt and ELF proof.
+        run_static_mode "$installed_root" "$mode" "$mode_root/float" \
+            "$label numerics" printf-float "$printf_matrix_reference.float"
     fi
     assert_malformed_tls_rejected "$candidate" "$label"
     sha256sum "$candidate" | awk '{ print $1 }' >"$mode_root/candidate.sha256"
@@ -964,7 +991,7 @@ compare_consumer_matrix_runs() {
     # the serial/parallel comparison an additional determinism check rather
     # than just a timing report, while both passes reuse the same cold-built
     # primary and extracted trees.
-    for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie; do
+    for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float; do
         cmp "$serial_primary/$mode_root/candidate.sha256" \
             "$parallel_primary/$mode_root/candidate.sha256" ||
             fail "${mode_root} primary output differs between serial and parallel consumers"
@@ -1216,6 +1243,14 @@ env -i "$header_consumer/printf-reference" --matrix >"$printf_matrix_reference" 
     fail "pinned-musl positional-printf matrix failed"
 assert_printf_matrix_records "$printf_matrix_reference" "pinned-musl positional-printf reference"
 
+"$ORACLE_CC" -std=c11 -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_printf_float_probe.c" \
+    -o "$header_consumer/printf-float-reference"
+env -i "$header_consumer/printf-float-reference" "$header_consumer/float-stream" \
+    >"$printf_matrix_reference.float" || fail "pinned-musl numeric printf reference failed"
+assert_printf_matrix_records "$printf_matrix_reference.float" "pinned-musl numeric reference" 1
+[ ! -e "$header_consumer/float-stream" ] || fail "numeric reference retained its temporary stream"
+
 common_compile=(
     gcc -std=c11 -D_GNU_SOURCE -fno-pie -ffreestanding -fno-builtin
     -fno-stack-protector -ftls-model=local-exec -nostdinc
@@ -1260,6 +1295,11 @@ audit_header_dependencies "$header_consumer/resolver.d" "$primary" \
     -o "$header_consumer/printf.o"
 audit_header_dependencies "$header_consumer/printf.d" "$primary" \
     "$ROOT_DIR/compat/x86_64/owned_static_printf_probe.c"
+"${common_compile[@]}" -MD -MF "$header_consumer/printf-float.d" \
+    -c "$ROOT_DIR/compat/x86_64/owned_static_printf_float_probe.c" \
+    -o "$header_consumer/printf-float.o"
+audit_header_dependencies "$header_consumer/printf-float.d" "$primary" \
+    "$ROOT_DIR/compat/x86_64/owned_static_printf_float_probe.c"
 grep -Fq "$primary/usr/include/errno.h" "$dependency_file" ||
     fail "consumer dependency trace did not resolve installed errno.h"
 grep -Fq "$primary/usr/include/pthread.h" "$dependency_file" ||
@@ -1294,7 +1334,7 @@ if [ "$consumer_benchmark" = 1 ]; then
         "$primary_consumer" "$extracted_consumer" \
         "$work_dir/consumer-matrix-serial-logs" "$work_dir/consumer-matrix-logs"
 fi
-for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie; do
+for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"
