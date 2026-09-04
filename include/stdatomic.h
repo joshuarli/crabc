@@ -152,10 +152,9 @@ typedef enum memory_order {
 #define atomic_fetch_and_explicit(object, value, order) \
     __atomic_fetch_and(__CRABC_ATOMIC_VALUE_PTR(object), (value), (order))
 
-/* These entry points remain libc-provided, as in the compiler's musl
- * stdatomic interface.  The macros below are used for normal calls, while
- * taking their address after an explicit #undef keeps the external symbol
- * contract visible to consumers. */
+/* This project-only C11 vocabulary retains libc entry points for address-taken
+ * use. The macros below handle ordinary calls; taking an entry point's address
+ * after an explicit #undef selects the documented external C ABI instead. */
 void atomic_flag_clear(volatile atomic_flag *);
 void atomic_flag_clear_explicit(volatile atomic_flag *, memory_order);
 _Bool atomic_flag_test_and_set(volatile atomic_flag *);

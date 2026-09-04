@@ -12,7 +12,7 @@
 compile_error!("the x86 atomic leaf requires little-endian Linux/x86-64");
 
 use core::ffi::c_int;
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU8, Ordering};
 
 /// Load one aligned `i32` with acquire ordering.
 ///
@@ -156,4 +156,145 @@ pub(crate) unsafe fn x86_64_fetch_sub_acqrel_i32(address: *mut c_int, value: c_i
     // SAFETY: forwards the caller's valid atomic storage to the locked add;
     // wrapping negation is the i32 subtraction identity for all addends.
     unsafe { x86_64_fetch_add_acqrel_i32(address, value.wrapping_neg()) }
+}
+
+
+/// Addressable C11 `atomic_flag` storage.
+///
+/// The project header defines `atomic_flag` as a one-byte record.  Keeping
+/// the Rust boundary byte-based avoids creating a Rust `bool` from a
+/// caller-supplied C representation before the atomic operation has observed
+/// it.
+#[repr(C)]
+pub struct AtomicFlag {
+    value: u8,
+}
+
+const _: [(); 1] = [(); core::mem::size_of::<AtomicFlag>()];
+const _: [(); 1] = [(); core::mem::align_of::<AtomicFlag>()];
+
+/// Translate the C11 ordering values accepted by read-modify-write operations.
+#[inline(always)]
+fn c_rmw_order(order: c_int) -> Ordering {
+    match order {
+        0 => Ordering::Relaxed,
+        // C11 consume is conservatively acquire, as it is in the compiler
+        // atomic builtin boundary used by the project header.
+        1 | 2 => Ordering::Acquire,
+        3 => Ordering::Release,
+        4 => Ordering::AcqRel,
+        5 => Ordering::SeqCst,
+        // An invalid C enum value is outside the caller contract. Do not
+        // permit it to turn into a Rust panic across this C ABI boundary.
+        _ => Ordering::SeqCst,
+    }
+}
+
+/// Translate orders permitted for C11 atomic-store operations.
+#[inline(always)]
+fn c_store_order(order: c_int) -> Ordering {
+    match order {
+        0 => Ordering::Relaxed,
+        3 => Ordering::Release,
+        5 => Ordering::SeqCst,
+        // Acquire and acquire-release stores are outside C11's caller
+        // contract. Use a conservative non-panicking fallback for malformed
+        // foreign calls.
+        _ => Ordering::SeqCst,
+    }
+}
+
+/// Translate a C11 fence order, where relaxed is explicitly a no-op.
+#[inline(always)]
+fn c_fence_order(order: c_int) -> Option<Ordering> {
+    match order {
+        0 => None,
+        1 | 2 => Some(Ordering::Acquire),
+        3 => Some(Ordering::Release),
+        4 => Some(Ordering::AcqRel),
+        _ => Some(Ordering::SeqCst),
+    }
+}
+
+/// Borrow the caller's one-byte C atomic object for one immediate operation.
+///
+/// # Safety
+///
+/// `flag` must designate a live, properly aligned `atomic_flag` object. All
+/// concurrent accesses to that object must be atomic and compatible with the
+/// ordering selected by the caller.
+#[inline(always)]
+unsafe fn c_atomic_flag<'a>(flag: *mut AtomicFlag) -> &'a AtomicU8 {
+    // SAFETY: `AtomicFlag` is a repr(C), one-byte C atomic object and the
+    // caller contract above provides its lifetime, alignment, and atomic
+    // access discipline for this immediate operation.
+    unsafe { AtomicU8::from_ptr(flag.cast()) }
+}
+
+/// Clear an address-taken C11 `atomic_flag` with sequential consistency.
+///
+/// # Safety
+///
+/// `flag` must point to a live C `atomic_flag`; all concurrent accesses must
+/// be atomic and obey the C11 sequentially consistent synchronization
+/// contract.
+#[no_mangle]
+pub unsafe extern "C" fn atomic_flag_clear(flag: *mut AtomicFlag) {
+    // SAFETY: upheld by this exported function's C caller contract.
+    unsafe { c_atomic_flag(flag) }.store(0, Ordering::SeqCst);
+}
+
+/// Clear an address-taken C11 `atomic_flag` with the requested store order.
+///
+/// # Safety
+///
+/// `flag` must point to a live C `atomic_flag`; all concurrent accesses must
+/// be atomic. `order` must be a C11 store-compatible `memory_order` value.
+#[no_mangle]
+pub unsafe extern "C" fn atomic_flag_clear_explicit(flag: *mut AtomicFlag, order: c_int) {
+    // SAFETY: upheld by this exported function's C caller contract.
+    unsafe { c_atomic_flag(flag) }.store(0, c_store_order(order));
+}
+
+/// Set an address-taken C11 `atomic_flag`, returning its previous truth value.
+///
+/// # Safety
+///
+/// `flag` must point to a live C `atomic_flag`; all concurrent accesses must
+/// be atomic and obey the C11 sequentially consistent synchronization
+/// contract.
+#[no_mangle]
+pub unsafe extern "C" fn atomic_flag_test_and_set(flag: *mut AtomicFlag) -> bool {
+    // SAFETY: upheld by this exported function's C caller contract.
+    unsafe { c_atomic_flag(flag) }.swap(1, Ordering::SeqCst) != 0
+}
+
+/// Set an address-taken C11 `atomic_flag` with the requested RMW order.
+///
+/// # Safety
+///
+/// `flag` must point to a live C `atomic_flag`; all concurrent accesses must
+/// be atomic. `order` must be a C11 read-modify-write-compatible
+/// `memory_order` value.
+#[no_mangle]
+pub unsafe extern "C" fn atomic_flag_test_and_set_explicit(
+    flag: *mut AtomicFlag,
+    order: c_int,
+) -> bool {
+    // SAFETY: upheld by this exported function's C caller contract.
+    unsafe { c_atomic_flag(flag) }.swap(1, c_rmw_order(order)) != 0
+}
+
+#[no_mangle]
+pub extern "C" fn atomic_signal_fence(order: c_int) {
+    if let Some(ordering) = c_fence_order(order) {
+        core::sync::atomic::compiler_fence(ordering);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn atomic_thread_fence(order: c_int) {
+    if let Some(ordering) = c_fence_order(order) {
+        core::sync::atomic::fence(ordering);
+    }
 }

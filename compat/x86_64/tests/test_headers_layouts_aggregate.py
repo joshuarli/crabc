@@ -105,21 +105,21 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
                 "uses_whole_archive": False,
             },
             "external_callable_count": 1526,
-            "ratcheted_external_callable_count": 1113,
+            "ratcheted_external_callable_count": 1119,
             "summary": {
                 "callable_provider_counts": {
                     "declared_unverified_feature_archives": 0,
-                    "default_static": 1113,
-                    "unprovided": 366,
+                    "default_static": 1119,
+                    "unprovided": 360,
                     "verified_feature_archives": 47,
                 },
                 "complete": False,
-                "extraction_status_counts": {"extracted": 1113},
+                "extraction_status_counts": {"extracted": 1119},
                 "incomplete_reasons": [
                     "static export complement is nonempty",
                     "one or more candidate external callables have no declared archive provider",
                 ],
-                "static_export_complement_count": 413,
+                "static_export_complement_count": 407,
             },
         }
         AGGREGATE.validate_accounted_incomplete_linkage_audit_report(report)

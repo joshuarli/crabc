@@ -142,8 +142,8 @@ canonical_visibility = "The project-only C11 atomic vocabulary intentionally exp
 declared_symbols = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_flag_test_and_set", "atomic_flag_test_and_set_explicit", "atomic_signal_fence", "atomic_thread_fence"]
 capability_owner = "process.atfork-exit-hooks"
 x86_family = "libc.c-abi-compat"
-provider_state = "unprovided"
-evidence = ["include/stdatomic.h", "compat/x86_64/libc_pthread_atfork_probe.c"]
+provider_state = "default-static"
+evidence = ["include/stdatomic.h", "compat/x86_64/atomic_addressable_abi_probe.c", "compat/x86_64/run_atomic_addressable_abi.sh"]
 removal_requires_abi_decision = true
 
 [[project_only_header]]

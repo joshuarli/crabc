@@ -115,8 +115,8 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1110,
-                "mismatch": 170,
+                "matched": 1117,
+                "mismatch": 163,
                 "oracle-not-applicable": 1,
             },
         )
@@ -143,6 +143,20 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
         ]
         self.assertEqual(len(stdatomic_cxx_rows), 2)
         self.assertTrue(all(row["candidate_callable_count"] == 0 for row in stdatomic_cxx_rows))
+        stdatomic_header = next(
+            header
+            for header in report["project_only_headers"]
+            if header["path"] == "stdatomic.h"
+        )
+        self.assertEqual(stdatomic_header["provider_state"], "default-static")
+        self.assertEqual(
+            stdatomic_header["evidence"],
+            [
+                "include/stdatomic.h",
+                "compat/x86_64/atomic_addressable_abi_probe.c",
+                "compat/x86_64/run_atomic_addressable_abi.sh",
+            ],
+        )
         runner = RUNNER.read_text(encoding="utf-8")
         for phrase in (
             "header_callable_inventory.py",

@@ -277,7 +277,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            369,
+            370,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -335,7 +335,14 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         headers_layouts = next(
             row for row in report["families"] if row["id"] == "libc.headers-layouts"
         )
-        self.assertEqual(headers_layouts["verified_artifact_count"], 14)
+        self.assertEqual(headers_layouts["verified_artifact_count"], 15)
+        self.assertIn(
+            {
+                "family": "libc.headers-layouts",
+                "id": "static-c-atomic-addressable",
+            },
+            report["selected_private_artifacts"],
+        )
         self.assertIn(
             {
                 "family": "libc.headers-layouts",
@@ -375,7 +382,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1183)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1189)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
             1162,

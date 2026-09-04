@@ -66,7 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 369)
+        self.assertEqual(report["verified_artifact_count"], 370)
         self.assertEqual(report["feature_archive_count"], 21)
         self.assertEqual(report["verified_feature_archive_count"], 21)
         self.assertEqual(report["planned_feature_archive_count"], 0)
@@ -3573,14 +3573,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 741,
-                "mismatch": 539,
+                "matched": 748,
+                "mismatch": 532,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 12938, "reference_only": 8751},
+            {"candidate_only": 12140, "reference_only": 8219},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3612,10 +3612,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh header-callable-disposition",
         )
         self.assertEqual(disposition["candidate_external_callable_count"], 1526)
-        self.assertEqual(disposition["default_static_callable_count"], 1113)
+        self.assertEqual(disposition["default_static_callable_count"], 1119)
         self.assertEqual(disposition["verified_feature_callable_count"], 47)
         self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 366)
+        self.assertEqual(disposition["unprovided_callable_count"], 360)
         self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
         self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
@@ -3631,11 +3631,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1526)
-        self.assertEqual(provider_audit["default_static_callable_count"], 1113)
+        self.assertEqual(provider_audit["default_static_callable_count"], 1119)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 47)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 21)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 366)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 360)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -4646,7 +4646,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         artifact = next(
             entry
             for entry in artifacts
@@ -4699,7 +4699,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         artifact = next(
             entry
             for entry in artifacts
@@ -4739,7 +4739,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "2,595 same-identity source-form differences across 439 rows",
+            "2,448 same-identity source-form differences across 432 rows",
             "71 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
@@ -4762,7 +4762,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         artifact = next(
             entry
             for entry in artifacts
@@ -4777,7 +4777,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "170 current comparable callable name/class mismatch rows",
+            "163 current comparable callable name/class mismatch rows",
             "one current oracle-not-applicable `aio.h` row",
             "56 project-only header/profile rows",
             "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -4789,7 +4789,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         artifact = next(
             entry
             for entry in artifacts
@@ -4846,7 +4846,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         matching = [
             entry
             for entry in artifacts
@@ -4923,7 +4923,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         matching = [
             entry
             for entry in artifacts
@@ -4988,7 +4988,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         artifact = next(
             entry
             for entry in artifacts
@@ -5055,11 +5055,66 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "complete C ABI"):
             ledger.validate_ledger(data)
 
+    def test_project_only_addressable_stdatomic_stays_a_closed_abi_artifact(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 15
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-atomic-addressable"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/x86_64/atomic_addressable_abi_probe.c",
+            "compat/x86_64/atomic_addressable_abi_probe.cpp",
+            "compat/x86_64/atomic_addressable_abi_start.S",
+            "compat/x86_64/run_atomic_addressable_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "libc/src/c_abi/x86_64/atomic.rs",
+            "include/stdatomic.h",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh atomic-addressable-abi"},
+        )
+        for phrase in (
+            "still-planned `libc.headers-layouts`",
+            "explicit `#undef`",
+            "one-byte `atomic_flag`",
+            "no C atomic surface to C++17",
+            "Musl 1.2.6 does not install `<stdatomic.h>`",
+            "complete C ABI",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.headers-layouts")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-atomic-addressable"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh pthread-c11-header-abi"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed atomic-addressable-abi command"
+        ):
+            ledger.validate_ledger(changed)
+
     def test_uio_cxx_archive_linkage_stays_a_closed_cxx_consumer_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         artifact = next(
             entry
             for entry in artifacts
@@ -13545,7 +13600,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(detail, socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         bootstrap = next(
             entry
             for entry in artifacts
@@ -18055,7 +18110,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         artifact = next(
             entry
             for entry in artifacts
@@ -18069,7 +18124,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 15
         artifact = next(
             entry
             for entry in artifacts

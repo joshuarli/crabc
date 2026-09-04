@@ -1,8 +1,8 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "7214ca4da735a46472d9ba5d8105b94d0c35e87c8af32a1c774b91191b6979c3",
-    "matrix_contract_sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be",
+    "callable_inventory_sha256": "1672737efe400d3fb95d2fc77dd7c29cfbc7f6cb687fe5aa1234b6e9ace3a6fb",
+    "matrix_contract_sha256": "335eeba75e30e98d996a35f079d1e7b2da36df2ebd3be023ab85253049ac0113",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -252,7 +252,8 @@
       "disposition": "retained-pending-c-abi-policy",
       "evidence": [
         "include/stdatomic.h",
-        "compat/x86_64/libc_pthread_atfork_probe.c"
+        "compat/x86_64/atomic_addressable_abi_probe.c",
+        "compat/x86_64/run_atomic_addressable_abi.sh"
       ],
       "observed_profiles": [
         "c11-gnu",
@@ -265,7 +266,7 @@
       ],
       "origin": "c11-vocabulary",
       "path": "stdatomic.h",
-      "provider_state": "unprovided",
+      "provider_state": "default-static",
       "removal_requires_abi_decision": true,
       "retained_profiles": [
         "c11-gnu",
@@ -14104,521 +14105,87 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 14,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 9,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/fanotify.h",
-      "matched_callable_count": 4,
+      "matched_callable_count": 9,
       "profile": "c11-gnu",
       "reference_callable_count": 9,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "fstatfs"
-        },
-        {
-          "classification": "external",
-          "name": "fstatvfs"
-        },
-        {
-          "classification": "external",
-          "name": "statfs"
-        },
-        {
-          "classification": "external",
-          "name": "statvfs"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 14,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 9,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/fanotify.h",
-      "matched_callable_count": 4,
+      "matched_callable_count": 9,
       "profile": "cxx17-gnu",
       "reference_callable_count": 9,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "fstatfs"
-        },
-        {
-          "classification": "external",
-          "name": "fstatvfs"
-        },
-        {
-          "classification": "external",
-          "name": "statfs"
-        },
-        {
-          "classification": "external",
-          "name": "statvfs"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 14,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 9,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/fanotify.h",
-      "matched_callable_count": 4,
+      "matched_callable_count": 9,
       "profile": "c11-strict",
       "reference_callable_count": 9,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "fstatfs"
-        },
-        {
-          "classification": "external",
-          "name": "fstatvfs"
-        },
-        {
-          "classification": "external",
-          "name": "statfs"
-        },
-        {
-          "classification": "external",
-          "name": "statvfs"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 14,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 9,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/fanotify.h",
-      "matched_callable_count": 4,
+      "matched_callable_count": 9,
       "profile": "c11-posix-2008",
       "reference_callable_count": 9,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "fstatfs"
-        },
-        {
-          "classification": "external",
-          "name": "fstatvfs"
-        },
-        {
-          "classification": "external",
-          "name": "statfs"
-        },
-        {
-          "classification": "external",
-          "name": "statvfs"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 14,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 9,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/fanotify.h",
-      "matched_callable_count": 4,
+      "matched_callable_count": 9,
       "profile": "c11-xopen-700",
       "reference_callable_count": 9,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "fstatfs"
-        },
-        {
-          "classification": "external",
-          "name": "fstatvfs"
-        },
-        {
-          "classification": "external",
-          "name": "statfs"
-        },
-        {
-          "classification": "external",
-          "name": "statvfs"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 14,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 9,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/fanotify.h",
-      "matched_callable_count": 4,
+      "matched_callable_count": 9,
       "profile": "c11-bsd",
       "reference_callable_count": 9,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "fstatfs"
-        },
-        {
-          "classification": "external",
-          "name": "fstatvfs"
-        },
-        {
-          "classification": "external",
-          "name": "statfs"
-        },
-        {
-          "classification": "external",
-          "name": "statvfs"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 14,
-      "candidate_only": [
-        {
-          "classification": "macro",
-          "name": "INT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "INTMAX_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT16_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT32_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT64_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINT8_C"
-        },
-        {
-          "classification": "macro",
-          "name": "UINTMAX_C"
-        }
-      ],
+      "candidate_callable_count": 9,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "sys/fanotify.h",
-      "matched_callable_count": 4,
+      "matched_callable_count": 9,
       "profile": "cxx17-strict",
       "reference_callable_count": 9,
-      "reference_only": [
-        {
-          "classification": "external",
-          "name": "fstatfs"
-        },
-        {
-          "classification": "external",
-          "name": "fstatvfs"
-        },
-        {
-          "classification": "external",
-          "name": "statfs"
-        },
-        {
-          "classification": "external",
-          "name": "statvfs"
-        },
-        {
-          "classification": "macro",
-          "name": "__REDIR"
-        }
-      ],
+      "reference_only": [],
       "reference_status": "ok"
     },
     {
@@ -26445,23 +26012,23 @@
     "public_support": false
   },
   "summary": {
-    "candidate_only_callable_count": 1846,
+    "candidate_only_callable_count": 1776,
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-retained-pending-c-abi-policy": 56,
-      "matched": 1110,
-      "mismatch": 170,
+      "matched": 1117,
+      "mismatch": 163,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "170 comparable pinned header/profile rows have callable visibility differences",
+      "163 comparable pinned header/profile rows have callable visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
-    "matched_callable_count": 34520,
-    "mismatch_row_count": 170,
+    "matched_callable_count": 34555,
+    "mismatch_row_count": 163,
     "oracle_not_applicable_candidate_visible_callable_count": 21,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -26470,7 +26037,7 @@
     "project_only_callable_count": 407,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_callable_count": 172,
+    "reference_only_callable_count": 137,
     "row_count": 1337
   },
   "target": "x86_64-unknown-linux-musl"

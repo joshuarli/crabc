@@ -38,9 +38,9 @@ class HeaderCallableDispositionTests(unittest.TestCase):
 
         summary = report["summary"]
         self.assertEqual(summary["candidate_external_callable_count"], 1526)
-        self.assertEqual(summary["default_static_callable_count"], 1113)
+        self.assertEqual(summary["default_static_callable_count"], 1119)
         self.assertEqual(summary["verified_feature_callable_count"], 47)
-        self.assertEqual(summary["unprovided_callable_count"], 366)
+        self.assertEqual(summary["unprovided_callable_count"], 360)
         self.assertEqual(
             summary["deferred_resolution_counts"],
             {
@@ -48,7 +48,6 @@ class HeaderCallableDispositionTests(unittest.TestCase):
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
                 "planned-provider": 351,
-                "policy-decision-required": 6,
             },
         )
         self.assertEqual(
@@ -79,7 +78,7 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertIn("statx", posix_runtime["members"])
         self.assertNotIn("statx", report["primary_disposition"]["default_static"]["members"])
 
-    def test_structural_and_policy_dispositions_stay_distinct_from_provider_claims(self) -> None:
+    def test_structural_dispositions_and_atomic_providers_stay_distinct(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         deferred = {
             row["id"]: row
@@ -98,10 +97,7 @@ class HeaderCallableDispositionTests(unittest.TestCase):
             deferred["x86-header-callable-oracle-no-provider-v1"]["resolution"],
             "oracle-declared-no-provider",
         )
-        self.assertEqual(
-            deferred["x86-header-callable-atomic-policy-v1"]["resolution"],
-            "policy-decision-required",
-        )
+        self.assertNotIn("x86-header-callable-atomic-policy-v1", deferred)
         self.assertIn("alloca", deferred["x86-header-callable-builtin-v1"]["members"])
         self.assertIn(
             "seqbuf_dump",
@@ -111,6 +107,16 @@ class HeaderCallableDispositionTests(unittest.TestCase):
             "tgkill",
             deferred["x86-header-callable-oracle-no-provider-v1"]["members"],
         )
+        default_static = report["primary_disposition"]["default_static"]["members"]
+        for symbol in (
+            "atomic_flag_clear",
+            "atomic_flag_clear_explicit",
+            "atomic_flag_test_and_set",
+            "atomic_flag_test_and_set_explicit",
+            "atomic_signal_fence",
+            "atomic_thread_fence",
+        ):
+            self.assertIn(symbol, default_static)
 
     def test_inventory_must_be_bound_to_the_current_parity_ledger(self) -> None:
         contract = DISPOSITION.load_contract()

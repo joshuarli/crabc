@@ -406,9 +406,9 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 12938,
-        "incompatible_count": 2595,
-        "reference_only_count": 8751,
+        "candidate_only_count": 12140,
+        "incompatible_count": 2448,
+        "reference_only_count": 8219,
     },
     "mismatch_row_count": 603,
     "pinned_public_header_count": 183,
@@ -425,12 +425,12 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 12938,
+    "candidate_only_identity_count": 12140,
     "candidate_only_identity_kind_counts": {
         "function": 834,
-        "macro": 9044,
+        "macro": 8442,
         "record": 233,
-        "typedef": 2785,
+        "typedef": 2589,
         "variable": 42,
     },
     "candidate_public_header_count": 191,
@@ -448,7 +448,7 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 286613,
+    "matched_identity_count": 287145,
     "mismatch_row_count": 532,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
@@ -458,12 +458,12 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 8751,
+    "reference_only_identity_count": 8219,
     "reference_only_identity_kind_counts": {
-        "function": 71,
-        "macro": 8544,
-        "record": 78,
-        "typedef": 49,
+        "function": 43,
+        "macro": 8103,
+        "record": 36,
+        "typedef": 28,
         "variable": 9,
     },
     "row_count": 1337,
@@ -473,8 +473,8 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
         "mismatch": 603,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 2595,
-    "source_form_difference_row_count": 439,
+    "source_form_difference_count": 2448,
+    "source_form_difference_row_count": 432,
     "source_form_only_difference_row_count": 71,
 }
 
@@ -2690,23 +2690,23 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 1846,
+            "candidate_only_callable_count": 1776,
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1110,
-                "mismatch": 170,
+                "matched": 1117,
+                "mismatch": 163,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "170 comparable pinned header/profile rows have callable visibility differences",
+                "163 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
-            "matched_callable_count": 34520,
-            "mismatch_row_count": 170,
+            "matched_callable_count": 34555,
+            "mismatch_row_count": 163,
             "oracle_not_applicable_candidate_visible_callable_count": 21,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
@@ -2715,7 +2715,7 @@ def require_header_callable_visibility_matrix(
             "project_only_callable_count": 407,
             "project_only_header_count": 8,
             "project_only_row_count": 56,
-            "reference_only_callable_count": 172,
+            "reference_only_callable_count": 137,
             "row_count": 1337,
         },
         "callable visibility matrix finite baseline drifted",
@@ -3212,11 +3212,11 @@ def validate_header_layout_foundation_manifest(
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1526,
-            "default_static_callable_count": 1113,
+            "default_static_callable_count": 1119,
             "verified_feature_callable_count": 47,
             "verified_feature_profile_count": 21,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 366,
+            "unprovided_callable_count": 360,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3278,10 +3278,10 @@ def validate_header_layout_foundation_manifest(
             "contract": "compat/x86_64/header_callable_disposition.toml",
             "report": "compat/x86_64/header_callable_disposition.json",
             "candidate_external_callable_count": 1526,
-            "default_static_callable_count": 1113,
+            "default_static_callable_count": 1119,
             "verified_feature_callable_count": 47,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 366,
+            "unprovided_callable_count": 360,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
             "missing_reference_declaration_routing_complete": True,
@@ -6415,7 +6415,7 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "2,595 same-identity source-form differences across 439 rows",
+        "2,448 same-identity source-form differences across 432 rows",
         "71 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
@@ -6484,7 +6484,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "170 current comparable callable name/class mismatch rows",
+        "163 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6532,9 +6532,9 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "all 1,526 current names",
-        "1,113 default-static",
+        "1,119 default-static",
         "47 verified feature-provider",
-        "366 exact deferred-owner records",
+        "360 exact deferred-owner records",
         "zero current pinned-musl missing declaration records",
         "not declaration parity",
         "does not perform archive extraction",
@@ -6575,7 +6575,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "366 deferred providers" in scope
+        and "360 deferred providers" in scope
         and "zero missing reference declaration names" in scope
         and "not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
@@ -6599,13 +6599,12 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
         == {
             "candidate_external_callable_count": 1526,
             "declared_unverified_feature_callable_count": 0,
-            "default_static_callable_count": 1113,
+            "default_static_callable_count": 1119,
             "deferred_resolution_counts": {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
                 "planned-provider": 351,
-                "policy-decision-required": 6,
             },
             "final_provider_archive_closure_complete": False,
             "header_declaration_parity_complete": False,
@@ -6616,7 +6615,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 366,
+            "unprovided_callable_count": 360,
             "verified_feature_callable_count": 47,
         },
         "header callable disposition summary drifted",
@@ -6678,12 +6677,12 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "no-feature default static archive",
         "isolated exact Cargo requests",
         "ordinary archive extraction",
-        "1,113 current default-static",
+        "1,119 current default-static",
         "47 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "366-name unprovided complement",
+        "360-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -7559,6 +7558,122 @@ def require_header_layouts_baseline_artifact(family: Mapping[str, Any]) -> None:
     require(
         "libc-header-layouts-baseline)" in dispatch_source,
         "libc-header-layouts-baseline is absent from the native dispatcher",
+    )
+
+
+def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the project-only C atomic ABI below C++ or runtime claims."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-atomic-addressable"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one static-c-atomic-addressable artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "`atomic_flag_clear`",
+        "`atomic_thread_fence`",
+        "explicit `#undef`",
+        "one-byte `atomic_flag`",
+        "C++17 companion",
+        "no C atomic surface to C++17",
+        "`-nostdlib -static`",
+        "Musl 1.2.6 does not install `<stdatomic.h>`",
+        "complete C ABI",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-atomic-addressable description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "compat/x86_64/atomic_addressable_abi_probe.c",
+        "compat/x86_64/atomic_addressable_abi_probe.cpp",
+        "compat/x86_64/atomic_addressable_abi_start.S",
+        "compat/x86_64/run_atomic_addressable_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_disposition.toml",
+        "compat/x86_64/header_callable_disposition.json",
+        "compat/x86_64/header_callable_visibility_matrix.toml",
+        "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/tests/test_header_callable_disposition.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/atomic.rs",
+        "include/stdatomic.h",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-atomic-addressable must own {owner}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh atomic-addressable-abi"},
+        "static-c-atomic-addressable must use the closed atomic-addressable-abi command",
+    )
+    scope = evidence[0]["scope"]
+    require(
+        isinstance(scope, str)
+        and "Musl 1.2.6 intentionally has no stdatomic.h reference arm" in scope
+        and "C++ header availability" in scope
+        and "general atomic/thread runtime behavior" in scope
+        and "public x86 support" in scope,
+        "static-c-atomic-addressable evidence must retain its project-only boundary",
+    )
+    runner_path = ROOT / "compat" / "x86_64" / "run_atomic_addressable_abi.sh"
+    require(runner_path.is_file(), "static-c-atomic-addressable runner is missing")
+    runner = runner_path.read_text(encoding="utf-8")
+    for phrase in (
+        "Musl 1.2.6 deliberately does not install <stdatomic.h>",
+        "assert_selected_c_abi_surface",
+        "-nostdinc",
+        "-nostdinc++",
+        "-nostdlib -static",
+        "atomic_flag_clear",
+        "atomic_thread_fence",
+        "C++ companion",
+        "__gxx_personality_v0",
+        "__tls_get_addr",
+    ):
+        require(phrase in runner, f"static-c-atomic-addressable runner omits {phrase}")
+    header = (ROOT / "include" / "stdatomic.h").read_text(encoding="utf-8")
+    for phrase in (
+        "C++17 has no C `<stdatomic.h>` interface",
+        "This project-only C11 vocabulary retains libc entry points",
+        "void atomic_flag_clear(volatile atomic_flag *);",
+        "void atomic_thread_fence(memory_order);",
+    ):
+        require(phrase in header, f"project stdatomic header omits {phrase}")
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "atomic.rs").read_text(
+        encoding="utf-8"
+    )
+    for phrase in (
+        "pub struct AtomicFlag",
+        "AtomicU8",
+        "pub unsafe extern \"C\" fn atomic_flag_clear",
+        "pub extern \"C\" fn atomic_thread_fence",
+    ):
+        require(phrase in source, f"addressable atomic source omits {phrase}")
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "atomic-addressable-abi)" in dispatch_source,
+        "atomic-addressable-abi is absent from the native dispatcher",
     )
 
 
@@ -76590,6 +76705,7 @@ def validate_ledger(
     require_dirent_header_profile_matrix_artifact(by_id["libc.headers-layouts"])
     require_stdlib_header_profile_matrix_artifact(by_id["libc.headers-layouts"])
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
+    require_addressable_stdatomic_artifact(by_id["libc.headers-layouts"])
     require_uio_cxx_archive_linkage_artifact(by_id["libc.headers-layouts"])
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])

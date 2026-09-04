@@ -32,7 +32,7 @@ public_support = false
 [work_package]
 target_family = "libc.headers-layouts"
 target_obligation = "header-callable-disposition"
-blocker = "The frozen selected external callable surface had a single no-provider bucket, which could not distinguish planned semantic owners, compiler builtins, consumer callbacks, oracle-declared no-provider declarations, or project-only atomic policy work."
+blocker = "The frozen selected external callable surface had a single no-provider bucket, which could not distinguish planned semantic owners, compiler builtins, consumer callbacks, oracle-declared no-provider declarations, or the now-selected project-only addressable atomic provider policy."
 prerequisites = ["oracle.musl-toolchain", "compiler-derived selected header callable inventory", "selected static C ABI export ratchet", "checked feature-archive provider partition"]
 dependent_work = ["maintain zero missing selected header declarations", "libc.c-abi-compat final callable-provider archive closure", "ordinary archive extraction for future providers", "header-family aggregate closure"]
 baseline_source = "Pinned musl 1.2.6 selected x86 public headers and the checked compiler-derived candidate callable inventory."
@@ -40,7 +40,7 @@ source_owners = ["compat/x86_64/header_callable_disposition.toml", "compat/x86_6
 focused_evidence_command = "./scripts/dev-x86_64.sh header-callable-disposition"
 family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
 negative_scope = "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support."
-expected_transition = "Completed as a non-promoting checked disposition: all 1,526 current candidate external callable names receive exact accounting records, including statx as a planned libc.posix-runtime provider. The 351 planned-provider names remain provider/archive work. Declaration parity remains red despite the zero missing reference declaration names until the independent declaration/macro matrix and remaining header obligations close."
+expected_transition = "Completed as a non-promoting checked disposition: all 1,526 current candidate external callable names receive exact accounting records, including statx as a planned libc.posix-runtime provider and six project-only addressable atomic names with selected default-static providers. The 351 planned-provider names remain provider/archive work. Declaration parity remains red despite the zero missing reference declaration names until the independent declaration/macro matrix and remaining header obligations close."
 evidence = ["compiler-derived inventory digest binding", "exact disjoint primary callable partition", "exact deferred-owner roster", "exact missing-reference declaration roster", "native x86 inventory regeneration plus checked report"]
 
 [[deferred_owner_group]]
@@ -122,13 +122,3 @@ resolution = "oracle-declared-no-provider"
 provider_target = "Pinned musl declares these names without a pinned x86 libc.a or libc.so provider; do not invent one"
 source_oracle = "Pinned musl 1.2.6 x86 header and archive export inventory"
 members = ["_flush_cache", "cachectl", "cacheflush", "getcontext", "makecontext", "setcontext", "swapcontext"]
-
-[[deferred_owner_group]]
-id = "x86-header-callable-atomic-policy-v1"
-semantic_family = "libc.headers-layouts"
-linkage_owner_family = "libc.c-abi-compat"
-linkage_owner_obligation = "final-callable-provider-archive-closure"
-resolution = "policy-decision-required"
-provider_target = "Project-only addressable stdatomic declarations require an explicit C ABI policy before provider selection"
-source_oracle = "Project include/stdatomic.h plus checked candidate callable inventory"
-members = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_flag_test_and_set", "atomic_flag_test_and_set_explicit", "atomic_signal_fence", "atomic_thread_fence"]
