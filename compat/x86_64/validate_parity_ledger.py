@@ -1861,6 +1861,25 @@ FILESYSTEM_DIRECTORY_COMPONENT_RUNNERS = (
     "run_libc_filesystem_traversal.sh",
 )
 
+FILESYSTEM_EXTENSIONS_SYMBOLS = (
+    "mktemp",
+    "name_to_handle_at",
+    "open_by_handle_at",
+    "tempnam",
+    "tmpnam",
+)
+
+FILESYSTEM_EXTENSIONS_FEATURES = (
+    "x86-temporary-names",
+    "x86-file-handles",
+)
+
+FILESYSTEM_EXTENSIONS_COMPONENT_RUNNERS = (
+    "run_libc_mktemp.sh",
+    "run_libc_file_handles.sh",
+    "run_libc_temporary_names.sh",
+)
+
 EXTENDED_ATTRIBUTE_SYMBOLS = (
     "setxattr",
     "lsetxattr",
@@ -3400,10 +3419,10 @@ def validate_header_layout_foundation_manifest(
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 60,
-            "verified_feature_profile_count": 25,
+            "verified_feature_callable_count": 62,
+            "verified_feature_profile_count": 26,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 346,
+            "unprovided_callable_count": 344,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3466,9 +3485,9 @@ def validate_header_layout_foundation_manifest(
             "report": "compat/x86_64/header_callable_disposition.json",
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 60,
+            "verified_feature_callable_count": 62,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 346,
+            "unprovided_callable_count": 344,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
             "missing_reference_declaration_routing_complete": True,
@@ -6728,8 +6747,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
         "still-planned `libc.headers-layouts`",
         "all 1,525 current names",
         "1,119 default-static",
-        "60 verified feature-provider",
-        "346 exact deferred-owner records",
+        "62 verified feature-provider",
+        "344 exact deferred-owner records",
         "zero current pinned-musl missing declaration records",
         "not declaration parity",
         "does not perform archive extraction",
@@ -6770,7 +6789,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "346 deferred providers" in scope
+        and "344 deferred providers" in scope
         and "zero missing reference declaration names" in scope
         and "not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
@@ -6799,7 +6818,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 337,
+                "planned-provider": 335,
             },
             "final_provider_archive_closure_complete": False,
             "header_declaration_parity_complete": False,
@@ -6810,8 +6829,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 346,
-            "verified_feature_callable_count": 60,
+            "unprovided_callable_count": 344,
+            "verified_feature_callable_count": 62,
         },
         "header callable disposition summary drifted",
     )
@@ -6873,11 +6892,11 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "isolated exact Cargo requests",
         "ordinary archive extraction",
         "1,119 current default-static",
-        "60 verified feature-provider",
+        "62 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "346-name unprovided complement",
+        "344-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -23082,6 +23101,9 @@ def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
         "`newfstatat(AT_FDCWD, path, scratch, 0)`",
         "`ENOENT`",
         "`EEXIST`",
+        "VDSO-first",
+        "TCB",
+        "seccomp",
         "inherently racy",
         "no security or ownership guarantee",
         "`tmpnam`",
@@ -23109,6 +23131,7 @@ def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
         "libc/src/c_abi/x86_64/errno.rs",
         "libc/src/c_abi/x86_64/syscall.rs",
         "libc/src/c_abi/x86_64/mktemp.rs",
+        "libc/src/c_abi/x86_64/temp_name_random.rs",
         "include/errno.h",
         "include/features.h",
         "include/stddef.h",
@@ -23164,6 +23187,13 @@ def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
             for item in prerequisites
         ),
         "static-c-mktemp must retain its selected Linux lookup ABI",
+    )
+    require(
+        any(
+            "VDSO-first" in item and "TCB" in item and "seccomp" in item
+            for item in prerequisites
+        ),
+        "static-c-mktemp must record its raw-clock/raw-gettid adaptation",
     )
     require(
         any("PT_TLS errno" in item and "__tls_get_addr" in item for item in prerequisites),
@@ -23231,15 +23261,10 @@ def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
         "src/temp/__randname.c::__randname",
         "TEMPLATE_SUFFIX_BYTES: usize = 6",
         "MAX_ATTEMPTS: usize = 100",
-        "CLOCK_REALTIME",
-        "struct Timespec",
         "struct KernelStatScratch",
         "size_of::<KernelStatScratch>() == 144",
-        "raw_syscall::SYS_CLOCK_GETTIME",
-        "raw_syscall::SYS_GETTID",
         "raw_syscall::SYS_NEWFSTATAT",
-        "wrapping_mul(65_537)",
-        "random >>= 5",
+        "temp_name_random::randomize_suffix",
         "if error != ENOENT",
         "errno::set_errno(EEXIST)",
         'pub unsafe extern "C" fn mktemp',
@@ -23247,6 +23272,28 @@ def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
         "does not create, open, reserve, unlink",
     ):
         require(snippet in source, f"mktemp implementation omits {snippet}")
+    random_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "temp_name_random.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Pinned musl 1.2.6 release commit",
+        "src/temp/__randname.c::__randname",
+        "TEMPLATE_SUFFIX_BYTES: usize = 6",
+        "CLOCK_REALTIME",
+        "struct Timespec",
+        "raw_syscall::SYS_CLOCK_GETTIME",
+        "raw_syscall::SYS_GETTID",
+        "wrapping_mul(65_537)",
+        "random >>= 5",
+        "VDSO-first",
+        "TCB",
+        "seccomp",
+        "does not allocate, reserve, create, open",
+    ):
+        require(
+            snippet in random_source,
+            f"shared temporary-name suffix helper omits {snippet}",
+        )
     exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
     require(exported == {"mktemp"}, "mktemp implementation must export only mktemp")
     for forbidden in (
@@ -24000,12 +24047,26 @@ def require_file_handles_artifact(family: Mapping[str, Any]) -> None:
         "assert_feature_archive_surface",
         "candidate has unresolved symbols",
         "candidate retains a dynamic TLS model",
-        "$0x12f",
-        "$0x130",
+        "0x12f",
+        "0x130",
         "%r10",
         "%r8",
     ):
         require(snippet in runner, f"file-handle runner omits {snippet}")
+    for snippet in (
+        "assert_direct_or_bound_syscall",
+        '"raw_syscall8" helper_leaf',
+        "if grep -Eq '\\<syscall\\>' \"$wrapper_disassembly\"; then",
+        'index($0, "<" symbol ">")',
+        "call expected raw syscall helper",
+        'objdump -d --disassemble="$helper_symbol" "$candidate"',
+        "assert_direct_or_bound_syscall name_to_handle_at 0x12f syscall5 %r10 %r8",
+        "assert_direct_or_bound_syscall open_by_handle_at 0x130 syscall3",
+    ):
+        require(
+            snippet in runner,
+            f"file-handle runner omits direct-or-bound syscall proof {snippet}",
+        )
 
     probe = (
         ROOT / "compat" / "x86_64" / "libc_file_handles_probe.c"
@@ -24091,6 +24152,359 @@ def require_file_handles_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_file_handles_probe()",
         "run_file_handles_header_abi.sh",
         "run_libc_file_handles.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_temporary_names_artifact(family: Mapping[str, Any]) -> None:
+    """Keep historical tmpnam/tempnam opt-in, racy, and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-temporary-names"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-temporary-names artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-temporary-names must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-temporary-names must remain a private artifact without capability promotion",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-temporary-names needs a description")
+    for phrase in (
+        "Private native x86 opt-in mixed-runtime legacy C temporary-name artifact",
+        "still-planned `libc.posix-runtime`",
+        "src/stdio/tmpnam.c::tmpnam",
+        "src/stdio/tempnam.c::tempnam",
+        "src/temp/__randname.c::__randname",
+        "`x86-temporary-names` adds exactly `tempnam` and `tmpnam`",
+        "x86-allocator-runtime,x86-allocator-string-duplication",
+        "L_tmpnam=20",
+        "PATH_MAX=4096",
+        "ENAMETOOLONG=36",
+        "raw Linux readlink=89",
+        "raw -ENOENT=2",
+        "Neither creates, opens, reserves, unlinks",
+        "consults TMPDIR",
+        "fail-closed branch",
+        "VDSO-first",
+        "TCB",
+        "seccomp",
+        "unmangled C++ linkage",
+        "safe Rust pathname API",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-temporary-names description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-temporary-names.source_owners",
+        )
+    )
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "compat/x86_64/temporary-names-provider.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/temp_name_random.rs",
+        "libc/src/c_abi/x86_64/temporary_names.rs",
+        "libc/src/c_abi/x86_64/allocator_string_duplication.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/stdio.h",
+        "include/stdlib.h",
+        "include/sys/prctl.h",
+        "compat/x86_64/temporary_names_header_abi_probe.c",
+        "compat/x86_64/temporary_names_header_abi_probe.cpp",
+        "compat/x86_64/run_temporary_names_header_abi.sh",
+        "compat/x86_64/libc_temporary_names_probe.c",
+        "compat/x86_64/run_libc_temporary_names.sh",
+        "compat/x86_64/tests/test_libc_temporary_names.py",
+        "compat/x86_64/tests/test_feature_archive_roster.py",
+        "compat/x86_64/tests/test_header_callable_disposition.py",
+        "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-temporary-names source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-temporary-names.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "char *tmpnam(char *)" in item
+            and "char *tempnam(const char *, const char *)" in item
+            and "L_tmpnam=20" in item
+            and "strdup" in item
+            for item in prerequisites
+        ),
+        "static-c-temporary-names must retain its C pointer/ownership ABI",
+    )
+    require(
+        any(
+            "src/temp/__randname.c" in item
+            and "100 six-byte candidates" in item
+            and "gettid*65537" in item
+            and "fails closed" in item
+            for item in prerequisites
+        ),
+        "static-c-temporary-names must retain its shared suffix provenance",
+    )
+    require(
+        any(
+            "VDSO-first" in item and "TCB" in item and "seccomp" in item
+            for item in prerequisites
+        ),
+        "static-c-temporary-names must record its raw-clock/raw-gettid adaptation",
+    )
+    require(
+        any(
+            "readlink=89" in item
+            and "-ENOENT=2" in item
+            and "PATH_MAX=4096" in item
+            and "ENAMETOOLONG=36" in item
+            for item in prerequisites
+        ),
+        "static-c-temporary-names must retain raw absence and length behavior",
+    )
+    require(
+        any(
+            "duplication/allocator/errno/backend" in item
+            and "pinned-musl link rejects" in item
+            for item in prerequisites
+        ),
+        "static-c-temporary-names must retain its selected closure boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-temporary-names.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `char *tmpnam(char *)`" in item
+            and "L_tmpnam=20" in item
+            and "every X/Open" in item
+            and "_XOPEN_SOURCE=800" in item
+            and "strict/POSIX C rejects" in item
+            and "GNU and strict C++" in item
+            for item in headers
+        ),
+        "static-c-temporary-names must retain its stdio visibility boundary",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-temporary-names native evidence is invalid")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-temporary-names"},
+        "static-c-temporary-names must use the closed libc-temporary-names command",
+    )
+    scope = evidence[0].get("scope") if evidence else None
+    require(isinstance(scope, str), "static-c-temporary-names evidence needs a scope")
+    for phrase in (
+        "x86 `--features x86-temporary-names` mixed static candidate",
+        "frozen default archive",
+        "temporary-name, strdup, allocator, errno, and backend closure",
+        "TMPDIR nonselection",
+        "PATH_MAX-1",
+        "ENOTDIR",
+        "seccomp raw-readlink ELOOP",
+        "readlink=89, clock_gettime=228, and gettid=186",
+        "neither creates, opens, reserves, nor unlinks",
+        "safe Rust APIs",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-temporary-names evidence omits {phrase}",
+        )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    for symbol in ("tmpnam", "tempnam"):
+        require(
+            symbol not in exports,
+            f"static-c-temporary-names must keep {symbol} out of the default static archive",
+        )
+
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "temporary_names.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stdio/tmpnam.c::tmpnam",
+        "src/stdio/tempnam.c::tempnam",
+        "temp_name_random::randomize_suffix",
+        "MAX_ATTEMPTS: usize = 100",
+        "L_TMPNAM: usize = 20",
+        "PATH_MAX: usize = 4096",
+        "ENAMETOOLONG: c_int = 36",
+        "raw_syscall::SYS_READLINK",
+        "result == -i64::from(ENOENT)",
+        "pub unsafe extern \"C\" fn tmpnam",
+        "pub unsafe extern \"C\" fn tempnam",
+        "# Safety",
+        "inherently racy",
+        "does not create, open, reserve, or unlink",
+    ):
+        require(snippet in source, f"temporary-name implementation omits {snippet}")
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(
+        exported == {"tmpnam", "tempnam"},
+        "temporary-name implementation must export exactly tmpnam/tempnam",
+    )
+    for forbidden in (
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "raw_syscall::SYS_GETRANDOM",
+        "raw_syscall::SYS_UNLINK",
+        "raw_syscall::SYS_UNLINKAT",
+        "TMPDIR",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in source,
+            f"temporary-name implementation selects {forbidden}",
+        )
+    random_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "temp_name_random.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in ("VDSO-first", "TCB", "seccomp"):
+        require(
+            snippet in random_source,
+            f"shared temporary-name suffix helper omits {snippet}",
+        )
+    require(
+        not re.search(r'pub unsafe extern "C" fn', random_source),
+        "shared temporary-name suffix helper must not expose a C ABI entry",
+    )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_temporary_names.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_temporary_names_header_abi.sh",
+        "FEATURE=x86-temporary-names",
+        "x86-allocator-runtime,x86-allocator-string-duplication",
+        "tempnam\\ntmpnam",
+        "-static",
+        "__crabc_x86_temporary_names_v1",
+        "tmpnam tempnam strdup strndup",
+        "memcpy_members",
+        "memset_members",
+        "strlen_members",
+        "pinned-musl temporary-name implementation or allocator",
+        "TMPDIR",
+        "assert_temporary_name_syscall_path",
+        "assert_readlink_retry_path",
+        "raw_syscall_helper_symbol",
+        "temporary_name_random_symbol",
+        "temporary_name_absence_symbol",
+        "readlink=89",
+        "clock_gettime=228",
+        "gettid=186",
+        "raw -ENOENT comparison",
+    ):
+        require(snippet in runner, f"temporary-name runner omits {snippet}")
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_temporary_names_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "SYS_readlink == 89",
+        "L_tmpnam == 20",
+        "path_is_absent",
+        "tmpnam((char *)0)",
+        "tempnam((const char *)0, (const char *)0)",
+        "TMPDIR",
+        'tempnam("/tmp/", "named")',
+        'tempnam("", "")',
+        'tempnam("/dev/null", "x")',
+        "FIXTURE_ENAMETOOLONG",
+        "build_path_max_minus_one_directory",
+        "FIXTURE_PATH_MAX - 1",
+        "caller[L_tmpnam - 1]",
+        "check_readlink_failure_retry",
+        "CRABC_SECCOMP_RET_ERRNO",
+        "FIXTURE_ELOOP",
+        "free(name)",
+    ):
+        require(snippet in probe, f"temporary-name probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_temporary_names_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "xopen700",
+        "xopen800",
+        "reject_c_tempnam strict",
+        "compile_cxx_visible strict",
+        "tempnam",
+        "tmpnam",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"temporary-name header runner omits {snippet}")
+
+    provider = load_toml(ROOT / "compat" / "x86_64" / "temporary-names-provider.toml")
+    require(
+        provider.get("schema") == "crabc.x86_64-temporary-names-provider/v1",
+        "temporary-name provider schema drifted",
+    )
+    work_package = provider.get("work_package")
+    require(isinstance(work_package, Mapping), "temporary-name provider lacks work package")
+    require(
+        work_package.get("target_family") == "libc.posix-runtime"
+        and work_package.get("target_obligations")
+        == ["header-callable-disposition", "x86-temporary-names"]
+        and work_package.get("target_verified_slice")
+        == "static-c-filesystem-extensions-selection"
+        and "target_capability" not in work_package,
+        "temporary-name provider target contract drifted",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "temporary-names-header-abi)",
+        "libc-temporary-names)",
+        "run_temporary_names_header_abi()",
+        "run_libc_temporary_names_probe()",
+        "run_temporary_names_header_abi.sh",
+        "run_libc_temporary_names.sh",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -42771,6 +43185,276 @@ def require_filesystem_directory_slice(family: Mapping[str, Any]) -> None:
         ),
         "filesystem directory selection evidence must retain its aggregate scope",
     )
+
+
+def require_filesystem_extensions_slice(family: Mapping[str, Any]) -> None:
+    """Keep the frozen five-symbol extensions selection composed and private."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.posix-runtime].verified_slice",
+        str(family.get("status", "")),
+        string_list(
+            family.get("capabilities"),
+            "family[libc.posix-runtime].capabilities",
+            allow_empty=True,
+        ),
+    )
+    matching = [
+        entry
+        for entry in slices
+        if entry.get("id") == "static-c-filesystem-extensions-selection"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one filesystem.extensions selection slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "filesystem.extensions selection must not promote libc.posix-runtime",
+    )
+    selected = matching[0]
+    require(
+        selected.get("capabilities") == ["filesystem.extensions"],
+        "filesystem extensions selection must own exactly filesystem.extensions",
+    )
+
+    coverage = load_toml(ROOT / "compat" / "crabc-rs" / "coverage.toml")
+    coverage_records = coverage.get("capability")
+    require(isinstance(coverage_records, list), "coverage capability records are missing")
+    coverage_entry = next(
+        (
+            entry
+            for entry in coverage_records
+            if isinstance(entry, Mapping)
+            and entry.get("id") == "filesystem.extensions"
+        ),
+        None,
+    )
+    require(
+        isinstance(coverage_entry, Mapping)
+        and coverage_entry.get("symbols") == list(FILESYSTEM_EXTENSIONS_SYMBOLS),
+        "filesystem.extensions frozen symbol roster drifted",
+    )
+    frozen_rows = {
+        line.split("\t", 1)[0]
+        for line in (
+            ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "libc.a.static.tsv"
+        ).read_text(encoding="utf-8").splitlines()[1:]
+    }
+    require(
+        set(FILESYSTEM_EXTENSIONS_SYMBOLS) <= frozen_rows,
+        "filesystem.extensions frozen ABI rows drifted",
+    )
+
+    description = selected.get("description")
+    require(
+        isinstance(description, str),
+        "filesystem extensions selection needs a description",
+    )
+    for symbol in FILESYSTEM_EXTENSIONS_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"filesystem extensions selection description omits frozen {symbol}",
+        )
+    for phrase in (
+        "Private native x86 selected-private frozen `filesystem.extensions` capability",
+        "still-planned `libc.posix-runtime`",
+        "static-c-mktemp",
+        "x86-file-handles",
+        "x86-temporary-names",
+        "x86-temporary-names,x86-file-handles",
+        "frozen default selected-static archive",
+        "`static_c_abi_exports.txt`",
+        "`./scripts/dev-x86_64.sh libc-filesystem-extensions`",
+        "safe Rust temporary-name or file-handle API",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"filesystem extensions selection description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            selected.get("source_owners"),
+            "static-c-filesystem-extensions-selection.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/temporary-names-provider.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/mktemp.rs",
+        "libc/src/c_abi/x86_64/temp_name_random.rs",
+        "libc/src/c_abi/x86_64/temporary_names.rs",
+        "libc/src/c_abi/x86_64/file_handles.rs",
+        "include/stdio.h",
+        "include/fcntl.h",
+        "compat/x86_64/run_libc_mktemp.sh",
+        "compat/x86_64/run_libc_file_handles.sh",
+        "compat/x86_64/run_libc_temporary_names.sh",
+        "compat/x86_64/run_libc_filesystem_extensions.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"filesystem extensions selection source owners omit {owner}",
+        )
+    for runner in FILESYSTEM_EXTENSIONS_COMPONENT_RUNNERS:
+        require(
+            f"compat/x86_64/{runner}" in owners,
+            f"filesystem extensions selection source owners omit component {runner}",
+        )
+
+    prerequisites = nonempty_strings(
+        selected.get("x86_abi_prerequisites"),
+        "static-c-filesystem-extensions-selection.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            all(symbol in item for symbol in FILESYSTEM_EXTENSIONS_SYMBOLS)
+            and "exactly" in item
+            and "default selected-static export list" in item
+            for item in prerequisites
+        ),
+        "filesystem extensions selection must retain its frozen/default boundary",
+    )
+    require(
+        any(
+            "x86-file-handles" in item
+            and "x86-temporary-names" in item
+            and "x86-allocator-runtime,x86-allocator-string-duplication" in item
+            and "combined profile adds only file handles" in item
+            for item in prerequisites
+        ),
+        "filesystem extensions selection must retain its exact feature closure",
+    )
+    require(
+        any(
+            "mktemp trailing-X lookup" in item
+            and "Linux file-handle syscall authority" in item
+            and "raw-readlink legacy temporary names" in item
+            for item in prerequisites
+        ),
+        "filesystem extensions selection must retain component evidence closure",
+    )
+    headers = nonempty_strings(
+        selected.get("x86_header_prerequisites"),
+        "static-c-filesystem-extensions-selection.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "stdlib.h" in item
+            and "fcntl.h" in item
+            and "stdio.h" in item
+            and "unmangled linkage" in item
+            for item in headers
+        ),
+        "filesystem extensions selection must retain composed header evidence",
+    )
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        str(family.get("status", "")),
+    )
+    artifact_ids = {entry.get("id") for entry in artifacts}
+    for artifact_id in (
+        "static-c-mktemp",
+        "static-c-file-handles",
+        "static-c-temporary-names",
+    ):
+        require(
+            artifact_id in artifact_ids,
+            f"filesystem extensions selection omits {artifact_id}",
+        )
+
+    manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        'x86-temporary-names = ["x86-allocator-string-duplication"]' in manifest
+        and "x86-file-handles = []" in manifest,
+        "filesystem extensions selection feature declarations drifted",
+    )
+    require(
+        "mktemp" in static_exports
+        and not (
+            {"name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam"}
+            & static_exports
+        ),
+        "filesystem extensions selection must preserve the frozen default export split",
+    )
+    aggregate_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_filesystem_extensions.sh"
+    ).read_text(encoding="utf-8")
+    for runner in FILESYSTEM_EXTENSIONS_COMPONENT_RUNNERS:
+        require(
+            runner in aggregate_runner,
+            f"filesystem extensions aggregate omits {runner}",
+        )
+    for snippet in (
+        "x86-temporary-names,x86-file-handles",
+        "default selected-static C ABI export surface drifted",
+        "mktemp",
+        "name_to_handle_at",
+        "open_by_handle_at",
+        "tempnam",
+        "tmpnam",
+    ):
+        require(
+            snippet in aggregate_runner,
+            f"filesystem extensions aggregate omits {snippet}",
+        )
+
+    evidence = selected.get("native_evidence")
+    require(isinstance(evidence, list), "filesystem extensions selection needs native evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-filesystem-extensions"},
+        "filesystem extensions selection must use its closed aggregate command",
+    )
+    scope = evidence[0].get("scope") if evidence else None
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "libc-mktemp",
+                "libc-file-handles",
+                "libc-temporary-names",
+                "x86-temporary-names,x86-file-handles",
+                "mktemp, name_to_handle_at, open_by_handle_at, tempnam, and tmpnam",
+                "filesystem.extensions privately",
+                "family completion, promotion, and public x86 support",
+            )
+        ),
+        "filesystem extensions selection evidence must retain its aggregate scope",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-filesystem-extensions)",
+        "run_libc_filesystem_extensions()",
+        "run_libc_filesystem_extensions.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
 def require_extended_attributes_artifact(family: Mapping[str, Any]) -> None:
@@ -77990,6 +78674,7 @@ def validate_ledger(
     require_tcsetpgrp_artifact(by_id["libc.posix-runtime"])
     require_getpass_artifact(by_id["libc.posix-runtime"])
     require_mktemp_artifact(by_id["libc.posix-runtime"])
+    require_temporary_names_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
     require_wait_extensions_artifact(by_id["libc.posix-runtime"])
     require_signal_legacy_aliases_artifact(by_id["libc.posix-runtime"])
@@ -78083,6 +78768,7 @@ def validate_ledger(
     require_directory_streams_artifact(by_id["libc.posix-runtime"])
     require_scandir_allocation_client_artifact(by_id["libc.posix-runtime"])
     require_filesystem_traversal_artifact(by_id["libc.posix-runtime"])
+    require_filesystem_extensions_slice(by_id["libc.posix-runtime"])
     require_filesystem_directory_slice(by_id["libc.posix-runtime"])
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])

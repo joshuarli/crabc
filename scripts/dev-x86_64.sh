@@ -224,6 +224,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   lchown-header-abi  verify selected x86 POSIX lchown C/C++ declarations
   hasmntopt-header-abi  verify selected x86 mntent hasmntopt C/C++ declarations
   mktemp-header-abi  compile the staged x86 C/C++ mktemp declaration
+  temporary-names-header-abi  verify x86 C/C++ tmpnam/tempnam declarations
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
   memory-sync-header-abi  verify selected x86 msync C/C++ declarations
   memory-locking-header-abi  verify selected x86 per-range mlock C/C++ declarations
@@ -277,6 +278,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
   libc-filesystem-traversal  run the opt-in static x86 crabc-libc ftw/nftw slice
   libc-filesystem-directory  run the selected-private x86 directory capability aggregate
+  libc-filesystem-extensions  run the selected-private x86 filesystem-extensions capability aggregate
   libc-lchmod-unsupported  run the static x86 crabc-libc lchmod unsupported slice
   libc-fchdir  run the static x86 crabc-libc fchdir O_PATH fallback slice
   libc-ulimit  run the static x86 crabc-libc historical RLIMIT_FSIZE slice
@@ -440,6 +442,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-lchown  run the static x86 crabc-libc lchown leaf
   libc-hasmntopt  run the static x86 crabc-libc hasmntopt leaf
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
+  libc-temporary-names  run the opt-in static x86 tmpnam/tempnam slice
   libc-file-handles  run the opt-in static x86 file-handle syscall slice
   libc-posix-spawn-file-actions  run the opt-in mixed-runtime x86 spawn file-actions lifecycle
   libc-process-context  run the static x86 crabc-libc selected process-context slice
@@ -3304,6 +3307,10 @@ run_libc_filesystem_directory() {
     run_in_container bash /workspace/compat/x86_64/run_libc_filesystem_directory.sh
 }
 
+run_libc_filesystem_extensions() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_filesystem_extensions.sh
+}
+
 run_libc_lchmod_unsupported() {
     run_in_container bash /workspace/compat/x86_64/run_libc_lchmod_unsupported.sh
 }
@@ -3610,6 +3617,10 @@ run_getpass_header_abi() {
 
 run_mktemp_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_mktemp_header_abi.sh
+}
+
+run_temporary_names_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_temporary_names_header_abi.sh
 }
 
 run_mkfifo_header_abi() {
@@ -4681,6 +4692,10 @@ run_libc_mktemp_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_mktemp.sh
 }
 
+run_libc_temporary_names_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_temporary_names.sh
+}
+
 run_libc_file_handles_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_file_handles.sh
 }
@@ -5135,6 +5150,7 @@ case "$command" in
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
     sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    temporary-names-header-abi|libc-temporary-names) ;;
     file-handles-header-abi|libc-file-handles) ;;
     posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
@@ -5255,6 +5271,7 @@ case "$command" in
     libc-directory-streams) ;;
     libc-filesystem-traversal) ;;
     libc-filesystem-directory) ;;
+    libc-filesystem-extensions) ;;
     libc-lchmod-unsupported) ;;
     libc-fopen64-alias) ;;
     libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
@@ -6264,6 +6281,11 @@ case "$command" in
         ensure_image
         run_mktemp_header_abi
         ;;
+    temporary-names-header-abi)
+        [ "$#" -eq 0 ] || fail "temporary-names-header-abi takes no arguments"
+        ensure_image
+        run_temporary_names_header_abi
+        ;;
     mman-header-abi)
         [ "$#" -eq 0 ] || fail "mman-header-abi takes no arguments"
         ensure_image
@@ -7233,6 +7255,11 @@ case "$command" in
         ensure_image
         run_libc_mktemp_probe
         ;;
+    libc-temporary-names)
+        [ "$#" -eq 0 ] || fail "libc-temporary-names takes no arguments"
+        ensure_image
+        run_libc_temporary_names_probe
+        ;;
     libc-file-handles)
         [ "$#" -eq 0 ] || fail "libc-file-handles takes no arguments"
         ensure_image
@@ -8146,6 +8173,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-filesystem-directory takes no arguments"
         ensure_image
         run_libc_filesystem_directory
+        ;;
+    libc-filesystem-extensions)
+        [ "$#" -eq 0 ] || fail "libc-filesystem-extensions takes no arguments"
+        ensure_image
+        run_libc_filesystem_extensions
         ;;
     libc-lchmod-unsupported)
         [ "$#" -eq 0 ] || fail "libc-lchmod-unsupported takes no arguments"

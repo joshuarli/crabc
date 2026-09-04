@@ -55,7 +55,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         rows = ROSTER.load_feature_archive_roster()
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
-        self.assertEqual(len(rows), 25)
+        self.assertEqual(len(rows), 26)
         self.assertEqual([item.identifier for item in rows if item.state == "planned"], [])
         resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
         self.assertEqual(resolver.state, "verified")
@@ -88,6 +88,22 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             file_handles.additive_callables,
             ("name_to_handle_at", "open_by_handle_at"),
         )
+        temporary_names = next(
+            item for item in rows if item.identifier == "x86-temporary-names"
+        )
+        self.assertEqual(
+            temporary_names.evidence_record,
+            "static-c-temporary-names",
+        )
+        self.assertEqual(
+            temporary_names.dispatch_command,
+            "libc-temporary-names",
+        )
+        self.assertEqual(
+            temporary_names.baseline_features,
+            ("x86-allocator-runtime", "x86-allocator-string-duplication"),
+        )
+        self.assertEqual(temporary_names.additive_callables, ("tempnam", "tmpnam"))
         spawn_file_actions = next(
             item
             for item in rows

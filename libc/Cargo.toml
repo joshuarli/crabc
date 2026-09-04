@@ -25,6 +25,11 @@ x86-allocator-runtime = ["dep:libmimalloc-sys"]
 # that feature's private wrapper/backend boundary and does not select a wider
 # string or allocator runtime.
 x86-allocator-string-duplication = ["x86-allocator-runtime"]
+# Legacy C temporary-name generation returns an allocator-owned pathname from
+# tempnam while tmpnam retains its source-compatible static-buffer path. Keep
+# both opt-in over the already audited strdup client so the default archive
+# neither gains racy pathname APIs nor a bundled allocator dependency.
+x86-temporary-names = ["x86-allocator-string-duplication"]
 # `scandir` is a separate allocation client over the selected C directory and
 # allocator boundaries. Keeping it opt-in leaves the dependency-free directory
 # stream artifact and the default x86 static export root unchanged.

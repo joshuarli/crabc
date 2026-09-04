@@ -51,8 +51,9 @@
 //! direct GNU current-task identifier observation, selected
 //! process-context, bounded process-environment,
 //! environment-backed login-name observation, child-reaping, selected
-//! descriptor-entry, selected filesystem-access, one historical `mktemp`
-//! pathname-selection leaf, fixed Linux `lchmod`
+//! descriptor-entry, selected filesystem-access, historical `mktemp`
+//! pathname selection and opt-in legacy `tmpnam`/`tempnam` name-generation
+//! leaves, fixed Linux `lchmod`
 //! unsupported compatibility, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
 //! regular-file sendfile transfer, mode-zero POSIX range allocation, one
@@ -195,6 +196,8 @@ mod atomic;
 #[allow(dead_code)]
 #[path = "syscall.rs"]
 mod raw_syscall;
+#[path = "temp_name_random.rs"]
+mod temp_name_random;
 #[path = "static_tls.rs"]
 mod static_tls;
 #[path = "stat_compat.rs"]
@@ -606,6 +609,12 @@ mod filesystem_access;
 mod fchdir;
 #[path = "mktemp.rs"]
 mod mktemp;
+// These legacy name generators are intentionally opt-in. They preserve
+// pinned-musl's racy absent-name observation and compose only with the
+// separately audited allocation/string-duplication baseline.
+#[cfg(feature = "x86-temporary-names")]
+#[path = "temporary_names.rs"]
+mod temporary_names;
 #[path = "lchmod_unsupported.rs"]
 mod lchmod_unsupported;
 #[path = "mkfifo.rs"]

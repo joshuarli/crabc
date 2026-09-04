@@ -2,7 +2,7 @@
   "abi_facet_count": 25,
   "accounting_complete": true,
   "blocker_counts": {
-    "callable_provider_unprovided": 346,
+    "callable_provider_unprovided": 344,
     "callable_visibility_mismatch_rows": 94,
     "declaration_identity_mismatch_rows": 518,
     "declaration_source_form_differences": 2511,
@@ -563,7 +563,7 @@
       "id": "declaration-macro-visibility",
       "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v1",
-      "sha256": "053c87983c1797b62749869b35ab82ebaa24b42eecaa331fc0ddbd306a0db77b",
+      "sha256": "de2cb17066899aaafd45d353a1f3ae2550e9c58cad4a370918fa5b425bbe3b04",
       "summary": {
         "candidate_only_identity_count": 7016,
         "candidate_only_identity_kind_counts": {
@@ -622,7 +622,7 @@
       "id": "callable-visibility",
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
-      "sha256": "cce11444e8bbbcd1fd1d32f6a871b46620695c3122f09019d9e1285e93d813d4",
+      "sha256": "c6c419224b390c1991278cfd9fad81c41f7786d6b862538c5e1d6c49dc7ec589",
       "summary": {
         "candidate_only_callable_count": 423,
         "candidate_public_header_count": 191,
@@ -658,7 +658,7 @@
       "id": "prototype-layout",
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
       "schema": "crabc.x86_64-header-abi-matrix-report/v1",
-      "sha256": "5eba4041996a5eca15fcb059f27b1652080601e422e3c74a7bb783f68430febb",
+      "sha256": "1fb5fb458fe0e427c6cbcc7897cde26d56938e8ddb38a47bfe7c4f7790beaacb",
       "summary": {
         "candidate_public_header_count": 191,
         "comparison_counts": {
@@ -690,7 +690,7 @@
       "id": "record-byte-layout",
       "path": "compat/x86_64/generated/header_record_layout_matrix/report.json",
       "schema": "crabc.x86_64-header-record-layout-matrix-report/v1",
-      "sha256": "aa77a8f54eb116841af71ab38651168ea4a2f0b39a6a9932dd0b89708d2ee6b4",
+      "sha256": "6d0949cb07b58323e5fd9a4a50a36823cf75873da868a73d0948c4fe9dd67ac7",
       "summary": {
         "candidate_field_categories": {
           "bit-field": 723,
@@ -737,7 +737,7 @@
       "id": "callable-disposition",
       "path": "compat/x86_64/header_callable_disposition.json",
       "schema": "crabc.x86_64-header-callable-disposition-report/v1",
-      "sha256": "6cd1c22e4f3d7e5417d8bb36bb95731c5bd69884aea9af21509abbaaefbd5aef",
+      "sha256": "625ef521297cfc7a57302bef2d3add34c245edce7310936ff35089153ff6e4dc",
       "summary": {
         "candidate_external_callable_count": 1525,
         "declared_unverified_feature_callable_count": 0,
@@ -746,7 +746,7 @@
           "compiler-builtin": 1,
           "consumer-supplied": 1,
           "oracle-declared-no-provider": 7,
-          "planned-provider": 337
+          "planned-provider": 335
         },
         "final_provider_archive_closure_complete": false,
         "header_declaration_parity_complete": false,
@@ -757,8 +757,8 @@
         "primary_disposition_exact_coverage": true,
         "undispositioned_candidate_callable_count": 0,
         "undispositioned_missing_reference_name_count": 0,
-        "unprovided_callable_count": 346,
-        "verified_feature_callable_count": 60
+        "unprovided_callable_count": 344,
+        "verified_feature_callable_count": 62
       },
       "table": "callable_disposition"
     }
@@ -771,7 +771,7 @@
   "inputs": [
     {
       "path": "compat/x86_64/headers-layouts-foundation.toml",
-      "sha256": "d213235b82cc491a275ab7c65bbaa4e78c6b3b0bdfbf5762008116f60186dab1"
+      "sha256": "ca4b1f1fb2bcfe13af81baaed15c8b239a2c3002269b665da2f14362c961e343"
     },
     {
       "path": "compat/x86_64/headers-layouts.toml",
@@ -779,7 +779,7 @@
     },
     {
       "path": "compat/x86_64/parity.toml",
-      "sha256": "2339c8a5fceb3185341b139edd29fce4bf9e5804dcac95d334e95612816f4987"
+      "sha256": "228bc858a2b9f2c8bd2a561ec1069de5c5291f2d835a137ba9fe6ca2263049f1"
     },
     {
       "path": "compat/x86_64/public_headers.txt",
@@ -791,11 +791,11 @@
     },
     {
       "path": "compat/x86_64/header_callable_inventory.json",
-      "sha256": "cb14381e33d8333928f6760945530a948ed89cdd551dfc4bd7cd991cf61e4086"
+      "sha256": "54993fcc6d81d9ff138da7f69adac04c35f29b28b49258e1e484c5b26ac1035a"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.toml",
-      "sha256": "e62464d84732070d73249487fc2ea86047ef25e5e0bc8e778f147c1ee31f9d81"
+      "sha256": "be958b437191ba19f1ebcd1efedf0dbed99e0ffccd600357e217cff8b31d118f"
     },
     {
       "path": "compat/x86_64/header_callable_visibility_matrix.toml",
@@ -819,27 +819,27 @@
     },
     {
       "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
-      "sha256": "053c87983c1797b62749869b35ab82ebaa24b42eecaa331fc0ddbd306a0db77b"
+      "sha256": "de2cb17066899aaafd45d353a1f3ae2550e9c58cad4a370918fa5b425bbe3b04"
     },
     {
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
-      "sha256": "cce11444e8bbbcd1fd1d32f6a871b46620695c3122f09019d9e1285e93d813d4"
+      "sha256": "c6c419224b390c1991278cfd9fad81c41f7786d6b862538c5e1d6c49dc7ec589"
     },
     {
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
-      "sha256": "5eba4041996a5eca15fcb059f27b1652080601e422e3c74a7bb783f68430febb"
+      "sha256": "1fb5fb458fe0e427c6cbcc7897cde26d56938e8ddb38a47bfe7c4f7790beaacb"
     },
     {
       "path": "compat/x86_64/generated/header_record_layout_matrix/report.json",
-      "sha256": "aa77a8f54eb116841af71ab38651168ea4a2f0b39a6a9932dd0b89708d2ee6b4"
+      "sha256": "6d0949cb07b58323e5fd9a4a50a36823cf75873da868a73d0948c4fe9dd67ac7"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.json",
-      "sha256": "6cd1c22e4f3d7e5417d8bb36bb95731c5bd69884aea9af21509abbaaefbd5aef"
+      "sha256": "625ef521297cfc7a57302bef2d3add34c245edce7310936ff35089153ff6e4dc"
     },
     {
       "path": "compat/x86_64/headers_layouts_aggregate.py",
-      "sha256": "1a86e824c29824daa0bb7d38889f70e5475d6a95037acdd9a4093b9bda01a20f"
+      "sha256": "c17f7d521673ff7a465295da5003e98b1f7ab0174740212c80cdd96d799d5738"
     },
     {
       "path": "compat/x86_64/run_headers_layouts_aggregate.sh",

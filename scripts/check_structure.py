@@ -179,6 +179,12 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
     Path("libc/src/c_abi/x86_64/filesystem_access.rs"),
     Path("libc/src/c_abi/x86_64/mktemp.rs"),
+    # The common musl __randname translation remains private, while the
+    # allocator-backed tmpnam/tempnam pair is an independently evidenced
+    # feature. Neither exact admission widens the default static archive or
+    # turns racy pathname generation into a general filesystem runtime.
+    Path("libc/src/c_abi/x86_64/temp_name_random.rs"),
+    Path("libc/src/c_abi/x86_64/temporary_names.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_control.rs"),
     Path("libc/src/c_abi/x86_64/ioctl.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
@@ -4005,6 +4011,30 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "legacy dependency-free environment owner"
         )
     libc_manifest_text = (ROOT / "libc" / "Cargo.toml").read_text(errors="replace")
+    if 'x86-temporary-names = ["x86-allocator-string-duplication"]' not in libc_manifest_text:
+        errors.append(
+            "libc/Cargo.toml: x86-temporary-names must compose only the "
+            "established x86 string-duplication allocation client"
+        )
+    temp_name_random_wiring = (
+        '#[path = "temp_name_random.rs"]\n'
+        "mod temp_name_random;"
+    )
+    if temp_name_random_wiring not in static_root_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_c_abi.rs: the shared private "
+            "temporary-name suffix helper must remain an explicit module"
+        )
+    temporary_names_wiring = (
+        '#[cfg(feature = "x86-temporary-names")]\n'
+        '#[path = "temporary_names.rs"]\n'
+        "mod temporary_names;"
+    )
+    if temporary_names_wiring not in static_root_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_c_abi.rs: tmpnam/tempnam must "
+            "remain behind their dedicated opt-in feature gate"
+        )
     if 'x86-legacy-misc = []' not in libc_manifest_text:
         errors.append(
             "libc/Cargo.toml: opt-in legacy.misc feature must remain dependency-free"
@@ -4256,6 +4286,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "errno.rs"]',
         '#[path = "atomic.rs"]',
         '#[path = "syscall.rs"]',
+        '#[path = "temp_name_random.rs"]',
         '#[path = "static_tls.rs"]',
         '#[path = "static_startup.rs"]',
         '#[path = "auxv_observation.rs"]',
@@ -4362,6 +4393,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "filesystem_access.rs"]',
         '#[path = "fchdir.rs"]',
         '#[path = "mktemp.rs"]',
+        '#[cfg(feature = "x86-temporary-names")]',
+        '#[path = "temporary_names.rs"]',
         '#[path = "descriptor_control.rs"]',
         '#[path = "ioctl.rs"]',
         '#[path = "descriptor_io.rs"]',
@@ -8763,15 +8796,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "src/temp/__randname.c::__randname",
         "TEMPLATE_SUFFIX_BYTES: usize = 6",
         "MAX_ATTEMPTS: usize = 100",
-        "CLOCK_REALTIME",
-        "struct Timespec",
         "struct KernelStatScratch",
         "size_of::<KernelStatScratch>() == 144",
-        "raw_syscall::SYS_CLOCK_GETTIME",
-        "raw_syscall::SYS_GETTID",
         "raw_syscall::SYS_NEWFSTATAT",
-        "wrapping_mul(65_537)",
-        "random >>= 5",
+        "temp_name_random::randomize_suffix",
         "if error != ENOENT",
         "errno::set_errno(EEXIST)",
         "inherently racy",
@@ -8781,6 +8809,78 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/mktemp.rs: selected static historical "
                 f"mktemp boundary is missing {required!r}"
+            )
+    # The historical mktemp leaf owns template validation and stat probing;
+    # musl's shared __randname translation is deliberately isolated so its
+    # clock/TID logic can also serve the opt-in tmpnam/tempnam leaf.
+    for stale_helper_detail in (
+        "struct Timespec",
+        "fn randomize_suffix",
+        "raw_syscall::SYS_CLOCK_GETTIME",
+        "raw_syscall::SYS_GETTID",
+        "wrapping_mul(65_537)",
+        "random >>= 5",
+    ):
+        if stale_helper_detail in mktemp_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/mktemp.rs: shared temporary-name "
+                f"suffix logic must remain in temp_name_random.rs, not {stale_helper_detail!r}"
+            )
+
+    temp_name_random_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "temp_name_random.rs"
+    )
+    temp_name_random_text = temp_name_random_source.read_text(errors="replace")
+    for required in (
+        "Pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/temp/__randname.c::__randname",
+        "TEMPLATE_SUFFIX_BYTES: usize = 6",
+        "CLOCK_REALTIME",
+        "struct Timespec",
+        "size_of::<Timespec>() == 16",
+        "align_of::<Timespec>() == 8",
+        "raw_syscall::SYS_CLOCK_GETTIME",
+        "raw_syscall::SYS_GETTID",
+        "wrapping_mul(65_537)",
+        "random >>= 5",
+        "pub(super) unsafe fn randomize_suffix",
+        "fail closed",
+        "VDSO-first",
+        "TCB",
+        "seccomp",
+    ):
+        if required not in temp_name_random_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/temp_name_random.rs: shared "
+                f"temporary-name suffix boundary is missing {required!r}"
+            )
+    temp_name_random_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            temp_name_random_text,
+        )
+    )
+    if temp_name_random_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/temp_name_random.rs: shared suffix helper "
+            "must not introduce a public C ABI export"
+        )
+    for forbidden in (
+        "raw_syscall::SYS_GETRANDOM",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "raw_syscall::SYS_UNLINK",
+        "raw_syscall::SYS_UNLINKAT",
+        "crabc_core",
+        "crabc_mimalloc",
+        "alloc::",
+        "std::",
+    ):
+        if forbidden in temp_name_random_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/temp_name_random.rs: shared suffix "
+                f"helper must not select {forbidden!r}"
             )
     mktemp_exports = set(
         re.findall(
@@ -8907,6 +9007,262 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "scripts/dev-x86_64.sh: selected historical mktemp dispatcher is "
                 f"missing {required!r}"
+            )
+
+    temporary_names_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "temporary_names.rs"
+    )
+    temporary_names_text = temporary_names_source.read_text(errors="replace")
+    for required in (
+        "Linux/x86-64 legacy C temporary-name compatibility",
+        "pinned musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/stdio/tmpnam.c::tmpnam",
+        "src/stdio/tempnam.c::tempnam",
+        "src/temp/__randname.c::__randname",
+        "MAX_ATTEMPTS: usize = 100",
+        "L_TMPNAM: usize = 20",
+        "PATH_MAX: usize = 4096",
+        "TMPNAM_INTERNAL",
+        "raw_syscall::SYS_READLINK",
+        "temp_name_random::randomize_suffix",
+        "cabi_strdup",
+        "ENAMETOOLONG",
+        "inherently racy",
+        "does not create, open, reserve, or unlink",
+        "# Safety",
+    ):
+        if required not in temporary_names_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/temporary_names.rs: opt-in "
+                f"legacy temporary-name boundary is missing {required!r}"
+            )
+    temporary_names_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            temporary_names_text,
+        )
+    )
+    if temporary_names_exports != {
+        "tmpnam",
+        "tempnam",
+        "__crabc_x86_temporary_names_v1",
+    }:
+        errors.append(
+            "libc/src/c_abi/x86_64/temporary_names.rs: opt-in temporary-name "
+            "owner must export only tmpnam, tempnam, and its private witness"
+        )
+    temporary_names_unsafe_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            temporary_names_text,
+        )
+    )
+    if temporary_names_unsafe_exports != {"tmpnam", "tempnam"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/temporary_names.rs: only tmpnam and "
+            "tempnam may be public unsafe temporary-name C entries"
+        )
+    for forbidden in (
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "raw_syscall::SYS_GETRANDOM",
+        "raw_syscall::SYS_UNLINK",
+        "raw_syscall::SYS_UNLINKAT",
+        "raw_syscall::SYS_CREAT",
+        "TMPDIR",
+        "name_to_handle_at",
+        "open_by_handle_at",
+        "crabc_core",
+        "crabc_mimalloc",
+        "alloc::",
+        "std::",
+    ):
+        if forbidden in temporary_names_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/temporary_names.rs: opt-in "
+                f"temporary-name boundary must not select {forbidden!r}"
+            )
+
+    stdio_header = ROOT / "include" / "stdio.h"
+    stdio_header_text = stdio_header.read_text(errors="replace")
+    for required in (
+        "#define L_tmpnam 20",
+        "char *tmpnam(char *);",
+        "#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE)",
+        " || defined(_BSD_SOURCE)",
+        '#define P_tmpdir "/tmp"',
+        "char *tempnam(const char *, const char *);",
+    ):
+        if required not in stdio_header_text:
+            errors.append(
+                "include/stdio.h: temporary-name declaration boundary is "
+                f"missing {required!r}"
+            )
+    if "_XOPEN_SOURCE < 800" in stdio_header_text:
+        errors.append(
+            "include/stdio.h: tempnam/P_tmpdir must remain visible in every "
+            "pinned-musl X/Open profile, including X/Open 800"
+        )
+
+    temporary_names_header_c = (
+        ROOT / "compat" / "x86_64" / "temporary_names_header_abi_probe.c"
+    )
+    temporary_names_header_cxx = (
+        ROOT / "compat" / "x86_64" / "temporary_names_header_abi_probe.cpp"
+    )
+    temporary_names_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_temporary_names_header_abi.sh"
+    )
+    temporary_names_header_c_text = temporary_names_header_c.read_text(errors="replace")
+    temporary_names_header_cxx_text = temporary_names_header_cxx.read_text(
+        errors="replace"
+    )
+    temporary_names_header_runner_text = temporary_names_header_runner.read_text(
+        errors="replace"
+    )
+    for probe_text, language in (
+        (temporary_names_header_c_text, "C"),
+        (temporary_names_header_cxx_text, "C++"),
+    ):
+        for required in (
+            "tmpnam_signature",
+            "tempnam_signature",
+            "L_tmpnam == 20",
+            "P_tmpdir",
+            "CRABC_EXPECT_TEMPNAM",
+        ):
+            if required not in probe_text:
+                errors.append(
+                    "compat/x86_64/temporary_names_header_abi_probe: "
+                    f"{language} temporary-name declaration evidence is missing {required!r}"
+                )
+    for required in (
+        "xopen700",
+        "xopen800",
+        "compile_c_universal strict",
+        "compile_c_universal posix",
+        "reject_c_tempnam strict",
+        "reject_c_tempnam posix",
+        "assert_unmangled_references",
+        "retained a mangled",
+        "C probe did not use project <$header>",
+    ):
+        if required not in temporary_names_header_runner_text:
+            errors.append(
+                "compat/x86_64/run_temporary_names_header_abi.sh: "
+                f"temporary-name C/C++ declaration evidence is missing {required!r}"
+            )
+
+    temporary_names_probe = (
+        ROOT / "compat" / "x86_64" / "libc_temporary_names_probe.c"
+    )
+    temporary_names_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_temporary_names.sh"
+    )
+    temporary_names_probe_text = temporary_names_probe.read_text(errors="replace")
+    temporary_names_runner_text = temporary_names_runner.read_text(errors="replace")
+    for required in (
+        "SYS_readlink == 89",
+        "L_tmpnam == 20",
+        "path_is_absent",
+        "tmpnam((char *)0)",
+        "tempnam((const char *)0, (const char *)0)",
+        'tempnam("/tmp/", "named")',
+        'tempnam("", "")',
+        "FIXTURE_PATH_MAX - 12",
+        "build_path_max_minus_one_directory",
+        "FIXTURE_PATH_MAX - 1",
+        "caller[L_tmpnam - 1]",
+        'tempnam("/dev/null", "x")',
+        "check_readlink_failure_retry",
+        "CRABC_SECCOMP_RET_ERRNO",
+        "FIXTURE_ELOOP",
+        "TMPDIR",
+        "free(name)",
+    ):
+        if required not in temporary_names_probe_text:
+            errors.append(
+                "compat/x86_64/libc_temporary_names_probe.c: temporary-name "
+                f"regression is missing {required!r}"
+            )
+    for required in (
+        "readonly FEATURE=x86-temporary-names",
+        "readonly BASELINE_FEATURES=x86-allocator-runtime,x86-allocator-string-duplication",
+        "run_musl_oracle.sh",
+        "run_temporary_names_header_abi.sh",
+        "assert_feature_delta",
+        "tempnam\\ntmpnam",
+        "temporary_name_members",
+        "temp_name_random_members",
+        "duplication_members",
+        "allocator_members",
+        "assert_temporary_name_syscall_path",
+        "assert_readlink_retry_path",
+        "raw_syscall_helper_symbol",
+        "temporary_name_random_symbol",
+        "temporary_name_absence_symbol",
+        "readlink=89",
+        "clock_gettime=228",
+        "gettid=186",
+        "raw -ENOENT comparison",
+        "candidate selected a pinned-musl temporary-name implementation or allocator",
+        "candidate retains a dynamic TLS model",
+    ):
+        if required not in temporary_names_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_temporary_names.sh: opt-in "
+                f"temporary-name evidence is missing {required!r}"
+            )
+    if "--whole-archive" in temporary_names_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_temporary_names.sh: temporary-name "
+            "evidence must select its explicit object closure rather than force-linking"
+        )
+
+    filesystem_extensions_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_filesystem_extensions.sh"
+    )
+    filesystem_extensions_runner_text = filesystem_extensions_runner.read_text(
+        errors="replace"
+    )
+    for required in (
+        "run_libc_mktemp.sh",
+        "run_libc_file_handles.sh",
+        "run_libc_temporary_names.sh",
+        "x86-temporary-names,x86-file-handles",
+        "FILESYSTEM_EXTENSIONS_SYMBOLS",
+        "static_c_abi_exports.txt",
+        "default selected-static C ABI export surface drifted",
+        "combined filesystem.extensions archive added more than file handles",
+        "mktemp",
+        "name_to_handle_at",
+        "open_by_handle_at",
+        "tempnam",
+        "tmpnam",
+    ):
+        if required not in filesystem_extensions_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_filesystem_extensions.sh: selected-private "
+                f"filesystem.extensions aggregate is missing {required!r}"
+            )
+    if "--whole-archive" in filesystem_extensions_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_filesystem_extensions.sh: aggregate must "
+            "not force-link the archive"
+        )
+    for required in (
+        "temporary-names-header-abi)",
+        "run_temporary_names_header_abi",
+        "libc-temporary-names)",
+        "run_libc_temporary_names_probe",
+        "libc-filesystem-extensions)",
+        "run_libc_filesystem_extensions",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: temporary-name/filesystem.extensions "
+                f"dispatcher is missing {required!r}"
             )
 
     process_context_source = (

@@ -1807,6 +1807,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
             "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
             "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "temporary-names-header-abi|libc-temporary-names",
             "file-handles-header-abi|libc-file-handles",
             "posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions",
             "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
@@ -1921,6 +1922,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-directory-streams",
             "libc-filesystem-traversal",
             "libc-filesystem-directory",
+            "libc-filesystem-extensions",
             "libc-lchmod-unsupported",
             "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
@@ -2079,6 +2081,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-mkfifoat", source)
         self.assertIn("mktemp-header-abi", source)
         self.assertIn("libc-mktemp", source)
+        self.assertIn("temporary-names-header-abi", source)
+        self.assertIn("libc-temporary-names", source)
         self.assertIn("file-handles-header-abi", source)
         self.assertIn("libc-file-handles", source)
         self.assertIn("posix-spawn-file-actions-header-abi", source)
@@ -2096,6 +2100,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-directory-streams", source)
         self.assertIn("libc-filesystem-traversal", source)
         self.assertIn("libc-filesystem-directory", source)
+        self.assertIn("libc-filesystem-extensions", source)
         self.assertIn("libc-lchmod-unsupported", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-sched-priority-bounds", source)
@@ -3585,6 +3590,24 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-mktemp)\n        [ "$#" -eq 0 ] || fail "libc-mktemp takes no arguments"',
+            source,
+        )
+        self.assertIn('run_temporary_names_header_abi()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_temporary_names_header_abi.sh',
+            source,
+        )
+        self.assertIn(
+            '    temporary-names-header-abi)\n        [ "$#" -eq 0 ] || fail "temporary-names-header-abi takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_temporary_names_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_temporary_names.sh',
+            source,
+        )
+        self.assertIn(
+            '    libc-temporary-names)\n        [ "$#" -eq 0 ] || fail "libc-temporary-names takes no arguments"',
             source,
         )
         self.assertIn('run_file_handles_header_abi()', source)
@@ -13118,8 +13141,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_feature_archive_surface",
             "name_to_handle_at open_by_handle_at",
             "-nostdlib -static",
-            "$0x12f",
-            "$0x130",
+            "0x12f",
+            "0x130",
             "%r10",
             "%r8",
         ):
@@ -13135,6 +13158,34 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, header_runner)
         self.assertIn("file-handles-header-abi", runner)
         self.assertIn("libc-file-handles", runner)
+
+    def test_libc_static_c_abi_file_handle_runner_binds_out_of_line_raw_syscalls(
+        self,
+    ) -> None:
+        """The static proof must survive legitimate Rust codegen-unit boundaries."""
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_file_handles.sh"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "assert_direct_or_bound_syscall",
+            '"raw_syscall8" helper_leaf',
+            'awk -v symbol="$helper_symbol"',
+            'index($0, "<" symbol ">")',
+            'objdump -d --disassemble="$helper_symbol" "$candidate"',
+            "assert_direct_or_bound_syscall name_to_handle_at 0x12f syscall5 %r10 %r8",
+            "assert_direct_or_bound_syscall open_by_handle_at 0x130 syscall3",
+        ):
+            self.assertIn(required, artifact_runner)
+
+        self.assertIn(
+            "if grep -Eq '\\<syscall\\>' \"$wrapper_disassembly\"; then",
+            artifact_runner,
+        )
+        self.assertRegex(
+            artifact_runner,
+            r"call expected raw syscall helper",
+        )
 
     def test_libc_static_c_abi_spawn_file_actions_stay_opt_in_and_nonexecuting(
         self,
@@ -31522,6 +31573,31 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(component, aggregate_runner)
         self.assertIn("x86-filesystem-traversal", traversal_runner)
         self.assertIn("x86-scandir", aggregate_runner)
+
+    def test_filesystem_extensions_dispatch_stays_explicit(self) -> None:
+        """Keep the frozen five-symbol selected-private aggregate callable."""
+
+        aggregate_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_filesystem_extensions.sh"
+        ).read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "  temporary-names-header-abi  verify x86 C/C++ tmpnam/tempnam declarations",
+            "  libc-temporary-names  run the opt-in static x86 tmpnam/tempnam slice",
+            "  libc-filesystem-extensions  run the selected-private x86 filesystem-extensions capability aggregate",
+            "run_libc_filesystem_extensions()",
+            "/workspace/compat/x86_64/run_libc_filesystem_extensions.sh",
+            '    libc-filesystem-extensions)\n        [ "$#" -eq 0 ] || fail "libc-filesystem-extensions takes no arguments"',
+        ):
+            self.assertIn(required, runner)
+
+        for component in (
+            "run_libc_mktemp.sh",
+            "run_libc_file_handles.sh",
+            "run_libc_temporary_names.sh",
+        ):
+            self.assertIn(component, aggregate_runner)
 
     def test_libc_static_c_abi_ffs_artifact_stays_narrow(self) -> None:
         static_root = (

@@ -210,6 +210,15 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         )
         provider_counts = report["summary"]["callable_provider_counts"]
         self.assertEqual(
+            provider_counts,
+            {
+                "declared_unverified_feature_archives": 0,
+                "default_static": 1119,
+                "unprovided": 344,
+                "verified_feature_archives": 62,
+            },
+        )
+        self.assertEqual(
             sum(provider_counts.values()),
             report["summary"]["candidate_external_callable_count"],
         )
@@ -236,6 +245,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
 
         self.assertIn("mkdirat", default_static)
         self.assertNotIn("mkdirat", unprovided)
+        self.assertEqual(planned, {})
         self.assertEqual(
             verified["x86-filesystem-traversal"],
             {"ftw", "nftw"},
@@ -255,6 +265,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             verified["x86-file-handles"],
             {"name_to_handle_at", "open_by_handle_at"},
         )
+        self.assertEqual(verified["x86-temporary-names"], {"tempnam", "tmpnam"})
         self.assertEqual(
             verified["x86-posix-spawn-file-actions"],
             {
@@ -283,7 +294,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             },
         )
         self.assertEqual(verified["x86-crypt-allocator-composition"], set())
-        self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "name_to_handle_at", "open_by_handle_at", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"} & unprovided)
+        self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"} & unprovided)
         self.assertIn("fputws", unprovided)
 
     def test_ftw_and_gnu_namespace_declarations_match_pinned_visibility(self) -> None:

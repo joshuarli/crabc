@@ -638,9 +638,10 @@ pathname selection: musl's realtime/TID six-byte alphabet, absent-name
 `ENOENT`, invalid-template `EINVAL` clearing, and non-missing lookup-error
 clearing. It never creates, opens, reserves, or returns authority for the
 selected pathname, so it remains inherently racy and is not a Rust temporary
-API. `tmpnam`, `tempnam`, all `mkstemp`/`mkdtemp` forms, `tmpfile`, file-handle
-APIs, entropy/crypto policy, generic filesystem policy, family completion,
-promotion, and public x86 support remain excluded.
+API. It remains a component artifact rather than capability selection by
+itself; `mkstemp`/`mkdtemp` forms, `tmpfile`, entropy/crypto policy, generic
+filesystem policy, family completion, promotion, and public x86 support remain
+outside that leaf.
 
 `./scripts/dev-x86_64.sh file-handles-header-abi` and
 `./scripts/dev-x86_64.sh libc-file-handles` record one separate private
@@ -654,6 +655,23 @@ caller-owned pointer/error behavior; filesystem support, mount selection, and
 permission results remain kernel authority. It does not allocate or retain
 handles, provide a Rust file-handle API or confinement policy, complete the
 filesystem family, promote x86, or establish public x86 support.
+
+`./scripts/dev-x86_64.sh temporary-names-header-abi`,
+`./scripts/dev-x86_64.sh libc-temporary-names`, and
+`./scripts/dev-x86_64.sh libc-filesystem-extensions` compose the frozen
+five-spelling `filesystem.extensions` roster: the default-static `mktemp`,
+the opt-in `x86-file-handles` `name_to_handle_at`/`open_by_handle_at` pair,
+and the opt-in `x86-temporary-names` `tmpnam`/`tempnam` pair over the existing
+allocator string-duplication client. The temporary-name header and runtime
+gates preserve musl's 20-byte caller/global `tmpnam` storage and
+allocator-owned `tempnam` result, including their current-absence probes; they
+do not create, reserve, open, or unlink a pathname and remain inherently racy.
+The aggregate therefore records `filesystem.extensions` as
+`selected-private`, not as a secure temporary-object policy, file-handle
+facade, Rust API, family completion, product transition, promotion, or public
+x86 support. `libc.posix-runtime` remains planned and nonpublic; all
+`mkstemp`/`mkdtemp` forms, `tmpfile`, general pathname/mount/confinement
+policy, and a generic filesystem runtime remain separately unselected.
 
 The x86 qualification lane has one bounded same-object static
 `memfd_create`/errno differential and one consumed five-transaction POSIX/ABI

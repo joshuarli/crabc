@@ -83,6 +83,11 @@ unsafe fn duplicate_prefix(source: *const u8, length: usize) -> *mut c_char {
 /// # Safety
 ///
 /// `source` must designate a readable NUL-terminated C string.
+///
+/// This stays a distinct object-level C ABI boundary. Opt-in C clients such
+/// as `tempnam` must select this established duplication owner rather than
+/// absorbing its allocation implementation into their own feature object.
+#[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn strdup(source: *const c_char) -> *mut c_char {
     let mut cursor = source.cast::<u8>();

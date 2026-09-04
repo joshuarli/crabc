@@ -190,9 +190,9 @@ FILE *tmpfile(void);
 #if defined(_LARGEFILE64_SOURCE)
 #define tmpfile64 tmpfile
 #endif
-/* POSIX.1-2024 removes these legacy names from the XSI namespace. */
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE) \
- || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE < 800)
+/* Pinned musl exposes these legacy names in every X/Open profile. */
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
 #define P_tmpdir "/tmp"
 char *tempnam(const char *, const char *);
 #endif

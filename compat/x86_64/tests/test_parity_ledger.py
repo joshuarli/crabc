@@ -65,10 +65,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 375)
-        self.assertEqual(report["feature_archive_count"], 25)
-        self.assertEqual(report["verified_feature_archive_count"], 25)
+        self.assertEqual(report["verified_slice_count"], 50)
+        self.assertEqual(report["verified_artifact_count"], 376)
+        self.assertEqual(report["feature_archive_count"], 26)
+        self.assertEqual(report["verified_feature_archive_count"], 26)
         self.assertEqual(report["planned_feature_archive_count"], 0)
         self.assertEqual(report["header_layout_probe_count"], 55)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -135,9 +135,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             data, self.verified_records(data)
         )
         self.assertEqual(report, {
-            "feature_archive_count": 25,
+            "feature_archive_count": 26,
             "planned_feature_archive_count": 0,
-            "verified_feature_archive_count": 25,
+            "verified_feature_archive_count": 26,
         })
 
         feature_archives = data["feature_archive"]
@@ -225,6 +225,102 @@ class X86ParityLedgerTests(unittest.TestCase):
         changed_artifact["description"] = "private file handles"
         with self.assertRaisesRegex(ledger.LedgerError, "file-handle C ABI artifact"):
             ledger.require_file_handles_artifact(changed_family)
+
+    def test_temporary_names_artifact_stays_opt_in_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        ledger.require_temporary_names_artifact(family)
+
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-temporary-names"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/x86_64/temporary-names-provider.toml",
+            "libc/src/c_abi/x86_64/temp_name_random.rs",
+            "libc/src/c_abi/x86_64/temporary_names.rs",
+            "libc/src/c_abi/x86_64/allocator_string_duplication.rs",
+            "include/sys/prctl.h",
+            "compat/x86_64/temporary_names_header_abi_probe.c",
+            "compat/x86_64/temporary_names_header_abi_probe.cpp",
+            "compat/x86_64/run_temporary_names_header_abi.sh",
+            "compat/x86_64/libc_temporary_names_probe.c",
+            "compat/x86_64/run_libc_temporary_names.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-temporary-names"},
+        )
+        for phrase in (
+            "x86-temporary-names",
+            "src/stdio/tmpnam.c::tmpnam",
+            "src/stdio/tempnam.c::tempnam",
+            "src/temp/__randname.c::__randname",
+            "L_tmpnam=20",
+            "PATH_MAX=4096",
+            "ENAMETOOLONG=36",
+            "raw Linux readlink=89",
+            "VDSO-first",
+            "TCB",
+            "seccomp",
+            "TMPDIR",
+            "no security, uniqueness, descriptor, or filesystem-policy guarantee",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("mktemp", exports)
+        self.assertFalse(exports & {"tempnam", "tmpnam"})
+
+        archives = data["feature_archive"]
+        assert isinstance(archives, list)
+        feature = next(
+            entry for entry in archives if entry["id"] == "x86-temporary-names"
+        )
+        assert isinstance(feature, dict)
+        self.assertEqual(
+            feature["baseline_features"],
+            ["x86-allocator-runtime", "x86-allocator-string-duplication"],
+        )
+        self.assertEqual(feature["enabled_features"], ["x86-temporary-names"])
+        self.assertEqual(feature["additive_callables"], ["tempnam", "tmpnam"])
+        self.assertEqual(feature["replacement_callables"], [])
+        self.assertEqual(feature["aliases"], [])
+
+        changed = self.data()
+        changed_family = self.family(changed, "libc.posix-runtime")
+        changed_family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-temporary-names must not promote"
+        ):
+            ledger.require_temporary_names_artifact(changed_family)
+
+        changed = self.data()
+        changed_family = self.family(changed, "libc.posix-runtime")
+        changed_artifacts = changed_family["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-temporary-names"
+        )
+        changed_artifact["description"] = "private temporary names"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-temporary-names description"
+        ):
+            ledger.require_temporary_names_artifact(changed_family)
 
     def test_posix_spawn_file_actions_artifact_stays_opt_in_and_non_promoting(self) -> None:
         data = self.data()
@@ -3762,9 +3858,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(disposition["candidate_external_callable_count"], 1525)
         self.assertEqual(disposition["default_static_callable_count"], 1119)
-        self.assertEqual(disposition["verified_feature_callable_count"], 60)
+        self.assertEqual(disposition["verified_feature_callable_count"], 62)
         self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 346)
+        self.assertEqual(disposition["unprovided_callable_count"], 344)
         self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
         self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
@@ -3781,10 +3877,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1525)
         self.assertEqual(provider_audit["default_static_callable_count"], 1119)
-        self.assertEqual(provider_audit["verified_feature_callable_count"], 60)
-        self.assertEqual(provider_audit["verified_feature_profile_count"], 25)
+        self.assertEqual(provider_audit["verified_feature_callable_count"], 62)
+        self.assertEqual(provider_audit["verified_feature_profile_count"], 26)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 346)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 344)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -28870,6 +28966,128 @@ class X86ParityLedgerTests(unittest.TestCase):
             "filesystem directory selection must use its closed aggregate command",
         ):
             ledger.require_filesystem_directory_slice(
+                self.family(changed_command, "libc.posix-runtime")
+            )
+
+    def test_filesystem_extensions_slice_selects_the_frozen_private_roster(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        ledger.require_filesystem_extensions_slice(family)
+
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-extensions-selection"
+        )
+        self.assertEqual(selected["capabilities"], ["filesystem.extensions"])
+        self.assertEqual(
+            ledger.FILESYSTEM_EXTENSIONS_SYMBOLS,
+            (
+                "mktemp",
+                "name_to_handle_at",
+                "open_by_handle_at",
+                "tempnam",
+                "tmpnam",
+            ),
+        )
+        self.assertEqual(
+            ledger.FILESYSTEM_EXTENSIONS_FEATURES,
+            ("x86-temporary-names", "x86-file-handles"),
+        )
+        self.assertEqual(
+            ledger.FILESYSTEM_EXTENSIONS_COMPONENT_RUNNERS,
+            (
+                "run_libc_mktemp.sh",
+                "run_libc_file_handles.sh",
+                "run_libc_temporary_names.sh",
+            ),
+        )
+        for symbol in ledger.FILESYSTEM_EXTENSIONS_SYMBOLS:
+            self.assertIn(f"`{symbol}`", selected["description"])
+        for owner in (
+            "compat/crabc-rs/coverage.toml",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi/x86_64/mktemp.rs",
+            "libc/src/c_abi/x86_64/temp_name_random.rs",
+            "libc/src/c_abi/x86_64/temporary_names.rs",
+            "libc/src/c_abi/x86_64/file_handles.rs",
+            "compat/x86_64/run_libc_mktemp.sh",
+            "compat/x86_64/run_libc_file_handles.sh",
+            "compat/x86_64/run_libc_temporary_names.sh",
+            "compat/x86_64/run_libc_filesystem_extensions.sh",
+        ):
+            self.assertIn(owner, selected["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in selected["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-filesystem-extensions"},
+        )
+        for phrase in (
+            "default `static-c-mktemp`",
+            "x86-file-handles",
+            "x86-temporary-names",
+            "safe Rust temporary-name or file-handle API",
+            "general temporary-file/filesystem/allocator policy",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("mktemp", exports)
+        self.assertFalse(
+            exports & {"name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam"}
+        )
+
+        changed_capability = self.data()
+        changed_slices = self.family(
+            changed_capability, "libc.posix-runtime"
+        )["verified_slice"]
+        assert isinstance(changed_slices, list)
+        changed_slice = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-extensions-selection"
+        )
+        changed_slice["capabilities"] = ["filesystem.directory"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "filesystem extensions selection must own exactly filesystem.extensions",
+        ):
+            ledger.require_filesystem_extensions_slice(
+                self.family(changed_capability, "libc.posix-runtime")
+            )
+
+        changed_command = self.data()
+        changed_slices = self.family(changed_command, "libc.posix-runtime")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_slice = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-extensions-selection"
+        )
+        evidence = changed_slice["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-file-handles"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "filesystem extensions selection must use its closed aggregate command",
+        ):
+            ledger.require_filesystem_extensions_slice(
                 self.family(changed_command, "libc.posix-runtime")
             )
 

@@ -1730,8 +1730,8 @@ work, and `libc.c-abi-compat` retains final provider selection, ordinary
 archive extraction, behavior, and C-ABI closure.
 
 `header-callable-disposition` regenerates the compiler-derived callable
-inventory, then checks that its 1,119 default-static, 60 verified
-feature-provider, and 346 deferred names form one exact primary partition.
+inventory, then checks that its 1,119 default-static, 62 verified
+feature-provider, and 344 deferred names form one exact primary partition.
 Its deferred groups distinguish planned semantic providers from compiler
 builtins, consumer-supplied callbacks, and oracle-declared no-provider names;
 the project-only addressable atomic names are now selected default-static
@@ -1740,11 +1740,11 @@ declaration parity, family promotion, final C-ABI closure, or public x86
 support.
 
 `header-callable-provider-linkage-audit` separately uses the checked inventory
-to ordinarily extract the 1,119 current default-static and 60 verified
+to ordinarily extract the 1,119 current default-static and 62 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 346-name unprovided complement remains explicit:
+selection and behavior. Its 344-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 
@@ -4792,18 +4792,17 @@ account data, a Rust secret API, cancellation, secret-memory erasure, terminal
 policy, dynamic runtime, family completion, promotion, and public x86 support.
 
 `libc-mktemp` is a separately recorded `static-c-mktemp` `verified_artifact`
-gate over that archive, not `filesystem.extensions` completion. Its GNU/BSD
-C/C++ header gate and project-header C fixture first run through pinned musl
-and then through a `-nostdlib -static` candidate. It selects only historical
-`mktemp(char *)`: mutable trailing `XXXXXX` validation, musl's realtime/TID
-six-byte `A`-`P`/`a`-`p` mapping, direct `newfstatat` availability lookup,
-`ENOENT` for a presently absent result, and invalid/non-missing-error first-byte
-clearing. It does not create, reserve, open, or return authority for the
-pathname and is inherently racy. It excludes `tmpnam`/`tempnam`, all
-`mkstemp`/`mkdtemp` forms, `tmpfile`, entropy/crypto policy, generic temporary
-or filesystem policy, descriptor/directory and file-handle authority, a Rust
+gate over that archive. Its GNU/BSD C/C++ header gate and project-header C
+fixture first run through pinned musl and then through a `-nostdlib -static`
+candidate. It selects only historical `mktemp(char *)`: mutable trailing
+`XXXXXX` validation, musl's realtime/TID six-byte `A`-`P`/`a`-`p` mapping,
+direct `newfstatat` availability lookup, `ENOENT` for a presently absent
+result, and invalid/non-missing-error first-byte clearing. It does not create,
+reserve, open, or return authority for the pathname and is inherently racy.
+It remains a component leaf: `mkstemp`/`mkdtemp` forms, `tmpfile`,
+entropy/crypto policy, generic temporary or filesystem policy, a Rust
 temporary API, dynamic runtime, family completion, promotion, and public x86
-support.
+support remain outside it.
 
 `file-handles-header-abi` and `libc-file-handles` are the paired private GNU
 file-handle checks. The header gate compares pinned-musl and project C/C++
@@ -4817,6 +4816,31 @@ paths while preserving filesystem support, mount selection, and permission
 outcomes as kernel authority. It provides no file-handle allocation, pathname
 or mount policy, generic filesystem confinement, Rust facade, family
 completion, promotion, or public x86 support.
+
+`temporary-names-header-abi` and `libc-temporary-names` are the paired private
+legacy pathname checks. The feature-selected C/C++ `<stdio.h>` matrix preserves
+musl's `tmpnam`/`L_tmpnam` declarations and `tempnam`/`P_tmpdir` feature
+visibility, including the X/Open 800 form and unmangled C++ linkage. The
+runtime differential adds only `tmpnam` and `tempnam` through
+`x86-temporary-names`, whose full Cargo closure is the existing
+`x86-allocator-string-duplication` client. `tmpnam` keeps its caller-buffer or
+single process-global 20-byte storage; `tempnam` returns an allocator-owned
+`strdup` copy. Both use the source-selected current-absence probe and never
+create, reserve, open, or unlink a pathname, so neither is a secure
+temporary-object primitive or Rust API.
+
+`libc-filesystem-extensions`
+(`./scripts/dev-x86_64.sh libc-filesystem-extensions`) is the private aggregate
+over `libc-mktemp`, `libc-file-handles`, and `libc-temporary-names`. It reruns
+their independent header and pinned-musl/candidate gates, then proves the
+combined default/`x86-temporary-names,x86-file-handles` archive roster owns
+exactly `mktemp`, `name_to_handle_at`, `open_by_handle_at`, `tempnam`, and
+`tmpnam`. This makes the frozen `filesystem.extensions` capability
+`selected-private` without widening the default static archive. It does not
+select `mkstemp`/`mkdtemp` forms, `tmpfile`, a general temporary-directory,
+pathname, mount, confinement, permission, or filesystem policy; it adds no
+crabc-rs wrapper and does not complete `libc.posix-runtime`, promote x86, or
+establish public x86 support.
 
 `libc-process-context` is a separately recorded static
 `verified_artifact` gate over that archive, not the `process.control`

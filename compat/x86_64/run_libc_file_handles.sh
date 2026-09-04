@@ -85,6 +85,64 @@ assert_feature_archive_surface() {
     fi
 }
 
+# Rust may place the raw syscall leaf in a separate codegen unit even when the
+# source marks it inline(always).  Accept either a fully inlined wrapper or a
+# wrapper that calls the exact mangled raw_syscall leaf; do not mistake an
+# unrelated syscall elsewhere in the final executable for this boundary.
+raw_syscall_helper_symbol() {
+    local candidate_path="$1"
+    local helper_leaf="$2"
+    local -a helper_symbols
+
+    mapfile -t helper_symbols < <(
+        nm --defined-only --format=posix "$candidate_path" |
+            awk -v helper_leaf="$helper_leaf" \
+                '$1 ~ ("raw_syscall8" helper_leaf) && $2 ~ /^[Tt]$/ { print $1 }'
+    )
+    [ "${#helper_symbols[@]}" -eq 1 ] ||
+        fail "expected one raw syscall helper for $helper_leaf, found ${#helper_symbols[@]}"
+    printf '%s\n' "${helper_symbols[0]}"
+}
+
+assert_direct_or_bound_syscall() {
+    local wrapper_symbol="$1"
+    local syscall_number="$2"
+    local helper_leaf="$3"
+    shift 3
+
+    local wrapper_disassembly="$work_dir/${wrapper_symbol}-disassembly"
+    local helper_symbol
+    local helper_disassembly
+    local syscall_disassembly
+
+    objdump -d --disassemble="$wrapper_symbol" "$candidate" >"$wrapper_disassembly"
+    if grep -Eq '\<syscall\>' "$wrapper_disassembly"; then
+        grep -Eq '\$'"${syscall_number}"',%e?ax' "$wrapper_disassembly" ||
+            fail "$wrapper_symbol lacks Linux x86-64 syscall $syscall_number"
+        syscall_disassembly="$wrapper_disassembly"
+    else
+        grep -Eq '\$'"${syscall_number}"',%edi' "$wrapper_disassembly" ||
+            fail "$wrapper_symbol does not pass Linux x86-64 syscall $syscall_number to its helper"
+        helper_symbol="$(raw_syscall_helper_symbol "$candidate" "$helper_leaf")"
+        if ! awk -v symbol="$helper_symbol" '
+            index($0, "<" symbol ">") && $0 ~ /call/ { found = 1 }
+            END { exit !found }
+        ' "$wrapper_disassembly"; then
+            fail "$wrapper_symbol does not call expected raw syscall helper $helper_symbol"
+        fi
+        helper_disassembly="$work_dir/${wrapper_symbol}-${helper_leaf}-disassembly"
+        objdump -d --disassemble="$helper_symbol" "$candidate" >"$helper_disassembly"
+        grep -Eq '\<syscall\>' "$helper_disassembly" ||
+            fail "$wrapper_symbol's raw syscall helper lacks the Linux syscall instruction"
+        syscall_disassembly="$helper_disassembly"
+    fi
+
+    for register in "$@"; do
+        grep -Eq "$register" "$syscall_disassembly" ||
+            fail "$wrapper_symbol lacks Linux syscall-word transfer through $register"
+    done
+}
+
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation" ;; esac
 for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf sort; do
@@ -132,16 +190,8 @@ done
     compat/x86_64/libc_file_handles_start.S "$archive" -o "$candidate"
 assert_static_closure "$candidate"
 
-objdump -d --disassemble=name_to_handle_at "$candidate" >"$work_dir/name-to-handle-disassembly"
-objdump -d --disassemble=open_by_handle_at "$candidate" >"$work_dir/open-by-handle-disassembly"
-grep -Eq '\$0x12f,%e?ax' "$work_dir/name-to-handle-disassembly" ||
-    fail "name_to_handle_at lacks Linux x86-64 syscall 303"
-grep -Eq '\$0x130,%e?ax' "$work_dir/open-by-handle-disassembly" ||
-    fail "open_by_handle_at lacks Linux x86-64 syscall 304"
-grep -Eq '%r10' "$work_dir/name-to-handle-disassembly" ||
-    fail "name_to_handle_at lacks Linux fourth-word r10 transfer"
-grep -Eq '%r8' "$work_dir/name-to-handle-disassembly" ||
-    fail "name_to_handle_at lacks Linux fifth-word r8 transfer"
+assert_direct_or_bound_syscall name_to_handle_at 0x12f syscall5 %r10 %r8
+assert_direct_or_bound_syscall open_by_handle_at 0x130 syscall3
 (cd "$candidate_work" && "$candidate") ||
     fail "freestanding file-handle fixture failed"
 
