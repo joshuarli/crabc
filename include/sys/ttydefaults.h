@@ -1,17 +1,17 @@
-#ifndef _CRABC_SYS_TTYDEFAULTS_H
-#define _CRABC_SYS_TTYDEFAULTS_H
-
-#include <termios.h>
+#ifndef _SYS_TTYDEFAULTS_H
+#define _SYS_TTYDEFAULTS_H
 
 #define TTYDEF_IFLAG (BRKINT | ISTRIP | ICRNL | IMAXBEL | IXON | IXANY)
 #define TTYDEF_OFLAG (OPOST | ONLCR | XTABS)
-#define TTYDEF_LFLAG (ECHO | ICANON | ISIG | IEXTEN | ECHOE | ECHOKE | ECHOCTL)
+#define TTYDEF_LFLAG (ECHO | ICANON | ISIG | IEXTEN | ECHOE|ECHOKE|ECHOCTL)
 #define TTYDEF_CFLAG (CREAD | CS7 | PARENB | HUPCL)
-#define TTYDEF_SPEED B9600
-#define CTRL(value) ((value) & 037)
+#define TTYDEF_SPEED (B9600)
+#define CTRL(x) ((x)&037)
 #define CEOF CTRL('d')
+
 #define CEOL '\0'
 #define CSTATUS '\0'
+
 #define CERASE 0177
 #define CINTR CTRL('c')
 #define CKILL CTRL('u')

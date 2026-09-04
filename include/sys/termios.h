@@ -1,6 +1,2 @@
-#ifndef _CRABC_SYS_TERMIOS_H
-#define _CRABC_SYS_TERMIOS_H
-
+#warning redirecting incorrect #include <sys/termios.h> to <termios.h>
 #include <termios.h>
-
-#endif

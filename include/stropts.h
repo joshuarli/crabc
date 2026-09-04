@@ -1,8 +1,6 @@
 #ifndef _STROPTS_H
 #define _STROPTS_H
 
-#include <sys/ioctl.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,26 +16,26 @@ extern "C" {
 #define I_GRDOPT (__SID | 7)
 #define I_STR (__SID | 8)
 #define I_SETSIG (__SID | 9)
-#define I_GETSIG (__SID | 10)
-#define I_FIND (__SID | 11)
-#define I_LINK (__SID | 12)
-#define I_UNLINK (__SID | 13)
-#define I_PEEK (__SID | 15)
-#define I_FDINSERT (__SID | 16)
-#define I_SENDFD (__SID | 17)
-#define I_RECVFD (__SID | 14)
-#define I_SWROPT (__SID | 19)
-#define I_GWROPT (__SID | 20)
-#define I_LIST (__SID | 21)
-#define I_PLINK (__SID | 22)
-#define I_PUNLINK (__SID | 23)
-#define I_FLUSHBAND (__SID | 28)
-#define I_CKBAND (__SID | 29)
-#define I_GETBAND (__SID | 30)
-#define I_ATMARK (__SID | 31)
-#define I_SETCLTIME (__SID | 32)
-#define I_GETCLTIME (__SID | 33)
-#define I_CANPUT (__SID | 34)
+#define I_GETSIG (__SID |10)
+#define I_FIND (__SID |11)
+#define I_LINK (__SID |12)
+#define I_UNLINK (__SID |13)
+#define I_PEEK (__SID |15)
+#define I_FDINSERT (__SID |16)
+#define I_SENDFD (__SID |17)
+#define I_RECVFD (__SID |14)
+#define I_SWROPT (__SID |19)
+#define I_GWROPT (__SID |20)
+#define I_LIST (__SID |21)
+#define I_PLINK (__SID |22)
+#define I_PUNLINK (__SID |23)
+#define I_FLUSHBAND (__SID |28)
+#define I_CKBAND (__SID |29)
+#define I_GETBAND (__SID |30)
+#define I_ATMARK (__SID |31)
+#define I_SETCLTIME (__SID |32)
+#define I_GETCLTIME (__SID |33)
+#define I_CANPUT (__SID |34)
 
 #define FMNAMESZ 8
 
@@ -132,6 +130,7 @@ struct str_list {
 };
 
 int isastream(int);
+int ioctl(int, int, ...);
 
 #ifdef __cplusplus
 }
