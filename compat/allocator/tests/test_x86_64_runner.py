@@ -197,6 +197,17 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             source.count("run_in_container "),
         )
 
+    def test_linked_worktree_git_metadata_is_visible_read_only_without_global_git_env(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("linked_worktree_git_mounts()", source)
+        self.assertIn("git -C \"$ROOT_DIR\" rev-parse --path-format=absolute --git-common-dir", source)
+        self.assertIn("git -C \"$ROOT_DIR\" rev-parse --path-format=absolute --git-dir", source)
+        self.assertIn('"$physical_common_dir:$physical_common_dir:ro"', source)
+        self.assertIn('"$ROOT_DIR:$ROOT_DIR:ro"', source)
+        self.assertIn('"${GIT_METADATA_MOUNTS[@]}"', source)
+        self.assertNotIn("--env GIT_DIR=", source)
+        self.assertNotIn("--env GIT_WORK_TREE=", source)
+
     def test_cmake_modes_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn("allocator-cmake-modes)", source)

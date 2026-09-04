@@ -219,12 +219,50 @@ ensure_image() {
     fi
 }
 
+linked_worktree_git_mounts() {
+    # A linked worktree's `.git` is a file whose gitdir points outside the
+    # `/workspace` bind mount. Git must see those exact files to attest the
+    # checked-out revision; copying status or inventing a clean state would
+    # make a native report meaningless. Mount the real worktree view and its
+    # common metadata read-only at their original absolute paths so ordinary
+    # Git discovery from `/workspace` follows the existing gitfile unchanged.
+    #
+    # Do not set GIT_DIR/GIT_WORK_TREE in the container. The runner also uses
+    # Git for operations that are not this checkout (for example `ls-remote`),
+    # and a global override would contaminate those independent commands.
+    GIT_METADATA_MOUNTS=()
+    [ -e "$ROOT_DIR/.git" ] || return 0
+
+    local git_common_dir
+    local git_dir
+    local physical_common_dir
+    local physical_git_dir
+    git_common_dir="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)" \
+        || fail "cannot locate allocator worktree Git common directory"
+    git_dir="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-dir)" \
+        || fail "cannot locate allocator worktree Git directory"
+    physical_common_dir="$(cd -P "$git_common_dir" 2>/dev/null && pwd)" \
+        || fail "allocator worktree Git common directory is not physical"
+    physical_git_dir="$(cd -P "$git_dir" 2>/dev/null && pwd)" \
+        || fail "allocator worktree Git directory is not physical"
+    case "$physical_git_dir" in
+        "$physical_common_dir"|"$physical_common_dir"/*) ;;
+        *) fail "allocator worktree Git directory is outside its common metadata" ;;
+    esac
+
+    GIT_METADATA_MOUNTS=(
+        --volume "$physical_common_dir:$physical_common_dir:ro"
+        --volume "$ROOT_DIR:$ROOT_DIR:ro"
+    )
+}
+
 run_in_container() {
     # Contain old runner spellings as well as the CRABC_WORK_DIR-aware paths.
     # Keep /opt/cargo/bin from the pinned image visible; only Cargo's mutable
     # home moves into the checkout.
     mkdir -p "$WORK_DIR/target" "$WORK_DIR/cargo" "$WORK_DIR/tmp" \
         "$WORK_DIR/reports" "$WORK_DIR/allocator-cache"
+    linked_worktree_git_mounts
     docker run --rm --init \
         --platform "$PLATFORM" \
         --workdir /workspace \
@@ -246,6 +284,7 @@ run_in_container() {
         --volume "$WORK_DIR/reports:/workspace/compat/reports" \
         --volume "$WORK_DIR/allocator-cache:/workspace/compat/allocator/.cache" \
         --volume "$WORK_DIR/tmp:/tmp" \
+        "${GIT_METADATA_MOUNTS[@]}" \
         "$IMAGE" "$@"
 }
 
