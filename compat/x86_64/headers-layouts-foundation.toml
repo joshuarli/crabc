@@ -13,7 +13,7 @@
 # `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
 # x86 `headers_install` identity; it is repeated here and in the Docker build
 # because those independent consumers cannot load TOML from one another.
-schema = "crabc.x86_64-headers-layouts-foundation/v17"
+schema = "crabc.x86_64-headers-layouts-foundation/v18"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -44,7 +44,6 @@ callable_disposition = true
 # has a complete archive-linkage contract.
 selected_callable_provider_linkage_audit = true
 callable_linkage_audit = false
-aggregate_family_completion = false
 runtime_completion = false
 public_support = false
 
@@ -86,22 +85,40 @@ runtime_completion = false
 family_promotion = false
 public_support = false
 
+# The future `libc.headers-layouts` transition is decided by the aggregate's
+# checked, pure assessment rather than by a hand-authored family-completion
+# flag.  It deliberately consumes only header correctness and exact callable
+# ownership routing.  The selected provider audit, archive extraction, static
+# export complement, runtime semantics, promotion, and public support stay
+# visible downstream obligations owned by `libc.c-abi-compat`.
+[header_completion_assessment]
+algorithm = "header-foundation-v1"
+installed_surface_completion_keys = ["abi_facets_accounted", "access_header_profile_matrix_slice", "c11_consumer_matrix", "candidate_transitive_include_closure", "cxx17_consumer_matrix", "dirent_header_profile_matrix_slice", "epoll_header_profile_matrix_slice", "event_descriptors_header_profile_matrix_slice", "feature_modes_accounted", "inventory_accounted", "ioctl_header_profile_matrix_slice", "language_profiles_accounted", "legacy_direct_inputs_accounted", "project_only_paths_accounted", "selected_header_install_projection", "stdlib_header_profile_matrix_slice", "sys_io_header_profile_matrix_slice", "sys_time_direct_header_profile_matrix_slice", "timeval_transitive_header_profile_matrix_slice", "uapi_paths_accounted", "uapi_wrapper_profile_matrix_slice", "xattr_header_profile_matrix_slice"]
+required_dimensions = ["installed-surface", "declaration-identity", "declaration-source-forms", "callable-visibility", "prototype-or-named-declarations", "record-byte-layouts", "callable-ownership-routing"]
+deferred_linkage_owner_family = "libc.c-abi-compat"
+deferred_linkage_owner_obligation = "final-callable-provider-archive-closure"
+explicit_nonrequirements = ["archive-extraction", "final-provider-archive-closure", "promotion-public-support", "runtime-semantics", "selected-provider-linkage-audit", "static-export-complement", "unprovided-callable-count"]
+description = "The aggregate's pure `header-foundation-v1` assessment requires the installed surface, declaration identity and source forms, callable visibility, prototype/named declarations, record layouts, and exact callable ownership routing. It reports but does not require the finite deferred provider/archive complement, selected-provider linkage audit, static-export complement, archive extraction, runtime semantics, promotion, or public support."
+
 # This control closes Phase 0 accounting over the current finite header
 # evidence without treating its intentionally red reports as a waiver. It
 # records every direct probe, profile/facet/ownership roster, and checked
-# generic report in one digest-bound result. `family_completion` remains false
-# until those finite blockers are actually discharged.
+# generic report in one digest-bound result. The separate
+# `header_completion_assessment` decides header completion from its named
+# dimensions; it must not infer that outcome from this control's current
+# planned status or downstream provider/archive evidence.
 [aggregate_control]
 id = "x86-headers-layouts-accounting-control"
 state = "partial-verified"
 owner = "libc.headers-layouts"
 command = "./scripts/dev-x86_64.sh headers-layouts-aggregate"
 generated_report = "compat/x86_64/generated/headers_layouts_aggregate/report.json"
-required_result = "checked-accounted-partial-report"
+required_result = "checked-header-foundation-assessment-report"
 direct_manifest = "compat/x86_64/headers-layouts.toml"
 direct_probe_count = 55
 profile_obligation_count = 21
-completion_keys = ["abi_facet_matrix", "abi_facets_accounted", "access_header_profile_matrix_slice", "c11_consumer_matrix", "callable_disposition", "callable_feature_visibility_matrix", "callable_linkage_audit", "callable_linkage_owners_accounted", "candidate_transitive_include_closure", "cxx17_consumer_matrix", "dirent_header_profile_matrix_slice", "epoll_header_profile_matrix_slice", "event_descriptors_header_profile_matrix_slice", "family_promotion", "feature_modes_accounted", "feature_visibility_matrix", "inventory_accounted", "ioctl_header_profile_matrix_slice", "language_profiles_accounted", "legacy_direct_inputs_accounted", "project_only_paths_accounted", "prototype_layout_matrix", "public_support", "record_layout_matrix", "runtime_completion", "selected_callable_provider_linkage_audit", "selected_header_install_projection", "stdlib_header_profile_matrix_slice", "sys_io_header_profile_matrix_slice", "sys_time_direct_header_profile_matrix_slice", "timeval_transitive_header_profile_matrix_slice", "uapi_paths_accounted", "uapi_wrapper_profile_matrix_slice", "xattr_header_profile_matrix_slice"]
+accounting_keys = ["abi_facet_matrix", "abi_facets_accounted", "access_header_profile_matrix_slice", "c11_consumer_matrix", "callable_disposition", "callable_feature_visibility_matrix", "callable_linkage_audit", "callable_linkage_owners_accounted", "candidate_transitive_include_closure", "cxx17_consumer_matrix", "dirent_header_profile_matrix_slice", "epoll_header_profile_matrix_slice", "event_descriptors_header_profile_matrix_slice", "family_promotion", "feature_modes_accounted", "feature_visibility_matrix", "inventory_accounted", "ioctl_header_profile_matrix_slice", "language_profiles_accounted", "legacy_direct_inputs_accounted", "project_only_paths_accounted", "prototype_layout_matrix", "public_support", "record_layout_matrix", "runtime_completion", "selected_callable_provider_linkage_audit", "selected_header_install_projection", "stdlib_header_profile_matrix_slice", "sys_io_header_profile_matrix_slice", "sys_time_direct_header_profile_matrix_slice", "timeval_transitive_header_profile_matrix_slice", "uapi_paths_accounted", "uapi_wrapper_profile_matrix_slice", "xattr_header_profile_matrix_slice"]
+completion_algorithm = "header-foundation-v1"
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 header_classes = ["pinned-non-uapi", "pinned-uapi-inputs", "project-only-extensions"]
 abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "sys-io-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "xattr-header-profile-matrix", "uapi-input-provenance", "uapi-wrapper-profile-matrix", "project-only-extension-policy", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-feature-visibility", "callable-prototype-layout", "record-byte-layout-matrix", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
@@ -109,10 +126,9 @@ linkage_owners = ["current-static-c-exports", "header-callable-disposition", "no
 evidence_tables = ["closure_diagnostic", "feature_visibility_matrix", "callable_feature_visibility_matrix", "prototype_layout_matrix", "record_layout_matrix", "callable_disposition", "selected_callable_provider_linkage_audit", "selected_header_install_projection", "uapi_wrapper_matrix", "ioctl_header_profile_matrix", "sys_io_header_profile_matrix", "epoll_header_profile_matrix", "event_descriptors_header_profile_matrix", "dirent_header_profile_matrix", "stdlib_header_profile_matrix", "timeval_transitive_header_profile_matrix", "sys_time_direct_header_profile_matrix", "access_header_profile_matrix", "xattr_header_profile_matrix"]
 supporting_commands = ["./scripts/dev-x86_64.sh musl-oracle", "./scripts/dev-x86_64.sh linux-5-10-uapi", "./scripts/dev-x86_64.sh installed-header-tree-closure", "./scripts/dev-x86_64.sh header-callable-linkage-audit"]
 source_owners = ["compat/x86_64/headers_layouts_aggregate.py", "compat/x86_64/run_headers_layouts_aggregate.sh", "compat/x86_64/tests/test_headers_layouts_aggregate.py", "compat/x86_64/generated/headers_layouts_aggregate/report.json"]
-family_completion = false
 family_promotion = false
 public_support = false
-description = "The checked aggregate records finite current header evidence and exact remaining declaration, layout, callable-provider, runtime, and promotion blockers. It executes only reviewed direct runner paths through its dedicated native wrapper, preserves every partial report, and cannot change family status, promotion readiness, or public x86 support."
+description = "The checked aggregate records finite current header evidence, a pure header-completion assessment, and separate downstream provider/archive obligations. It executes only reviewed direct runner paths through its dedicated native wrapper, preserves every partial report, and cannot change family status, promotion readiness, or public x86 support."
 
 [[aggregate_control.runner]]
 command = "./scripts/dev-x86_64.sh candidate-header-closure"

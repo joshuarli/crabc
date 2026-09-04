@@ -3680,7 +3680,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v17"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v18"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -3829,11 +3829,39 @@ class X86ParityLedgerTests(unittest.TestCase):
             aggregate_control["command"],
             "./scripts/dev-x86_64.sh headers-layouts-aggregate",
         )
-        self.assertFalse(aggregate_control["family_completion"])
+        self.assertEqual(
+            aggregate_control["completion_algorithm"], "header-foundation-v1"
+        )
+        self.assertNotIn("family_completion", aggregate_control)
         self.assertFalse(aggregate_control["family_promotion"])
         self.assertFalse(aggregate_control["public_support"])
         self.assertEqual(aggregate_control["direct_probe_count"], 55)
         self.assertEqual(aggregate_control["profile_obligation_count"], 21)
+        header_completion_assessment = manifest["header_completion_assessment"]
+        assert isinstance(header_completion_assessment, dict)
+        self.assertEqual(
+            header_completion_assessment["algorithm"], "header-foundation-v1"
+        )
+        self.assertEqual(
+            header_completion_assessment["required_dimensions"],
+            [
+                "installed-surface",
+                "declaration-identity",
+                "declaration-source-forms",
+                "callable-visibility",
+                "prototype-or-named-declarations",
+                "record-byte-layouts",
+                "callable-ownership-routing",
+            ],
+        )
+        self.assertEqual(
+            header_completion_assessment["deferred_linkage_owner_family"],
+            "libc.c-abi-compat",
+        )
+        self.assertEqual(
+            header_completion_assessment["deferred_linkage_owner_obligation"],
+            "final-callable-provider-archive-closure",
+        )
         feature_visibility = manifest["feature_visibility_matrix"]
         assert isinstance(feature_visibility, dict)
         self.assertEqual(

@@ -184,8 +184,51 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v17"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v18"
 EXPECTED_HEADER_LAYOUTS_AGGREGATE_COMMAND = "./scripts/dev-x86_64.sh headers-layouts-aggregate"
+EXPECTED_HEADER_COMPLETION_ALGORITHM = "header-foundation-v1"
+EXPECTED_HEADER_COMPLETION_INSTALLED_SURFACE_KEYS = [
+    "abi_facets_accounted",
+    "access_header_profile_matrix_slice",
+    "c11_consumer_matrix",
+    "candidate_transitive_include_closure",
+    "cxx17_consumer_matrix",
+    "dirent_header_profile_matrix_slice",
+    "epoll_header_profile_matrix_slice",
+    "event_descriptors_header_profile_matrix_slice",
+    "feature_modes_accounted",
+    "inventory_accounted",
+    "ioctl_header_profile_matrix_slice",
+    "language_profiles_accounted",
+    "legacy_direct_inputs_accounted",
+    "project_only_paths_accounted",
+    "selected_header_install_projection",
+    "stdlib_header_profile_matrix_slice",
+    "sys_io_header_profile_matrix_slice",
+    "sys_time_direct_header_profile_matrix_slice",
+    "timeval_transitive_header_profile_matrix_slice",
+    "uapi_paths_accounted",
+    "uapi_wrapper_profile_matrix_slice",
+    "xattr_header_profile_matrix_slice",
+]
+EXPECTED_HEADER_COMPLETION_DIMENSIONS = [
+    "installed-surface",
+    "declaration-identity",
+    "declaration-source-forms",
+    "callable-visibility",
+    "prototype-or-named-declarations",
+    "record-byte-layouts",
+    "callable-ownership-routing",
+]
+EXPECTED_HEADER_COMPLETION_NONREQUIREMENTS = [
+    "archive-extraction",
+    "final-provider-archive-closure",
+    "promotion-public-support",
+    "runtime-semantics",
+    "selected-provider-linkage-audit",
+    "static-export-complement",
+    "unprovided-callable-count",
+]
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -3263,6 +3306,7 @@ def validate_header_layout_foundation_manifest(
         "static_c_abi_exports",
         "policy",
         "completion",
+        "header_completion_assessment",
         "aggregate_control",
         "profile_matrix",
         "uapi_input",
@@ -3330,7 +3374,6 @@ def validate_header_layout_foundation_manifest(
             "callable_disposition": True,
             "selected_callable_provider_linkage_audit": True,
             "callable_linkage_audit": False,
-            "aggregate_family_completion": False,
             "runtime_completion": False,
             "public_support": False,
         },
@@ -3377,6 +3420,53 @@ def validate_header_layout_foundation_manifest(
             "public_support": False,
         },
         "header-foundation manifest completion drifted",
+    )
+
+    header_completion_assessment = manifest["header_completion_assessment"]
+    require(
+        isinstance(header_completion_assessment, Mapping),
+        "header-foundation completion assessment must be a table",
+    )
+    require(
+        set(header_completion_assessment)
+        == {
+            "algorithm",
+            "installed_surface_completion_keys",
+            "required_dimensions",
+            "deferred_linkage_owner_family",
+            "deferred_linkage_owner_obligation",
+            "explicit_nonrequirements",
+            "description",
+        },
+        "header-foundation completion assessment keys drifted",
+    )
+    require(
+        header_completion_assessment.get("algorithm")
+        == EXPECTED_HEADER_COMPLETION_ALGORITHM
+        and header_completion_assessment.get("installed_surface_completion_keys")
+        == EXPECTED_HEADER_COMPLETION_INSTALLED_SURFACE_KEYS
+        and header_completion_assessment.get("required_dimensions")
+        == EXPECTED_HEADER_COMPLETION_DIMENSIONS
+        and header_completion_assessment.get("deferred_linkage_owner_family")
+        == "libc.c-abi-compat"
+        and header_completion_assessment.get("deferred_linkage_owner_obligation")
+        == "final-callable-provider-archive-closure"
+        and header_completion_assessment.get("explicit_nonrequirements")
+        == EXPECTED_HEADER_COMPLETION_NONREQUIREMENTS,
+        "header-foundation completion assessment contract drifted",
+    )
+    description = header_completion_assessment.get("description")
+    require(
+        isinstance(description, str)
+        and "pure" in description
+        and "finite deferred provider/archive complement" in description
+        and "does not require" in description
+        and "public support" in description,
+        "header-foundation completion assessment description drifted",
+    )
+    require(
+        all(key in completion for key in EXPECTED_HEADER_COMPLETION_INSTALLED_SURFACE_KEYS),
+        "header-foundation completion assessment installed surface coverage drifted",
     )
 
     selected_provider_audit = manifest["selected_callable_provider_linkage_audit"]
@@ -3739,7 +3829,8 @@ def validate_header_layout_foundation_manifest(
             "direct_manifest",
             "direct_probe_count",
             "profile_obligation_count",
-            "completion_keys",
+            "accounting_keys",
+            "completion_algorithm",
             "language_profiles",
             "header_classes",
             "abi_facets",
@@ -3747,7 +3838,6 @@ def validate_header_layout_foundation_manifest(
             "evidence_tables",
             "supporting_commands",
             "source_owners",
-            "family_completion",
             "family_promotion",
             "public_support",
             "description",
@@ -3760,11 +3850,13 @@ def validate_header_layout_foundation_manifest(
         and aggregate_control.get("state") == "partial-verified"
         and aggregate_control.get("owner") == "libc.headers-layouts"
         and aggregate_control.get("command") == EXPECTED_HEADER_LAYOUTS_AGGREGATE_COMMAND
-        and aggregate_control.get("required_result") == "checked-accounted-partial-report"
+        and aggregate_control.get("required_result")
+        == "checked-header-foundation-assessment-report"
+        and aggregate_control.get("completion_algorithm")
+        == EXPECTED_HEADER_COMPLETION_ALGORITHM
         and aggregate_control.get("direct_manifest") == "compat/x86_64/headers-layouts.toml"
         and aggregate_control.get("direct_probe_count") == 55
         and aggregate_control.get("profile_obligation_count") == 21
-        and aggregate_control.get("family_completion") is False
         and aggregate_control.get("family_promotion") is False
         and aggregate_control.get("public_support") is False,
         "header-foundation aggregate control contract drifted",
@@ -3772,6 +3864,8 @@ def validate_header_layout_foundation_manifest(
     require(
         isinstance(aggregate_control.get("description"), str)
         and "finite" in aggregate_control["description"]
+        and "pure header-completion assessment" in aggregate_control["description"]
+        and "downstream provider/archive obligations" in aggregate_control["description"]
         and "cannot change family status" in aggregate_control["description"],
         "header-foundation aggregate control description drifted",
     )
@@ -3806,14 +3900,14 @@ def validate_header_layout_foundation_manifest(
         "header-foundation aggregate control files are missing",
     )
 
-    completion_keys = nonempty_strings(
-        aggregate_control.get("completion_keys"),
-        "header-foundation aggregate control completion keys",
+    accounting_keys = nonempty_strings(
+        aggregate_control.get("accounting_keys"),
+        "header-foundation aggregate control accounting keys",
     )
     require(
-        completion_keys == sorted(completion_keys)
-        and completion_keys == sorted(completion),
-        "header-foundation aggregate control completion coverage drifted",
+        accounting_keys == sorted(accounting_keys)
+        and accounting_keys == sorted(completion),
+        "header-foundation aggregate control accounting coverage drifted",
     )
     language_profile_ids = [
         entry.get("id")

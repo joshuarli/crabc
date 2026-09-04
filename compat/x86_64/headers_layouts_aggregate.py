@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Check the finite, non-promoting native x86 header accounting boundary.
+"""Assess finite native x86 header closure without consuming C-ABI closure.
 
-``libc.headers-layouts`` has a deliberately broad public-header obligation.
-Its current evidence is useful but intentionally partial: generic compiler
-reports make declaration differences finite, while direct probes retain
-bounded layout and linkage observations.  This control joins those checked
-inputs without converting a red report into a completion claim.  The native
-shell wrapper runs only the reviewed runner paths emitted here; this module
-then verifies the resulting digest-bound accounting report.
+``libc.headers-layouts`` owns installed-header correctness and exact callable
+ownership routing.  ``libc.c-abi-compat`` separately owns final provider
+selection, archive extraction, and runtime compatibility.  This control keeps
+both boundaries visible in one digest-bound report, but its pure header
+completion assessment deliberately cannot treat a downstream provider/archive
+gap as a header blocker.
 """
 
 from __future__ import annotations
@@ -19,11 +18,15 @@ import shlex
 import sys
 import tomllib
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
+MODULE_DIR = Path(__file__).resolve().parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
 FOUNDATION_PATH = ROOT / "compat" / "x86_64" / "headers-layouts-foundation.toml"
 DIRECT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
 PARITY_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
@@ -39,11 +42,30 @@ CONTROL_ID = "x86-headers-layouts-accounting-control"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 ORACLE = "Pinned musl 1.2.6"
-REPORT_SCHEMA = "crabc.x86_64-headers-layouts-aggregate-report/v1"
-FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v17"
+REPORT_SCHEMA = "crabc.x86_64-headers-layouts-aggregate-report/v2"
+FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v18"
 DIRECT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
 FAMILY = "libc.headers-layouts"
 DISPATCHER = "./scripts/dev-x86_64.sh"
+HEADER_COMPLETION_ALGORITHM = "header-foundation-v1"
+HEADER_COMPLETION_DIMENSIONS = (
+    "installed-surface",
+    "declaration-identity",
+    "declaration-source-forms",
+    "callable-visibility",
+    "prototype-or-named-declarations",
+    "record-byte-layouts",
+    "callable-ownership-routing",
+)
+HEADER_COMPLETION_NONREQUIREMENTS = (
+    "archive-extraction",
+    "final-provider-archive-closure",
+    "promotion-public-support",
+    "runtime-semantics",
+    "selected-provider-linkage-audit",
+    "static-export-complement",
+    "unprovided-callable-count",
+)
 
 EVIDENCE_TABLES = (
     "closure_diagnostic",
@@ -112,6 +134,8 @@ TRACKED_INPUTS = (
     "compat/x86_64/static_c_abi_exports.txt",
     "compat/x86_64/header_callable_inventory.json",
     "compat/x86_64/header_callable_disposition.toml",
+    "compat/x86_64/header_callable_disposition.py",
+    "compat/x86_64/header_callable_linkage_audit.py",
     "compat/x86_64/header_callable_visibility_matrix.toml",
     "compat/x86_64/header_abi_matrix.toml",
     "compat/x86_64/header_record_layout_matrix.toml",
@@ -131,6 +155,48 @@ EXECUTION_SOURCE_INPUTS = (
 
 class AggregateError(ValueError):
     """The finite header accounting boundary is stale, incomplete, or unsafe."""
+
+
+@dataclass(frozen=True)
+class HeaderCompletionAssessmentContract:
+    """The versioned inputs and exclusions for header-family completion."""
+
+    algorithm: str
+    installed_surface_completion_keys: tuple[str, ...]
+    required_dimensions: tuple[str, ...]
+    deferred_linkage_owner_family: str
+    deferred_linkage_owner_obligation: str
+    explicit_nonrequirements: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DeferredOwnerRouting:
+    """One named residual callable group routed to its C-ABI closure owner."""
+
+    identifier: str
+    linkage_owner_family: str
+    linkage_owner_obligation: str
+    members: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class HeaderFoundationCompletionFacts:
+    """Only header correctness and routing facts admitted to the pure predicate."""
+
+    installed_surface_requirements: tuple[tuple[str, bool], ...]
+    declaration_identity_mismatch_rows: int
+    declaration_source_form_differences: int
+    callable_visibility_mismatch_rows: int
+    prototype_or_named_declaration_mismatch_rows: int
+    record_byte_layout_mismatch_rows: int
+    candidate_external_callable_names: tuple[str, ...]
+    current_provider_callable_names: tuple[str, ...]
+    expected_deferred_callable_names: tuple[str, ...]
+    deferred_owner_groups: tuple[DeferredOwnerRouting, ...]
+    missing_reference_declaration_name_count: int
+    missing_reference_declaration_record_count: int
+    undispositioned_candidate_callable_count: int
+    undispositioned_missing_reference_name_count: int
 
 
 def require(condition: bool, message: str) -> None:
@@ -266,6 +332,92 @@ def identifier_rows(value: object, location: str) -> list[str]:
     return identifiers
 
 
+def header_completion_assessment_contract(
+    foundation: Mapping[str, Any],
+) -> HeaderCompletionAssessmentContract:
+    """Load the closed, versioned set of inputs for header completion.
+
+    This contract intentionally names neither a provider audit nor a runtime
+    gate.  Those facts remain reportable downstream, but adding one here would
+    create the reverse dependency prohibited by ``x86-64.md``.
+    """
+
+    raw = foundation.get("header_completion_assessment")
+    require(isinstance(raw, Mapping), "header completion assessment contract is missing")
+    expected_keys = {
+        "algorithm",
+        "installed_surface_completion_keys",
+        "required_dimensions",
+        "deferred_linkage_owner_family",
+        "deferred_linkage_owner_obligation",
+        "explicit_nonrequirements",
+        "description",
+    }
+    require(
+        set(raw) == expected_keys,
+        "header completion assessment contract keys drifted",
+    )
+    installed_surface_completion_keys = tuple(
+        string_list(
+            raw.get("installed_surface_completion_keys"),
+            "header completion assessment installed_surface_completion_keys",
+        )
+    )
+    require(
+        installed_surface_completion_keys == tuple(sorted(installed_surface_completion_keys)),
+        "header completion assessment installed surface keys must be sorted",
+    )
+    required_dimensions = tuple(
+        string_list(
+            raw.get("required_dimensions"),
+            "header completion assessment required_dimensions",
+        )
+    )
+    require(
+        required_dimensions == HEADER_COMPLETION_DIMENSIONS,
+        "header completion assessment dimensions drifted",
+    )
+    explicit_nonrequirements = tuple(
+        string_list(
+            raw.get("explicit_nonrequirements"),
+            "header completion assessment explicit_nonrequirements",
+        )
+    )
+    require(
+        explicit_nonrequirements == HEADER_COMPLETION_NONREQUIREMENTS,
+        "header completion assessment nonrequirements drifted",
+    )
+    deferred_linkage_owner_family = raw.get("deferred_linkage_owner_family")
+    deferred_linkage_owner_obligation = raw.get("deferred_linkage_owner_obligation")
+    require(
+        deferred_linkage_owner_family == "libc.c-abi-compat",
+        "header completion assessment deferred linkage owner drifted",
+    )
+    require(
+        deferred_linkage_owner_obligation
+        == "final-callable-provider-archive-closure",
+        "header completion assessment deferred linkage obligation drifted",
+    )
+    require(
+        raw.get("algorithm") == HEADER_COMPLETION_ALGORITHM,
+        "header completion assessment algorithm drifted",
+    )
+    require(
+        isinstance(raw.get("description"), str)
+        and "does not require" in raw["description"]
+        and "deferred provider/archive complement" in raw["description"],
+        "header completion assessment description drifted",
+    )
+    return HeaderCompletionAssessmentContract(
+        algorithm=HEADER_COMPLETION_ALGORITHM,
+        installed_surface_completion_keys=installed_surface_completion_keys,
+        required_dimensions=required_dimensions,
+        deferred_linkage_owner_family=str(deferred_linkage_owner_family),
+        deferred_linkage_owner_obligation=str(deferred_linkage_owner_obligation),
+        explicit_nonrequirements=explicit_nonrequirements,
+    )
+
+
 def header_family(parity: Mapping[str, Any]) -> Mapping[str, Any]:
     families = mapping_list(parity.get("family"), "parity family")
     matches = [row for row in families if row.get("id") == FAMILY]
@@ -318,8 +470,8 @@ def aggregate_control(foundation: Mapping[str, Any], direct: Mapping[str, Any], 
     require(foundation.get("status") == "planned", "header foundation must remain planned")
     policy = foundation.get("policy")
     require(isinstance(policy, Mapping), "header foundation policy is invalid")
-    require(policy.get("aggregate_family_completion") is False, "header foundation must not claim aggregate completion")
     require(policy.get("public_support") is False, "header foundation must not claim public support")
+    assessment_contract = header_completion_assessment_contract(foundation)
 
     raw_control = foundation.get("aggregate_control")
     require(isinstance(raw_control, Mapping), "header foundation aggregate control is missing")
@@ -333,7 +485,8 @@ def aggregate_control(foundation: Mapping[str, Any], direct: Mapping[str, Any], 
         "direct_manifest",
         "direct_probe_count",
         "profile_obligation_count",
-        "completion_keys",
+        "accounting_keys",
+        "completion_algorithm",
         "language_profiles",
         "header_classes",
         "abi_facets",
@@ -341,7 +494,6 @@ def aggregate_control(foundation: Mapping[str, Any], direct: Mapping[str, Any], 
         "evidence_tables",
         "supporting_commands",
         "source_owners",
-        "family_completion",
         "family_promotion",
         "public_support",
         "description",
@@ -353,20 +505,35 @@ def aggregate_control(foundation: Mapping[str, Any], direct: Mapping[str, Any], 
     require(control["state"] == "partial-verified", "aggregate control state must remain partial-verified")
     require(control["owner"] == FAMILY, "aggregate control owner drifted")
     require(control["command"] == f"{DISPATCHER} headers-layouts-aggregate", "aggregate control command drifted")
-    require(control["required_result"] == "checked-accounted-partial-report", "aggregate control result contract drifted")
-    require(control["family_completion"] is False, "aggregate control cannot claim family completion")
+    require(
+        control["required_result"] == "checked-header-foundation-assessment-report",
+        "aggregate control result contract drifted",
+    )
+    require(
+        control["completion_algorithm"] == assessment_contract.algorithm,
+        "aggregate control completion algorithm drifted",
+    )
     require(control["family_promotion"] is False, "aggregate control cannot claim family promotion")
     require(control["public_support"] is False, "aggregate control cannot claim public support")
-    require(isinstance(control["description"], str) and "blockers" in control["description"], "aggregate control description drifted")
+    require(
+        isinstance(control["description"], str)
+        and "header-completion assessment" in control["description"]
+        and "downstream provider/archive obligations" in control["description"],
+        "aggregate control description drifted",
+    )
     require(control["direct_manifest"] == display_path(DIRECT_MANIFEST_PATH), "aggregate control direct manifest drifted")
     repository_output(control["generated_report"], "aggregate control generated_report")
     require(int(control["direct_probe_count"]) == len(direct_probes(direct)), "aggregate control direct probe count drifted")
 
     completion = foundation.get("completion")
     require(isinstance(completion, Mapping), "header foundation completion is invalid")
-    completion_keys = string_list(control["completion_keys"], "aggregate control completion_keys")
-    require(completion_keys == sorted(completion_keys), "aggregate control completion_keys must be sorted")
-    require(completion_keys == sorted(completion), "aggregate control completion coverage drifted")
+    accounting_keys = string_list(control["accounting_keys"], "aggregate control accounting_keys")
+    require(accounting_keys == sorted(accounting_keys), "aggregate control accounting_keys must be sorted")
+    require(accounting_keys == sorted(completion), "aggregate control accounting coverage drifted")
+    require(
+        set(assessment_contract.installed_surface_completion_keys) <= set(accounting_keys),
+        "header completion installed surface inputs are absent from accounting coverage",
+    )
 
     language_profiles = identifier_rows(foundation.get("language_profile"), "header foundation language_profile")
     require(string_list(control["language_profiles"], "aggregate control language_profiles") == language_profiles, "aggregate control language profile coverage drifted")
@@ -461,7 +628,10 @@ def generic_reports(foundation: Mapping[str, Any]) -> list[dict[str, Any]]:
         else:
             require(summary.get("profile_count") == 7, f"generic report {identifier} profile count drifted")
             require(summary.get("row_count") == 1337, f"generic report {identifier} row count drifted")
-        require(summary.get("complete") is False if "complete" in summary else True, f"generic report {identifier} cannot claim completion")
+        # Each generic matrix deliberately has broader scope than one header
+        # dimension (for example, it can mention archive or runtime work).
+        # Header completion therefore consumes the checked dimension-specific
+        # facts below rather than this report-level convenience flag.
         if "record_count" in value:
             require(summary.get("row_count") == value.get("record_count"), f"generic report {identifier} record count drifted")
         if "comparison_counts" in value:
@@ -654,83 +824,530 @@ def check_accounted_incomplete_linkage_audit() -> None:
     )
 
 
-def blockers(foundation: Mapping[str, Any], reports: Sequence[Mapping[str, Any]]) -> tuple[list[str], dict[str, int]]:
+def nonnegative_count(value: object, location: str) -> int:
+    require(
+        isinstance(value, int) and not isinstance(value, bool) and value >= 0,
+        f"{location} must be a nonnegative integer",
+    )
+    return value
+
+
+def sorted_unique_names(value: object, location: str, *, allow_empty: bool = False) -> tuple[str, ...]:
+    require(isinstance(value, list), f"{location} must be an array")
+    names: list[str] = []
+    for index, name in enumerate(value):
+        require(isinstance(name, str) and name, f"{location}[{index}] is invalid")
+        names.append(name)
+    require(allow_empty or bool(names), f"{location} must not be empty")
+    require(names == sorted(names), f"{location} must be ASCII sorted")
+    require(len(names) == len(set(names)), f"{location} contains duplicates")
+    return tuple(names)
+
+
+def candidate_external_callable_names(inventory: Mapping[str, Any]) -> tuple[str, ...]:
+    records = inventory.get("callables")
+    require(isinstance(records, list), "callable inventory records are missing")
+    names: set[str] = set()
+    for index, record in enumerate(records):
+        require(isinstance(record, Mapping), f"callable inventory record[{index}] is invalid")
+        if record.get("tree") != "candidate" or record.get("classification") != "external":
+            continue
+        require(
+            record.get("declaration_kind") == "function",
+            f"candidate external callable[{index}] is not a function",
+        )
+        name = record.get("name")
+        require(isinstance(name, str) and name, f"candidate external callable[{index}] has no name")
+        names.add(name)
+    require(names, "callable inventory has no candidate external names")
+    return tuple(sorted(names))
+
+
+def provider_members(value: object, location: str) -> tuple[str, ...]:
+    """Return the declared current-provider names without proving extraction."""
+
+    require(isinstance(value, list), f"{location} must be an array")
+    members: list[str] = []
+    identifiers: set[str] = set()
+    for index, row in enumerate(value):
+        require(isinstance(row, Mapping), f"{location}[{index}] is invalid")
+        require(set(row) == {"id", "members"}, f"{location}[{index}] keys drifted")
+        identifier = row.get("id")
+        require(
+            isinstance(identifier, str) and identifier and identifier not in identifiers,
+            f"{location}[{index}].id is invalid",
+        )
+        identifiers.add(identifier)
+        members.extend(sorted_unique_names(row.get("members"), f"{location}[{index}].members", allow_empty=True))
+    return tuple(members)
+
+
+def disposition_routing_facts(
+    foundation: Mapping[str, Any], reports: Sequence[Mapping[str, Any]]
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[DeferredOwnerRouting, ...],
+    int,
+    int,
+    int,
+    int,
+]:
+    """Extract independent routing facts after validating the checked report.
+
+    The disposition generator already proves the inventory's primary partition.
+    This adapter nevertheless carries the actual provider and deferred member
+    sets into the pure assessment so synthetic tests can reject missing,
+    overlapping, or mis-owned deferred coverage without invoking any archive
+    audit.
+    """
+
+    disposition = foundation.get("callable_disposition")
+    require(isinstance(disposition, Mapping), "header foundation callable disposition is invalid")
+    report_path = repository_file(
+        disposition.get("report"), "header foundation callable disposition report"
+    )
+    contract_path = repository_file(
+        disposition.get("contract"), "header foundation callable disposition contract"
+    )
+    report = load_json(report_path)
+    try:
+        from header_callable_disposition import (
+            load_contract as load_disposition_contract,
+            validate_checked_report as validate_disposition_report,
+        )
+
+        validate_disposition_report(report, load_disposition_contract(contract_path))
+    except (ImportError, ValueError) as error:
+        raise AggregateError(f"header callable disposition report is invalid: {error}") from error
+
+    by_id = {str(entry["id"]): entry for entry in reports}
+    generic_disposition = by_id.get("callable-disposition")
+    require(isinstance(generic_disposition, Mapping), "generic callable disposition report is missing")
+    require(
+        generic_disposition.get("summary") == report.get("summary"),
+        "generic callable disposition summary is stale",
+    )
+
+    inventory = load_json(
+        repository_file(
+            display_path(HEADER_CALLABLE_INVENTORY_PATH),
+            "header completion callable inventory",
+        )
+    )
+    partition = inventory.get("callable_provider_partition")
+    require(isinstance(partition, Mapping), "callable inventory provider partition is invalid")
+    unprovided = partition.get("unprovided")
+    require(
+        isinstance(unprovided, Mapping) and set(unprovided) == {"members"},
+        "callable inventory unprovided partition is invalid",
+    )
+    expected_deferred = sorted_unique_names(
+        unprovided.get("members"),
+        "callable inventory unprovided members",
+        allow_empty=True,
+    )
+
+    primary = report.get("primary_disposition")
+    require(isinstance(primary, Mapping), "callable disposition primary routing is invalid")
+    require(
+        set(primary)
+        == {
+            "kind",
+            "default_static",
+            "verified_feature_archives",
+            "declared_unverified_feature_archives",
+            "deferred_owner_groups",
+        },
+        "callable disposition primary routing keys drifted",
+    )
+    require(
+        primary.get("kind") == "candidate-external-callable-primary-disposition",
+        "callable disposition primary routing kind drifted",
+    )
+    default_static = primary.get("default_static")
+    require(
+        isinstance(default_static, Mapping) and set(default_static) == {"members"},
+        "callable disposition default-static routing is invalid",
+    )
+    current_provider_members = list(
+        sorted_unique_names(
+            default_static.get("members"),
+            "callable disposition default-static members",
+            allow_empty=True,
+        )
+    )
+    current_provider_members.extend(
+        provider_members(
+            primary.get("verified_feature_archives"),
+            "callable disposition verified-feature providers",
+        )
+    )
+    current_provider_members.extend(
+        provider_members(
+            primary.get("declared_unverified_feature_archives"),
+            "callable disposition declared-unverified-feature providers",
+        )
+    )
+
+    raw_groups = primary.get("deferred_owner_groups")
+    require(isinstance(raw_groups, list), "callable disposition deferred owner groups are invalid")
+    groups: list[DeferredOwnerRouting] = []
+    for index, raw_group in enumerate(raw_groups):
+        require(isinstance(raw_group, Mapping), f"callable disposition deferred group[{index}] is invalid")
+        require(
+            set(raw_group)
+            == {
+                "id",
+                "linkage_owner_family",
+                "linkage_owner_obligation",
+                "members",
+                "provider_target",
+                "resolution",
+                "semantic_family",
+                "source_oracle",
+            },
+            f"callable disposition deferred group[{index}] keys drifted",
+        )
+        identifier = raw_group.get("id")
+        require(
+            isinstance(identifier, str) and identifier,
+            f"callable disposition deferred group[{index}].id is invalid",
+        )
+        owner = raw_group.get("linkage_owner_family")
+        obligation = raw_group.get("linkage_owner_obligation")
+        require(
+            isinstance(owner, str) and owner,
+            f"callable disposition deferred group[{index}].linkage_owner_family is invalid",
+        )
+        require(
+            isinstance(obligation, str) and obligation,
+            f"callable disposition deferred group[{index}].linkage_owner_obligation is invalid",
+        )
+        groups.append(
+            DeferredOwnerRouting(
+                identifier=identifier,
+                linkage_owner_family=owner,
+                linkage_owner_obligation=obligation,
+                members=sorted_unique_names(
+                    raw_group.get("members"),
+                    f"callable disposition deferred group[{index}].members",
+                ),
+            )
+        )
+
+    summary = report.get("summary")
+    require(isinstance(summary, Mapping), "callable disposition summary is invalid")
+    return (
+        candidate_external_callable_names(inventory),
+        tuple(current_provider_members),
+        expected_deferred,
+        tuple(groups),
+        nonnegative_count(
+            summary.get("missing_reference_declaration_name_count"),
+            "callable disposition missing reference declaration name count",
+        ),
+        nonnegative_count(
+            summary.get("missing_reference_declaration_record_count"),
+            "callable disposition missing reference declaration record count",
+        ),
+        nonnegative_count(
+            summary.get("undispositioned_candidate_callable_count"),
+            "callable disposition undispositioned candidate callable count",
+        ),
+        nonnegative_count(
+            summary.get("undispositioned_missing_reference_name_count"),
+            "callable disposition undispositioned missing reference name count",
+        ),
+    )
+
+
+def header_completion_facts(
+    foundation: Mapping[str, Any],
+    reports: Sequence[Mapping[str, Any]],
+    contract: HeaderCompletionAssessmentContract,
+) -> HeaderFoundationCompletionFacts:
+    """Convert checked repository evidence into facts for the pure predicate."""
+
     by_id = {str(report["id"]): report for report in reports}
-    declaration = by_id["declaration-macro-visibility"]["summary"]
-    callable_visibility = by_id["callable-visibility"]["summary"]
-    prototype = by_id["prototype-layout"]["summary"]
-    record_layout = by_id["record-byte-layout"]["summary"]
-    disposition = by_id["callable-disposition"]["summary"]
+    declaration = by_id.get("declaration-macro-visibility", {}).get("summary")
+    callable_visibility = by_id.get("callable-visibility", {}).get("summary")
+    prototype = by_id.get("prototype-layout", {}).get("summary")
+    record_layout = by_id.get("record-byte-layout", {}).get("summary")
     require(isinstance(declaration, Mapping), "declaration summary is invalid")
     require(isinstance(callable_visibility, Mapping), "callable visibility summary is invalid")
     require(isinstance(prototype, Mapping), "prototype summary is invalid")
     require(isinstance(record_layout, Mapping), "record byte-layout summary is invalid")
-    require(isinstance(disposition, Mapping), "callable disposition summary is invalid")
     record_layout_comparisons = record_layout.get("comparison_counts")
     require(
         isinstance(record_layout_comparisons, Mapping),
         "record byte-layout comparison summary is invalid",
     )
-    counts = {
-        "callable_provider_unprovided": int(disposition.get("unprovided_callable_count", -1)),
-        "callable_visibility_mismatch_rows": int(callable_visibility.get("mismatch_row_count", -1)),
-        "declaration_identity_mismatch_rows": int(declaration.get("mismatch_row_count", -1)),
-        "declaration_source_form_differences": int(declaration.get("source_form_difference_count", -1)),
-        "prototype_or_named_declaration_mismatch_rows": int(prototype.get("mismatch_row_count", -1)),
-        # A zero-valued comparison category is intentionally absent from the
-        # deterministic record report. Treat that omission as zero rather than
-        # a malformed blocker, while retaining the negative default for fields
-        # that are required to be present.
-        "record_byte_layout_mismatch_rows": int(record_layout_comparisons.get("mismatch", 0)),
-    }
-    require(all(value >= 0 for value in counts.values()), "generic blocker count is invalid")
+
     completion = foundation.get("completion")
     require(isinstance(completion, Mapping), "header foundation completion is invalid")
-    require(completion.get("abi_facet_matrix") is False, "header foundation ABI facet completion drifted")
-    require(completion.get("callable_linkage_audit") is False, "header foundation callable linkage completion drifted")
-    require(completion.get("runtime_completion") is False, "header foundation runtime completion drifted")
-    require(completion.get("family_promotion") is False, "header foundation family promotion drifted")
-    return (
-        [
-            "declaration-macro-identity",
-            "declaration-source-forms",
-            "callable-visibility",
-            "prototype-or-named-declarations",
-            "callable-provider-closure",
-            "record-byte-layouts",
-            "runtime-semantics",
-            "family-promotion",
-        ],
-        counts,
+    installed_surface_requirements: list[tuple[str, bool]] = []
+    for key in contract.installed_surface_completion_keys:
+        value = completion.get(key)
+        require(
+            isinstance(value, bool),
+            f"header completion installed surface input {key} is invalid",
+        )
+        installed_surface_requirements.append((key, value))
+
+    (
+        candidates,
+        current_providers,
+        expected_deferred,
+        deferred_groups,
+        missing_reference_names,
+        missing_reference_records,
+        undispositioned_candidates,
+        undispositioned_missing_names,
+    ) = disposition_routing_facts(foundation, reports)
+    return HeaderFoundationCompletionFacts(
+        installed_surface_requirements=tuple(installed_surface_requirements),
+        declaration_identity_mismatch_rows=nonnegative_count(
+            declaration.get("mismatch_row_count"),
+            "declaration identity mismatch row count",
+        ),
+        declaration_source_form_differences=nonnegative_count(
+            declaration.get("source_form_difference_count"),
+            "declaration source-form difference count",
+        ),
+        callable_visibility_mismatch_rows=nonnegative_count(
+            callable_visibility.get("mismatch_row_count"),
+            "callable visibility mismatch row count",
+        ),
+        prototype_or_named_declaration_mismatch_rows=nonnegative_count(
+            prototype.get("mismatch_row_count"),
+            "prototype or named declaration mismatch row count",
+        ),
+        # A zero-valued category is omitted by the deterministic record
+        # report. Its absence is meaningful zero, unlike a missing required
+        # row-count field above.
+        record_byte_layout_mismatch_rows=nonnegative_count(
+            record_layout_comparisons.get("mismatch", 0),
+            "record byte-layout mismatch row count",
+        ),
+        candidate_external_callable_names=candidates,
+        current_provider_callable_names=current_providers,
+        expected_deferred_callable_names=expected_deferred,
+        deferred_owner_groups=deferred_groups,
+        missing_reference_declaration_name_count=missing_reference_names,
+        missing_reference_declaration_record_count=missing_reference_records,
+        undispositioned_candidate_callable_count=undispositioned_candidates,
+        undispositioned_missing_reference_name_count=undispositioned_missing_names,
     )
 
 
+def exact_callable_ownership_routing(
+    facts: HeaderFoundationCompletionFacts,
+    contract: HeaderCompletionAssessmentContract,
+) -> bool:
+    """Check routing directly, without requiring a provider or archive member."""
+
+    if (
+        facts.missing_reference_declaration_name_count != 0
+        or facts.missing_reference_declaration_record_count != 0
+        or facts.undispositioned_candidate_callable_count != 0
+        or facts.undispositioned_missing_reference_name_count != 0
+    ):
+        return False
+
+    candidates = facts.candidate_external_callable_names
+    expected_deferred = facts.expected_deferred_callable_names
+    current_providers = facts.current_provider_callable_names
+    if (
+        candidates != tuple(sorted(candidates))
+        or expected_deferred != tuple(sorted(expected_deferred))
+        or len(candidates) != len(set(candidates))
+        or len(expected_deferred) != len(set(expected_deferred))
+    ):
+        return False
+
+    group_ids: set[str] = set()
+    deferred_members: list[str] = []
+    for group in facts.deferred_owner_groups:
+        if (
+            not group.identifier
+            or group.identifier in group_ids
+            or not group.members
+            or group.members != tuple(sorted(group.members))
+            or len(group.members) != len(set(group.members))
+            or group.linkage_owner_family != contract.deferred_linkage_owner_family
+            or group.linkage_owner_obligation
+            != contract.deferred_linkage_owner_obligation
+        ):
+            return False
+        group_ids.add(group.identifier)
+        deferred_members.extend(group.members)
+    if len(deferred_members) != len(set(deferred_members)):
+        return False
+    if tuple(sorted(deferred_members)) != expected_deferred:
+        return False
+
+    primary_members = [*current_providers, *deferred_members]
+    if len(primary_members) != len(set(primary_members)):
+        return False
+    return tuple(sorted(primary_members)) == candidates
+
+
+def assess_header_foundation_completion(
+    facts: HeaderFoundationCompletionFacts,
+    contract: HeaderCompletionAssessmentContract,
+) -> dict[str, Any]:
+    """Purely evaluate the seven named header-completion dimensions.
+
+    ``facts`` deliberately contains no provider/archive audit, extraction,
+    static-export-complement, runtime, promotion, or public-support result.
+    A caller cannot make a red header dimension green by supplying a provider
+    success record because the predicate has no such input.
+    """
+
+    expected_installed = contract.installed_surface_completion_keys
+    actual_installed = tuple(key for key, _value in facts.installed_surface_requirements)
+    installed_surface_complete = (
+        actual_installed == expected_installed
+        and all(isinstance(value, bool) and value for _key, value in facts.installed_surface_requirements)
+    )
+    requirements = (
+        ("installed-surface", installed_surface_complete),
+        ("declaration-identity", facts.declaration_identity_mismatch_rows == 0),
+        ("declaration-source-forms", facts.declaration_source_form_differences == 0),
+        ("callable-visibility", facts.callable_visibility_mismatch_rows == 0),
+        (
+            "prototype-or-named-declarations",
+            facts.prototype_or_named_declaration_mismatch_rows == 0,
+        ),
+        ("record-byte-layouts", facts.record_byte_layout_mismatch_rows == 0),
+        (
+            "callable-ownership-routing",
+            exact_callable_ownership_routing(facts, contract),
+        ),
+    )
+    require(
+        tuple(identifier for identifier, _complete in requirements)
+        == contract.required_dimensions,
+        "header completion requirement order drifted",
+    )
+    blockers = [identifier for identifier, complete in requirements if not complete]
+    return {
+        "algorithm": contract.algorithm,
+        "blockers": blockers,
+        "complete": not blockers,
+        "explicit_nonrequirements": list(contract.explicit_nonrequirements),
+        "requirements": [
+            {"complete": complete, "id": identifier}
+            for identifier, complete in requirements
+        ],
+    }
+
+
+def header_blocker_counts(
+    facts: HeaderFoundationCompletionFacts,
+    contract: HeaderCompletionAssessmentContract,
+) -> dict[str, int]:
+    """Expose diagnostic counts without importing downstream closure gaps."""
+
+    unmet_installed = sum(
+        1
+        for key, value in facts.installed_surface_requirements
+        if key not in contract.installed_surface_completion_keys or value is not True
+    )
+    return {
+        "callable_ownership_routing_invalid": int(
+            not exact_callable_ownership_routing(facts, contract)
+        ),
+        "callable_visibility_mismatch_rows": facts.callable_visibility_mismatch_rows,
+        "declaration_identity_mismatch_rows": facts.declaration_identity_mismatch_rows,
+        "declaration_source_form_differences": facts.declaration_source_form_differences,
+        "installed_surface_unmet_requirement_count": unmet_installed,
+        "prototype_or_named_declaration_mismatch_rows": facts.prototype_or_named_declaration_mismatch_rows,
+        "record_byte_layout_mismatch_rows": facts.record_byte_layout_mismatch_rows,
+    }
+
+
+def downstream_provider_archive_obligations(
+    foundation: Mapping[str, Any],
+    facts: HeaderFoundationCompletionFacts,
+    contract: HeaderCompletionAssessmentContract,
+) -> dict[str, Any]:
+    """Report the deferred C-ABI closure without admitting it to assessment."""
+
+    disposition = foundation.get("callable_disposition")
+    provider_audit = foundation.get("selected_callable_provider_linkage_audit")
+    require(isinstance(disposition, Mapping), "header foundation callable disposition is invalid")
+    require(isinstance(provider_audit, Mapping), "header foundation selected provider audit is invalid")
+    final_provider_archive_closure_complete = disposition.get(
+        "final_provider_archive_closure_complete"
+    )
+    selected_provider_linkage_audit_complete = provider_audit.get("full_callable_closure")
+    require(
+        isinstance(final_provider_archive_closure_complete, bool),
+        "header foundation final provider/archive closure state is invalid",
+    )
+    require(
+        isinstance(selected_provider_linkage_audit_complete, bool),
+        "header foundation selected provider linkage-audit state is invalid",
+    )
+    require(
+        nonnegative_count(
+            disposition.get("unprovided_callable_count"),
+            "header foundation deferred callable count",
+        )
+        == len(facts.expected_deferred_callable_names),
+        "header foundation deferred callable count is stale",
+    )
+    return {
+        "archive_extraction_is_header_completion_requirement": False,
+        "deferred_callable_count": len(facts.expected_deferred_callable_names),
+        "deferred_owner_group_count": len(facts.deferred_owner_groups),
+        "final_provider_archive_closure_complete": final_provider_archive_closure_complete,
+        "linkage_owner_family": contract.deferred_linkage_owner_family,
+        "linkage_owner_obligation": contract.deferred_linkage_owner_obligation,
+        "routing_exact": exact_callable_ownership_routing(facts, contract),
+        "runtime_semantics_are_header_completion_requirement": False,
+        "selected_provider_linkage_audit_complete": selected_provider_linkage_audit_complete,
+        "static_export_complement_is_header_completion_requirement": False,
+        "unprovided_callable_count_is_header_completion_requirement": False,
+    }
+
+
 def build_report() -> dict[str, Any]:
-    """Build the deterministic partial-accounting report from checked inputs."""
+    """Build the deterministic header assessment and downstream obligation view."""
     foundation, _direct, _parity, control, probes, reports = load_context()
     completion = foundation.get("completion")
     require(isinstance(completion, Mapping), "header foundation completion is invalid")
-    block_ids, block_counts = blockers(foundation, reports)
+    assessment_contract = header_completion_assessment_contract(foundation)
+    facts = header_completion_facts(foundation, reports, assessment_contract)
+    header_completion = assess_header_foundation_completion(facts, assessment_contract)
     return {
         "abi_facet_count": len(string_list(control["abi_facets"], "aggregate control abi_facets")),
         "accounting_complete": True,
-        "blocker_counts": block_counts,
-        "blockers": block_ids,
-        "completion_coverage": [
+        "blocker_counts": header_blocker_counts(facts, assessment_contract),
+        "blockers": header_completion["blockers"],
+        "accounting_coverage": [
             {"key": key, "value": completion[key]}
-            for key in string_list(control["completion_keys"], "aggregate control completion_keys")
+            for key in string_list(control["accounting_keys"], "aggregate control accounting_keys")
         ],
         "control": {
+            "completion_algorithm": assessment_contract.algorithm,
             "id": control["id"],
             "required_result": control["required_result"],
             "state": control["state"],
         },
+        "downstream_provider_archive_obligations": downstream_provider_archive_obligations(
+            foundation, facts, assessment_contract
+        ),
         "direct_probe_count": len(probes),
         "direct_probes": probes,
         "evidence": evidence_records(foundation, control),
         "family": FAMILY,
-        "family_completion": False,
+        "family_completion": header_completion["complete"],
         "generic_reports": reports,
+        "header_completion": header_completion,
         "header_classes": string_list(control["header_classes"], "aggregate control header_classes"),
         "inputs": input_records(),
         "language_profile_count": len(string_list(control["language_profiles"], "aggregate control language_profiles")),
@@ -743,7 +1360,7 @@ def build_report() -> dict[str, Any]:
         "promotion_ready": False,
         "public_support": False,
         "schema": REPORT_SCHEMA,
-        "scope": "finite native x86 header accounting only; no family completion, product admission, promotion, or public support",
+        "scope": "finite native x86 header accounting with a pure header-completion assessment; downstream C-ABI provider/archive closure is separately reported and does not gate header completion, promotion, or public support",
         "target": TARGET,
     }
 
@@ -771,14 +1388,16 @@ def validate_report(report: Mapping[str, Any]) -> None:
         "accounting_complete",
         "blocker_counts",
         "blockers",
-        "completion_coverage",
+        "accounting_coverage",
         "control",
+        "downstream_provider_archive_obligations",
         "direct_probe_count",
         "direct_probes",
         "evidence",
         "family",
         "family_completion",
         "generic_reports",
+        "header_completion",
         "header_classes",
         "inputs",
         "language_profile_count",
@@ -801,10 +1420,20 @@ def validate_report(report: Mapping[str, Any]) -> None:
     require(report.get("platform") == PLATFORM, "aggregate report platform drifted")
     require(report.get("oracle") == ORACLE, "aggregate report oracle drifted")
     require(report.get("accounting_complete") is True, "aggregate report must retain finite accounting")
-    require(report.get("family_completion") is False, "aggregate report cannot claim family completion")
+    header_completion = report.get("header_completion")
+    require(isinstance(header_completion, Mapping), "aggregate report header completion is invalid")
+    require(
+        report.get("family_completion") == header_completion.get("complete"),
+        "aggregate report family completion must derive from header assessment",
+    )
     require(report.get("promotion_ready") is False, "aggregate report cannot claim promotion readiness")
     require(report.get("public_support") is False, "aggregate report cannot claim public support")
-    require(isinstance(report.get("scope"), str) and "no family completion" in report["scope"], "aggregate report scope drifted")
+    require(
+        isinstance(report.get("scope"), str)
+        and "pure header-completion assessment" in report["scope"]
+        and "does not gate header completion" in report["scope"],
+        "aggregate report scope drifted",
+    )
     report_inputs_are_current(report.get("inputs"))
 
     _foundation, _direct, _parity, control, probes, expected_reports = load_context()
@@ -812,7 +1441,12 @@ def validate_report(report: Mapping[str, Any]) -> None:
     require(isinstance(control_value, Mapping), "aggregate report control is invalid")
     require(
         dict(control_value)
-        == {"id": CONTROL_ID, "required_result": "checked-accounted-partial-report", "state": "partial-verified"},
+        == {
+            "completion_algorithm": HEADER_COMPLETION_ALGORITHM,
+            "id": CONTROL_ID,
+            "required_result": "checked-header-foundation-assessment-report",
+            "state": "partial-verified",
+        },
         "aggregate report control drifted",
     )
     require(report.get("direct_probe_count") == len(probes), "aggregate report direct probe count drifted")
@@ -833,8 +1467,24 @@ def validate_report(report: Mapping[str, Any]) -> None:
     require(generic == expected_reports, "aggregate report generic report content drifted")
 
     expected = build_report()
-    require(report.get("completion_coverage") == expected["completion_coverage"], "aggregate report completion coverage drifted")
+    require(
+        report.get("accounting_coverage") == expected["accounting_coverage"],
+        "aggregate report accounting coverage drifted",
+    )
     require(report.get("evidence") == expected["evidence"], "aggregate report evidence coverage drifted")
+    require(
+        report.get("header_completion") == expected["header_completion"],
+        "aggregate report header completion assessment drifted",
+    )
+    require(
+        report.get("downstream_provider_archive_obligations")
+        == expected["downstream_provider_archive_obligations"],
+        "aggregate report downstream provider/archive obligations drifted",
+    )
+    require(
+        report.get("family_completion") == expected["family_completion"],
+        "aggregate report family completion drifted",
+    )
     require(report.get("blockers") == expected["blockers"], "aggregate report blockers drifted")
     require(report.get("blocker_counts") == expected["blocker_counts"], "aggregate report blocker counts drifted")
 
