@@ -5,6 +5,17 @@
 extern "C" {
 #endif
 
+#if defined(__x86_64__) /* pinned-musl form; the AArch64 branch stays frozen */
+#define RB_AUTOBOOT     0x01234567
+#define RB_HALT_SYSTEM  0xcdef0123
+#define RB_ENABLE_CAD   0x89abcdef
+#define RB_DISABLE_CAD  0
+#define RB_POWER_OFF    0x4321fedc
+#define RB_SW_SUSPEND   0xd000fce2
+#define RB_KEXEC        0x45584543
+
+#else
+
 #define LINUX_REBOOT_MAGIC1  0xfee1dead
 #define LINUX_REBOOT_MAGIC2  672274793
 #define LINUX_REBOOT_MAGIC2A 85072278
@@ -28,6 +39,8 @@ extern "C" {
 #define RB_POWER_OFF    LINUX_REBOOT_CMD_POWER_OFF
 #define RB_SW_SUSPEND   LINUX_REBOOT_CMD_SW_SUSPEND
 #define RB_KEXEC        LINUX_REBOOT_CMD_KEXEC
+
+#endif
 
 int reboot(int);
 

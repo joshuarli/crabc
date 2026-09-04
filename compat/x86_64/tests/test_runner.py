@@ -1989,6 +1989,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "feature-profile-control-plane-header-abi",
             "terminal-streams-header-topology",
             "link-header-source-form",
+            "reboot-header-source-form",
         )
         expected_groups = tuple(
             group.replace(
@@ -2147,6 +2148,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_link_header_source_form()', source)
         self.assertIn(
             'compat/x86_64/run_link_header_source_form.sh', source
+        )
+        self.assertIn('run_reboot_header_source_form()', source)
+        self.assertIn(
+            'compat/x86_64/run_reboot_header_source_form.sh', source
         )
         self.assertIn('run_public_header_surface()', source)
         self.assertIn('compat/x86_64/run_public_header_surface.sh', source)
