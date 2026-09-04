@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 HELPER = ROOT / "compat" / "x86_64" / "owned_static_consumer_matrix.py"
+RUNNER = ROOT / "compat" / "x86_64" / "run_owned_static_sysroot.sh"
 SCRATCH_ROOT = ROOT / ".work" / "x86_64" / "owned-static-consumer-matrix-tests"
 
 
@@ -66,12 +67,13 @@ class OwnedStaticConsumerMatrixTests(unittest.TestCase):
         *,
         workers: int | None = None,
         timeout: float = 2.0,
+        state_root: Path | None = None,
     ) -> list[str]:
         command = [
             sys.executable,
             str(HELPER),
             "--state-root",
-            str(self.state_root),
+            str(self.state_root if state_root is None else state_root),
             "--manifest",
             str(manifest),
             "--log-directory",
@@ -90,11 +92,18 @@ class OwnedStaticConsumerMatrixTests(unittest.TestCase):
         *,
         workers: int | None = None,
         timeout: float = 2.0,
+        state_root: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         environment = dict(os.environ)
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         return subprocess.run(
-            self.command(manifest, logs, workers=workers, timeout=timeout),
+            self.command(
+                manifest,
+                logs,
+                workers=workers,
+                timeout=timeout,
+                state_root=state_root,
+            ),
             cwd=ROOT,
             env=environment,
             text=True,
@@ -375,6 +384,75 @@ print("isolated-output:" + name, flush=True)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertFalse(marker.exists())
         self.assertEqual(list(outside.iterdir()), [])
+
+    def test_external_physical_state_root_is_rejected_before_a_job_starts(self) -> None:
+        marker = self.fixture_root / "external-state-job-ran"
+        success = self.write_child(
+            "external-state.py",
+            "from pathlib import Path\nimport sys\nPath(sys.argv[1]).write_text('ran')\n",
+        )
+        manifest = self.write_manifest(
+            [{"name": "external-state", "argv": [*success, str(marker)]}]
+        )
+        logs = self.state_root / "external-state-logs"
+
+        result = self.invoke(manifest, logs, workers=1, state_root=ROOT)
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertFalse(marker.exists())
+        self.assertFalse(logs.exists())
+
+    def test_boolean_manifest_schema_is_rejected_before_a_job_starts(self) -> None:
+        marker = self.fixture_root / "boolean-schema-job-ran"
+        success = self.write_child(
+            "boolean-schema.py",
+            "from pathlib import Path\nimport sys\nPath(sys.argv[1]).write_text('ran')\n",
+        )
+        manifest = self.state_root / "boolean-schema.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schema": True,
+                    "jobs": [{"name": "boolean-schema", "argv": [*success, str(marker)]}],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        logs = self.state_root / "boolean-schema-logs"
+
+        result = self.invoke(manifest, logs, workers=1)
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertFalse(marker.exists())
+        self.assertFalse(logs.exists())
+
+    def test_serial_comparison_is_an_explicit_four_worker_opt_in(self) -> None:
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "CRABC_X86_64_OWNED_STATIC_CONSUMER_WORKERS": "1",
+                "CRABC_X86_64_OWNED_STATIC_CONSUMER_BENCHMARK": "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+        )
+
+        result = subprocess.run(
+            ["bash", str(RUNNER)],
+            cwd=ROOT,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=5,
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "CRABC_X86_64_OWNED_STATIC_CONSUMER_BENCHMARK=1 requires 4 workers",
+            result.stderr,
+        )
 
 
 if __name__ == "__main__":

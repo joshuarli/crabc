@@ -64,13 +64,26 @@ selected_consumer_workers() {
     local workers="${CRABC_X86_64_OWNED_STATIC_CONSUMER_WORKERS:-$CONSUMER_MATRIX_DEFAULT_WORKERS}"
 
     # `1` intentionally remains available when a developer needs a serial
-    # replay. The default four-worker run additionally compares itself with a
-    # serial pass over the same already-built installed trees; validating
-    # before the cold producer work avoids spending two builds on a malformed
-    # setting.
+    # replay. Validate before the cold producer work so a malformed setting
+    # cannot spend two clean builds before failing.
     case "$workers" in
         [1-8]) printf '%s\n' "$workers" ;;
         *) fail "CRABC_X86_64_OWNED_STATIC_CONSUMER_WORKERS must be an integer from 1 through $CONSUMER_MATRIX_MAX_WORKERS" ;;
+    esac
+}
+
+selected_consumer_benchmark() {
+    local workers="$1"
+    local benchmark="${CRABC_X86_64_OWNED_STATIC_CONSUMER_BENCHMARK:-0}"
+
+    case "$benchmark" in
+        0) printf '%s\n' 0 ;;
+        1)
+            [ "$workers" = "$CONSUMER_MATRIX_DEFAULT_WORKERS" ] ||
+                fail "CRABC_X86_64_OWNED_STATIC_CONSUMER_BENCHMARK=1 requires $CONSUMER_MATRIX_DEFAULT_WORKERS workers"
+            printf '%s\n' 1
+            ;;
+        *) fail "CRABC_X86_64_OWNED_STATIC_CONSUMER_BENCHMARK must be 0 or 1" ;;
     esac
 }
 
@@ -907,6 +920,7 @@ fi
 [ "$#" -eq 0 ] || fail "usage: $0"
 require_native_linux_x86_64
 consumer_workers="$(selected_consumer_workers)"
+consumer_benchmark="$(selected_consumer_benchmark "$consumer_workers")"
 for tool in awk cmp cp dd env find gcc grep nm od python3 readelf rustup sha256sum sort tr xargs; do
     require_tool "$tool"
 done
@@ -1055,7 +1069,7 @@ mkdir "$primary_consumer" "$extracted_consumer"
 run_consumer_matrix "$work_dir" "$primary" "$extracted" "$primary_consumer" \
     "$extracted_consumer" "$consumer_workers"
 assert_missing_builtins_rejected "$primary" "$primary_consumer/static-et-exec"
-if [ "$consumer_workers" = "$CONSUMER_MATRIX_DEFAULT_WORKERS" ]; then
+if [ "$consumer_benchmark" = 1 ]; then
     serial_primary_consumer="$work_dir/primary-consumer-serial"
     serial_extracted_consumer="$work_dir/extracted-consumer-serial"
     mkdir "$serial_primary_consumer" "$serial_extracted_consumer"

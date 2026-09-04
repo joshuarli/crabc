@@ -31,6 +31,8 @@ MAX_TIMEOUT_SECONDS: Final = 900.0
 TERMINATION_GRACE_SECONDS: Final = 2.0
 POLL_SECONDS: Final = 0.05
 JOB_NAME: Final = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
+CHECKOUT_ROOT: Final = Path(__file__).resolve().parents[2]
+CHECKOUT_WORK_ROOT: Final = CHECKOUT_ROOT / ".work"
 
 
 class MatrixError(RuntimeError):
@@ -99,6 +101,24 @@ def require_physical_directory(path: Path, description: str) -> Path:
     return resolved
 
 
+def require_checkout_state_root(path: Path) -> Path:
+    """Accept only a dedicated physical state directory below this checkout."""
+
+    checkout_work_root = require_physical_directory(
+        CHECKOUT_WORK_ROOT, "checkout .work root"
+    )
+    state_root = require_physical_directory(path, "state root")
+    try:
+        relative = state_root.relative_to(checkout_work_root)
+    except ValueError as error:
+        raise MatrixError(
+            f"state root must stay below checkout .work: {state_root}"
+        ) from error
+    if not relative.parts:
+        raise MatrixError("state root must name a dedicated directory below checkout .work")
+    return state_root
+
+
 def require_child_path(root: Path, path: Path, description: str) -> Path:
     """Require a physical existing path below the caller-owned state root."""
 
@@ -150,7 +170,12 @@ def parse_manifest(path: Path) -> tuple[ConsumerJob, ...]:
         raise MatrixError(f"consumer manifest is unreadable: {path}") from error
     if not isinstance(decoded, dict) or set(decoded) != {"schema", "jobs"}:
         raise MatrixError("consumer manifest has an invalid schema")
-    if decoded["schema"] != 1 or not isinstance(decoded["jobs"], list) or not decoded["jobs"]:
+    if (
+        type(decoded["schema"]) is not int
+        or decoded["schema"] != 1
+        or not isinstance(decoded["jobs"], list)
+        or not decoded["jobs"]
+    ):
         raise MatrixError("consumer manifest has no jobs")
 
     jobs: list[ConsumerJob] = []
@@ -431,7 +456,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     try:
         args = parse_arguments(sys.argv[1:] if arguments is None else arguments)
-        state_root = require_physical_directory(Path(args.state_root), "state root")
+        state_root = require_checkout_state_root(Path(args.state_root))
         manifest = require_child_path(state_root, Path(args.manifest), "consumer manifest")
         workers = parse_workers(args.workers)
         timeout_seconds = parse_timeout(args.timeout)
