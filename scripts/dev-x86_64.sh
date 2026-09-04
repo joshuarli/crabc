@@ -180,6 +180,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   fcntl-header-abi compile the staged x86 C/C++ fcntl header layouts
   file-handles-header-abi verify x86 GNU <fcntl.h> file-handle C/C++ ABI
   posix-spawn-file-actions-header-abi verify x86 C/C++ POSIX spawn file-actions ABI
+  process-exec-header-abi verify x86 C/C++ process-exec declarations and linkage
   descriptor-advice-header-abi verify x86 C/C++ descriptor-advice header profiles
   filesystem-capacity-header-abi verify x86 C/C++ filesystem-capacity header profiles
   vector-io-header-abi verify x86 C/C++ vector-I/O header profiles
@@ -445,6 +446,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-temporary-names  run the opt-in static x86 tmpnam/tempnam slice
   libc-file-handles  run the opt-in static x86 file-handle syscall slice
   libc-posix-spawn-file-actions  run the opt-in mixed-runtime x86 spawn file-actions lifecycle
+  libc-process-exec  run the opt-in x86 process-image replacement slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-environment  run the static x86 crabc-libc environment-mutation slice
   libc-secure-environment  run the static x86 crabc-libc GNU secure-environment slice
@@ -3455,6 +3457,10 @@ run_posix_spawn_file_actions_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_posix_spawn_file_actions_header_abi.sh
 }
 
+run_process_exec_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_process_exec_header_abi.sh
+}
+
 run_flock_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_flock_header_abi.sh
 }
@@ -4440,6 +4446,10 @@ run_libc_process_signal_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_process_signal.sh
 }
 
+run_libc_process_exec_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_process_exec.sh
+}
+
 run_libc_pthread_create_join_tls_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_create_join_tls.sh
 }
@@ -5152,7 +5162,7 @@ case "$command" in
     ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     temporary-names-header-abi|libc-temporary-names) ;;
     file-handles-header-abi|libc-file-handles) ;;
-    posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions) ;;
+    posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions|process-exec-header-abi|libc-process-exec) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
     tee-header-abi|splice-header-abi) ;;
     sync-file-range-header-abi|copy-file-range-header-abi) ;;
@@ -6071,6 +6081,11 @@ case "$command" in
         ensure_image
         run_posix_spawn_file_actions_header_abi
         ;;
+    process-exec-header-abi)
+        [ "$#" -eq 0 ] || fail "process-exec-header-abi takes no arguments"
+        ensure_image
+        run_process_exec_header_abi
+        ;;
     flock-header-abi)
         [ "$#" -eq 0 ] || fail "flock-header-abi takes no arguments"
         ensure_image
@@ -6894,6 +6909,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-process-signal takes no arguments"
         ensure_image
         run_libc_process_signal_probe
+        ;;
+    libc-process-exec)
+        [ "$#" -eq 0 ] || fail "libc-process-exec takes no arguments"
+        ensure_image
+        run_libc_process_exec_probe
         ;;
     libc-pthread-create-join-tls)
         [ "$#" -eq 0 ] || fail "libc-pthread-create-join-tls takes no arguments"

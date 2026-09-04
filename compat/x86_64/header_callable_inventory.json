@@ -1207,13 +1207,6 @@
         "endutxent",
         "err",
         "errx",
-        "execl",
-        "execle",
-        "execlp",
-        "execv",
-        "execve",
-        "execvp",
-        "execvpe",
         "fallocate",
         "fanotify_init",
         "fanotify_mark",
@@ -1221,7 +1214,6 @@
         "fchown",
         "fchownat",
         "fdopen",
-        "fexecve",
         "fflush_unlocked",
         "fgetc_unlocked",
         "fgetgrent",
@@ -1577,6 +1569,29 @@
           "posix_spawn_file_actions_destroy"
         ],
         "runner": "compat/x86_64/run_libc_posix_spawn_file_actions.sh",
+        "state": "verified"
+      },
+      {
+        "aliases": [
+          {
+            "binding": "weak-same-address",
+            "name": "execvpe",
+            "target": "__execvpe"
+          }
+        ],
+        "evidence_record": "static-c-process-exec",
+        "id": "x86-process-exec",
+        "members": [
+          "execl",
+          "execle",
+          "execlp",
+          "execv",
+          "execve",
+          "execvp",
+          "execvpe",
+          "fexecve"
+        ],
+        "runner": "compat/x86_64/run_libc_process_exec.sh",
         "state": "verified"
       },
       {
@@ -417409,7 +417424,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "228bc858a2b9f2c8bd2a561ec1069de5c5291f2d835a137ba9fe6ca2263049f1",
+    "parity_ledger_sha256": "833f01a6933063d22b15a425935a8ba16639ebb5df33cd6f6527d096e9a2bc3a",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -436224,8 +436239,8 @@
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
       "default_static": 1119,
-      "unprovided": 344,
-      "verified_feature_archives": 62
+      "unprovided": 336,
+      "verified_feature_archives": 70
     },
     "candidate_external_callable_count": 1525,
     "candidate_public_header_count": 191,

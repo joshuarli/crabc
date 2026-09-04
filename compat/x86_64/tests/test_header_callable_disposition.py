@@ -39,15 +39,15 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         summary = report["summary"]
         self.assertEqual(summary["candidate_external_callable_count"], 1525)
         self.assertEqual(summary["default_static_callable_count"], 1119)
-        self.assertEqual(summary["verified_feature_callable_count"], 62)
-        self.assertEqual(summary["unprovided_callable_count"], 344)
+        self.assertEqual(summary["verified_feature_callable_count"], 70)
+        self.assertEqual(summary["unprovided_callable_count"], 336)
         self.assertEqual(
             summary["deferred_resolution_counts"],
             {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 335,
+                "planned-provider": 327,
             },
         )
         self.assertEqual(
@@ -96,6 +96,24 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         }
         self.assertNotIn("name_to_handle_at", deferred_members)
         self.assertNotIn("open_by_handle_at", deferred_members)
+
+    def test_process_exec_is_a_verified_opt_in_provider(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: row
+            for row in report["primary_disposition"]["verified_feature_archives"]
+        }
+        process_exec = providers["x86-process-exec"]
+        self.assertEqual(
+            process_exec["members"],
+            ["execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"],
+        )
+        deferred_members = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        self.assertFalse(set(process_exec["members"]) & deferred_members)
 
     def test_temporary_names_are_verified_opt_in_providers_not_deferred_defaults(
         self,

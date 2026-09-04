@@ -47,6 +47,11 @@ x86-environment-runtime = ["x86-allocator-runtime"]
 # already evidenced x86 C allocator wrapper; keeping this opt-in leaves the
 # dependency-free selected-static archive unchanged.
 x86-posix-spawn-file-actions = ["x86-allocator-runtime"]
+# Private Linux/x86-64 direct process-image replacement. This reuses the
+# selected environment and byte-string substrates plus private raw mappings
+# for variadic argv vectors, but does not select fork, vfork, spawn, or an
+# allocator/runtime composition.
+x86-process-exec = []
 # Complete the distinct strong AArch64 allocator-observation entry only for
 # its closed capability gate. This implies the private allocation backend but
 # does not widen the earlier basic-wrapper artifact's exact object surface.

@@ -332,6 +332,8 @@ pub(crate) const SYS_SOCKETPAIR: i64 = 53;
 pub(crate) const SYS_SETSOCKOPT: i64 = 54;
 pub(crate) const SYS_GETSOCKOPT: i64 = 55;
 pub(crate) const SYS_EXECVE: i64 = 59;
+/// Linux 5.10 x86-64 `execveat` is the direct `fexecve` kernel boundary.
+pub(crate) const SYS_EXECVEAT: i64 = 322;
 pub(crate) const SYS_WAIT4: i64 = 61;
 pub(crate) const SYS_KILL: i64 = 62;
 pub(crate) const SYS_UNAME: i64 = 63;

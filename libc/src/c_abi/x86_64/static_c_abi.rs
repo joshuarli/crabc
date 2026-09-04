@@ -504,6 +504,36 @@ mod environment;
 #[cfg(feature = "x86-environment-runtime")]
 #[path = "environment_runtime.rs"]
 mod environment;
+// The direct exec forms, selected-environment forwarding, PATH search, and
+// C-variadic argv constructors are separate source leaves. The feature
+// evidence build pins multi-CGU, LTO-off topology and audits separate archive
+// members: there, ordinary static `execve`/`fexecve` consumers avoid
+// environment/PATH/mmap closure, `execv` adds only its environment forwarding,
+// `execvp` adds its intended PATH/environment closure but not mmap, and only
+// the variadic forms add mmap. Source modularity preserves dependency
+// ownership; arbitrary release archive topology is not claimed. None of these
+// leaves implies fork, vfork, or spawn.
+#[cfg(feature = "x86-process-exec")]
+#[path = "process_exec.rs"]
+mod process_exec;
+#[cfg(feature = "x86-process-exec")]
+#[path = "process_exec_env.rs"]
+mod process_exec_env;
+#[cfg(feature = "x86-process-exec")]
+#[path = "process_exec_path.rs"]
+mod process_exec_path;
+#[cfg(feature = "x86-process-exec")]
+#[path = "process_exec_variadic.rs"]
+mod process_exec_variadic;
+#[cfg(feature = "x86-process-exec")]
+#[path = "process_exec_execl.rs"]
+mod process_exec_execl;
+#[cfg(feature = "x86-process-exec")]
+#[path = "process_exec_execle.rs"]
+mod process_exec_execle;
+#[cfg(feature = "x86-process-exec")]
+#[path = "process_exec_execlp.rs"]
+mod process_exec_execlp;
 #[path = "login_name.rs"]
 mod login_name;
 #[path = "auxv_observation.rs"]

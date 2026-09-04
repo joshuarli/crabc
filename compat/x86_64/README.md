@@ -178,6 +178,21 @@ contained clone/fork, `WNOHANG`, `WNOWAIT`, exit, exact-reap, and post-reap
 `wait`/`waitpid`/`waitid`, `posix_spawn`, C process/signal headers or ABI,
 errno TLS, pthread/atfork/cancellation mechanics, child supervision, or public
 x86 support.
+
+The private `x86-process-exec` archive slice is exposed only through the
+paired `process-exec-header-abi` and `libc-process-exec` commands. It routes
+exactly `execl`, `execle`, `execlp`, `execv`, `execve`, `execvp`, `execvpe`, and
+`fexecve` using pinned musl 1.2.6 semantics. Linux 5.10 `fexecve` uses direct
+`execveat` with `AT_EMPTY_PATH`; a seccomp `ENOSYS` remains `ENOSYS`, with no
+`/proc/self/fd` construction or fallback-only `ENOENT`-to-`EBADF` remap. The
+internal `__execvpe` is strong and public `execvpe` is a weak same-address
+alias. This opt-in slice does not select all `process.control`, widen the
+default archive, promote x86, or claim public support. `execv` forwards the
+selected `__environ` pointer directly; `execvp` and `execvpe` additionally use
+default `environment.rs`'s 1,048,576-entry `getenv` lookup for PATH; all three
+observe bounded mutation semantics. Ordinary valid finite environment
+forwarding is selected, while unrestricted musl environment parity is not
+claimed.
 The separate `thread-kill-reference` gate verifies the private
 `process.thread-kill` slice: typed `signal::kill_thread` fixes the thread group
 to the calling process and invokes direct `tgkill=234` for one positive target
@@ -545,6 +560,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-file-handles
 ./scripts/dev-x86_64.sh posix-spawn-file-actions-header-abi
 ./scripts/dev-x86_64.sh libc-posix-spawn-file-actions
+./scripts/dev-x86_64.sh process-exec-header-abi
+./scripts/dev-x86_64.sh libc-process-exec
 ./scripts/dev-x86_64.sh libc-process-context
 ./scripts/dev-x86_64.sh libc-environment
 ./scripts/dev-x86_64.sh libc-secure-environment
@@ -1730,8 +1747,8 @@ work, and `libc.c-abi-compat` retains final provider selection, ordinary
 archive extraction, behavior, and C-ABI closure.
 
 `header-callable-disposition` regenerates the compiler-derived callable
-inventory, then checks that its 1,119 default-static, 62 verified
-feature-provider, and 344 deferred names form one exact primary partition.
+inventory, then checks that its 1,119 default-static, 70 verified
+feature-provider, and 336 deferred names form one exact primary partition.
 Its deferred groups distinguish planned semantic providers from compiler
 builtins, consumer-supplied callbacks, and oracle-declared no-provider names;
 the project-only addressable atomic names are now selected default-static
@@ -1740,11 +1757,11 @@ declaration parity, family promotion, final C-ABI closure, or public x86
 support.
 
 `header-callable-provider-linkage-audit` separately uses the checked inventory
-to ordinarily extract the 1,119 current default-static and 62 verified
+to ordinarily extract the 1,119 current default-static and 70 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 344-name unprovided complement remains explicit:
+selection and behavior. Its 336-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 

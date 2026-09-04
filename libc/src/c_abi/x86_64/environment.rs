@@ -26,9 +26,12 @@
 //! call, synchronize direct foreign writes to `environ`, protect mutation or
 //! lifetime of caller-owned `putenv` strings, provide fork recovery when a
 //! different thread held the lock, or make any operation async-signal-safe.
-//! Callers must coordinate all such access themselves. The artifact also has
-//! no allocator, `secure_getenv`, auxv secure-execution decision, exec/spawn
-//! integration, general startup, dynamic libc, loader, or public x86 support.
+//! Callers must coordinate all such access themselves. The private opt-in
+//! `x86-process-exec` leaf consumes only `getenv` and `__environ` for direct
+//! exec-family PATH/environment forwarding. That reuse does not establish
+//! `posix_spawn`, fork, or general runtime integration. This artifact also has
+//! no allocator, `secure_getenv`, auxv secure-execution decision, general
+//! startup, dynamic libc, loader, or public x86 support.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

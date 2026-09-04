@@ -1739,6 +1739,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    header-callable-disposition) ;;", source)
         self.assertIn("    header-abi-matrix) ;;", source)
         self.assertIn("    header-record-layout-matrix) ;;", source)
+        self.assertIn("    process-exec-header-abi) ;;", source)
         self.assertIn("    header-declaration-macro-visibility-matrix) ;;", source)
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    ftw-header-abi) ;;", source)
@@ -1809,7 +1810,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "temporary-names-header-abi|libc-temporary-names",
             "file-handles-header-abi|libc-file-handles",
-            "posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions",
+            "posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions|process-exec-header-abi|libc-process-exec",
             "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
             "tee-header-abi|splice-header-abi",
             "sync-file-range-header-abi|copy-file-range-header-abi",
@@ -2087,6 +2088,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-file-handles", source)
         self.assertIn("posix-spawn-file-actions-header-abi", source)
         self.assertIn("libc-posix-spawn-file-actions", source)
+        self.assertIn("process-exec-header-abi", source)
+        self.assertIn("libc-process-exec", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-environment", source)
         self.assertIn("libc-secure-environment", source)
@@ -13287,6 +13290,83 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, header_runner)
         self.assertIn("posix-spawn-file-actions-header-abi", runner)
         self.assertIn("libc-posix-spawn-file-actions", runner)
+
+    def test_libc_static_c_abi_process_exec_stays_opt_in_and_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = "\n".join(
+            (
+                ROOT / "libc" / "src" / "c_abi" / "x86_64" / name
+            ).read_text(encoding="utf-8")
+            for name in (
+                "process_exec.rs",
+                "process_exec_env.rs",
+                "process_exec_path.rs",
+                "process_exec_variadic.rs",
+                "process_exec_execl.rs",
+                "process_exec_execle.rs",
+                "process_exec_execlp.rs",
+            )
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_process_exec_probe.c").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_exec.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_process_exec_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[cfg(feature = "x86-process-exec")]', static_root)
+        self.assertIn('#[path = "process_exec.rs"]', static_root)
+        expected = {"execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"}
+        self.assertFalse(expected & set(static_exports.splitlines()))
+        for required in (
+            "src/process/execve.c",
+            "src/process/execv.c",
+            "src/process/execvp.c",
+            "src/process/fexecve.c",
+            "SYS_EXECVE",
+            "SYS_EXECVEAT",
+            "AT_EMPTY_PATH",
+            "PATH",
+            "EACCES",
+            "__execvpe",
+            ".weak execvpe",
+            ".set execvpe, __execvpe",
+            "# Safety",
+        ):
+            self.assertIn(required, source)
+        self.assertIn("x86-process-exec", artifact_runner)
+        for required in (
+            "execve=59",
+            "execveat=322",
+            "AT_EMPTY_PATH",
+            "ENOSYS",
+            "no-procfd",
+            "__execvpe",
+            "weak",
+            "-nostdlib -static",
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "process_exec_header_abi_probe.c",
+            "process_exec_header_abi_probe.cpp",
+            "execvpe",
+            "_GNU_SOURCE",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+        for symbol in expected:
+            self.assertIn(symbol, probe)
+        self.assertIn("process-exec-header-abi", runner)
+        self.assertIn("libc-process-exec", runner)
 
     def test_libc_static_c_abi_process_context_artifact_stays_narrow(self) -> None:
         static_root = (

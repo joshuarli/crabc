@@ -3419,10 +3419,10 @@ def validate_header_layout_foundation_manifest(
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 62,
-            "verified_feature_profile_count": 26,
+            "verified_feature_callable_count": 70,
+            "verified_feature_profile_count": 27,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 344,
+            "unprovided_callable_count": 336,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3485,9 +3485,9 @@ def validate_header_layout_foundation_manifest(
             "report": "compat/x86_64/header_callable_disposition.json",
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 62,
+            "verified_feature_callable_count": 70,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 344,
+            "unprovided_callable_count": 336,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
             "missing_reference_declaration_routing_complete": True,
@@ -6549,6 +6549,7 @@ def require_public_header_profile_consumability_artifact(
         "compat/x86_64/tests/test_candidate_header_closure.py",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
+        "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
     ):
         require(
@@ -6747,8 +6748,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
         "still-planned `libc.headers-layouts`",
         "all 1,525 current names",
         "1,119 default-static",
-        "62 verified feature-provider",
-        "344 exact deferred-owner records",
+        "70 verified feature-provider",
+        "336 exact deferred-owner records",
         "zero current pinned-musl missing declaration records",
         "not declaration parity",
         "does not perform archive extraction",
@@ -6789,7 +6790,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "344 deferred providers" in scope
+        and "336 deferred providers" in scope
         and "zero missing reference declaration names" in scope
         and "not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
@@ -6818,7 +6819,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 335,
+                "planned-provider": 327,
             },
             "final_provider_archive_closure_complete": False,
             "header_declaration_parity_complete": False,
@@ -6829,8 +6830,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 344,
-            "verified_feature_callable_count": 62,
+            "unprovided_callable_count": 336,
+            "verified_feature_callable_count": 70,
         },
         "header callable disposition summary drifted",
     )
@@ -6892,11 +6893,11 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "isolated exact Cargo requests",
         "ordinary archive extraction",
         "1,119 current default-static",
-        "62 verified feature-provider",
+        "70 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "344-name unprovided complement",
+        "336-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -9303,7 +9304,6 @@ def require_legacy_memory_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "STATUS.md",
-        "x86-64.md",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -23765,10 +23765,7 @@ def require_posix_spawn_file_actions_artifact(family: Mapping[str, Any]) -> None
         "destroy(&actions) != 0",
         "fresh init; this checks only",
     ):
-        require(
-            snippet in probe,
-            f"spawn file-actions lifecycle probe omits {snippet}",
-        )
+        require(snippet in probe, f"spawn file-actions lifecycle probe omits {snippet}")
 
     header_runner = (
         ROOT / "compat" / "x86_64" / "run_posix_spawn_file_actions_header_abi.sh"
@@ -23784,10 +23781,7 @@ def require_posix_spawn_file_actions_artifact(family: Mapping[str, Any]) -> None
         "posix_spawn_file_actions_addfchdir_np",
         "unmangled",
     ):
-        require(
-            snippet in header_runner,
-            f"spawn file-actions header runner omits {snippet}",
-        )
+        require(snippet in header_runner, f"spawn file-actions header runner omits {snippet}")
 
     dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
     for snippet in (
@@ -23798,11 +23792,244 @@ def require_posix_spawn_file_actions_artifact(family: Mapping[str, Any]) -> None
         "run_posix_spawn_file_actions_header_abi.sh",
         "run_libc_posix_spawn_file_actions.sh",
     ):
-        require(
-            snippet in dispatcher,
-            f"x86 dispatcher omits {snippet}",
-        )
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
+
+def require_process_exec_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the process-image replacement slice opt-in and narrowly owned."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-process-exec"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-process-exec artifact",
+    )
+    artifact = matching[0]
+    require("capabilities" not in artifact, "static-c-process-exec must remain a private artifact")
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-process-exec needs a description")
+    for phrase in (
+        "Private native x86 opt-in process-image replacement C ABI artifact",
+        "still-planned `libc.posix-runtime`",
+        "x86-process-exec",
+        "execl",
+        "execle",
+        "execlp",
+        "execv",
+        "execve",
+        "execvp",
+        "execvpe",
+        "fexecve",
+        "execve=59",
+        "execveat=322",
+        "AT_EMPTY_PATH=0x1000",
+        "/proc/self/fd",
+        "/proc/self/fd/<fd>",
+        "ENOENT-to-EBADF",
+        "ENOSYS",
+        "strong",
+        "weak same-address",
+        "does not select all `process.control`",
+        "public x86 support",
+        "ordinary valid finite C-vararg argv semantics",
+        "exact-size anonymous mapping",
+        "stack-VLA allocation",
+    ):
+        require(phrase in description, f"static-c-process-exec description omits {phrase}")
+
+    owners = set(nonempty_strings(artifact.get("source_owners"), "static-c-process-exec.source_owners"))
+    for owner in (
+        "libc/Cargo.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/process_exec.rs",
+        "libc/src/c_abi/x86_64/process_exec_env.rs",
+        "libc/src/c_abi/x86_64/process_exec_execl.rs",
+        "libc/src/c_abi/x86_64/process_exec_execle.rs",
+        "libc/src/c_abi/x86_64/process_exec_execlp.rs",
+        "libc/src/c_abi/x86_64/process_exec_path.rs",
+        "libc/src/c_abi/x86_64/process_exec_variadic.rs",
+        "include/unistd.h",
+        "compat/x86_64/process_exec_header_abi_probe.c",
+        "compat/x86_64/process_exec_header_abi_probe.cpp",
+        "compat/x86_64/run_process_exec_header_abi.sh",
+        "compat/x86_64/libc_process_exec_probe.c",
+        "compat/x86_64/run_libc_process_exec.sh",
+        "compat/x86_64/tests/test_libc_process_exec.py",
+        "compat/x86_64/tests/test_feature_archive_roster.py",
+        "compat/x86_64/tests/test_header_callable_disposition.py",
+        "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-process-exec source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-process-exec.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            all(token in item for token in ("rdi", "rsi", "rdx", "execve=59", "execveat=322"))
+            for item in prerequisites
+        ),
+        "static-c-process-exec must retain its x86 syscall ABI",
+    )
+    require(
+        any(
+            all(token in item for token in ("PATH", "EACCES", "variadic", "__execvpe"))
+            for item in prerequisites
+        ),
+        "static-c-process-exec must retain musl exec semantics",
+    )
+    require(
+        any(
+            all(token in item for token in ("default `/usr/local/bin:/bin:/usr/bin`", "NAME_MAX=255", "empty-component current-directory slash bypass", "ENOEXEC"))
+            for item in prerequisites
+        ),
+        "static-c-process-exec must retain bounded PATH search semantics",
+    )
+    require(
+        any(
+            all(
+                token in item
+                for token in (
+                    "`execv` forwards the selected `__environ` pointer directly",
+                    "`execvp` and `execvpe` additionally use",
+                    "default `environment.rs`",
+                    "1,048,576-entry getenv lookup",
+                    "bounded mutation semantics",
+                    "Ordinary valid finite environment forwarding",
+                    "unrestricted musl environment parity is not claimed",
+                )
+            )
+            for item in prerequisites
+        ),
+        "static-c-process-exec must state its inherited environment boundary",
+    )
+    require(
+        any(
+            "runner's explicitly audited `-C lto=off -C codegen-units=256` candidate archive" in item
+            and "ordinary direct execve/fexecve syscall closure" in item
+            and "environment, PATH, byte-string, and C-vararg support closure" in item
+            and "release-profile" in item
+            for item in prerequisites
+        ),
+        "static-c-process-exec must distinguish direct and composed closure topology",
+    )
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-process-exec.x86_header_prerequisites",
+    )
+    require(
+        any(
+            all(token in item for token in ("pinned-musl/project", "unistd.h", "C11/C++17", "execvpe", "unmangled"))
+            for item in headers
+        ),
+        "static-c-process-exec must retain its bounded header ABI",
+    )
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list) and len(evidence) == 1, "static-c-process-exec native evidence is invalid")
+    entry = evidence[0]
+    require(
+        isinstance(entry, Mapping)
+        and entry.get("state") == "verified"
+        and entry.get("command") == "./scripts/dev-x86_64.sh libc-process-exec",
+        "static-c-process-exec must use the private lifecycle command",
+    )
+    scope = entry.get("scope")
+    require(isinstance(scope, str), "static-c-process-exec evidence needs a scope")
+    for phrase in (
+        "x86-process-exec",
+        "all eight selected callables",
+        "execve=59",
+        "execveat=322",
+        "AT_EMPTY_PATH",
+        "EACCES",
+        "strong `__execvpe`/weak same-address `execvpe`",
+        "ENOSYS",
+        "no-procfd",
+        "/proc/self/fd/<fd>",
+        "ENOENT-to-EBADF",
+        "not claimed as musl parity",
+        "default `environment.rs`",
+        "1,048,576-entry getenv lookup",
+        "bounded mutation semantics",
+        "unrestricted musl environment parity is not claimed",
+        "all `process.control`",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-process-exec evidence omits {phrase}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_process_exec_probe.c").read_text(encoding="utf-8")
+    for phrase in (
+        "stack",
+        "variadic",
+        "ENOEXEC",
+        "EACCES",
+        "PATH",
+        "seccomp",
+        "ENOSYS",
+        "procfd",
+        "ENOEXEC",
+        "EACCES",
+        "execveat",
+        "strong",
+        "weak",
+        "raw-forked child",
+        "check_direct_failure_errno",
+        "check_empty_path_leading",
+        "check_empty_path_interior",
+        "check_empty_path_trailing",
+        "check_default_path",
+        "check_enoexec_is_terminal",
+        "check_fexecve_enosys",
+        "SECCOMP_RET_ERRNO",
+        "FIXTURE_ENOSYS",
+        "CRABC_PROCESS_EXEC_EXECVE_ONLY",
+        "CRABC_PROCESS_EXEC_FEXECVE_ONLY",
+        "CRABC_PROCESS_EXEC_CANDIDATE",
+    ):
+        require(phrase in probe, f"static-c-process-exec probe omits {phrase}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_process_exec.sh").read_text(encoding="utf-8")
+    for phrase in (
+        "readonly FEATURE=x86-process-exec",
+        'feature_args=(--features "$FEATURE")',
+        "execve=59",
+        "execveat=322",
+        "AT_EMPTY_PATH",
+        "ENOSYS",
+        "procfd",
+        "strong",
+        "weak",
+        "-nostdlib -static",
+        "direct execve",
+        "fexecve",
+        "-C lto=off",
+        "-C codegen-units=256",
+        "PATH",
+        "NAME_MAX",
+        "slash",
+        "shell",
+        "environment closure",
+        "without --gc-sections",
+    ):
+        require(phrase in runner, f"static-c-process-exec runner omits {phrase}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for phrase in (
+        "process-exec-header-abi)",
+        "libc-process-exec)",
+        "run_process_exec_header_abi()",
+        "run_libc_process_exec_probe()",
+        "run_process_exec_header_abi.sh",
+        "run_libc_process_exec.sh",
+    ):
+        require(phrase in dispatcher, f"x86 dispatcher omits {phrase}")
 
 def require_file_handles_artifact(family: Mapping[str, Any]) -> None:
     """Keep GNU file-handle authority opt-in and outside filesystem promotion."""
@@ -78640,6 +78867,7 @@ def validate_ledger(
     )
     require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
     require_posix_spawn_file_actions_artifact(by_id["libc.posix-runtime"])
+    require_process_exec_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getpgroup_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_signal_fields_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getschedparam_artifact(by_id["libc.posix-runtime"])

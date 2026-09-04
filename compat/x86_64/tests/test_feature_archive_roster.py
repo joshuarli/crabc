@@ -55,7 +55,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         rows = ROSTER.load_feature_archive_roster()
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
-        self.assertEqual(len(rows), 26)
+        self.assertEqual(len(rows), 27)
         self.assertEqual([item.identifier for item in rows if item.state == "planned"], [])
         resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
         self.assertEqual(resolver.state, "verified")
@@ -131,6 +131,20 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "posix_spawn_file_actions_addopen",
                 "posix_spawn_file_actions_destroy",
             ),
+        )
+        process_exec = next(item for item in rows if item.identifier == "x86-process-exec")
+        self.assertEqual(process_exec.state, "verified")
+        self.assertEqual(process_exec.evidence_record, "static-c-process-exec")
+        self.assertEqual(process_exec.runner, "compat/x86_64/run_libc_process_exec.sh")
+        self.assertEqual(process_exec.dispatch_command, "libc-process-exec")
+        self.assertEqual(process_exec.baseline_features, ())
+        self.assertEqual(
+            process_exec.additive_callables,
+            ("execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"),
+        )
+        self.assertEqual(
+            process_exec.aliases,
+            (ROSTER.ArchiveAlias("execvpe", "__execvpe", "weak-same-address"),),
         )
         spin_operations = next(
             item

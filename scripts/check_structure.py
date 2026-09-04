@@ -266,6 +266,13 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
     Path("libc/src/c_abi/x86_64/environment_runtime.rs"),
+    # The private x86-process-exec feature admits only its direct syscall,
+    # selected-environment, PATH-search, and variadic-vector leaves. This
+    # exact list does not select the wider process-control runtime.
+    Path("libc/src/c_abi/x86_64/process_exec.rs"),
+    Path("libc/src/c_abi/x86_64/process_exec_env.rs"),
+    Path("libc/src/c_abi/x86_64/process_exec_path.rs"),
+    Path("libc/src/c_abi/x86_64/process_exec_variadic.rs"),
     Path("libc/src/c_abi/x86_64/startup_security.rs"),
     Path("libc/src/c_abi/x86_64/issetugid.rs"),
     Path("libc/src/c_abi/x86_64/secure_environment.rs"),

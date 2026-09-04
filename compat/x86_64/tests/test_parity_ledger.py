@@ -66,9 +66,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 50)
-        self.assertEqual(report["verified_artifact_count"], 376)
-        self.assertEqual(report["feature_archive_count"], 26)
-        self.assertEqual(report["verified_feature_archive_count"], 26)
+        self.assertEqual(report["verified_artifact_count"], 377)
+        self.assertEqual(report["feature_archive_count"], 27)
+        self.assertEqual(report["verified_feature_archive_count"], 27)
         self.assertEqual(report["planned_feature_archive_count"], 0)
         self.assertEqual(report["header_layout_probe_count"], 55)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -135,9 +135,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             data, self.verified_records(data)
         )
         self.assertEqual(report, {
-            "feature_archive_count": 26,
+            "feature_archive_count": 27,
             "planned_feature_archive_count": 0,
-            "verified_feature_archive_count": 26,
+            "verified_feature_archive_count": 27,
         })
 
         feature_archives = data["feature_archive"]
@@ -388,6 +388,49 @@ class X86ParityLedgerTests(unittest.TestCase):
         changed_artifact["description"] = "private spawn file actions"
         with self.assertRaisesRegex(ledger.LedgerError, "mixed-runtime POSIX"):
             ledger.require_posix_spawn_file_actions_artifact(changed_family)
+
+    def test_process_exec_artifact_stays_opt_in_and_non_promoting(self) -> None:
+        family = self.family(self.data(), "libc.posix-runtime")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(entry for entry in artifacts if entry["id"] == "static-c-process-exec")
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        description = artifact["description"]
+        for phrase in (
+            "x86-process-exec",
+            "execve=59",
+            "execveat=322",
+            "AT_EMPTY_PATH=0x1000",
+            "/proc/self/fd",
+            "ENOSYS",
+            "default `environment.rs`",
+            "1,048,576-entry getenv lookup",
+            "bounded mutation semantics",
+            "unrestricted musl environment parity is not claimed",
+            "strong",
+            "weak same-address",
+            "all `process.control`",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, description)
+        self.assertEqual(
+            artifact["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-process-exec",
+        )
+
+        archives = self.data()["feature_archive"]
+        assert isinstance(archives, list)
+        feature = next(entry for entry in archives if entry["id"] == "x86-process-exec")
+        self.assertEqual(feature["enabled_features"], ["x86-process-exec"])
+        self.assertEqual(
+            feature["additive_callables"],
+            ["execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"],
+        )
+        self.assertEqual(
+            feature["aliases"],
+            [{"name": "execvpe", "target": "__execvpe", "binding": "weak-same-address"}],
+        )
 
     def test_resolver_runtime_artifact_keeps_its_opt_in_alias_boundary(self) -> None:
         data = self.data()
@@ -3858,9 +3901,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(disposition["candidate_external_callable_count"], 1525)
         self.assertEqual(disposition["default_static_callable_count"], 1119)
-        self.assertEqual(disposition["verified_feature_callable_count"], 62)
+        self.assertEqual(disposition["verified_feature_callable_count"], 70)
         self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 344)
+        self.assertEqual(disposition["unprovided_callable_count"], 336)
         self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
         self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
@@ -3877,10 +3920,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1525)
         self.assertEqual(provider_audit["default_static_callable_count"], 1119)
-        self.assertEqual(provider_audit["verified_feature_callable_count"], 62)
-        self.assertEqual(provider_audit["verified_feature_profile_count"], 26)
+        self.assertEqual(provider_audit["verified_feature_callable_count"], 70)
+        self.assertEqual(provider_audit["verified_feature_profile_count"], 27)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 344)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 336)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])

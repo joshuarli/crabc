@@ -528,6 +528,20 @@ execute a spawn action or select posix_spawn/posix_spawnp, fork/vfork/clone,
 exec, attributes, allocator completion, default-archive change, family
 completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh process-exec-header-abi` and
+`./scripts/dev-x86_64.sh libc-process-exec` record the private opt-in
+`static-c-process-exec` slice in still-planned `libc.posix-runtime`. It adds
+only `execl`, `execle`, `execlp`, `execv`, `execve`, `execvp`, `execvpe`, and
+`fexecve`; direct `execveat=322`/`AT_EMPTY_PATH` fexecve intentionally has no
+procfd fallback, so seccomp `ENOSYS` remains visible. The slice retains musl
+PATH/EACCES/ENOEXEC and finite vararg semantics, with strong `__execvpe` and
+weak same-address `execvpe`, while leaving the default archive, broad
+`process.control`, family promotion, and public x86 support unchanged.
+The PATH forms inherit default `environment.rs`, including its 1,048,576-entry
+`getenv` lookup and bounded mutation semantics; ordinary valid finite
+environment forwarding is selected, while unrestricted musl environment parity
+is not claimed.
+
 `./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup` is a separate private
 `static-c-posix-spawnattr-getpgroup` artifact inside still-planned
 `libc.posix-runtime`, not a process-spawn or process-control capability. Its

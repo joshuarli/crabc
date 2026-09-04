@@ -214,8 +214,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             {
                 "declared_unverified_feature_archives": 0,
                 "default_static": 1119,
-                "unprovided": 344,
-                "verified_feature_archives": 62,
+                "unprovided": 336,
+                "verified_feature_archives": 70,
             },
         )
         self.assertEqual(
@@ -278,6 +278,10 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             },
         )
         self.assertEqual(
+            verified["x86-process-exec"],
+            {"execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"},
+        )
+        self.assertEqual(
             verified["x86-pthread-spin-operations"],
             {"pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"},
         )
@@ -294,7 +298,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             },
         )
         self.assertEqual(verified["x86-crypt-allocator-composition"], set())
-        self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"} & unprovided)
+        self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"} & unprovided)
         self.assertIn("fputws", unprovided)
 
     def test_ftw_and_gnu_namespace_declarations_match_pinned_visibility(self) -> None:
