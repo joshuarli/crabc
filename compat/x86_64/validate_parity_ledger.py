@@ -394,23 +394,23 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 663,
-        "mismatch": 617,
+        "matched": 677,
+        "mismatch": 603,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "617 comparable header/profile rows have prototype or named declaration-form differences",
+        "603 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 12954,
-        "incompatible_count": 2819,
+        "candidate_only_count": 12938,
+        "incompatible_count": 2595,
         "reference_only_count": 8751,
     },
-    "mismatch_row_count": 617,
+    "mismatch_row_count": 603,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -425,9 +425,9 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 12954,
+    "candidate_only_identity_count": 12938,
     "candidate_only_identity_kind_counts": {
-        "function": 850,
+        "function": 834,
         "macro": 9044,
         "record": 233,
         "typedef": 2785,
@@ -437,19 +437,19 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 741,
-        "mismatch": 539,
+        "matched": 748,
+        "mismatch": 532,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "539 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "532 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "matched_identity_count": 286613,
-    "mismatch_row_count": 539,
+    "mismatch_row_count": 532,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -469,13 +469,13 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 663,
-        "mismatch": 617,
+        "matched": 677,
+        "mismatch": 603,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 2819,
-    "source_form_difference_row_count": 453,
-    "source_form_only_difference_row_count": 78,
+    "source_form_difference_count": 2595,
+    "source_form_difference_row_count": 439,
+    "source_form_only_difference_row_count": 71,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -2690,23 +2690,23 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 1862,
+            "candidate_only_callable_count": 1846,
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1103,
-                "mismatch": 177,
+                "matched": 1110,
+                "mismatch": 170,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "177 comparable pinned header/profile rows have callable visibility differences",
+                "170 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
             "matched_callable_count": 34520,
-            "mismatch_row_count": 177,
+            "mismatch_row_count": 170,
             "oracle_not_applicable_candidate_visible_callable_count": 21,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
@@ -3501,6 +3501,7 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/tests/test_header_callable_provider_linkage_audit.py",
         "compat/x86_64/tests/test_header_callable_visibility_matrix.py",
         "compat/x86_64/tests/test_header_abi_matrix.py",
+        "compat/x86_64/tests/test_wchar_uchar_header_source.py",
         "compat/x86_64/tests/test_header_declaration_macro_visibility_matrix.py",
         "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
         "compat/x86_64/tests/test_ioctl_header_abi.py",
@@ -6409,13 +6410,13 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "539 current comparable declaration-or-macro identity mismatch rows",
-        "741 matched identity rows",
+        "532 current comparable declaration-or-macro identity mismatch rows",
+        "748 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "2,819 same-identity source-form differences across 453 rows",
-        "78 form-only rows",
+        "2,595 same-identity source-form differences across 439 rows",
+        "71 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"declaration/macro visibility artifact description omits {phrase}")
@@ -6483,7 +6484,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "177 current comparable callable name/class mismatch rows",
+        "170 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6781,7 +6782,7 @@ def require_all_header_prototype_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "617 current comparable prototype or named source-form mismatch rows",
+        "603 current comparable prototype or named source-form mismatch rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",
@@ -68692,7 +68693,7 @@ def require_uchar_stateful_artifact(family: Mapping[str, Any]) -> None:
         "unmangled C linkage",
         "true `-nostdlib -static` closure",
         "unchanged c32rtomb",
-        "pre-existing uchar restrict spelling",
+        "exact x86 musl branch and retained AArch64 fallback spelling",
         "locale policy or public locale-object APIs",
         "family completion, promotion, and public x86 support",
     ):

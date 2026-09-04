@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "80fd582d3a8d91edb3a214d1105018f25313b60988270b76307f94a8a81e636f",
+    "callable_inventory_sha256": "7214ca4da735a46472d9ba5d8105b94d0c35e87c8af32a1c774b91191b6979c3",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -154664,41 +154664,16 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, char16_t, mbstate_t *)|mangled=c16rtomb",
-            "kind": "function",
-            "name": "c16rtomb",
-            "reference_signature": "size_t (char *restrict, char16_t, mbstate_t *restrict)|mangled=c16rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char *, char32_t, mbstate_t *)|mangled=c32rtomb",
-            "kind": "function",
-            "name": "c32rtomb",
-            "reference_signature": "size_t (char *restrict, char32_t, mbstate_t *restrict)|mangled=c32rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char16_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc16",
-            "kind": "function",
-            "name": "mbrtoc16",
-            "reference_signature": "size_t (char16_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc16"
-          },
-          {
-            "candidate_signature": "size_t (char32_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc32",
-            "kind": "function",
-            "name": "mbrtoc32",
-            "reference_signature": "size_t (char32_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc32"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 19,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 23,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -154725,41 +154700,16 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "6331a307abb46c77d6ef805cbe49ac82333c80beeafd9815238c2fbd30d07802"
+        "sha256": "8f889169ad41a7f0f8f4247b85ea4338aab588c8cb8136ee30c2012a52b33bfa"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, char16_t, mbstate_t *)|mangled=c16rtomb",
-            "kind": "function",
-            "name": "c16rtomb",
-            "reference_signature": "size_t (char *__restrict, char16_t, mbstate_t *__restrict)|mangled=c16rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char *, char32_t, mbstate_t *)|mangled=c32rtomb",
-            "kind": "function",
-            "name": "c32rtomb",
-            "reference_signature": "size_t (char *__restrict, char32_t, mbstate_t *__restrict)|mangled=c32rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char16_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc16",
-            "kind": "function",
-            "name": "mbrtoc16",
-            "reference_signature": "size_t (char16_t *__restrict, const char *__restrict, size_t, mbstate_t *__restrict)|mangled=mbrtoc16"
-          },
-          {
-            "candidate_signature": "size_t (char32_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc32",
-            "kind": "function",
-            "name": "mbrtoc32",
-            "reference_signature": "size_t (char32_t *__restrict, const char *__restrict, size_t, mbstate_t *__restrict)|mangled=mbrtoc32"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 17,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 21,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -154786,41 +154736,16 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, char16_t, mbstate_t *)|mangled=c16rtomb",
-            "kind": "function",
-            "name": "c16rtomb",
-            "reference_signature": "size_t (char *restrict, char16_t, mbstate_t *restrict)|mangled=c16rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char *, char32_t, mbstate_t *)|mangled=c32rtomb",
-            "kind": "function",
-            "name": "c32rtomb",
-            "reference_signature": "size_t (char *restrict, char32_t, mbstate_t *restrict)|mangled=c32rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char16_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc16",
-            "kind": "function",
-            "name": "mbrtoc16",
-            "reference_signature": "size_t (char16_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc16"
-          },
-          {
-            "candidate_signature": "size_t (char32_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc32",
-            "kind": "function",
-            "name": "mbrtoc32",
-            "reference_signature": "size_t (char32_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc32"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 19,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 23,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -154847,41 +154772,16 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, char16_t, mbstate_t *)|mangled=c16rtomb",
-            "kind": "function",
-            "name": "c16rtomb",
-            "reference_signature": "size_t (char *restrict, char16_t, mbstate_t *restrict)|mangled=c16rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char *, char32_t, mbstate_t *)|mangled=c32rtomb",
-            "kind": "function",
-            "name": "c32rtomb",
-            "reference_signature": "size_t (char *restrict, char32_t, mbstate_t *restrict)|mangled=c32rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char16_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc16",
-            "kind": "function",
-            "name": "mbrtoc16",
-            "reference_signature": "size_t (char16_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc16"
-          },
-          {
-            "candidate_signature": "size_t (char32_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc32",
-            "kind": "function",
-            "name": "mbrtoc32",
-            "reference_signature": "size_t (char32_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc32"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 19,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 23,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -154908,41 +154808,16 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, char16_t, mbstate_t *)|mangled=c16rtomb",
-            "kind": "function",
-            "name": "c16rtomb",
-            "reference_signature": "size_t (char *restrict, char16_t, mbstate_t *restrict)|mangled=c16rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char *, char32_t, mbstate_t *)|mangled=c32rtomb",
-            "kind": "function",
-            "name": "c32rtomb",
-            "reference_signature": "size_t (char *restrict, char32_t, mbstate_t *restrict)|mangled=c32rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char16_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc16",
-            "kind": "function",
-            "name": "mbrtoc16",
-            "reference_signature": "size_t (char16_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc16"
-          },
-          {
-            "candidate_signature": "size_t (char32_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc32",
-            "kind": "function",
-            "name": "mbrtoc32",
-            "reference_signature": "size_t (char32_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc32"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 19,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 23,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -154969,41 +154844,16 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, char16_t, mbstate_t *)|mangled=c16rtomb",
-            "kind": "function",
-            "name": "c16rtomb",
-            "reference_signature": "size_t (char *restrict, char16_t, mbstate_t *restrict)|mangled=c16rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char *, char32_t, mbstate_t *)|mangled=c32rtomb",
-            "kind": "function",
-            "name": "c32rtomb",
-            "reference_signature": "size_t (char *restrict, char32_t, mbstate_t *restrict)|mangled=c32rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char16_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc16",
-            "kind": "function",
-            "name": "mbrtoc16",
-            "reference_signature": "size_t (char16_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc16"
-          },
-          {
-            "candidate_signature": "size_t (char32_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc32",
-            "kind": "function",
-            "name": "mbrtoc32",
-            "reference_signature": "size_t (char32_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtoc32"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 19,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 23,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -155030,41 +154880,16 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "6331a307abb46c77d6ef805cbe49ac82333c80beeafd9815238c2fbd30d07802"
+        "sha256": "8f889169ad41a7f0f8f4247b85ea4338aab588c8cb8136ee30c2012a52b33bfa"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "size_t (char *, char16_t, mbstate_t *)|mangled=c16rtomb",
-            "kind": "function",
-            "name": "c16rtomb",
-            "reference_signature": "size_t (char *__restrict, char16_t, mbstate_t *__restrict)|mangled=c16rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char *, char32_t, mbstate_t *)|mangled=c32rtomb",
-            "kind": "function",
-            "name": "c32rtomb",
-            "reference_signature": "size_t (char *__restrict, char32_t, mbstate_t *__restrict)|mangled=c32rtomb"
-          },
-          {
-            "candidate_signature": "size_t (char16_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc16",
-            "kind": "function",
-            "name": "mbrtoc16",
-            "reference_signature": "size_t (char16_t *__restrict, const char *__restrict, size_t, mbstate_t *__restrict)|mangled=mbrtoc16"
-          },
-          {
-            "candidate_signature": "size_t (char32_t *, const char *, size_t, mbstate_t *)|mangled=mbrtoc32",
-            "kind": "function",
-            "name": "mbrtoc32",
-            "reference_signature": "size_t (char32_t *__restrict, const char *__restrict, size_t, mbstate_t *__restrict)|mangled=mbrtoc32"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 17,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 21,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -170086,203 +169911,23 @@
     },
     {
       "candidate": {
-        "count": 148,
+        "count": 146,
         "kind_counts": {
-          "function": 102,
+          "function": 100,
           "macro": 33,
           "record": 4,
           "typedef": 9
         },
-        "sha256": "df7c5f7a966e38950f1d3618b57729880d6122ed9085dff2a79b15f43eaed6b0"
+        "sha256": "c96d079b3d2165e9006231bbb49034649add8da0ac4c56eee57568ef136e0a24"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "function",
-            "name": "mbstowcs",
-            "signature": "size_t (wchar_t *, const char *, size_t)|mangled=mbstowcs"
-          },
-          {
-            "kind": "function",
-            "name": "wcstombs",
-            "signature": "size_t (char *, const wchar_t *, size_t)|mangled=wcstombs"
-          }
-        ],
-        "candidate_only_count": 2,
-        "incompatible": [
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwprintf",
-            "kind": "function",
-            "name": "fwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwscanf",
-            "kind": "function",
-            "name": "fwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwscanf"
-          },
-          {
-            "candidate_signature": "size_t (const char *, size_t, mbstate_t *)|mangled=mbrlen",
-            "kind": "function",
-            "name": "mbrlen",
-            "reference_signature": "size_t (const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrlen"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char *, size_t, mbstate_t *)|mangled=mbrtowc",
-            "kind": "function",
-            "name": "mbrtowc",
-            "reference_signature": "size_t (wchar_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtowc"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char **, size_t, mbstate_t *)|mangled=mbsrtowcs",
-            "kind": "function",
-            "name": "mbsrtowcs",
-            "reference_signature": "size_t (wchar_t *restrict, const char **restrict, size_t, mbstate_t *restrict)|mangled=mbsrtowcs"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, ...)|mangled=swprintf",
-            "kind": "function",
-            "name": "swprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, ...)|mangled=swprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, ...)|mangled=swscanf",
-            "kind": "function",
-            "name": "swscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, ...)|mangled=swscanf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwprintf",
-            "kind": "function",
-            "name": "vfwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwscanf",
-            "kind": "function",
-            "name": "vfwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwscanf"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, struct __va_list_tag *)|mangled=vswprintf",
-            "kind": "function",
-            "name": "vswprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, struct __va_list_tag *)|mangled=vswscanf",
-            "kind": "function",
-            "name": "vswscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswscanf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, struct __va_list_tag *)|mangled=vwscanf",
-            "kind": "function",
-            "name": "vwscanf",
-            "reference_signature": "int (const wchar_t *restrict, struct __va_list_tag *)|mangled=vwscanf"
-          },
-          {
-            "candidate_signature": "size_t (char *, wchar_t, mbstate_t *)|mangled=wcrtomb",
-            "kind": "function",
-            "name": "wcrtomb",
-            "reference_signature": "size_t (char *restrict, wchar_t, mbstate_t *restrict)|mangled=wcrtomb"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscat",
-            "kind": "function",
-            "name": "wcscat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscpy",
-            "kind": "function",
-            "name": "wcscpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscpy"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncat",
-            "kind": "function",
-            "name": "wcsncat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncpy",
-            "kind": "function",
-            "name": "wcsncpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const wchar_t **, size_t, mbstate_t *)|mangled=wcsrtombs",
-            "kind": "function",
-            "name": "wcsrtombs",
-            "reference_signature": "size_t (char *restrict, const wchar_t **restrict, size_t, mbstate_t *restrict)|mangled=wcsrtombs"
-          },
-          {
-            "candidate_signature": "wchar_t *(const wchar_t *, const wchar_t *)|mangled=wcsstr",
-            "kind": "function",
-            "name": "wcsstr",
-            "reference_signature": "wchar_t *(const wchar_t *restrict, const wchar_t *restrict)|mangled=wcsstr"
-          },
-          {
-            "candidate_signature": "double (const wchar_t *, wchar_t **)|mangled=wcstod",
-            "kind": "function",
-            "name": "wcstod",
-            "reference_signature": "double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstod"
-          },
-          {
-            "candidate_signature": "float (const wchar_t *, wchar_t **)|mangled=wcstof",
-            "kind": "function",
-            "name": "wcstof",
-            "reference_signature": "float (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstof"
-          },
-          {
-            "candidate_signature": "long (const wchar_t *, wchar_t **, int)|mangled=wcstol",
-            "kind": "function",
-            "name": "wcstol",
-            "reference_signature": "long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstol"
-          },
-          {
-            "candidate_signature": "long double (const wchar_t *, wchar_t **)|mangled=wcstold",
-            "kind": "function",
-            "name": "wcstold",
-            "reference_signature": "long double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstold"
-          },
-          {
-            "candidate_signature": "long long (const wchar_t *, wchar_t **, int)|mangled=wcstoll",
-            "kind": "function",
-            "name": "wcstoll",
-            "reference_signature": "long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoll"
-          },
-          {
-            "candidate_signature": "unsigned long (const wchar_t *, wchar_t **, int)|mangled=wcstoul",
-            "kind": "function",
-            "name": "wcstoul",
-            "reference_signature": "unsigned long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoul"
-          },
-          {
-            "candidate_signature": "unsigned long long (const wchar_t *, wchar_t **, int)|mangled=wcstoull",
-            "kind": "function",
-            "name": "wcstoull",
-            "reference_signature": "unsigned long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoull"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const wchar_t *, size_t)|mangled=wcsxfrm",
-            "kind": "function",
-            "name": "wcsxfrm",
-            "reference_signature": "size_t (wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsxfrm"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, ...)|mangled=wscanf",
-            "kind": "function",
-            "name": "wscanf",
-            "reference_signature": "int (const wchar_t *restrict, ...)|mangled=wscanf"
-          }
-        ],
-        "incompatible_count": 28,
-        "matched_count": 118,
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 146,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -170302,203 +169947,23 @@
     },
     {
       "candidate": {
-        "count": 147,
+        "count": 145,
         "kind_counts": {
-          "function": 102,
+          "function": 100,
           "macro": 33,
           "record": 4,
           "typedef": 8
         },
-        "sha256": "553f9cffa3fe3184fd02f5281a6ba218c2fc1aa4718e49968b15b1bf54c49348"
+        "sha256": "bef76b5567ebbfaca89b1077f5513f41ca928fb7183fc724cdd06cf00216021a"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "function",
-            "name": "mbstowcs",
-            "signature": "size_t (wchar_t *, const char *, size_t)|mangled=mbstowcs"
-          },
-          {
-            "kind": "function",
-            "name": "wcstombs",
-            "signature": "size_t (char *, const wchar_t *, size_t)|mangled=wcstombs"
-          }
-        ],
-        "candidate_only_count": 2,
-        "incompatible": [
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwprintf",
-            "kind": "function",
-            "name": "fwprintf",
-            "reference_signature": "int (FILE *__restrict, const wchar_t *__restrict, ...)|mangled=fwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwscanf",
-            "kind": "function",
-            "name": "fwscanf",
-            "reference_signature": "int (FILE *__restrict, const wchar_t *__restrict, ...)|mangled=fwscanf"
-          },
-          {
-            "candidate_signature": "size_t (const char *, size_t, mbstate_t *)|mangled=mbrlen",
-            "kind": "function",
-            "name": "mbrlen",
-            "reference_signature": "size_t (const char *__restrict, size_t, mbstate_t *__restrict)|mangled=mbrlen"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char *, size_t, mbstate_t *)|mangled=mbrtowc",
-            "kind": "function",
-            "name": "mbrtowc",
-            "reference_signature": "size_t (wchar_t *__restrict, const char *__restrict, size_t, mbstate_t *__restrict)|mangled=mbrtowc"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char **, size_t, mbstate_t *)|mangled=mbsrtowcs",
-            "kind": "function",
-            "name": "mbsrtowcs",
-            "reference_signature": "size_t (wchar_t *__restrict, const char **__restrict, size_t, mbstate_t *__restrict)|mangled=mbsrtowcs"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, ...)|mangled=swprintf",
-            "kind": "function",
-            "name": "swprintf",
-            "reference_signature": "int (wchar_t *__restrict, size_t, const wchar_t *__restrict, ...)|mangled=swprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, ...)|mangled=swscanf",
-            "kind": "function",
-            "name": "swscanf",
-            "reference_signature": "int (const wchar_t *__restrict, const wchar_t *__restrict, ...)|mangled=swscanf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, __va_list_tag *)|mangled=vfwprintf",
-            "kind": "function",
-            "name": "vfwprintf",
-            "reference_signature": "int (FILE *__restrict, const wchar_t *__restrict, __va_list_tag *)|mangled=vfwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, __va_list_tag *)|mangled=vfwscanf",
-            "kind": "function",
-            "name": "vfwscanf",
-            "reference_signature": "int (FILE *__restrict, const wchar_t *__restrict, __va_list_tag *)|mangled=vfwscanf"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, __va_list_tag *)|mangled=vswprintf",
-            "kind": "function",
-            "name": "vswprintf",
-            "reference_signature": "int (wchar_t *__restrict, size_t, const wchar_t *__restrict, __va_list_tag *)|mangled=vswprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, __va_list_tag *)|mangled=vswscanf",
-            "kind": "function",
-            "name": "vswscanf",
-            "reference_signature": "int (const wchar_t *__restrict, const wchar_t *__restrict, __va_list_tag *)|mangled=vswscanf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, __va_list_tag *)|mangled=vwscanf",
-            "kind": "function",
-            "name": "vwscanf",
-            "reference_signature": "int (const wchar_t *__restrict, __va_list_tag *)|mangled=vwscanf"
-          },
-          {
-            "candidate_signature": "size_t (char *, wchar_t, mbstate_t *)|mangled=wcrtomb",
-            "kind": "function",
-            "name": "wcrtomb",
-            "reference_signature": "size_t (char *__restrict, wchar_t, mbstate_t *__restrict)|mangled=wcrtomb"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscat",
-            "kind": "function",
-            "name": "wcscat",
-            "reference_signature": "wchar_t *(wchar_t *__restrict, const wchar_t *__restrict)|mangled=wcscat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscpy",
-            "kind": "function",
-            "name": "wcscpy",
-            "reference_signature": "wchar_t *(wchar_t *__restrict, const wchar_t *__restrict)|mangled=wcscpy"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncat",
-            "kind": "function",
-            "name": "wcsncat",
-            "reference_signature": "wchar_t *(wchar_t *__restrict, const wchar_t *__restrict, size_t)|mangled=wcsncat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncpy",
-            "kind": "function",
-            "name": "wcsncpy",
-            "reference_signature": "wchar_t *(wchar_t *__restrict, const wchar_t *__restrict, size_t)|mangled=wcsncpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const wchar_t **, size_t, mbstate_t *)|mangled=wcsrtombs",
-            "kind": "function",
-            "name": "wcsrtombs",
-            "reference_signature": "size_t (char *__restrict, const wchar_t **__restrict, size_t, mbstate_t *__restrict)|mangled=wcsrtombs"
-          },
-          {
-            "candidate_signature": "wchar_t *(const wchar_t *, const wchar_t *)|mangled=wcsstr",
-            "kind": "function",
-            "name": "wcsstr",
-            "reference_signature": "wchar_t *(const wchar_t *__restrict, const wchar_t *__restrict)|mangled=wcsstr"
-          },
-          {
-            "candidate_signature": "double (const wchar_t *, wchar_t **)|mangled=wcstod",
-            "kind": "function",
-            "name": "wcstod",
-            "reference_signature": "double (const wchar_t *__restrict, wchar_t **__restrict)|mangled=wcstod"
-          },
-          {
-            "candidate_signature": "float (const wchar_t *, wchar_t **)|mangled=wcstof",
-            "kind": "function",
-            "name": "wcstof",
-            "reference_signature": "float (const wchar_t *__restrict, wchar_t **__restrict)|mangled=wcstof"
-          },
-          {
-            "candidate_signature": "long (const wchar_t *, wchar_t **, int)|mangled=wcstol",
-            "kind": "function",
-            "name": "wcstol",
-            "reference_signature": "long (const wchar_t *__restrict, wchar_t **__restrict, int)|mangled=wcstol"
-          },
-          {
-            "candidate_signature": "long double (const wchar_t *, wchar_t **)|mangled=wcstold",
-            "kind": "function",
-            "name": "wcstold",
-            "reference_signature": "long double (const wchar_t *__restrict, wchar_t **__restrict)|mangled=wcstold"
-          },
-          {
-            "candidate_signature": "long long (const wchar_t *, wchar_t **, int)|mangled=wcstoll",
-            "kind": "function",
-            "name": "wcstoll",
-            "reference_signature": "long long (const wchar_t *__restrict, wchar_t **__restrict, int)|mangled=wcstoll"
-          },
-          {
-            "candidate_signature": "unsigned long (const wchar_t *, wchar_t **, int)|mangled=wcstoul",
-            "kind": "function",
-            "name": "wcstoul",
-            "reference_signature": "unsigned long (const wchar_t *__restrict, wchar_t **__restrict, int)|mangled=wcstoul"
-          },
-          {
-            "candidate_signature": "unsigned long long (const wchar_t *, wchar_t **, int)|mangled=wcstoull",
-            "kind": "function",
-            "name": "wcstoull",
-            "reference_signature": "unsigned long long (const wchar_t *__restrict, wchar_t **__restrict, int)|mangled=wcstoull"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const wchar_t *, size_t)|mangled=wcsxfrm",
-            "kind": "function",
-            "name": "wcsxfrm",
-            "reference_signature": "size_t (wchar_t *__restrict, const wchar_t *__restrict, size_t)|mangled=wcsxfrm"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, ...)|mangled=wscanf",
-            "kind": "function",
-            "name": "wscanf",
-            "reference_signature": "int (const wchar_t *__restrict, ...)|mangled=wscanf"
-          }
-        ],
-        "incompatible_count": 28,
-        "matched_count": 117,
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 145,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -170518,213 +169983,23 @@
     },
     {
       "candidate": {
-        "count": 99,
+        "count": 95,
         "kind_counts": {
-          "function": 64,
+          "function": 60,
           "macro": 26,
           "record": 3,
           "typedef": 6
         },
-        "sha256": "9faadc20ba4042bf28a7f3a76865ee27e4dc2e2a2677dcdb136b5152e0c2a12e"
+        "sha256": "20d959ca47a3d9a8f0a8f01637888abb9ffffd7705308ef1f6fdd13f101594a4"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "function",
-            "name": "mbsnrtowcs",
-            "signature": "size_t (wchar_t *restrict, const char **restrict, size_t, size_t, mbstate_t *restrict)|mangled=mbsnrtowcs"
-          },
-          {
-            "kind": "function",
-            "name": "mbstowcs",
-            "signature": "size_t (wchar_t *, const char *, size_t)|mangled=mbstowcs"
-          },
-          {
-            "kind": "function",
-            "name": "wcsnrtombs",
-            "signature": "size_t (char *restrict, const wchar_t **restrict, size_t, size_t, mbstate_t *restrict)|mangled=wcsnrtombs"
-          },
-          {
-            "kind": "function",
-            "name": "wcstombs",
-            "signature": "size_t (char *, const wchar_t *, size_t)|mangled=wcstombs"
-          }
-        ],
-        "candidate_only_count": 4,
-        "incompatible": [
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwprintf",
-            "kind": "function",
-            "name": "fwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwscanf",
-            "kind": "function",
-            "name": "fwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwscanf"
-          },
-          {
-            "candidate_signature": "size_t (const char *, size_t, mbstate_t *)|mangled=mbrlen",
-            "kind": "function",
-            "name": "mbrlen",
-            "reference_signature": "size_t (const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrlen"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char *, size_t, mbstate_t *)|mangled=mbrtowc",
-            "kind": "function",
-            "name": "mbrtowc",
-            "reference_signature": "size_t (wchar_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtowc"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char **, size_t, mbstate_t *)|mangled=mbsrtowcs",
-            "kind": "function",
-            "name": "mbsrtowcs",
-            "reference_signature": "size_t (wchar_t *restrict, const char **restrict, size_t, mbstate_t *restrict)|mangled=mbsrtowcs"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, ...)|mangled=swprintf",
-            "kind": "function",
-            "name": "swprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, ...)|mangled=swprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, ...)|mangled=swscanf",
-            "kind": "function",
-            "name": "swscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, ...)|mangled=swscanf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwprintf",
-            "kind": "function",
-            "name": "vfwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwscanf",
-            "kind": "function",
-            "name": "vfwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwscanf"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, struct __va_list_tag *)|mangled=vswprintf",
-            "kind": "function",
-            "name": "vswprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, struct __va_list_tag *)|mangled=vswscanf",
-            "kind": "function",
-            "name": "vswscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswscanf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, struct __va_list_tag *)|mangled=vwscanf",
-            "kind": "function",
-            "name": "vwscanf",
-            "reference_signature": "int (const wchar_t *restrict, struct __va_list_tag *)|mangled=vwscanf"
-          },
-          {
-            "candidate_signature": "size_t (char *, wchar_t, mbstate_t *)|mangled=wcrtomb",
-            "kind": "function",
-            "name": "wcrtomb",
-            "reference_signature": "size_t (char *restrict, wchar_t, mbstate_t *restrict)|mangled=wcrtomb"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscat",
-            "kind": "function",
-            "name": "wcscat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscpy",
-            "kind": "function",
-            "name": "wcscpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscpy"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncat",
-            "kind": "function",
-            "name": "wcsncat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncpy",
-            "kind": "function",
-            "name": "wcsncpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const wchar_t **, size_t, mbstate_t *)|mangled=wcsrtombs",
-            "kind": "function",
-            "name": "wcsrtombs",
-            "reference_signature": "size_t (char *restrict, const wchar_t **restrict, size_t, mbstate_t *restrict)|mangled=wcsrtombs"
-          },
-          {
-            "candidate_signature": "wchar_t *(const wchar_t *, const wchar_t *)|mangled=wcsstr",
-            "kind": "function",
-            "name": "wcsstr",
-            "reference_signature": "wchar_t *(const wchar_t *restrict, const wchar_t *restrict)|mangled=wcsstr"
-          },
-          {
-            "candidate_signature": "double (const wchar_t *, wchar_t **)|mangled=wcstod",
-            "kind": "function",
-            "name": "wcstod",
-            "reference_signature": "double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstod"
-          },
-          {
-            "candidate_signature": "float (const wchar_t *, wchar_t **)|mangled=wcstof",
-            "kind": "function",
-            "name": "wcstof",
-            "reference_signature": "float (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstof"
-          },
-          {
-            "candidate_signature": "long (const wchar_t *, wchar_t **, int)|mangled=wcstol",
-            "kind": "function",
-            "name": "wcstol",
-            "reference_signature": "long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstol"
-          },
-          {
-            "candidate_signature": "long double (const wchar_t *, wchar_t **)|mangled=wcstold",
-            "kind": "function",
-            "name": "wcstold",
-            "reference_signature": "long double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstold"
-          },
-          {
-            "candidate_signature": "long long (const wchar_t *, wchar_t **, int)|mangled=wcstoll",
-            "kind": "function",
-            "name": "wcstoll",
-            "reference_signature": "long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoll"
-          },
-          {
-            "candidate_signature": "unsigned long (const wchar_t *, wchar_t **, int)|mangled=wcstoul",
-            "kind": "function",
-            "name": "wcstoul",
-            "reference_signature": "unsigned long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoul"
-          },
-          {
-            "candidate_signature": "unsigned long long (const wchar_t *, wchar_t **, int)|mangled=wcstoull",
-            "kind": "function",
-            "name": "wcstoull",
-            "reference_signature": "unsigned long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoull"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const wchar_t *, size_t)|mangled=wcsxfrm",
-            "kind": "function",
-            "name": "wcsxfrm",
-            "reference_signature": "size_t (wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsxfrm"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, ...)|mangled=wscanf",
-            "kind": "function",
-            "name": "wscanf",
-            "reference_signature": "int (const wchar_t *restrict, ...)|mangled=wscanf"
-          }
-        ],
-        "incompatible_count": 28,
-        "matched_count": 67,
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 95,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -170744,203 +170019,23 @@
     },
     {
       "candidate": {
-        "count": 117,
+        "count": 115,
         "kind_counts": {
-          "function": 75,
+          "function": 73,
           "macro": 30,
           "record": 4,
           "typedef": 8
         },
-        "sha256": "4013c6d9372f7520b37bff8b5f2ff85303bd7b9909a4bb219d4103bfe14236db"
+        "sha256": "1fd0612e1eb2a5c56fd4a03fb3d1cc26affcbfb850c76dae33db024b0ce8ccf4"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "function",
-            "name": "mbstowcs",
-            "signature": "size_t (wchar_t *, const char *, size_t)|mangled=mbstowcs"
-          },
-          {
-            "kind": "function",
-            "name": "wcstombs",
-            "signature": "size_t (char *, const wchar_t *, size_t)|mangled=wcstombs"
-          }
-        ],
-        "candidate_only_count": 2,
-        "incompatible": [
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwprintf",
-            "kind": "function",
-            "name": "fwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwscanf",
-            "kind": "function",
-            "name": "fwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwscanf"
-          },
-          {
-            "candidate_signature": "size_t (const char *, size_t, mbstate_t *)|mangled=mbrlen",
-            "kind": "function",
-            "name": "mbrlen",
-            "reference_signature": "size_t (const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrlen"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char *, size_t, mbstate_t *)|mangled=mbrtowc",
-            "kind": "function",
-            "name": "mbrtowc",
-            "reference_signature": "size_t (wchar_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtowc"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char **, size_t, mbstate_t *)|mangled=mbsrtowcs",
-            "kind": "function",
-            "name": "mbsrtowcs",
-            "reference_signature": "size_t (wchar_t *restrict, const char **restrict, size_t, mbstate_t *restrict)|mangled=mbsrtowcs"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, ...)|mangled=swprintf",
-            "kind": "function",
-            "name": "swprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, ...)|mangled=swprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, ...)|mangled=swscanf",
-            "kind": "function",
-            "name": "swscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, ...)|mangled=swscanf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwprintf",
-            "kind": "function",
-            "name": "vfwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwscanf",
-            "kind": "function",
-            "name": "vfwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwscanf"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, struct __va_list_tag *)|mangled=vswprintf",
-            "kind": "function",
-            "name": "vswprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, struct __va_list_tag *)|mangled=vswscanf",
-            "kind": "function",
-            "name": "vswscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswscanf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, struct __va_list_tag *)|mangled=vwscanf",
-            "kind": "function",
-            "name": "vwscanf",
-            "reference_signature": "int (const wchar_t *restrict, struct __va_list_tag *)|mangled=vwscanf"
-          },
-          {
-            "candidate_signature": "size_t (char *, wchar_t, mbstate_t *)|mangled=wcrtomb",
-            "kind": "function",
-            "name": "wcrtomb",
-            "reference_signature": "size_t (char *restrict, wchar_t, mbstate_t *restrict)|mangled=wcrtomb"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscat",
-            "kind": "function",
-            "name": "wcscat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscpy",
-            "kind": "function",
-            "name": "wcscpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscpy"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncat",
-            "kind": "function",
-            "name": "wcsncat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncpy",
-            "kind": "function",
-            "name": "wcsncpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const wchar_t **, size_t, mbstate_t *)|mangled=wcsrtombs",
-            "kind": "function",
-            "name": "wcsrtombs",
-            "reference_signature": "size_t (char *restrict, const wchar_t **restrict, size_t, mbstate_t *restrict)|mangled=wcsrtombs"
-          },
-          {
-            "candidate_signature": "wchar_t *(const wchar_t *, const wchar_t *)|mangled=wcsstr",
-            "kind": "function",
-            "name": "wcsstr",
-            "reference_signature": "wchar_t *(const wchar_t *restrict, const wchar_t *restrict)|mangled=wcsstr"
-          },
-          {
-            "candidate_signature": "double (const wchar_t *, wchar_t **)|mangled=wcstod",
-            "kind": "function",
-            "name": "wcstod",
-            "reference_signature": "double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstod"
-          },
-          {
-            "candidate_signature": "float (const wchar_t *, wchar_t **)|mangled=wcstof",
-            "kind": "function",
-            "name": "wcstof",
-            "reference_signature": "float (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstof"
-          },
-          {
-            "candidate_signature": "long (const wchar_t *, wchar_t **, int)|mangled=wcstol",
-            "kind": "function",
-            "name": "wcstol",
-            "reference_signature": "long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstol"
-          },
-          {
-            "candidate_signature": "long double (const wchar_t *, wchar_t **)|mangled=wcstold",
-            "kind": "function",
-            "name": "wcstold",
-            "reference_signature": "long double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstold"
-          },
-          {
-            "candidate_signature": "long long (const wchar_t *, wchar_t **, int)|mangled=wcstoll",
-            "kind": "function",
-            "name": "wcstoll",
-            "reference_signature": "long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoll"
-          },
-          {
-            "candidate_signature": "unsigned long (const wchar_t *, wchar_t **, int)|mangled=wcstoul",
-            "kind": "function",
-            "name": "wcstoul",
-            "reference_signature": "unsigned long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoul"
-          },
-          {
-            "candidate_signature": "unsigned long long (const wchar_t *, wchar_t **, int)|mangled=wcstoull",
-            "kind": "function",
-            "name": "wcstoull",
-            "reference_signature": "unsigned long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoull"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const wchar_t *, size_t)|mangled=wcsxfrm",
-            "kind": "function",
-            "name": "wcsxfrm",
-            "reference_signature": "size_t (wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsxfrm"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, ...)|mangled=wscanf",
-            "kind": "function",
-            "name": "wscanf",
-            "reference_signature": "int (const wchar_t *restrict, ...)|mangled=wscanf"
-          }
-        ],
-        "incompatible_count": 28,
-        "matched_count": 87,
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 115,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -170960,203 +170055,23 @@
     },
     {
       "candidate": {
-        "count": 139,
+        "count": 137,
         "kind_counts": {
-          "function": 93,
+          "function": 91,
           "macro": 33,
           "record": 4,
           "typedef": 9
         },
-        "sha256": "d999d378f98f18855d8df75686aa6730f4eb90588ded37787a39c9c988140369"
+        "sha256": "b7469ed41e0e03e8e5a9a8834c14ae96b0ebbe2c4d381af95cadd2a930818a95"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "function",
-            "name": "mbstowcs",
-            "signature": "size_t (wchar_t *, const char *, size_t)|mangled=mbstowcs"
-          },
-          {
-            "kind": "function",
-            "name": "wcstombs",
-            "signature": "size_t (char *, const wchar_t *, size_t)|mangled=wcstombs"
-          }
-        ],
-        "candidate_only_count": 2,
-        "incompatible": [
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwprintf",
-            "kind": "function",
-            "name": "fwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwscanf",
-            "kind": "function",
-            "name": "fwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwscanf"
-          },
-          {
-            "candidate_signature": "size_t (const char *, size_t, mbstate_t *)|mangled=mbrlen",
-            "kind": "function",
-            "name": "mbrlen",
-            "reference_signature": "size_t (const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrlen"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char *, size_t, mbstate_t *)|mangled=mbrtowc",
-            "kind": "function",
-            "name": "mbrtowc",
-            "reference_signature": "size_t (wchar_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtowc"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char **, size_t, mbstate_t *)|mangled=mbsrtowcs",
-            "kind": "function",
-            "name": "mbsrtowcs",
-            "reference_signature": "size_t (wchar_t *restrict, const char **restrict, size_t, mbstate_t *restrict)|mangled=mbsrtowcs"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, ...)|mangled=swprintf",
-            "kind": "function",
-            "name": "swprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, ...)|mangled=swprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, ...)|mangled=swscanf",
-            "kind": "function",
-            "name": "swscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, ...)|mangled=swscanf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwprintf",
-            "kind": "function",
-            "name": "vfwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwscanf",
-            "kind": "function",
-            "name": "vfwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwscanf"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, struct __va_list_tag *)|mangled=vswprintf",
-            "kind": "function",
-            "name": "vswprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, struct __va_list_tag *)|mangled=vswscanf",
-            "kind": "function",
-            "name": "vswscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswscanf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, struct __va_list_tag *)|mangled=vwscanf",
-            "kind": "function",
-            "name": "vwscanf",
-            "reference_signature": "int (const wchar_t *restrict, struct __va_list_tag *)|mangled=vwscanf"
-          },
-          {
-            "candidate_signature": "size_t (char *, wchar_t, mbstate_t *)|mangled=wcrtomb",
-            "kind": "function",
-            "name": "wcrtomb",
-            "reference_signature": "size_t (char *restrict, wchar_t, mbstate_t *restrict)|mangled=wcrtomb"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscat",
-            "kind": "function",
-            "name": "wcscat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscpy",
-            "kind": "function",
-            "name": "wcscpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscpy"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncat",
-            "kind": "function",
-            "name": "wcsncat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncpy",
-            "kind": "function",
-            "name": "wcsncpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const wchar_t **, size_t, mbstate_t *)|mangled=wcsrtombs",
-            "kind": "function",
-            "name": "wcsrtombs",
-            "reference_signature": "size_t (char *restrict, const wchar_t **restrict, size_t, mbstate_t *restrict)|mangled=wcsrtombs"
-          },
-          {
-            "candidate_signature": "wchar_t *(const wchar_t *, const wchar_t *)|mangled=wcsstr",
-            "kind": "function",
-            "name": "wcsstr",
-            "reference_signature": "wchar_t *(const wchar_t *restrict, const wchar_t *restrict)|mangled=wcsstr"
-          },
-          {
-            "candidate_signature": "double (const wchar_t *, wchar_t **)|mangled=wcstod",
-            "kind": "function",
-            "name": "wcstod",
-            "reference_signature": "double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstod"
-          },
-          {
-            "candidate_signature": "float (const wchar_t *, wchar_t **)|mangled=wcstof",
-            "kind": "function",
-            "name": "wcstof",
-            "reference_signature": "float (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstof"
-          },
-          {
-            "candidate_signature": "long (const wchar_t *, wchar_t **, int)|mangled=wcstol",
-            "kind": "function",
-            "name": "wcstol",
-            "reference_signature": "long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstol"
-          },
-          {
-            "candidate_signature": "long double (const wchar_t *, wchar_t **)|mangled=wcstold",
-            "kind": "function",
-            "name": "wcstold",
-            "reference_signature": "long double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstold"
-          },
-          {
-            "candidate_signature": "long long (const wchar_t *, wchar_t **, int)|mangled=wcstoll",
-            "kind": "function",
-            "name": "wcstoll",
-            "reference_signature": "long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoll"
-          },
-          {
-            "candidate_signature": "unsigned long (const wchar_t *, wchar_t **, int)|mangled=wcstoul",
-            "kind": "function",
-            "name": "wcstoul",
-            "reference_signature": "unsigned long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoul"
-          },
-          {
-            "candidate_signature": "unsigned long long (const wchar_t *, wchar_t **, int)|mangled=wcstoull",
-            "kind": "function",
-            "name": "wcstoull",
-            "reference_signature": "unsigned long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoull"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const wchar_t *, size_t)|mangled=wcsxfrm",
-            "kind": "function",
-            "name": "wcsxfrm",
-            "reference_signature": "size_t (wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsxfrm"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, ...)|mangled=wscanf",
-            "kind": "function",
-            "name": "wscanf",
-            "reference_signature": "int (const wchar_t *restrict, ...)|mangled=wscanf"
-          }
-        ],
-        "incompatible_count": 28,
-        "matched_count": 109,
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 137,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -171176,203 +170091,23 @@
     },
     {
       "candidate": {
-        "count": 140,
+        "count": 138,
         "kind_counts": {
-          "function": 94,
+          "function": 92,
           "macro": 33,
           "record": 4,
           "typedef": 9
         },
-        "sha256": "a966c6a96fdd39fb6adb89e1a21e13fb2ffd3a3f16ead92d851a4ab7354583fd"
+        "sha256": "6da284c99c13b7bdbc71a600cac7d014b870176c92de2be1fa6b870def6b111d"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "function",
-            "name": "mbstowcs",
-            "signature": "size_t (wchar_t *, const char *, size_t)|mangled=mbstowcs"
-          },
-          {
-            "kind": "function",
-            "name": "wcstombs",
-            "signature": "size_t (char *, const wchar_t *, size_t)|mangled=wcstombs"
-          }
-        ],
-        "candidate_only_count": 2,
-        "incompatible": [
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwprintf",
-            "kind": "function",
-            "name": "fwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwscanf",
-            "kind": "function",
-            "name": "fwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, ...)|mangled=fwscanf"
-          },
-          {
-            "candidate_signature": "size_t (const char *, size_t, mbstate_t *)|mangled=mbrlen",
-            "kind": "function",
-            "name": "mbrlen",
-            "reference_signature": "size_t (const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrlen"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char *, size_t, mbstate_t *)|mangled=mbrtowc",
-            "kind": "function",
-            "name": "mbrtowc",
-            "reference_signature": "size_t (wchar_t *restrict, const char *restrict, size_t, mbstate_t *restrict)|mangled=mbrtowc"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char **, size_t, mbstate_t *)|mangled=mbsrtowcs",
-            "kind": "function",
-            "name": "mbsrtowcs",
-            "reference_signature": "size_t (wchar_t *restrict, const char **restrict, size_t, mbstate_t *restrict)|mangled=mbsrtowcs"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, ...)|mangled=swprintf",
-            "kind": "function",
-            "name": "swprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, ...)|mangled=swprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, ...)|mangled=swscanf",
-            "kind": "function",
-            "name": "swscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, ...)|mangled=swscanf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwprintf",
-            "kind": "function",
-            "name": "vfwprintf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, struct __va_list_tag *)|mangled=vfwscanf",
-            "kind": "function",
-            "name": "vfwscanf",
-            "reference_signature": "int (FILE *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vfwscanf"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, struct __va_list_tag *)|mangled=vswprintf",
-            "kind": "function",
-            "name": "vswprintf",
-            "reference_signature": "int (wchar_t *restrict, size_t, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, struct __va_list_tag *)|mangled=vswscanf",
-            "kind": "function",
-            "name": "vswscanf",
-            "reference_signature": "int (const wchar_t *restrict, const wchar_t *restrict, struct __va_list_tag *)|mangled=vswscanf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, struct __va_list_tag *)|mangled=vwscanf",
-            "kind": "function",
-            "name": "vwscanf",
-            "reference_signature": "int (const wchar_t *restrict, struct __va_list_tag *)|mangled=vwscanf"
-          },
-          {
-            "candidate_signature": "size_t (char *, wchar_t, mbstate_t *)|mangled=wcrtomb",
-            "kind": "function",
-            "name": "wcrtomb",
-            "reference_signature": "size_t (char *restrict, wchar_t, mbstate_t *restrict)|mangled=wcrtomb"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscat",
-            "kind": "function",
-            "name": "wcscat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscpy",
-            "kind": "function",
-            "name": "wcscpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict)|mangled=wcscpy"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncat",
-            "kind": "function",
-            "name": "wcsncat",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncpy",
-            "kind": "function",
-            "name": "wcsncpy",
-            "reference_signature": "wchar_t *(wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsncpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const wchar_t **, size_t, mbstate_t *)|mangled=wcsrtombs",
-            "kind": "function",
-            "name": "wcsrtombs",
-            "reference_signature": "size_t (char *restrict, const wchar_t **restrict, size_t, mbstate_t *restrict)|mangled=wcsrtombs"
-          },
-          {
-            "candidate_signature": "wchar_t *(const wchar_t *, const wchar_t *)|mangled=wcsstr",
-            "kind": "function",
-            "name": "wcsstr",
-            "reference_signature": "wchar_t *(const wchar_t *restrict, const wchar_t *restrict)|mangled=wcsstr"
-          },
-          {
-            "candidate_signature": "double (const wchar_t *, wchar_t **)|mangled=wcstod",
-            "kind": "function",
-            "name": "wcstod",
-            "reference_signature": "double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstod"
-          },
-          {
-            "candidate_signature": "float (const wchar_t *, wchar_t **)|mangled=wcstof",
-            "kind": "function",
-            "name": "wcstof",
-            "reference_signature": "float (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstof"
-          },
-          {
-            "candidate_signature": "long (const wchar_t *, wchar_t **, int)|mangled=wcstol",
-            "kind": "function",
-            "name": "wcstol",
-            "reference_signature": "long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstol"
-          },
-          {
-            "candidate_signature": "long double (const wchar_t *, wchar_t **)|mangled=wcstold",
-            "kind": "function",
-            "name": "wcstold",
-            "reference_signature": "long double (const wchar_t *restrict, wchar_t **restrict)|mangled=wcstold"
-          },
-          {
-            "candidate_signature": "long long (const wchar_t *, wchar_t **, int)|mangled=wcstoll",
-            "kind": "function",
-            "name": "wcstoll",
-            "reference_signature": "long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoll"
-          },
-          {
-            "candidate_signature": "unsigned long (const wchar_t *, wchar_t **, int)|mangled=wcstoul",
-            "kind": "function",
-            "name": "wcstoul",
-            "reference_signature": "unsigned long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoul"
-          },
-          {
-            "candidate_signature": "unsigned long long (const wchar_t *, wchar_t **, int)|mangled=wcstoull",
-            "kind": "function",
-            "name": "wcstoull",
-            "reference_signature": "unsigned long long (const wchar_t *restrict, wchar_t **restrict, int)|mangled=wcstoull"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const wchar_t *, size_t)|mangled=wcsxfrm",
-            "kind": "function",
-            "name": "wcsxfrm",
-            "reference_signature": "size_t (wchar_t *restrict, const wchar_t *restrict, size_t)|mangled=wcsxfrm"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, ...)|mangled=wscanf",
-            "kind": "function",
-            "name": "wscanf",
-            "reference_signature": "int (const wchar_t *restrict, ...)|mangled=wscanf"
-          }
-        ],
-        "incompatible_count": 28,
-        "matched_count": 110,
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 138,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -171392,203 +170127,23 @@
     },
     {
       "candidate": {
-        "count": 147,
+        "count": 145,
         "kind_counts": {
-          "function": 102,
+          "function": 100,
           "macro": 33,
           "record": 4,
           "typedef": 8
         },
-        "sha256": "553f9cffa3fe3184fd02f5281a6ba218c2fc1aa4718e49968b15b1bf54c49348"
+        "sha256": "bef76b5567ebbfaca89b1077f5513f41ca928fb7183fc724cdd06cf00216021a"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          {
-            "kind": "function",
-            "name": "mbstowcs",
-            "signature": "size_t (wchar_t *, const char *, size_t)|mangled=mbstowcs"
-          },
-          {
-            "kind": "function",
-            "name": "wcstombs",
-            "signature": "size_t (char *, const wchar_t *, size_t)|mangled=wcstombs"
-          }
-        ],
-        "candidate_only_count": 2,
-        "incompatible": [
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwprintf",
-            "kind": "function",
-            "name": "fwprintf",
-            "reference_signature": "int (FILE *__restrict, const wchar_t *__restrict, ...)|mangled=fwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, ...)|mangled=fwscanf",
-            "kind": "function",
-            "name": "fwscanf",
-            "reference_signature": "int (FILE *__restrict, const wchar_t *__restrict, ...)|mangled=fwscanf"
-          },
-          {
-            "candidate_signature": "size_t (const char *, size_t, mbstate_t *)|mangled=mbrlen",
-            "kind": "function",
-            "name": "mbrlen",
-            "reference_signature": "size_t (const char *__restrict, size_t, mbstate_t *__restrict)|mangled=mbrlen"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char *, size_t, mbstate_t *)|mangled=mbrtowc",
-            "kind": "function",
-            "name": "mbrtowc",
-            "reference_signature": "size_t (wchar_t *__restrict, const char *__restrict, size_t, mbstate_t *__restrict)|mangled=mbrtowc"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const char **, size_t, mbstate_t *)|mangled=mbsrtowcs",
-            "kind": "function",
-            "name": "mbsrtowcs",
-            "reference_signature": "size_t (wchar_t *__restrict, const char **__restrict, size_t, mbstate_t *__restrict)|mangled=mbsrtowcs"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, ...)|mangled=swprintf",
-            "kind": "function",
-            "name": "swprintf",
-            "reference_signature": "int (wchar_t *__restrict, size_t, const wchar_t *__restrict, ...)|mangled=swprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, ...)|mangled=swscanf",
-            "kind": "function",
-            "name": "swscanf",
-            "reference_signature": "int (const wchar_t *__restrict, const wchar_t *__restrict, ...)|mangled=swscanf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, __va_list_tag *)|mangled=vfwprintf",
-            "kind": "function",
-            "name": "vfwprintf",
-            "reference_signature": "int (FILE *__restrict, const wchar_t *__restrict, __va_list_tag *)|mangled=vfwprintf"
-          },
-          {
-            "candidate_signature": "int (FILE *, const wchar_t *, __va_list_tag *)|mangled=vfwscanf",
-            "kind": "function",
-            "name": "vfwscanf",
-            "reference_signature": "int (FILE *__restrict, const wchar_t *__restrict, __va_list_tag *)|mangled=vfwscanf"
-          },
-          {
-            "candidate_signature": "int (wchar_t *, size_t, const wchar_t *, __va_list_tag *)|mangled=vswprintf",
-            "kind": "function",
-            "name": "vswprintf",
-            "reference_signature": "int (wchar_t *__restrict, size_t, const wchar_t *__restrict, __va_list_tag *)|mangled=vswprintf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, const wchar_t *, __va_list_tag *)|mangled=vswscanf",
-            "kind": "function",
-            "name": "vswscanf",
-            "reference_signature": "int (const wchar_t *__restrict, const wchar_t *__restrict, __va_list_tag *)|mangled=vswscanf"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, __va_list_tag *)|mangled=vwscanf",
-            "kind": "function",
-            "name": "vwscanf",
-            "reference_signature": "int (const wchar_t *__restrict, __va_list_tag *)|mangled=vwscanf"
-          },
-          {
-            "candidate_signature": "size_t (char *, wchar_t, mbstate_t *)|mangled=wcrtomb",
-            "kind": "function",
-            "name": "wcrtomb",
-            "reference_signature": "size_t (char *__restrict, wchar_t, mbstate_t *__restrict)|mangled=wcrtomb"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscat",
-            "kind": "function",
-            "name": "wcscat",
-            "reference_signature": "wchar_t *(wchar_t *__restrict, const wchar_t *__restrict)|mangled=wcscat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *)|mangled=wcscpy",
-            "kind": "function",
-            "name": "wcscpy",
-            "reference_signature": "wchar_t *(wchar_t *__restrict, const wchar_t *__restrict)|mangled=wcscpy"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncat",
-            "kind": "function",
-            "name": "wcsncat",
-            "reference_signature": "wchar_t *(wchar_t *__restrict, const wchar_t *__restrict, size_t)|mangled=wcsncat"
-          },
-          {
-            "candidate_signature": "wchar_t *(wchar_t *, const wchar_t *, size_t)|mangled=wcsncpy",
-            "kind": "function",
-            "name": "wcsncpy",
-            "reference_signature": "wchar_t *(wchar_t *__restrict, const wchar_t *__restrict, size_t)|mangled=wcsncpy"
-          },
-          {
-            "candidate_signature": "size_t (char *, const wchar_t **, size_t, mbstate_t *)|mangled=wcsrtombs",
-            "kind": "function",
-            "name": "wcsrtombs",
-            "reference_signature": "size_t (char *__restrict, const wchar_t **__restrict, size_t, mbstate_t *__restrict)|mangled=wcsrtombs"
-          },
-          {
-            "candidate_signature": "wchar_t *(const wchar_t *, const wchar_t *)|mangled=wcsstr",
-            "kind": "function",
-            "name": "wcsstr",
-            "reference_signature": "wchar_t *(const wchar_t *__restrict, const wchar_t *__restrict)|mangled=wcsstr"
-          },
-          {
-            "candidate_signature": "double (const wchar_t *, wchar_t **)|mangled=wcstod",
-            "kind": "function",
-            "name": "wcstod",
-            "reference_signature": "double (const wchar_t *__restrict, wchar_t **__restrict)|mangled=wcstod"
-          },
-          {
-            "candidate_signature": "float (const wchar_t *, wchar_t **)|mangled=wcstof",
-            "kind": "function",
-            "name": "wcstof",
-            "reference_signature": "float (const wchar_t *__restrict, wchar_t **__restrict)|mangled=wcstof"
-          },
-          {
-            "candidate_signature": "long (const wchar_t *, wchar_t **, int)|mangled=wcstol",
-            "kind": "function",
-            "name": "wcstol",
-            "reference_signature": "long (const wchar_t *__restrict, wchar_t **__restrict, int)|mangled=wcstol"
-          },
-          {
-            "candidate_signature": "long double (const wchar_t *, wchar_t **)|mangled=wcstold",
-            "kind": "function",
-            "name": "wcstold",
-            "reference_signature": "long double (const wchar_t *__restrict, wchar_t **__restrict)|mangled=wcstold"
-          },
-          {
-            "candidate_signature": "long long (const wchar_t *, wchar_t **, int)|mangled=wcstoll",
-            "kind": "function",
-            "name": "wcstoll",
-            "reference_signature": "long long (const wchar_t *__restrict, wchar_t **__restrict, int)|mangled=wcstoll"
-          },
-          {
-            "candidate_signature": "unsigned long (const wchar_t *, wchar_t **, int)|mangled=wcstoul",
-            "kind": "function",
-            "name": "wcstoul",
-            "reference_signature": "unsigned long (const wchar_t *__restrict, wchar_t **__restrict, int)|mangled=wcstoul"
-          },
-          {
-            "candidate_signature": "unsigned long long (const wchar_t *, wchar_t **, int)|mangled=wcstoull",
-            "kind": "function",
-            "name": "wcstoull",
-            "reference_signature": "unsigned long long (const wchar_t *__restrict, wchar_t **__restrict, int)|mangled=wcstoull"
-          },
-          {
-            "candidate_signature": "size_t (wchar_t *, const wchar_t *, size_t)|mangled=wcsxfrm",
-            "kind": "function",
-            "name": "wcsxfrm",
-            "reference_signature": "size_t (wchar_t *__restrict, const wchar_t *__restrict, size_t)|mangled=wcsxfrm"
-          },
-          {
-            "candidate_signature": "int (const wchar_t *, ...)|mangled=wscanf",
-            "kind": "function",
-            "name": "wscanf",
-            "reference_signature": "int (const wchar_t *__restrict, ...)|mangled=wscanf"
-          }
-        ],
-        "incompatible_count": 28,
-        "matched_count": 117,
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 145,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -172112,23 +170667,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 663,
-      "mismatch": 617,
+      "matched": 677,
+      "mismatch": 603,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "617 comparable header/profile rows have prototype or named declaration-form differences",
+      "603 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
-      "candidate_only_count": 12954,
-      "incompatible_count": 2819,
+      "candidate_only_count": 12938,
+      "incompatible_count": 2595,
       "reference_only_count": 8751
     },
-    "mismatch_row_count": 617,
+    "mismatch_row_count": 603,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337

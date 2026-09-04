@@ -3,10 +3,11 @@
 #
 # Pinned musl 1.2.6 is the declaration and C++ C-linkage oracle. The raw
 # project pass uses only project headers plus compiler builtins, so host libc
-# headers cannot fill this unconditional C11 surface. The gate deliberately
-# leaves the pre-existing header spelling (including its restrict choices)
-# unchanged; it proves only c16rtomb, mbrtoc16, and mbrtoc32 across the five
-# feature profiles, not locale policy or runtime behavior.
+# headers cannot fill this unconditional C11 surface. The x86 musl branch
+# retains the exact pinned declaration spelling, including restrict choices,
+# while the AArch64 fallback remains the legacy body; this gate proves only
+# c16rtomb, mbrtoc16, and mbrtoc32 across the five feature profiles, not
+# locale policy or runtime behavior.
 set -euo pipefail
 export LC_ALL=C
 

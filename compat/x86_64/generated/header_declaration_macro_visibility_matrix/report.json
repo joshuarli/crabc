@@ -5,7 +5,7 @@
     "declaration_macro_visibility_matrix_contract_sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "source_abi_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
-    "source_abi_report_sha256": "77588ce898c0c226b0c3620d75dc38b96acc27518e25011d6dd2fa2fbe86dcc2"
+    "source_abi_report_sha256": "a40cbda4d291805ef71cc0bb0e85a2616ecc230ca2d79bffdc42c3af08dc8544"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",
@@ -115173,7 +115173,7 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -115193,8 +115193,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -115205,7 +115205,7 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "6331a307abb46c77d6ef805cbe49ac82333c80beeafd9815238c2fbd30d07802"
+        "sha256": "8f889169ad41a7f0f8f4247b85ea4338aab588c8cb8136ee30c2012a52b33bfa"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -115225,8 +115225,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -115237,7 +115237,7 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -115257,8 +115257,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -115269,7 +115269,7 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -115289,8 +115289,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -115301,7 +115301,7 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -115321,8 +115321,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -115333,7 +115333,7 @@
           "record": 1,
           "typedef": 4
         },
-        "sha256": "6abebd3a18509e9ae59a124df2305f730b71f4e35812dc61008158448d248646"
+        "sha256": "1185d8914dbdb8b609e8f560767e0823701ea25f04646902410edadc4993599f"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -115353,8 +115353,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -115365,7 +115365,7 @@
           "record": 1,
           "typedef": 2
         },
-        "sha256": "6331a307abb46c77d6ef805cbe49ac82333c80beeafd9815238c2fbd30d07802"
+        "sha256": "8f889169ad41a7f0f8f4247b85ea4338aab588c8cb8136ee30c2012a52b33bfa"
       },
       "candidate_only": [],
       "candidate_status": "ok",
@@ -115385,8 +115385,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 4,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -127269,27 +127269,18 @@
     },
     {
       "candidate": {
-        "count": 148,
+        "count": 146,
         "kind_counts": {
-          "function": 102,
+          "function": 100,
           "macro": 33,
           "record": 4,
           "typedef": 9
         },
-        "sha256": "df7c5f7a966e38950f1d3618b57729880d6122ed9085dff2a79b15f43eaed6b0"
+        "sha256": "c96d079b3d2165e9006231bbb49034649add8da0ac4c56eee57568ef136e0a24"
       },
-      "candidate_only": [
-        {
-          "kind": "function",
-          "name": "mbstowcs"
-        },
-        {
-          "kind": "function",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_identity_count": 146,
       "profile": "c11-gnu",
@@ -127305,32 +127296,23 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 28,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 147,
+        "count": 145,
         "kind_counts": {
-          "function": 102,
+          "function": 100,
           "macro": 33,
           "record": 4,
           "typedef": 8
         },
-        "sha256": "553f9cffa3fe3184fd02f5281a6ba218c2fc1aa4718e49968b15b1bf54c49348"
+        "sha256": "bef76b5567ebbfaca89b1077f5513f41ca928fb7183fc724cdd06cf00216021a"
       },
-      "candidate_only": [
-        {
-          "kind": "function",
-          "name": "mbstowcs"
-        },
-        {
-          "kind": "function",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_identity_count": 145,
       "profile": "cxx17-gnu",
@@ -127346,40 +127328,23 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 28,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 99,
+        "count": 95,
         "kind_counts": {
-          "function": 64,
+          "function": 60,
           "macro": 26,
           "record": 3,
           "typedef": 6
         },
-        "sha256": "9faadc20ba4042bf28a7f3a76865ee27e4dc2e2a2677dcdb136b5152e0c2a12e"
+        "sha256": "20d959ca47a3d9a8f0a8f01637888abb9ffffd7705308ef1f6fdd13f101594a4"
       },
-      "candidate_only": [
-        {
-          "kind": "function",
-          "name": "mbsnrtowcs"
-        },
-        {
-          "kind": "function",
-          "name": "mbstowcs"
-        },
-        {
-          "kind": "function",
-          "name": "wcsnrtombs"
-        },
-        {
-          "kind": "function",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_identity_count": 95,
       "profile": "c11-strict",
@@ -127395,32 +127360,23 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 28,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 117,
+        "count": 115,
         "kind_counts": {
-          "function": 75,
+          "function": 73,
           "macro": 30,
           "record": 4,
           "typedef": 8
         },
-        "sha256": "4013c6d9372f7520b37bff8b5f2ff85303bd7b9909a4bb219d4103bfe14236db"
+        "sha256": "1fd0612e1eb2a5c56fd4a03fb3d1cc26affcbfb850c76dae33db024b0ce8ccf4"
       },
-      "candidate_only": [
-        {
-          "kind": "function",
-          "name": "mbstowcs"
-        },
-        {
-          "kind": "function",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_identity_count": 115,
       "profile": "c11-posix-2008",
@@ -127436,32 +127392,23 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 28,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 139,
+        "count": 137,
         "kind_counts": {
-          "function": 93,
+          "function": 91,
           "macro": 33,
           "record": 4,
           "typedef": 9
         },
-        "sha256": "d999d378f98f18855d8df75686aa6730f4eb90588ded37787a39c9c988140369"
+        "sha256": "b7469ed41e0e03e8e5a9a8834c14ae96b0ebbe2c4d381af95cadd2a930818a95"
       },
-      "candidate_only": [
-        {
-          "kind": "function",
-          "name": "mbstowcs"
-        },
-        {
-          "kind": "function",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_identity_count": 137,
       "profile": "c11-xopen-700",
@@ -127477,32 +127424,23 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 28,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 140,
+        "count": 138,
         "kind_counts": {
-          "function": 94,
+          "function": 92,
           "macro": 33,
           "record": 4,
           "typedef": 9
         },
-        "sha256": "a966c6a96fdd39fb6adb89e1a21e13fb2ffd3a3f16ead92d851a4ab7354583fd"
+        "sha256": "6da284c99c13b7bdbc71a600cac7d014b870176c92de2be1fa6b870def6b111d"
       },
-      "candidate_only": [
-        {
-          "kind": "function",
-          "name": "mbstowcs"
-        },
-        {
-          "kind": "function",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_identity_count": 138,
       "profile": "c11-bsd",
@@ -127518,32 +127456,23 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 28,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
-        "count": 147,
+        "count": 145,
         "kind_counts": {
-          "function": 102,
+          "function": 100,
           "macro": 33,
           "record": 4,
           "typedef": 8
         },
-        "sha256": "553f9cffa3fe3184fd02f5281a6ba218c2fc1aa4718e49968b15b1bf54c49348"
+        "sha256": "bef76b5567ebbfaca89b1077f5513f41ca928fb7183fc724cdd06cf00216021a"
       },
-      "candidate_only": [
-        {
-          "kind": "function",
-          "name": "mbstowcs"
-        },
-        {
-          "kind": "function",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_identity_count": 145,
       "profile": "cxx17-strict",
@@ -127559,8 +127488,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 28,
-      "source_form_comparison": "mismatch"
+      "separately_accounted_source_form_difference_count": 0,
+      "source_form_comparison": "matched"
     },
     {
       "candidate": {
@@ -128010,9 +127939,9 @@
     "runtime": false
   },
   "summary": {
-    "candidate_only_identity_count": 12954,
+    "candidate_only_identity_count": 12938,
     "candidate_only_identity_kind_counts": {
-      "function": 850,
+      "function": 834,
       "macro": 9044,
       "record": 233,
       "typedef": 2785,
@@ -128022,19 +127951,19 @@
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 741,
-      "mismatch": 539,
+      "matched": 748,
+      "mismatch": 532,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "539 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+      "532 comparable pinned header/profile rows have declaration or macro identity visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "matched_identity_count": 286613,
-    "mismatch_row_count": 539,
+    "mismatch_row_count": 532,
     "oracle_not_applicable_candidate_fact_count": 117,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -128054,13 +127983,13 @@
     "row_count": 1337,
     "source_form_comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 663,
-      "mismatch": 617,
+      "matched": 677,
+      "mismatch": 603,
       "oracle-not-applicable": 1
     },
-    "source_form_difference_count": 2819,
-    "source_form_difference_row_count": 453,
-    "source_form_only_difference_row_count": 78
+    "source_form_difference_count": 2595,
+    "source_form_difference_row_count": 439,
+    "source_form_only_difference_row_count": 71
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {

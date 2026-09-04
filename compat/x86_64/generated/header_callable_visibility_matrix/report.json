@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "80fd582d3a8d91edb3a214d1105018f25313b60988270b76307f94a8a81e636f",
+    "callable_inventory_sha256": "7214ca4da735a46472d9ba5d8105b94d0c35e87c8af32a1c774b91191b6979c3",
     "matrix_contract_sha256": "592a97ca84465cbaf64d63a6c0eb27ca76e4817d1fb5e07a83468b35c80e47be",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -26180,19 +26180,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 104,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "mbstowcs"
-        },
-        {
-          "classification": "external",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_callable_count": 102,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_callable_count": 102,
       "profile": "c11-gnu",
@@ -26201,19 +26192,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 103,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "mbstowcs"
-        },
-        {
-          "classification": "external",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_callable_count": 101,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_callable_count": 101,
       "profile": "cxx17-gnu",
@@ -26222,27 +26204,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 65,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "mbsnrtowcs"
-        },
-        {
-          "classification": "external",
-          "name": "mbstowcs"
-        },
-        {
-          "classification": "external",
-          "name": "wcsnrtombs"
-        },
-        {
-          "classification": "external",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_callable_count": 61,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_callable_count": 61,
       "profile": "c11-strict",
@@ -26251,19 +26216,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 76,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "mbstowcs"
-        },
-        {
-          "classification": "external",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_callable_count": 74,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_callable_count": 74,
       "profile": "c11-posix-2008",
@@ -26272,19 +26228,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 95,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "mbstowcs"
-        },
-        {
-          "classification": "external",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_callable_count": 93,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_callable_count": 93,
       "profile": "c11-xopen-700",
@@ -26293,19 +26240,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 96,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "mbstowcs"
-        },
-        {
-          "classification": "external",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_callable_count": 94,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_callable_count": 94,
       "profile": "c11-bsd",
@@ -26314,19 +26252,10 @@
       "reference_status": "ok"
     },
     {
-      "candidate_callable_count": 103,
-      "candidate_only": [
-        {
-          "classification": "external",
-          "name": "mbstowcs"
-        },
-        {
-          "classification": "external",
-          "name": "wcstombs"
-        }
-      ],
+      "candidate_callable_count": 101,
+      "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "header": "wchar.h",
       "matched_callable_count": 101,
       "profile": "cxx17-strict",
@@ -26516,23 +26445,23 @@
     "public_support": false
   },
   "summary": {
-    "candidate_only_callable_count": 1862,
+    "candidate_only_callable_count": 1846,
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
       "candidate-only-retained-pending-c-abi-policy": 56,
-      "matched": 1103,
-      "mismatch": 177,
+      "matched": 1110,
+      "mismatch": 170,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "177 comparable pinned header/profile rows have callable visibility differences",
+      "170 comparable pinned header/profile rows have callable visibility differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy"
     ],
     "matched_callable_count": 34520,
-    "mismatch_row_count": 177,
+    "mismatch_row_count": 170,
     "oracle_not_applicable_candidate_visible_callable_count": 21,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,

@@ -2514,6 +2514,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/stddef_header_abi_probe.cpp",
             "compat/x86_64/run_stddef_header_abi.sh",
             "compat/x86_64/tests/test_stddef_header_abi.py",
+            "compat/x86_64/tests/test_wchar_uchar_header_source.py",
             "include/stddef.h",
             "compat/x86_64/sys_io_header_abi_probe.c",
             "compat/x86_64/sys_io_header_abi_probe.cpp",
@@ -3579,7 +3580,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 12954, "reference_only": 8751},
+            {"candidate_only": 12938, "reference_only": 8751},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3599,8 +3600,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 663,
-                "mismatch": 617,
+                "matched": 677,
+                "mismatch": 603,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4733,13 +4734,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "539 current comparable declaration-or-macro identity mismatch rows",
-            "741 matched identity rows",
+            "532 current comparable declaration-or-macro identity mismatch rows",
+            "748 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "2,819 same-identity source-form differences across 453 rows",
-            "78 form-only rows",
+            "2,595 same-identity source-form differences across 439 rows",
+            "71 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -4776,7 +4777,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "177 current comparable callable name/class mismatch rows",
+            "170 current comparable callable name/class mismatch rows",
             "one current oracle-not-applicable `aio.h` row",
             "56 project-only header/profile rows",
             "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -4816,7 +4817,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "617 current comparable prototype or named source-form mismatch rows",
+            "603 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",
