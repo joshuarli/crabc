@@ -31,8 +31,11 @@ class UapiHeaderClosureTests(unittest.TestCase):
         self.assertIn("#include <sys/ioctl.h>", mount)
         self.assertIn("#include <sys/ioctl.h>", pty)
         self.assertIn("#include <sys/ioctl.h>", mtio)
-        for phrase in ("#define _IOC(", "#define _IOW(", "#define TIOCGPTN", "#define SIOCGIFINDEX"):
+        for phrase in ("#define _IOC(", "#define _IOW(", "#define TIOCGPTN"):
             self.assertIn(phrase, bits)
+        for phrase in ("#define N_TTY", "#define TIOCPKT_IOCTL", "#define SIOCGIFINDEX"):
+            self.assertIn(phrase, ioctl)
+            self.assertNotIn(phrase, bits)
         for phrase in ("#define BLKROSET", "#define BLKBSZGET", "#define BLKGETSIZE64"):
             self.assertIn(phrase, mount)
         self.assertNotIn("#define _IOT(", mtio)
