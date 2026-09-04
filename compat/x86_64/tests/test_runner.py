@@ -1747,6 +1747,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    ftw-header-abi) ;;", source)
         self.assertIn("    stat-ftw-header-source-form) ;;", source)
+        self.assertIn("    math-tgmath-source-form) ;;", source)
         self.assertIn("    mount-header-source-form) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
         self.assertIn("    stddef-header-abi) ;;", source)
@@ -1993,6 +1994,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "terminal-streams-header-topology",
             "link-header-source-form",
             "reboot-header-source-form",
+            "math-tgmath-source-form",
             "mount-header-source-form",
             "fcntl-event-header-topology",
         )
