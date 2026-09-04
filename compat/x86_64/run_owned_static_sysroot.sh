@@ -3,9 +3,10 @@
 #
 # Two clean builds must produce byte-identical regular-file trees. The actual
 # consumer setup first proves header isolation, then each independent TLS,
-# allocator, POSIX, and stdio job compiles, links, and executes through the
-# installed sealed driver in both ET_EXEC and static-PIE modes. It also packs
-# and safely extracts the regular-file tree before running the same matrix.
+# allocator, POSIX, stdio, resolver, and positional-printf job compiles, links,
+# and executes through the installed sealed driver in both ET_EXEC and
+# static-PIE modes. It also packs and safely extracts the regular-file tree
+# before running the same matrix.
 # This remains a narrow non-promoting product slice: no loader, libc.so,
 # dynamic mode, family completion, x86 promotion, or public-support claim.
 set -euo pipefail
@@ -599,14 +600,134 @@ assert_malformed_tls_rejected() {
     [ "$status" = 127 ] || fail "${label} malformed PT_TLS candidate exited $status, not 127"
 }
 
+assert_printf_matrix_records() {
+    local records_path="$1"
+    local label="$2"
+
+    # The positional-printf probe deliberately writes binary records instead
+    # of formatting its own evidence.  Check its framing independently before
+    # comparing bytes with musl so a truncated record cannot look like a
+    # superficial output mismatch.
+    python3 - "$records_path" "$label" <<'PY'
+from pathlib import Path
+import struct
+import sys
+
+
+path = Path(sys.argv[1])
+label = sys.argv[2]
+try:
+    data = path.read_bytes()
+except OSError as error:
+    raise SystemExit(f"{label} positional-printf matrix is unreadable: {error}") from error
+
+header = struct.Struct("=ii")
+offset = 0
+records = 0
+while offset < len(data):
+    if len(data) - offset < header.size:
+        raise SystemExit(f"{label} positional-printf matrix has a truncated record header")
+    count, _error = header.unpack_from(data, offset)
+    offset += header.size
+    if count >= 512:
+        raise SystemExit(
+            f"{label} positional-printf matrix has an out-of-contract count: {count}"
+        )
+    payload_size = count if count > 0 else 0
+    if len(data) - offset < payload_size:
+        raise SystemExit(f"{label} positional-printf matrix has a truncated payload")
+    offset += payload_size
+    records += 1
+
+if records != 71:
+    raise SystemExit(
+        f"{label} positional-printf matrix has {records} records, expected 71"
+    )
+PY
+}
+
+seed_resolver_fixture() {
+    local fixture_root="$1"
+
+    mkdir -p "$fixture_root/etc"
+    printf '192.0.2.44 host.fixture host-alias\n' >"$fixture_root/etc/hosts"
+}
+
+assert_resolver_fixture_result() {
+    local fixture_root="$1"
+    local label="$2"
+
+    # The candidate writes the resolver configuration after its private DNS
+    # endpoint is reserved.  Keep the fixture evidence inside the job's mode
+    # root and reject a return to the old shared 127.0.0.1 endpoint.
+    python3 - "$fixture_root" "$label" <<'PY'
+from pathlib import Path
+import sys
+
+
+fixture_root = Path(sys.argv[1])
+label = sys.argv[2]
+etc = fixture_root / "etc"
+hosts = etc / "hosts"
+resolv = etc / "resolv.conf"
+expected_hosts = b"192.0.2.44 host.fixture host-alias\n"
+
+for path, description in ((fixture_root, "fixture root"), (etc, "etc"),
+                          (hosts, "hosts"), (resolv, "resolv.conf")):
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise SystemExit(f"{label} resolver {description} is missing: {error}") from error
+    if path.is_symlink():
+        raise SystemExit(f"{label} resolver {description} became a symlink")
+    if description in {"fixture root", "etc"}:
+        if not path.is_dir():
+            raise SystemExit(f"{label} resolver {description} is not a directory")
+    elif not path.is_file():
+        raise SystemExit(f"{label} resolver {description} is not a regular file")
+
+if hosts.read_bytes() != expected_hosts:
+    raise SystemExit(f"{label} resolver fixture hosts content drifted")
+try:
+    lines = resolv.read_text(encoding="ascii").splitlines()
+except UnicodeDecodeError as error:
+    raise SystemExit(f"{label} resolver configuration is not ASCII") from error
+if len(lines) != 3 or lines[1:] != [
+    "search fixture.test",
+    "options ndots:1 timeout:1 attempts:1",
+]:
+    raise SystemExit(f"{label} resolver configuration drifted: {lines!r}")
+fields = lines[0].split()
+if len(fields) != 2 or fields[0] != "nameserver":
+    raise SystemExit(f"{label} resolver nameserver line is invalid: {lines[0]!r}")
+octets = fields[1].split(".")
+try:
+    valid_loopback = (
+        len(octets) == 4
+        and octets[0] == "127"
+        and all(part.isdecimal() and 0 <= int(part) <= 255 for part in octets[1:])
+    )
+except ValueError:
+    valid_loopback = False
+if not valid_loopback or fields[1] == "127.0.0.1":
+    raise SystemExit(f"{label} resolver did not retain a private loopback endpoint: {fields[1]!r}")
+PY
+}
+
 run_static_mode() {
     local installed_root="$1"
     local mode="$2"
     local mode_root="$3"
     local label="$4"
     local consumer_kind="${5:-tls}"
-    local candidate receipt candidate_output
+    local printf_matrix_reference="${6:-}"
+    local candidate receipt candidate_output resolver_fixture
     local -a candidate_arguments=()
+    local -a probe_defines=(
+        -DCRABC_CRT_STATIC_TLS_CANDIDATE
+        -DCRABC_STATIC_STACK_GUARD
+        -DCRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE
+    )
     local probe=libc_crt_static_tls_probe.c
     local expected_output=PIMBCAF
     local minimum_tls_alignment=4096
@@ -635,15 +756,39 @@ run_static_mode() {
             minimum_tls_alignment=1
             candidate_arguments=("$mode_root/stream-data" "$mode_root/exit-data")
             ;;
+        resolver)
+            probe=libc_resolver_runtime_probe.c
+            expected_output=''
+            minimum_tls_alignment=1
+            resolver_fixture="$mode_root/resolver-fixture"
+            candidate_arguments=("$resolver_fixture")
+            probe_defines+=(
+                -DCRABC_RESOLVER_RUNTIME_FREESTANDING
+                -DCRABC_RESOLVER_RUNTIME_INSTALLED
+            )
+            ;;
+        printf)
+            probe=owned_static_printf_probe.c
+            expected_output=owned-printf-ok
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/printf-output")
+            probe_defines+=(-DCRABC_OWNED_PRINTF)
+            [ -n "$printf_matrix_reference" ] ||
+                fail "${label} positional-printf job has no pinned-musl matrix reference"
+            [ -f "$printf_matrix_reference" ] ||
+                fail "${label} positional-printf matrix reference is missing"
+            ;;
         *) fail "unknown installed consumer: $consumer_kind" ;;
     esac
 
     mkdir "$mode_root"
+    if [ "$consumer_kind" = resolver ]; then
+        seed_resolver_fixture "$resolver_fixture"
+    fi
     (
         cd "$mode_root"
         "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE \
-            -DCRABC_CRT_STATIC_TLS_CANDIDATE -DCRABC_STATIC_STACK_GUARD \
-            -DCRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE -c \
+            "${probe_defines[@]}" -c \
             "$ROOT_DIR/compat/x86_64/$probe" -o probe.o
         "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE -DCRABC_STATIC_STACK_GUARD -c \
             "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_peer.c" -o peer.o
@@ -685,6 +830,19 @@ run_static_mode() {
         cmp "$mode_root/expected-exit-data" "$mode_root/exit-data" ||
             fail "${label} did not flush its dynamic stream at ordinary exit"
     fi
+    if [ "$consumer_kind" = resolver ]; then
+        assert_resolver_fixture_result "$resolver_fixture" "$label"
+    fi
+    if [ "$consumer_kind" = printf ]; then
+        printf 'after' >"$mode_root/expected-printf-output"
+        cmp "$mode_root/expected-printf-output" "$mode_root/printf-output" ||
+            fail "${label} positional-printf consumer did not preserve its file result"
+        env -i "$candidate" --matrix >"$mode_root/printf-matrix-output" ||
+            fail "${label} positional-printf differential matrix failed"
+        assert_printf_matrix_records "$mode_root/printf-matrix-output" "$label"
+        cmp "$printf_matrix_reference" "$mode_root/printf-matrix-output" ||
+            fail "${label} positional-printf matrix differs from pinned musl"
+    fi
     assert_malformed_tls_rejected "$candidate" "$label"
     sha256sum "$candidate" | awk '{ print $1 }' >"$mode_root/candidate.sha256"
 }
@@ -711,9 +869,11 @@ write_consumer_matrix_manifest() {
     local extracted="$3"
     local primary_consumer="$4"
     local extracted_consumer="$5"
+    local printf_matrix_reference="$6"
 
     python3 - "$destination" "$ROOT_DIR/compat/x86_64/run_owned_static_sysroot.sh" \
-        "$primary" "$extracted" "$primary_consumer" "$extracted_consumer" <<'PY'
+        "$primary" "$extracted" "$primary_consumer" "$extracted_consumer" \
+        "$printf_matrix_reference" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -721,7 +881,9 @@ from pathlib import Path
 
 destination = Path(sys.argv[1])
 runner = sys.argv[2]
-primary, extracted, primary_consumer, extracted_consumer = map(Path, sys.argv[3:])
+primary, extracted, primary_consumer, extracted_consumer, printf_matrix_reference = map(
+    Path, sys.argv[3:]
+)
 jobs: list[dict[str, object]] = []
 consumer_specs = (
     ("tls", "static-et-exec", "-static", "ET_EXEC", "et-exec"),
@@ -732,24 +894,31 @@ consumer_specs = (
     ("posix", "posix-pie", "-static-pie", "POSIX static PIE", "static-pie"),
     ("stdio", "stdio-et-exec", "-static", "stdio ET_EXEC", "et-exec"),
     ("stdio", "stdio-pie", "-static-pie", "stdio static PIE", "static-pie"),
+    ("resolver", "resolver-et-exec", "-static", "resolver ET_EXEC", "et-exec"),
+    ("resolver", "resolver-pie", "-static-pie", "resolver static PIE", "static-pie"),
+    ("printf", "printf-et-exec", "-static", "positional printf ET_EXEC", "et-exec"),
+    ("printf", "printf-pie", "-static-pie", "positional printf static PIE", "static-pie"),
 )
 for tree_name, installed_root, consumer_root in (
     ("primary", primary, primary_consumer),
     ("extracted", extracted, extracted_consumer),
 ):
     for kind, mode_root_name, mode, label, mode_name in consumer_specs:
+        argv = [
+            runner,
+            "--consumer-job",
+            str(installed_root),
+            mode,
+            str(consumer_root / mode_root_name),
+            label if tree_name == "primary" else f"extracted {label}",
+            kind,
+        ]
+        if kind == "printf":
+            argv.append(str(printf_matrix_reference))
         jobs.append(
             {
                 "name": f"{tree_name}-{kind}-{mode_name}",
-                "argv": [
-                    runner,
-                    "--consumer-job",
-                    str(installed_root),
-                    mode,
-                    str(consumer_root / mode_root_name),
-                    label if tree_name == "primary" else f"extracted {label}",
-                    kind,
-                ],
+                "argv": argv,
             }
         )
 with destination.open("x", encoding="utf-8", newline="\n") as stream:
@@ -765,13 +934,14 @@ run_consumer_matrix() {
     local primary_consumer="$4"
     local extracted_consumer="$5"
     local workers="$6"
-    local matrix_name="${7:-consumer-matrix}"
+    local printf_matrix_reference="$7"
+    local matrix_name="${8:-consumer-matrix}"
     local manifest="$work_root/$matrix_name.json"
     local logs="$work_root/$matrix_name-logs"
     local status=0
 
     write_consumer_matrix_manifest "$manifest" "$primary" "$extracted" \
-        "$primary_consumer" "$extracted_consumer"
+        "$primary_consumer" "$extracted_consumer" "$printf_matrix_reference"
     python3 "$CONSUMER_MATRIX" --state-root "$work_root" --manifest "$manifest" \
         --log-directory "$logs" --workers "$workers" \
         --timeout "$CONSUMER_MATRIX_TIMEOUT_SECONDS" &
@@ -794,7 +964,7 @@ compare_consumer_matrix_runs() {
     # the serial/parallel comparison an additional determinism check rather
     # than just a timing report, while both passes reuse the same cold-built
     # primary and extracted trees.
-    for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie; do
+    for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie; do
         cmp "$serial_primary/$mode_root/candidate.sha256" \
             "$parallel_primary/$mode_root/candidate.sha256" ||
             fail "${mode_root} primary output differs between serial and parallel consumers"
@@ -822,10 +992,10 @@ def read_summary(path: Path, expected_workers: int) -> tuple[float, list[str]]:
         value.get("schema") != 1
         or value.get("workers") != expected_workers
         or not isinstance(jobs, list)
-        or len(jobs) != 16
+        or len(jobs) != 24
         or any(not isinstance(job, dict) or job.get("status") != "passed" for job in jobs)
     ):
-        raise SystemExit(f"consumer timing summary is not a complete passing 16-job run: {path}")
+        raise SystemExit(f"consumer timing summary is not a complete passing 24-job run: {path}")
     elapsed = value.get("elapsed_seconds")
     if not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed) or elapsed <= 0:
         raise SystemExit(f"consumer timing summary has no finite elapsed time: {path}")
@@ -912,7 +1082,8 @@ PY
 
 if [ "${1:-}" = "--consumer-job" ]; then
     shift
-    [ "$#" -eq 5 ] || fail "usage: $0 --consumer-job <installed-root> <mode> <consumer-root> <label> <kind>"
+    [ "$#" -eq 5 ] || [ "$#" -eq 6 ] ||
+        fail "usage: $0 --consumer-job <installed-root> <mode> <consumer-root> <label> <kind> [printf-matrix-reference]"
     run_static_mode "$@"
     exit
 fi
@@ -921,9 +1092,10 @@ fi
 require_native_linux_x86_64
 consumer_workers="$(selected_consumer_workers)"
 consumer_benchmark="$(selected_consumer_benchmark "$consumer_workers")"
-for tool in awk cmp cp dd env find gcc grep nm od python3 readelf rustup sha256sum sort tr xargs; do
+for tool in awk cmp cp dd env find gcc grep id mkdir nm od python3 readelf rustup sha256sum sort tr xargs; do
     require_tool "$tool"
 done
+[ "$(id -u)" -eq 0 ] || fail "requires root for the resolver fixture chroot"
 [ -f "$BUILDER" ] || fail "missing x86 owned-sysroot builder"
 [ -f "$PACKAGE" ] || fail "missing x86 owned-sysroot package helper"
 [ -f "$CONSUMER_MATRIX" ] || fail "missing owned-static consumer matrix helper"
@@ -979,6 +1151,8 @@ dependency_file="$header_consumer/probe.d"
 peer_dependency_file="$header_consumer/peer.d"
 builtins_dependency_file="$header_consumer/builtins.d"
 forged_dependency="$header_consumer/forged.d"
+resolver_reference_fixture="$header_consumer/resolver-reference-fixture"
+printf_matrix_reference="$header_consumer/printf-matrix-reference"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CRT_STATIC_TLS_MUSL_REFERENCE -DCRABC_STATIC_STACK_GUARD \
     -pthread -fno-builtin -fno-stack-protector -ftls-model=local-exec \
@@ -1018,6 +1192,30 @@ printf 'exit-flushed\n' >"$header_consumer/expected-stdio-exit-data"
 cmp "$header_consumer/expected-stdio-exit-data" "$header_consumer/stdio-exit-data" ||
     fail "pinned-musl stdio reference did not flush its dynamic stream at exit"
 
+seed_resolver_fixture "$resolver_reference_fixture"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_resolver_runtime_probe.c" \
+    -o "$header_consumer/resolver-reference"
+reference_output="$(env -i "$header_consumer/resolver-reference" "$resolver_reference_fixture")" ||
+    fail "pinned-musl resolver reference failed"
+[ -z "$reference_output" ] ||
+    fail "pinned-musl resolver reference output drifted: $reference_output"
+assert_resolver_fixture_result "$resolver_reference_fixture" "pinned-musl resolver reference"
+
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_printf_probe.c" \
+    -o "$header_consumer/printf-reference"
+reference_output="$(env -i "$header_consumer/printf-reference" "$header_consumer/printf-reference-output")" ||
+    fail "pinned-musl positional-printf reference failed"
+[ "$reference_output" = owned-printf-ok ] ||
+    fail "pinned-musl positional-printf reference output drifted: $reference_output"
+printf 'after' >"$header_consumer/expected-printf-reference-output"
+cmp "$header_consumer/expected-printf-reference-output" "$header_consumer/printf-reference-output" ||
+    fail "pinned-musl positional-printf reference did not preserve its file result"
+env -i "$header_consumer/printf-reference" --matrix >"$printf_matrix_reference" ||
+    fail "pinned-musl positional-printf matrix failed"
+assert_printf_matrix_records "$printf_matrix_reference" "pinned-musl positional-printf reference"
+
 common_compile=(
     gcc -std=c11 -D_GNU_SOURCE -fno-pie -ffreestanding -fno-builtin
     -fno-stack-protector -ftls-model=local-exec -nostdinc
@@ -1051,10 +1249,25 @@ audit_header_dependencies "$header_consumer/posix.d" "$primary" \
     -o "$header_consumer/stdio.o"
 audit_header_dependencies "$header_consumer/stdio.d" "$primary" \
     "$ROOT_DIR/compat/x86_64/owned_static_stdio_probe.c"
+"${common_compile[@]}" -DCRABC_RESOLVER_RUNTIME_FREESTANDING \
+    -DCRABC_RESOLVER_RUNTIME_INSTALLED -MD -MF "$header_consumer/resolver.d" \
+    -c "$ROOT_DIR/compat/x86_64/libc_resolver_runtime_probe.c" \
+    -o "$header_consumer/resolver.o"
+audit_header_dependencies "$header_consumer/resolver.d" "$primary" \
+    "$ROOT_DIR/compat/x86_64/libc_resolver_runtime_probe.c"
+"${common_compile[@]}" -DCRABC_OWNED_PRINTF -MD -MF "$header_consumer/printf.d" \
+    -c "$ROOT_DIR/compat/x86_64/owned_static_printf_probe.c" \
+    -o "$header_consumer/printf.o"
+audit_header_dependencies "$header_consumer/printf.d" "$primary" \
+    "$ROOT_DIR/compat/x86_64/owned_static_printf_probe.c"
 grep -Fq "$primary/usr/include/errno.h" "$dependency_file" ||
     fail "consumer dependency trace did not resolve installed errno.h"
 grep -Fq "$primary/usr/include/pthread.h" "$dependency_file" ||
     fail "consumer dependency trace did not resolve installed pthread.h"
+grep -Fq "$primary/usr/include/netdb.h" "$header_consumer/resolver.d" ||
+    fail "resolver dependency trace did not resolve installed netdb.h"
+grep -Fq "$primary/usr/include/stdio.h" "$header_consumer/printf.d" ||
+    fail "positional-printf dependency trace did not resolve installed stdio.h"
 printf '%s: %s %s %s\n' "$probe_object" \
     "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_probe.c" \
     "$primary/usr/include/errno.h" /usr/include/stdint.h >"$forged_dependency"
@@ -1067,19 +1280,21 @@ primary_consumer="$work_dir/primary-consumer"
 extracted_consumer="$work_dir/extracted-consumer"
 mkdir "$primary_consumer" "$extracted_consumer"
 run_consumer_matrix "$work_dir" "$primary" "$extracted" "$primary_consumer" \
-    "$extracted_consumer" "$consumer_workers"
+    "$extracted_consumer" "$consumer_workers" "$printf_matrix_reference"
+python3 -B "$ROOT_DIR/compat/x86_64/check_resolver_fixture_isolation.py" \
+    "$primary_consumer/resolver-et-exec/candidate"
 assert_missing_builtins_rejected "$primary" "$primary_consumer/static-et-exec"
 if [ "$consumer_benchmark" = 1 ]; then
     serial_primary_consumer="$work_dir/primary-consumer-serial"
     serial_extracted_consumer="$work_dir/extracted-consumer-serial"
     mkdir "$serial_primary_consumer" "$serial_extracted_consumer"
     run_consumer_matrix "$work_dir" "$primary" "$extracted" "$serial_primary_consumer" \
-        "$serial_extracted_consumer" 1 consumer-matrix-serial
+        "$serial_extracted_consumer" 1 "$printf_matrix_reference" consumer-matrix-serial
     compare_consumer_matrix_runs "$serial_primary_consumer" "$serial_extracted_consumer" \
         "$primary_consumer" "$extracted_consumer" \
         "$work_dir/consumer-matrix-serial-logs" "$work_dir/consumer-matrix-logs"
 fi
-for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie; do
+for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"
@@ -1087,4 +1302,4 @@ for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix
         "$extracted" "$extracted_consumer/$mode_root" "$mode_root"
 done
 
-printf 'x86 owned static sysroot dual-mode + extracted TLS, allocator, POSIX, and stdio consumers: PASS\n'
+printf 'x86 owned static sysroot dual-mode + extracted TLS, allocator, POSIX, stdio, resolver, and positional-printf consumers: PASS\n'
