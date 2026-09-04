@@ -1148,6 +1148,114 @@ impl Mapping {
         mapping
     }
 
+    /// Runs the Linux/x86-64 `mi_os_prim_alloc_aligned` mmap branch through a
+    /// single process pair.
+    ///
+    /// On this 64-bit source profile the direct candidate is always tried.
+    /// An unaligned successful candidate is explicitly released with
+    /// adjustment accounting before the overmap attempt. A direct primitive
+    /// failure does *not* skip that overmap attempt: upstream has the same
+    /// fallback after either an unaligned pointer or a null pointer.
+    fn map_aligned_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        length: usize,
+        alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        mut default_random: Option<&mut TheapRandomImage>,
+    ) -> core::result::Result<Self, AlignedMappingFailure> {
+        let page_size = config.page_size().bytes();
+        if alignment < page_size || !alignment.is_power_of_two() {
+            return Err(AlignedMappingFailure::without_mapping(Errno::INVAL));
+        }
+
+        match Self::map_for_process(
+            process,
+            config,
+            length,
+            alignment,
+            access,
+            allow_large,
+            default_random.as_deref_mut(),
+        ) {
+            Ok(mut direct) => {
+                let base = match direct.base() {
+                    Ok(base) => base,
+                    Err(error) => return Err(AlignedMappingFailure::with_mapping(error, direct)),
+                };
+                if base.addr() % alignment == 0 {
+                    return Ok(direct);
+                }
+                if let Err(error) = direct.unmap_for_process(
+                    process,
+                    if matches!(access, MapAccess::Committed) { length } else { 0 },
+                    true,
+                ) {
+                    return Err(AlignedMappingFailure::with_mapping(error, direct));
+                }
+            }
+            // The source deliberately continues into its overmap branch.
+            Err(_) => {}
+        }
+
+        let over_length = match length.checked_add(alignment) {
+            Some(length) => length,
+            None => return Err(AlignedMappingFailure::without_mapping(Errno::NOMEM)),
+        };
+        let mut over = Self::map_for_process(
+            process,
+            config,
+            over_length,
+            1,
+            access,
+            allow_large,
+            default_random.as_deref_mut(),
+        )
+        .map_err(AlignedMappingFailure::without_mapping)?;
+        let base = match over.base() {
+            Ok(base) => base,
+            Err(error) => return Err(AlignedMappingFailure::with_mapping(error, over)),
+        };
+        let aligned_address = match invariants::align_up(base.addr(), alignment) {
+            Some(address) => address,
+            None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
+        };
+        let prefix = match aligned_address.checked_sub(base.addr()) {
+            Some(size) => size,
+            None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
+        };
+        let suffix = match over_length
+            .checked_sub(prefix)
+            .and_then(|remaining| remaining.checked_sub(length))
+        {
+            Some(size) => size,
+            None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
+        };
+
+        if prefix != 0 {
+            if let Err(error) = over.unmap_prefix_for_process(
+                process,
+                prefix,
+                matches!(access, MapAccess::Committed),
+            ) {
+                return Err(AlignedMappingFailure::with_mapping(error, over));
+            }
+        }
+        if suffix != 0 {
+            if let Err(error) = over.unmap_suffix_for_process(
+                process,
+                suffix,
+                matches!(access, MapAccess::Committed),
+            ) {
+                return Err(AlignedMappingFailure::with_mapping(error, over));
+            }
+        }
+        debug_assert_eq!(over.address.addr(), aligned_address);
+        debug_assert_eq!(over.length, length);
+        Ok(over)
+    }
+
     /// Attempts the exact one-GiB source huge-page primitive at a claimed
     /// high-address hint. There is no regular mmap fallback on this path.
     fn map_huge_page_at(policy: &VmPolicy, config: MemoryConfig, hint: usize) -> Result<Self> {
@@ -1800,6 +1908,31 @@ impl Mapping {
         Ok(())
     }
 
+    /// Releases an aligned-map prefix with the source adjustment statistics.
+    /// Failed cleanup retains this exact complete mapping owner unchanged.
+    fn unmap_prefix_for_process(
+        &mut self,
+        process: VmProcess<'_>,
+        prefix: usize,
+        committed: bool,
+    ) -> Result<()> {
+        self.validate_partial_unmap(prefix)?;
+        let result = match fault_before(FaultPoint::Unmap) {
+            Ok(()) => unsafe { crabc_core::mm::munmap_raw(self.address, prefix) },
+            Err(error) => Err(error),
+        };
+        let stats = process.subprocess.vm_statistics();
+        if committed {
+            stats.committed_adjust_decrease(prefix);
+        }
+        stats.reserved_adjust_decrease(prefix);
+        if result.is_ok() {
+            self.address = self.address.wrapping_add(prefix);
+            self.length -= prefix;
+        }
+        result
+    }
+
     /// Releases a nonempty page-aligned suffix while retaining the exact
     /// contiguous prefix on both syscall success and failure.
     #[inline]
@@ -1814,6 +1947,32 @@ impl Mapping {
         unsafe { crabc_core::mm::munmap_raw(suffix_address, suffix) }?;
         self.length = retained_length;
         Ok(())
+    }
+
+    /// Releases an aligned-map suffix with the source adjustment statistics.
+    /// The owner remains the exact retained prefix if this syscall fails.
+    fn unmap_suffix_for_process(
+        &mut self,
+        process: VmProcess<'_>,
+        suffix: usize,
+        committed: bool,
+    ) -> Result<()> {
+        self.validate_partial_unmap(suffix)?;
+        let retained_length = self.length - suffix;
+        let suffix_address = self.address.wrapping_add(retained_length);
+        let result = match fault_before(FaultPoint::Unmap) {
+            Ok(()) => unsafe { crabc_core::mm::munmap_raw(suffix_address, suffix) },
+            Err(error) => Err(error),
+        };
+        let stats = process.subprocess.vm_statistics();
+        if committed {
+            stats.committed_adjust_decrease(suffix);
+        }
+        stats.reserved_adjust_decrease(suffix);
+        if result.is_ok() {
+            self.length = retained_length;
+        }
+        result
     }
 
     #[inline]
@@ -1926,15 +2085,16 @@ pub(crate) struct NormalOsAllocation {
     memory: MemoryId,
 }
 
-/// A zero-offset normal aligned allocation that may become one arena backing.
+/// A zero-offset regular-OS aligned allocation that may become one arena
+/// backing.
 ///
 /// This is deliberately distinct from [`NormalOsAllocation`]: the latter can
 /// represent `_mi_os_alloc_aligned_at_offset` and therefore carry an interior
 /// client pointer. Only [`NormalOsAllocation::allocate_aligned_base`] builds
 /// this type, by consuming the ordinary `_mi_os_alloc_aligned` result whose
 /// client pointer is the complete mapping base. The process arena may transfer
-/// its exact [`MemoryId`] and [`Mapping`] together, but no offset allocation
-/// can enter that handoff.
+/// its exact [`MemoryId`] and [`Mapping`] together, whether it is a normal or
+/// pinned regular-large OS map; no offset allocation can enter that handoff.
 #[must_use = "a normal OS base allocation must move into an arena owner or an explicit release owner"]
 pub(crate) struct NormalOsBaseAllocation {
     mapping: Mapping,
@@ -1954,7 +2114,6 @@ impl NormalOsBaseAllocation {
         let base = self.mapping.base()?;
         let length = self.mapping.length()?;
         debug_assert_eq!(self.memory.kind(), MemoryKind::Os);
-        debug_assert!(!self.memory.is_pinned());
         debug_assert_eq!(self.memory.os_memory().map(|memory| memory.base), Some(base));
         debug_assert_eq!(self.memory.os_memory().map(|memory| memory.size), Some(length));
         debug_assert_eq!(self.memory.initially_committed(), self.mapping.initially_committed());
@@ -2062,6 +2221,29 @@ impl fmt::Debug for NormalOsAllocationReleaseFailure {
 }
 
 impl NormalOsAllocation {
+    /// Allocates the fixed `_mi_os_alloc` route through the supplied process
+    /// pair. This is the live source counterpart of [`Self::allocate`]: it
+    /// preserves the fixed `allow_large = false` call argument while recording
+    /// the primitive's map/reserved/committed events on that subprocess.
+    pub(crate) fn allocate_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        size: usize,
+    ) -> core::result::Result<Self, NormalOsAllocationFailure> {
+        let length = Self::good_allocation_size(config, size)?;
+        let mapping = Mapping::map_for_process(
+            process,
+            config,
+            length,
+            0,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .map_err(NormalOsAllocationFailure::without_mapping)?;
+        Self::from_mapping(mapping, 0)
+    }
+
     /// Allocates the fixed normal committed `_mi_os_alloc` route.
     ///
     /// This applies the pinned `_mi_os_good_alloc_size` rule and selects only
@@ -2089,6 +2271,32 @@ impl NormalOsAllocation {
         access: MapAccess,
     ) -> core::result::Result<Self, NormalOsAllocationFailure> {
         let mapping = Self::allocate_aligned_mapping(config, size, alignment, access)?;
+        Self::from_mapping(mapping, 0)
+    }
+
+    /// Allocates `_mi_os_alloc_aligned` through the source process pair.
+    ///
+    /// `allow_large` is the exact caller argument from the source call site;
+    /// it remains separate from [`VmPolicy::allow_large_os_pages`], which
+    /// controls source arena selection before this primitive is reached.
+    pub(crate) fn allocate_aligned_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        default_random: Option<&mut TheapRandomImage>,
+    ) -> core::result::Result<Self, NormalOsAllocationFailure> {
+        let mapping = Self::allocate_aligned_mapping_for_process(
+            process,
+            config,
+            size,
+            alignment,
+            access,
+            allow_large,
+            default_random,
+        )?;
         Self::from_mapping(mapping, 0)
     }
 
@@ -2124,7 +2332,6 @@ impl NormalOsAllocation {
         };
         if pointer.as_ptr() != base
             || memory.kind() != MemoryKind::Os
-            || memory.is_pinned()
             || os_memory.base != base
             || os_memory.size != length
             || memory.initially_committed() != mapping.initially_committed()
@@ -2133,6 +2340,29 @@ impl NormalOsAllocation {
             return Err(NormalOsAllocationFailure::with_mapping(Errno::INVAL, mapping));
         }
         Ok(NormalOsBaseAllocation { mapping, memory })
+    }
+
+    /// Builds the zero-offset arena-backing form of
+    /// `_mi_os_alloc_aligned` through one paired process owner.
+    pub(crate) fn allocate_aligned_base_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        default_random: Option<&mut TheapRandomImage>,
+    ) -> core::result::Result<NormalOsBaseAllocation, NormalOsAllocationFailure> {
+        let allocation = Self::allocate_aligned_for_process(
+            process,
+            config,
+            size,
+            alignment,
+            access,
+            allow_large,
+            default_random,
+        )?;
+        Self::into_base_allocation(allocation)
     }
 
     /// Allocates `_mi_os_alloc_aligned_at_offset` without source policy extras.
@@ -2192,6 +2422,63 @@ impl NormalOsAllocation {
         Ok(allocation)
     }
 
+    /// Allocates `_mi_os_alloc_aligned_at_offset` through the paired process
+    /// owner, retaining source accounting for both its overmap and optional
+    /// best-effort prefix decommit.
+    pub(crate) fn allocate_aligned_at_offset_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+        access: MapAccess,
+        allow_large: bool,
+        mut default_random: Option<&mut TheapRandomImage>,
+    ) -> core::result::Result<Self, NormalOsAllocationFailure> {
+        if offset > size {
+            return Err(NormalOsAllocationFailure::without_mapping(Errno::INVAL));
+        }
+        if offset == 0 {
+            return Self::allocate_aligned_for_process(
+                process,
+                config,
+                size,
+                alignment,
+                access,
+                allow_large,
+                default_random.as_deref_mut(),
+            );
+        }
+        let page_size = config.page_size().bytes();
+        if alignment == 0 || alignment % page_size != 0 {
+            return Err(NormalOsAllocationFailure::without_mapping(Errno::INVAL));
+        }
+        let extra = invariants::align_up(offset, alignment)
+            .and_then(|aligned_offset| aligned_offset.checked_sub(offset))
+            .ok_or_else(|| NormalOsAllocationFailure::without_mapping(Errno::NOMEM))?;
+        if size >= usize::MAX - extra {
+            return Err(NormalOsAllocationFailure::without_mapping(Errno::NOMEM));
+        }
+        let oversize = size + extra;
+        let mapping = Self::allocate_aligned_mapping_for_process(
+            process,
+            config,
+            oversize,
+            alignment,
+            access,
+            allow_large,
+            default_random.as_deref_mut(),
+        )?;
+        let allocation = Self::from_mapping(mapping, extra)?;
+        if matches!(access, MapAccess::Committed) && extra >= page_size {
+            // Just as in `src/os.c:521-525`, prefix decommit is best-effort
+            // after the allocation is already live. Keep the owner/pointer
+            // even if Linux rejects the advisory.
+            let _ = allocation.mapping.decommit_for_process(process, 0, extra, extra);
+        }
+        Ok(allocation)
+    }
+
     /// Returns the source client pointer while this exact allocation is live.
     #[inline]
     pub(crate) fn pointer(&self) -> Result<NonNull<u8>> {
@@ -2238,6 +2525,65 @@ impl NormalOsAllocation {
         }
     }
 
+    /// Releases this regular mapping with `_mi_os_free_ex`'s paired source
+    /// statistics. A failed `munmap` returns the same exact allocation owner
+    /// for a later retry; it cannot be mistaken for a finished release.
+    pub(crate) fn release_for_process(
+        mut self,
+        process: VmProcess<'_>,
+        still_committed: bool,
+    ) -> core::result::Result<(), NormalOsAllocationReleaseFailure> {
+        let commit_size = if still_committed {
+            let base = match self.mapping.base() {
+                Ok(base) => base,
+                Err(error) => {
+                    return Err(NormalOsAllocationReleaseFailure {
+                        error,
+                        allocation: self,
+                    });
+                }
+            };
+            let length = match self.mapping.length() {
+                Ok(length) => length,
+                Err(error) => {
+                    return Err(NormalOsAllocationReleaseFailure {
+                        error,
+                        allocation: self,
+                    });
+                }
+            };
+            // `_mi_os_free_ex` frees the full `mem.os` base/size but removes
+            // a previously decommitted interior-allocation prefix from the
+            // final committed count. `pointer` is exactly that source `addr`.
+            match self.pointer.as_ptr().addr().checked_sub(base.addr()) {
+                Some(prefix) => match length.checked_sub(prefix) {
+                    Some(committed) => committed,
+                    None => {
+                        return Err(NormalOsAllocationReleaseFailure {
+                            error: Errno::INVAL,
+                            allocation: self,
+                        });
+                    }
+                },
+                None => {
+                    return Err(NormalOsAllocationReleaseFailure {
+                        error: Errno::INVAL,
+                        allocation: self,
+                    });
+                }
+            }
+        } else {
+            0
+        };
+        match self.mapping.unmap_for_process(process, commit_size, false) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(NormalOsAllocationReleaseFailure {
+                error,
+                allocation: self,
+            }),
+        }
+    }
+
     fn allocate_aligned_mapping(
         config: MemoryConfig,
         size: usize,
@@ -2248,6 +2594,60 @@ impl NormalOsAllocation {
         let alignment = Self::aligned_allocation_alignment(config, alignment)?;
         Mapping::map_aligned_for_allocator(config, length, alignment, access)
             .map_err(NormalOsAllocationFailure::from_aligned_failure)
+    }
+
+    fn allocate_aligned_mapping_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        default_random: Option<&mut TheapRandomImage>,
+    ) -> core::result::Result<Mapping, NormalOsAllocationFailure> {
+        let length = Self::good_allocation_size(config, size)?;
+        let alignment = Self::aligned_allocation_alignment(config, alignment)?;
+        Mapping::map_aligned_for_process(
+            process,
+            config,
+            length,
+            alignment,
+            access,
+            allow_large,
+            default_random,
+        )
+        .map_err(NormalOsAllocationFailure::from_aligned_failure)
+    }
+
+    fn into_base_allocation(
+        allocation: Self,
+    ) -> core::result::Result<NormalOsBaseAllocation, NormalOsAllocationFailure> {
+        let Self {
+            mapping,
+            pointer,
+            memory,
+        } = allocation;
+        let base = match mapping.base() {
+            Ok(base) => base,
+            Err(error) => return Err(NormalOsAllocationFailure::with_mapping(error, mapping)),
+        };
+        let length = match mapping.length() {
+            Ok(length) => length,
+            Err(error) => return Err(NormalOsAllocationFailure::with_mapping(error, mapping)),
+        };
+        let Some(os_memory) = memory.os_memory() else {
+            return Err(NormalOsAllocationFailure::with_mapping(Errno::INVAL, mapping));
+        };
+        if pointer.as_ptr() != base
+            || memory.kind() != MemoryKind::Os
+            || os_memory.base != base
+            || os_memory.size != length
+            || memory.initially_committed() != mapping.initially_committed()
+            || memory.initially_zero() != mapping.initially_zero()
+        {
+            return Err(NormalOsAllocationFailure::with_mapping(Errno::INVAL, mapping));
+        }
+        Ok(NormalOsBaseAllocation { mapping, memory })
     }
 
     #[cfg(test)]
@@ -3365,6 +3765,132 @@ mod tests {
     }
 
     #[test]
+    fn vm_process_normal_allocation_retains_source_statistics_on_failed_release() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+
+        let allocation = NormalOsAllocation::allocate_for_process(process, config, page)
+            .expect("the paired source process maps one regular committed range");
+        let full_size = allocation.full_size().expect("the regular mapping stays live");
+        let after_map = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_map.mmap_calls, 1);
+        assert_eq!(after_map.reserved_total, full_size as i64);
+        assert_eq!(after_map.reserved_current, full_size as i64);
+        assert_eq!(after_map.committed_total, full_size as i64);
+        assert_eq!(after_map.committed_current, full_size as i64);
+
+        // `_mi_os_prim_free` updates source counters after the primitive
+        // reports an error. Its retained owner is still live, but there is no
+        // invented statistic rollback before an explicit retry.
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let retained = match allocation.release_for_process(process, true) {
+            Ok(()) => panic!("the injected release failure must retain its mapping"),
+            Err(failure) => failure,
+        };
+        assert_eq!(retained.error(), Errno::NOMEM);
+        let retained = retained.into_allocation();
+        assert!(retained.base().is_ok());
+        let after_failed_release = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_failed_release.reserved_current, 0);
+        assert_eq!(after_failed_release.committed_current, 0);
+
+        // Retrying the same explicit source free decrements its statistics a
+        // second time: there is deliberately no bookkeeping rollback tied to
+        // a failed kernel release. The owner remains the only reliable retry
+        // token, so preserve that observable source consequence.
+        fault.set(fault::Plan::disabled());
+        retained
+            .release_for_process(process, true)
+            .expect("the retained exact owner releases successfully");
+        let after_retry = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_retry.reserved_current, -(full_size as i64));
+        assert_eq!(after_retry.committed_current, -(full_size as i64));
+    }
+
+    #[test]
+    fn vm_process_purge_counts_before_a_failed_reset_primitive() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let mut policy = VmPolicy::defaults_for_test();
+        policy.set_option(VmOption::PurgeDecommits, 0);
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapping = Mapping::map_for_process(
+            process,
+            config,
+            page,
+            1,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the paired source process maps one purge range");
+
+        fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::NOMEM));
+        assert_eq!(mapping.purge_for_process(process, 0, page, true, page), Err(Errno::NOMEM));
+        let after_failed_reset = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_failed_reset.purge_calls, 1);
+        assert_eq!(after_failed_reset.purged, page as i64);
+        assert_eq!(after_failed_reset.reset_calls, 1);
+        assert_eq!(after_failed_reset.reset, page as i64);
+        assert_eq!(after_failed_reset.committed_current, page as i64);
+
+        fault.set(fault::Plan::disabled());
+        mapping
+            .unmap_for_process(process, page, false)
+            .expect("the exact retained mapping releases after a reset failure");
+    }
+
+    #[test]
+    fn vm_process_offset_release_subtracts_the_decommitted_client_prefix() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let size = page.checked_mul(2).expect("the source span fits");
+        let alignment = page.checked_mul(4).expect("the source alignment fits");
+        let offset = page;
+        let prefix = invariants::align_up(offset, alignment)
+            .and_then(|aligned| aligned.checked_sub(offset))
+            .expect("the source prefix geometry fits");
+
+        let allocation = NormalOsAllocation::allocate_aligned_at_offset_for_process(
+            process,
+            config,
+            size,
+            alignment,
+            offset,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the paired offset allocation maps one retained full owner");
+        let full_size = allocation.full_size().expect("the full source map is live");
+        assert_eq!(
+            allocation.pointer().unwrap().as_ptr().addr() - allocation.base().unwrap().addr(),
+            prefix
+        );
+        allocation
+            .release_for_process(process, true)
+            .expect("the interior source pointer still releases the mapping base");
+        let statistics = subprocess.vm_statistics().snapshot();
+        assert_eq!(statistics.reserved_current, 0);
+        assert_eq!(
+            statistics.committed_current,
+            prefix as i64,
+            "source release subtracts the decommitted prefix from its final committed edge"
+        );
+        assert_eq!(statistics.reserved_total, full_size as i64);
+    }
+
+    #[test]
     fn normal_os_base_handoff_preserves_full_mapping_and_memid() {
         let _fault = fault::install(fault::Plan::disabled());
         let config = MemoryConfig::detect(current_startup());
@@ -3412,6 +3938,33 @@ mod tests {
         mapping
             .unmap()
             .expect("the consumed base-only mapping releases its exact full extent");
+    }
+
+    #[test]
+    fn normal_os_base_handoff_accepts_pinned_regular_large_provenance() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let allocation = NormalOsAllocation::allocate(config, page)
+            .expect("one regular mapping supplies the isolated provenance fixture");
+        // A successful `MAP_HUGETLB` regular allocation retains the ordinary
+        // `MI_MEM_OS` kind but marks its `MemoryId` pinned. The mapping remains
+        // one range and is therefore valid arena-backing input; only
+        // `MI_MEM_OS_HUGE` has its distinct one-GiB release owner.
+        let mut allocation = allocation;
+        let mapping_base = allocation.mapping.base().expect("the map remains live");
+        let mapping_size = allocation.mapping.length().expect("the map remains live");
+        allocation.mapping.is_large = true;
+        allocation.memory = MemoryId::os(mapping_base, mapping_size, true, true, true);
+        let base = NormalOsAllocation::into_base_allocation(allocation)
+            .expect("a pinned regular-large map is valid base-only backing");
+        let memory = base.memory_id().expect("the base handoff stays live");
+        assert_eq!(memory.kind(), MemoryKind::Os);
+        assert!(memory.is_pinned());
+        let (mut mapping, _) = base.into_mapping_and_memory();
+        mapping
+            .unmap()
+            .expect("the regular-large provenance fixture releases one mapping");
     }
 
     #[test]
