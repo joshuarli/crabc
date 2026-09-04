@@ -913,6 +913,12 @@ mod owned_static_realpath;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_static_abort.rs"]
 mod owned_static_abort;
+// The installed owned-static composition additionally needs Lua's complete
+// binary32/binary64 inverse-trigonometry set. Keep it at this aggregate
+// boundary: the frozen default archive must not acquire any of these entries.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_inverse_trig.rs"]
+mod owned_inverse_trig;
 
 // This is a separate dependency-backed password-hash compatibility leaf. Its
 // temporary MCF allocation bridges only to the final link's C allocation
