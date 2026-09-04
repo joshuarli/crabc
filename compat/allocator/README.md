@@ -2119,7 +2119,10 @@ The default is the lesser of the available CPUs and four workers; `--jobs`
 accepts at most eight. Each module receives unique `TMPDIR`, scratch, report,
 and captured-log directories beneath a retained
 `.work/python-test-runs/run-*/` root. A module has a 300-second timeout by
-default; `--timeout` changes that per-module bound. The runner reports only a
+default; `--timeout` changes that per-module bound. Each completed run retains
+`summary.json` with every module's outcome, count, and elapsed time, so tuning
+can use measured costs without rerunning solely to collect timings.
+The runner reports only a
 short ordered failure summary and paths to its logs, rejects traversal and
 symlinked selections before allocating a run root, and fails when discovery or
 a module runs zero tests. Timeout, interruption, and a normal worker exit that

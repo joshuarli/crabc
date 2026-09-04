@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -142,6 +143,18 @@ class EnvironmentTests(unittest.TestCase):
         self.assertNotIn("synthetic child output", result.stdout)
         run_root = self.only_run_root()
         self.assertEqual(len(list((run_root / "coordination").glob("*.passed"))), 2)
+        summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["jobs"], 2)
+        self.assertEqual(summary["tests_run"], 2)
+        self.assertEqual([row["module"] for row in summary["modules"]], [
+            self.relative(suite / "test_one.py"), self.relative(suite / "test_two.py")
+        ])
+        for row in summary["modules"]:
+            self.assertEqual(row["status"], "passed")
+            self.assertEqual(row["tests_run"], 1)
+            self.assertEqual(row["exit_code"], 0)
+            self.assertGreaterEqual(row["elapsed_seconds"], 0)
+            self.assertLessEqual(row["elapsed_seconds"], summary["elapsed_seconds"])
         for index, name in ((1, "test-one"), (2, "test-two")):
             worker = run_root / "modules" / f"{index:03d}-{name}"
             self.assertTrue((worker / "tmp").is_dir())
@@ -186,6 +199,9 @@ class FailureTests(unittest.TestCase):
         self.assertIn("FAILED", failed.stdout)
         self.assertNotIn("synthetic failure payload", failed.stdout)
         failed_root = self.only_run_root()
+        summary = json.loads((failed_root / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["modules"][0]["status"], "failed")
+        self.assertEqual(summary["modules"][0]["exit_code"], 1)
         self.assertIn(
             "synthetic failure payload",
             (failed_root / "modules/001-test-failure/stdout.log").read_text(encoding="utf-8"),

@@ -476,6 +476,28 @@ def print_summary(results: Sequence[ModuleResult], jobs: int, run_root: Path, st
     tests_run = sum(result.tests_run for result in ordered)
     elapsed = time.monotonic() - started_at
     artifact_root = relative_to_repository(run_root)
+    # Retain successful-module timings too: throughput decisions need the
+    # whole workload, not only the slow modules that happened to fail. This
+    # private run owns the sidecar; no shared timing cache or scheduler state.
+    summary = {
+        "schema": 1,
+        "jobs": jobs,
+        "tests_run": tests_run,
+        "elapsed_seconds": elapsed,
+        "modules": [
+            {
+                "module": relative_to_repository(result.module),
+                "status": result.status,
+                "tests_run": result.tests_run,
+                "exit_code": result.exit_code,
+                "elapsed_seconds": result.elapsed_seconds,
+            }
+            for result in ordered
+        ],
+    }
+    with (run_root / "summary.json").open("x", encoding="utf-8") as stream:
+        json.dump(summary, stream, indent=2)
+        stream.write("\n")
     if not failures:
         print(
             f"test-python: passed {len(ordered)} modules / {tests_run} tests "
