@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/test_python.py"
 RUNS_ROOT = ROOT / ".work/python-test-runs"
+RUN_ROOT_REPORT = re.compile(r"(?:logs:|retained logs:)\s+(\.work/python-test-runs/run-[^/\s;]+)")
 SPEC = importlib.util.spec_from_file_location("crabc_test_python", RUNNER)
 assert SPEC is not None and SPEC.loader is not None
 RUNNER_MODULE = importlib.util.module_from_spec(SPEC)
@@ -38,14 +40,32 @@ class PythonTestRunnerTests(unittest.TestCase):
 
     def remove_run_roots(self) -> None:
         for path in self.run_roots:
-            if path.is_relative_to(RUNS_ROOT) and not path.is_symlink():
-                shutil.rmtree(path, ignore_errors=True)
+            self.remove_owned_run_root(path)
+
+    def remove_owned_run_root(self, path: Path) -> None:
+        try:
+            resolved = path.resolve(strict=True)
+        except FileNotFoundError:
+            return
+        if resolved == path and resolved.is_relative_to(RUNS_ROOT.resolve()) and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
 
     def relative(self, path: Path) -> str:
         return path.relative_to(ROOT).as_posix()
 
+    def report_run_root(self, result: subprocess.CompletedProcess[str]) -> Path | None:
+        reported = set(RUN_ROOT_REPORT.findall(result.stdout + result.stderr))
+        if not reported:
+            return None
+        self.assertEqual(len(reported), 1, result.stdout + result.stderr)
+        path = ROOT / reported.pop()
+        self.assertFalse(path.is_symlink())
+        resolved = path.resolve(strict=True)
+        self.assertEqual(resolved, path)
+        self.assertTrue(resolved.is_relative_to(RUNS_ROOT.resolve()))
+        return resolved
+
     def invoke(self, *arguments: str) -> subprocess.CompletedProcess[str]:
-        before = set(RUNS_ROOT.glob("run-*")) if RUNS_ROOT.exists() else set()
         environment = dict(os.environ)
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         result = subprocess.run(
@@ -57,10 +77,9 @@ class PythonTestRunnerTests(unittest.TestCase):
             stderr=subprocess.PIPE,
             check=False,
         )
-        after = set(RUNS_ROOT.glob("run-*")) if RUNS_ROOT.exists() else set()
-        created = after - before
-        self.assertLessEqual(len(created), 1, result.stdout + result.stderr)
-        self.run_roots.extend(created)
+        run_root = self.report_run_root(result)
+        if run_root is not None:
+            self.run_roots.append(run_root)
         return result
 
     def write_module(self, name: str, body: str) -> Path:
@@ -103,9 +122,15 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(Path(os.environ["CRABC_WORK_DIR"]), work_root)
         coordinate = run_root / "coordination"
         coordinate.mkdir(exist_ok=True)
-        (coordinate / (Path(__file__).stem + ".started")).write_text(str(time.monotonic()), encoding="utf-8")
+        name = Path(__file__).stem
+        (coordinate / (name + ".ready")).write_text("ready", encoding="utf-8")
+        deadline = time.monotonic() + 3
+        while len(list(coordinate.glob("*.ready"))) < 2:
+            if time.monotonic() >= deadline:
+                self.fail("two-worker rendezvous timed out")
+            time.sleep(0.01)
+        (coordinate / (name + ".passed")).write_text("passed", encoding="utf-8")
         print("synthetic child output must stay in the captured log")
-        time.sleep(0.6)
 """
         (suite / "test_one.py").write_text(body, encoding="utf-8")
         (suite / "test_two.py").write_text(body, encoding="utf-8")
@@ -116,12 +141,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertIn("passed 2 modules / 2 tests", result.stdout)
         self.assertNotIn("synthetic child output", result.stdout)
         run_root = self.only_run_root()
-        starts = sorted(
-            float(path.read_text(encoding="utf-8"))
-            for path in (run_root / "coordination").glob("*.started")
-        )
-        self.assertEqual(len(starts), 2)
-        self.assertLess(starts[1] - starts[0], 0.35)
+        self.assertEqual(len(list((run_root / "coordination").glob("*.passed"))), 2)
         for index, name in ((1, "test-one"), (2, "test-two")):
             worker = run_root / "modules" / f"{index:03d}-{name}"
             self.assertTrue((worker / "tmp").is_dir())
@@ -227,6 +247,84 @@ class LeakTests(unittest.TestCase):
         run_root = self.only_run_root()
         child_pid = int((run_root / "modules/001-test-leak/child-pid").read_text(encoding="utf-8"))
         self.assert_stopped(child_pid, "normal worker exit left its descendant running")
+
+    def test_cleanup_keeps_a_concurrent_unrelated_run_root(self) -> None:
+        ready = self.fixture_root / "unrelated-ready"
+        release = self.fixture_root / "unrelated-release"
+        unrelated_module = self.write_module(
+            "test_unrelated.py",
+            """\
+import os
+import time
+import unittest
+from pathlib import Path
+
+class UnrelatedTests(unittest.TestCase):
+    def test_waits_for_its_owner(self):
+        ready = Path(os.environ["UNRELATED_READY"])
+        release = Path(os.environ["UNRELATED_RELEASE"])
+        ready.write_text(os.environ["CRABC_PYTHON_TEST_RUN_ROOT"], encoding="utf-8")
+        deadline = time.monotonic() + 10
+        while not release.exists():
+            if time.monotonic() >= deadline:
+                self.fail("unrelated runner was not released")
+            time.sleep(0.01)
+""",
+        )
+        environment = dict(os.environ)
+        environment.update(
+            PYTHONDONTWRITEBYTECODE="1",
+            UNRELATED_READY=str(ready),
+            UNRELATED_RELEASE=str(release),
+        )
+        unrelated = subprocess.Popen(
+            [sys.executable, str(RUNNER), "--module", self.relative(unrelated_module), "--jobs", "1"],
+            cwd=ROOT,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        def finish_unrelated() -> None:
+            release.touch(exist_ok=True)
+            try:
+                unrelated.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                unrelated.terminate()
+                unrelated.communicate()
+
+        self.addCleanup(finish_unrelated)
+        for _ in range(100):
+            if ready.exists():
+                break
+            time.sleep(0.01)
+        self.assertTrue(ready.is_file(), "unrelated runner did not start")
+        unrelated_root = Path(ready.read_text(encoding="utf-8"))
+        self.assertTrue(unrelated_root.is_relative_to(RUNS_ROOT.resolve()))
+        self.assertFalse(unrelated_root.is_symlink())
+
+        own_module = self.write_module(
+            "test_owned.py",
+            """\
+import unittest
+
+class OwnedTests(unittest.TestCase):
+    def test_owned(self):
+        self.assertTrue(True)
+""",
+        )
+        result = self.invoke("--module", self.relative(own_module), "--jobs", "1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.remove_run_roots()
+        self.assertTrue(unrelated_root.is_dir())
+        self.assertIsNone(unrelated.poll())
+
+        release.touch()
+        stdout, stderr = unrelated.communicate(timeout=5)
+        self.assertEqual(unrelated.returncode, 0, stdout + stderr)
+        self.assertTrue(unrelated_root.is_dir())
+        self.remove_owned_run_root(unrelated_root)
 
     def test_malformed_worker_protocol_records_fail_closed(self) -> None:
         for name, payload in (("test_protocol_list.py", "[]"), ("test_protocol_bool.py", '{"tests_run":true,"failures":0,"errors":0,"discovery_errors":0}')):
