@@ -6,16 +6,6 @@ extern "C" {
 #endif
 
 #include <features.h>
-#if defined(__x86_64__)
-#define __NEED_uid_t
-#define __NEED_gid_t
-#define __NEED_mode_t
-#define __NEED_key_t
-
-#include <bits/alltypes.h>
-#else
-#include <sys/types.h>
-#endif
 
 /* Musl keeps the ABI backing spellings private outside its GNU/BSD
  * namespace, then maps the public compatibility spellings back under those
@@ -28,6 +18,20 @@ extern "C" {
 #define __seq seq
 #endif
 
+#if defined(__x86_64__)
+#define __NEED_uid_t
+#define __NEED_gid_t
+#define __NEED_mode_t
+#define __NEED_key_t
+
+#include <bits/alltypes.h>
+#include <bits/ipc.h>
+#include <bits/ipcstat.h>
+#else
+#include <sys/types.h>
+#endif
+
+#if !defined(__x86_64__)
 struct ipc_perm {
 	key_t __ipc_perm_key;
 	uid_t uid;
@@ -39,6 +43,7 @@ struct ipc_perm {
 	long __pad1;
 	long __pad2;
 };
+#endif
 
 #define IPC_CREAT  01000
 #define IPC_EXCL   02000
@@ -46,7 +51,9 @@ struct ipc_perm {
 
 #define IPC_RMID 0
 #define IPC_SET  1
+#if !defined(__x86_64__)
 #define IPC_STAT 2
+#endif
 #define IPC_INFO 3
 
 #define IPC_PRIVATE ((key_t) 0)

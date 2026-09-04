@@ -22,6 +22,9 @@ extern "C" {
 typedef unsigned long msgqnum_t;
 typedef unsigned long msglen_t;
 
+#if defined(__x86_64__)
+#include <bits/msg.h>
+#else
 struct msqid_ds {
 	struct ipc_perm msg_perm;
 	time_t msg_stime;
@@ -34,6 +37,7 @@ struct msqid_ds {
 	pid_t msg_lrpid;
 	unsigned long __unused[2];
 };
+#endif
 
 #define __msg_cbytes msg_cbytes
 

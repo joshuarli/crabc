@@ -16,6 +16,9 @@ extern "C" {
 #include <bits/alltypes.h>
 
 #include <sys/ipc.h>
+#if defined(__x86_64__)
+#include <bits/sem.h>
+#endif
 #else
 #include <sys/ipc.h>
 #include <sys/types.h>
@@ -30,6 +33,7 @@ extern "C" {
 #define SETVAL		16
 #define SETALL		17
 
+#if !defined(__x86_64__)
 struct semid_ds {
 	struct ipc_perm sem_perm;
 	time_t sem_otime;
@@ -41,6 +45,7 @@ struct semid_ds {
 	long __unused3;
 	long __unused4;
 };
+#endif
 
 #define _SEM_SEMUN_UNDEFINED 1
 

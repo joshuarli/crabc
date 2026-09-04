@@ -6,6 +6,16 @@ extern "C" {
 #endif
 
 #include <features.h>
+
+/* GNU exposes the non-underscored Linux compatibility spellings only. Keep
+ * the backing record names visible for strict/POSIX consumers, matching the
+ * pinned musl namespace contract. */
+#ifdef _GNU_SOURCE
+#define __used_ids used_ids
+#define __swap_attempts swap_attempts
+#define __swap_successes swap_successes
+#endif
+
 #if defined(__x86_64__)
 #define __NEED_time_t
 #define __NEED_size_t
@@ -14,13 +24,19 @@ extern "C" {
 #include <bits/alltypes.h>
 
 #include <sys/ipc.h>
+#if defined(__x86_64__)
+#include <bits/shm.h>
+#endif
 #else
 #include <sys/ipc.h>
 #include <sys/types.h>
 #endif
 
+#if !defined(__x86_64__)
 #define SHMLBA 4096
+#endif
 
+#if !defined(__x86_64__)
 struct shmid_ds {
 	struct ipc_perm shm_perm;
 	size_t shm_segsz;
@@ -38,20 +54,12 @@ struct shminfo {
 	unsigned long shmmax, shmmin, shmmni, shmseg, shmall, __unused[4];
 };
 
-/* GNU exposes the non-underscored Linux compatibility spellings only. Keep
- * the backing record names visible for strict/POSIX consumers, matching the
- * pinned musl namespace contract. */
-#ifdef _GNU_SOURCE
-#define __used_ids used_ids
-#define __swap_attempts swap_attempts
-#define __swap_successes swap_successes
-#endif
-
 struct shm_info {
 	int __used_ids;
 	unsigned long shm_tot, shm_rss, shm_swp;
 	unsigned long __swap_attempts, __swap_successes;
 };
+#endif
 
 #define SHM_R 0400
 #define SHM_W 0200
