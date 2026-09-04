@@ -4,10 +4,12 @@
 
 `crabc` is a small, auditable modern Unix runtime for **Linux/AArch64
 little-endian**: a Rust `no_std` libc, dynamic linker, and an idiomatic
-`crabc-rs` facade. Linux **5.10** is the kernel baseline. This is the only
-active `crabc` platform: do not add x86_64, RISC-V, 32-bit, big-endian, or
-non-Linux support or portability abstractions unless the user explicitly
-reopens the scope.
+`crabc-rs` facade. Linux **5.10** is the kernel baseline. Public support remains
+AArch64; the user has opened native x86-64 runtime parity and native x86-64
+mimalloc work under `x86-64.md` and `native-mimalloc.md`, coordinated by
+`plan.md`. AArch64 implementation/qualification work is paused; preserve its
+contracts and frozen parity baseline. Do not add RISC-V, 32-bit, big-endian,
+non-Linux support, or portability abstractions without explicit user direction.
 
 `crabc-rs` exposes useful OS/runtime capabilities; it is not a mechanical
 C-wrapper layer. A future macOS/AArch64 libSystem backend would be separately
@@ -29,7 +31,7 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 | `builtins/` | Rust `no_std` compiler-helper archive and deterministic builder for `libcrabc-builtins.a`; it replaces foreign target compiler-runtime archives. |
 | `crabc-core/` | Shared typed `no_std` Linux/AArch64 primitives used by the Rust facade. |
 | `crabc-rs/` | Public idiomatic Rust facade, direct probes, and native tests. |
-| `crabc-mimalloc/` | Fixed-upstream allocator provenance and incomplete `#![no_std]` engine. It is a Linux/AArch64 semantic port of pinned mimalloc, not a new allocator design or the current production backend. |
+| `crabc-mimalloc/` | Fixed-upstream allocator provenance and incomplete `#![no_std]` semantic port. Native x86-64 work is active; AArch64 work is paused. It is not a new allocator design or the current production backend. |
 | `include/` | Installed public C headers. |
 | `tests/` | Root Rust integration tests and C fixtures. |
 | `compat/` | ABI, differential, loader, corpus, POSIX, Rust-std, LTO, Rustix, performance, and capability-ledger evidence. |
@@ -46,6 +48,7 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 | Governing scope and non-goals | [`SCOPE.md`](SCOPE.md) |
 | Public support/limitation boundary | [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) |
 | Current completion state and roadmap router | [`STATUS.md`](STATUS.md) |
+| Combined native x86-64 execution goal | [`plan.md`](plan.md), [`x86-64.md`](x86-64.md), and [`native-mimalloc.md`](native-mimalloc.md) |
 | Runtime ownership and dependency architecture | [`docs/design/architecture.md`](docs/design/architecture.md) |
 | Owned application CRT/sysroot design and purity boundary | [`docs/design/crt-and-sysroot.md`](docs/design/crt-and-sysroot.md) and [`docs/evidence/crabc-owned-sysroot.md`](docs/evidence/crabc-owned-sysroot.md) |
 | Completed Lua source-build gate | [`docs/design/source-build.md`](docs/design/source-build.md) and [`docs/evidence/lua-source-build.md`](docs/evidence/lua-source-build.md) |
@@ -110,7 +113,8 @@ does not replace the pinned native evidence environment.
 - Kernel-facing code may rely on Linux 5.10. Do not add pre-5.10 fallbacks;
   centrally document a newer requirement before relying on it.
 - Allocator invention is out of scope. The one exception is a
-  provenance-preserving Linux/AArch64 semantic port of fixed mimalloc v3.5.0:
+  provenance-preserving semantic port of fixed mimalloc v3.5.0 (native x86-64
+  active; AArch64 paused):
   preserve its algorithms, data structures, memory orderings, and observable
   behavior until parity is proved; retain the pinned C implementation as a
   differential oracle; require a written design note plus differential and

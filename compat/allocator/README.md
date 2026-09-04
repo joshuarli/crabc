@@ -1,17 +1,19 @@
 # Allocator-port evidence contract
 
-> **Status: active native-mimalloc work.** `native-mimalloc.md` is the live
-> AArch64 allocator ledger. M2 is its current closure gate: its commands
-> produce evidence only, and do not promote the backend, later milestones, or
-> non-AArch64 support.
+> **Status: native x86-64 active; AArch64 paused.**
+> [`native-mimalloc.md`](../../native-mimalloc.md) owns the live x86 queue and
+> preserved AArch64 handoff. Existing x86 quick/check evidence is not x86 M1/M2
+> closure. AArch64 milestone records remain tied to their original target and
+> revision; neither target's reports promote the other.
 
 This directory owns the reproducible source, inventory, C-oracle, and later
-Rust/C evidence for the Linux/AArch64 production-oriented semantic port of
-pinned mimalloc v3.5.0 and its preserved native Linux/x86-64 little-endian
-historical evidence profile. The x86-64 profile is evidence-only: it does not
-authorize public x86 `crabc` support, public allocator integration,
-default-backend promotion, AArch64 emulation, allocator invention, a
-cross-platform abstraction, or a runtime allocator-selection system. The
+Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
+Linux/x86-64 little-endian development is active alongside runtime parity;
+AArch64 implementation and qualification are paused. Existing x86 evidence
+provides a baseline, not public x86 support or qualified backend promotion.
+Those outcomes require the execution plans' full gates. Neither program
+authorizes AArch64 emulation, allocator invention, a cross-platform
+abstraction, or a runtime allocator-selection system. The
 immutable source and licensing record are in
 [`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md); the design
 boundary is in [`docs/design/allocator.md`](../../docs/design/allocator.md).
@@ -915,9 +917,12 @@ model covers current mapping and page-map ownership. The pinned image does not
 currently contain Miri, so forced-`cfg(miri)` execution is smoke evidence only
 and is never reported as a Miri pass.
 
-## Recorded reproduction commands (paused)
+## Recorded AArch64 reproduction commands (paused)
 
-Run the harness through the pinned Linux/AArch64 development image:
+These are preserved AArch64 reproduction commands, not the active work queue.
+For native x86, follow §20 and §26 of `native-mimalloc.md`, including containment
+of the allocator launcher under `.work/` before executing it.
+The historical AArch64 harness uses the pinned Linux/AArch64 development image:
 
 ```sh
 ./scripts/dev.sh allocator --quick

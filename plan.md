@@ -1,24 +1,175 @@
-# Current plan
+# Combined native x86-64 completion goal
 
-## Active future goal: native Linux/x86-64 runtime parity
+## Goal prompt
 
-Implement the native Linux/x86-64 program defined in
-[`x86-64.md`](x86-64.md). The goal is full parity with the current
-Linux/AArch64 runtime capability boundary across `crabc-core`, `crabc-libc`,
-`crabc-ldso`, CRT/sysroot artifacts, and `crabc-rs`; it is not allocator-only
-or symbol-count parity.
+> Implement `plan.md` to completion: fully complete both `x86-64.md` and the
+> native Linux/x86-64 scope of `native-mimalloc.md`, working their independent
+> critical paths in parallel and integrating them into one qualified runtime.
+> AArch64 implementation and qualification work is paused. Preserve its
+> existing contracts, implementation, evidence, and frozen parity baseline;
+> do not emulate it or transfer its milestone claims to x86. Continue through
+> all runtime product/qualification gates and allocator milestones M0–M11,
+> including qualified native Rust allocator promotion, final installed-product
+> requalification, and public x86 support. Commit coherent completed slices
+> with conventional commit subjects. Do not stop at a plan, selected fixture,
+> intermediate milestone, stable checkpoint, or handoff. Completion requires
+> both plans' full predicates at the same final committed source revision.
 
-Work in native-x86 vertical capability slices: establish the syscall, ELF,
-TLS, atomic/futex, signal, CRT, and loader foundation, then complete the
-supported libc and Rust-facade families with focused native ABI and behavioral
-evidence. Keep public support documentation AArch64-only until every promotion
-gate in `x86-64.md` passes.
+This is an execution goal, not a request for another planning exercise.
+The two linked plans remain the detailed acceptance contracts; this file
+coordinates their scheduling and joint finish without weakening either one.
 
-## Paused: fixed Rust mimalloc parity
+## Scope and authority
 
-All new mimalloc implementation, source-map or ledger expansion, C/Rust
-differential lanes, performance work, backend integration, and AArch64
-production-port work are paused. Retain the existing implementation and private
-native x86-64 allocator evidence; the technical handoff is
-[`native-mimalloc.md`](native-mimalloc.md). Resume that program only after an
-explicit reprioritization.
+Read `AGENTS.md`, `SCOPE.md`, `COMPATIBILITY-PROFILE.md`, `STATUS.md`, both
+execution plans, and their relevant machine-readable contracts before choosing
+work. Explicit user direction and the governing scope take precedence. This
+combined goal supersedes historical instructions that pause all mimalloc work
+or resume AArch64 allocator development; only native x86-64 is active here.
+
+- Target native Linux/x86-64 little-endian, Linux 5.10 or newer, using the
+  pinned native environment. Do not introduce new platforms or a portability
+  framework.
+- Preserve the runtime baseline fixed by `x86-64.md`: source
+  `3e100d45c5a0798c2d3862d5e2eef584c610ccf9`, all 223 capabilities, all 26
+  required families, and the recorded digests. Never refresh it to absorb
+  drift or eliminate required work.
+- Port mimalloc v3.5.0 at its immutable upstream revision and hash. Preserve
+  algorithms, memory orderings, ownership, lifecycle, and observable behavior;
+  do not invent an allocator. Keep the exact C source as a separate test oracle.
+- Use pinned musl 1.2.6 for C/POSIX evidence and Rustix only in its permitted
+  test role. Glibc and ambient target runtime inputs are never fallbacks.
+- No AArch64 implementation/qualification campaign, emulation, CI-workflow
+  work, unrelated cleanup, formatting, linting, pre-commit hooks, or remote
+  pushes. Shared source changes must preserve the paused target's contract.
+
+## Two parallel workstreams, one integration owner
+
+### Runtime parity
+
+Follow `x86-64.md` and `compat/x86_64/parity.toml`, closing finite capability
+families and the owned static and dynamic products in dependency order.
+Advance static delivery without waiting for unrelated dynamic work; establish
+general loader architecture while independent runtime families progress.
+Do not resume a one-symbol/export-count campaign or replace ordinary installed
+runtime behavior with private fixtures.
+
+Continue runtime work with the accepted C allocator until the native Rust
+backend qualifies. Allocator development must not unnecessarily serialize
+independent syscall, ABI, CRT, loader, facade, or sysroot work.
+
+### Native x86-64 mimalloc
+
+Follow the active x86 handoff in §26 of `native-mimalloc.md`, its full milestone
+definitions, source map, API/mode inventories, and gate manifests. First
+contain the allocator launcher under `.work/`, then establish target-qualified
+baseline and milestone gates. Imported AArch64 M0/M1 closure and partial M2
+records are preserved evidence, not x86 completion.
+
+Close each milestone completely before advancing to its dependent milestone.
+In particular, M3 requires all eight M2 components complete with no remaining
+conditions and clean native gate evidence. Work independent components in
+parallel where ownership permits. Never substitute additional trace counts,
+documentation, selected leaves, or a partial-gate exit for component closure.
+
+### Shared runtime/allocator boundary
+
+The root integrator owns shared contracts and final integration. Assign one
+writer to each shared file or interface, and land interface changes before
+dependent implementations. Coordinate these boundaries explicitly:
+
+- raw memory/entropy/syscall primitives, page and address geometry;
+- allocation-free bootstrap, process state, errno, and recursion behavior;
+- TCB/TLS ownership, pthread creation, teardown, cancellation, and fork;
+- pointer-derived allocation ownership, ABI exports, weak symbols, and
+  interposition; and
+- CRT startup, loader/DSO lifecycle, installed sysroot, and dependency purity.
+
+Allocator engine/API work may proceed before the general runtime is complete.
+M8 integration and M10 promotion must wait for their actual owned-runtime
+prerequisites. Neither an oracle-hosted allocator test nor a runtime test with
+the C backend proves final native Rust allocator integration.
+
+Use independent agents for bounded parallel work when applicable routing rules
+allow it. Never use Terra or Sol without explicit user permission. Give each
+worker a concrete deliverable, nonoverlapping ownership, required evidence,
+and a repository-local worktree; the root reviews and integrates results.
+
+### Relationship to `sysroot.md`
+
+`sysroot.md` describes the earlier AArch64 owned CRT/sysroot work. Its recorded
+CRT/sysroot-purity deliverable is complete; full target-runtime Rust purity
+remains blocked by the C allocator. Its literal no-native-dependency hard gate
+is therefore not a completed whole-runtime claim. See
+`docs/design/crt-and-sysroot.md` and `docs/evidence/crabc-owned-sysroot.md` for
+that explicit distinction. These are recorded AArch64 results, not current
+x86 qualification.
+
+Do not defer the x86 sysroot until after mimalloc or start another AArch64
+campaign from `sysroot.md`. The owned x86 static/dynamic sysroots are required
+products inside `x86-64.md`; build them in parallel using the accepted backend,
+then requalify their final Rust-allocator integration and purity here. Native
+x86 allocator completion does not clear the paused AArch64 full-runtime purity
+blocker; that requires separate future AArch64 promotion and evidence.
+
+## Execution and evidence discipline
+
+1. Inspect the current commit, dirty work, worktrees, contracts, and available
+   evidence. Preserve accepted work and recover unfinished changes before
+   replacing them. Derive the next work from unmet gates, not old narratives.
+2. Keep all new mutable development state under checkout-local `.work/`:
+   worktrees, scratch, sources, Cargo caches/targets, sysroots, and report
+   backing storage. Validate physical paths and reject traversal/symlink
+   escapes. Override tool defaults before execution; do not use external
+   `/tmp` or named external Docker storage. Keep separate workstream paths.
+3. Choose coherent behavior or component slices that shorten a required
+   product's critical path. For bugs, observe the smallest isolated failing
+   regression before fixing the pinned-source root cause.
+4. Run the nearest hard judge first, then relevant boundary, differential,
+   aggregate, lifecycle, fault, model, and performance evidence as required.
+   Repair demonstrated test-contract defects with oracle evidence; never
+   weaken acceptance merely to make a gate green.
+5. Commit completed slices promptly using `feat`, `fix`, `test`, `refactor`,
+   `perf`, `build`, or `docs` subjects with a meaningful scope. Do not bundle
+   unrelated work, invoke hooks, or push. Run required clean-revision gates
+   after committing; qualify a later code change again rather than inheriting
+   a previous revision's pass.
+6. Update concise architecture-qualified handoffs and machine-readable state
+   with exact remaining conditions, commands, revision, report paths, and
+   results. Do not inflate status files with per-leaf histories or count stale
+   generated reports as current evidence.
+7. Continue from the next unmet gate. Expected partial results, preexisting
+   failures, or task size are unfinished work, not successful terminal states.
+   If genuinely blocked on new authority or unavailable external resources,
+   report the exact blocker and required action without claiming completion;
+   pursue safe independent in-scope work while available.
+
+## Exact joint completion predicate
+
+The goal is complete only when all of the following hold together:
+
+1. Every item in `x86-64.md`'s exact full-completion definition passes: the
+   immutable baseline and complete accounting, all 26 required families,
+   reproducible installed static and dynamic products, the ordered consumer
+   and qualification chain, native performance, computed promotion readiness,
+   validated public support, and the post-promotion aggregate rerun.
+2. Every applicable native x86 allocator milestone M0–M11 and every item in
+   `native-mimalloc.md`'s final definition of done passes. There are no hidden
+   incomplete components, remaining conditions, unclassified applicable
+   upstream behavior, waived required tests, or unqualified performance gates.
+3. Native Rust mimalloc is the default backend for the qualified x86 product.
+   Its final target production graph/artifacts exclude C mimalloc; the pinned
+   C oracle remains isolated for tests. Do not remove the paused AArch64
+   backend or imply its promotion to satisfy an x86 purity check.
+4. Rebuild and requalify both installed x86 static and dynamic products after
+   backend promotion, including allocator ABI, TLS/pthread/fork, loader/DSO,
+   consumers, reproducibility, dependency purity, and performance. A runtime
+   pass earned only with the former C backend is insufficient.
+5. Required final reports attest the same committed, clean source revision,
+   target, pinned inputs, and applicable test configuration. Documentation and
+   machine-readable status agree with those results; no required work remains.
+
+Finish with the final commit, the proving commands and report locations,
+upstream/source-map and dependency-purity results, measured performance, and
+any explicitly supported limitations already permitted by the contracts.
+Do not mark the goal complete if either linked program remains incomplete.

@@ -2,10 +2,11 @@
 
 ## Purpose and status
 
-> **Status: paused.** This document preserves fixed-mimalloc provenance,
-> boundaries, implementation context, and evidence. It is not an active
-> backlog; resume implementation, evidence expansion, integration, or
-> performance work only after an explicit reprioritization.
+> **Status: native x86-64 active; AArch64 paused.** The execution contract and
+> architecture-qualified live queue are in
+> [`native-mimalloc.md`](../../native-mimalloc.md). This document preserves
+> provenance, boundaries, and implementation context; its older evidence
+> records do not transfer milestone completion between architectures.
 
 `crabc` may replace the C allocator implementation in its production graph
 with a provenance-preserving, pure-Rust semantic port of a fixed mature
@@ -18,9 +19,9 @@ mapping register, and update procedure are in
 [`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md).
 
 The current production `libmimalloc-sys` 0.1.49 backend bundles mimalloc
-v3.3.2. It remains the default while the port is paused, but it is not the
+v3.3.2. It remains the default until qualified target-specific promotion, but it is not the
 exact v3.5.0 C oracle: the pinned v3.5.0 archive must be built separately for
-the Rust-port differential and performance baseline if work resumes.
+the Rust-port differential and performance baseline.
 
 Gate 5C—the source-shaped owner-exit traversal with live allocations—is
 accepted for the direct native-engine lifecycle surface. The checked
@@ -2354,12 +2355,13 @@ queue traversal, or complete source thread teardown.
 
 ## Scope boundary
 
-The production integration profile is Linux/AArch64 little-endian, with Linux
-5.10 as the kernel floor and support for valid Linux/AArch64 page sizes. The
-fixed allocator retains a paused, native Linux/x86-64 little-endian historical
-evidence profile. It has no public `crabc` allocator integration or
-default-promotion claim, must run on native x86-64 Linux, and must not use
-AArch64 emulation. RISC-V, macOS, Windows, big-endian, 32-bit, and portability
+The active implementation and gated integration profile is native
+Linux/x86-64 little-endian, with Linux 5.10 as the kernel floor. Preserve the
+paused AArch64 port's valid page-size and ABI contracts without resuming its
+implementation or qualification. Existing x86 evidence does not establish
+public allocator integration or default promotion; those remain gated by
+`native-mimalloc.md` and the relevant owned-runtime contracts in `x86-64.md`.
+Do not use AArch64 emulation. RISC-V, macOS, Windows, big-endian, 32-bit, and portability
 scaffolds remain out of scope. Both allocator profiles must be `#![no_std]`,
 must not depend on `alloc` or libc, and must not compile C or C++ in the
 production allocator.
@@ -2561,19 +2563,17 @@ implementation becomes the default only in a final isolated promotion change.
 
 ## Evidence and promotion
 
-If allocator work is explicitly resumed, track the outcomes separately for
-each architecture profile:
+Track these outcomes independently for the active native x86-64 profile:
 
-1. AArch64 readiness to back crabc's `malloc` family without changing its C
-   ABI;
-2. parity for every Linux/AArch64-applicable public mimalloc v3.5.0 `mi_*`
-   interface and compile-time mode; and
-3. the paused native x86-64 historical evidence profile for the fixed
-   mimalloc port.
+1. readiness to back crabc's `malloc` family without changing its C ABI;
+2. parity for every applicable public mimalloc v3.5.0 `mi_*` interface and
+   compile-time mode; and
+3. qualified integration and default promotion in the owned x86 runtime.
 
-The x86-64 parity outcome is never a libc-readiness or public-platform
-outcome. It cannot promote an x86 allocator backend or change the public
-Linux/AArch64 support boundary.
+Preserve AArch64 outcomes as paused, architecture-qualified records. A
+standalone x86 allocator parity result is not libc readiness or public-platform
+completion. Backend promotion requires the native allocator and owned-runtime
+integration gates; public x86 support requires the full `x86-64.md` predicate.
 
 No outcome follows from basic allocation tests. Promotion requires focused
 invariants, layout/configuration probes, upstream-test evidence, deterministic

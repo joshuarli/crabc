@@ -58,13 +58,13 @@ capability**, not a Rust wrapper for every exported C symbol.
 
 ## Allocation and cryptography
 
-- Fixed-mimalloc implementation, evidence expansion, backend integration, and
-  performance work is paused pending explicit reprioritization. The retained
-  port contract and private evidence remain available for review and future
-  resumption; they are not an active backlog.
+- Native x86-64 fixed-mimalloc implementation, qualification, and gated backend
+  promotion are active under [`native-mimalloc.md`](native-mimalloc.md), in
+  parallel with runtime parity as coordinated by [`plan.md`](plan.md).
+  AArch64 allocator work is paused; preserve its contracts and evidence.
 - Allocator invention remains outside project scope. The one fixed exception
   is a provenance-preserving Rust semantic port of mimalloc v3.5.0 for
-  Linux/AArch64 little-endian, governed by
+  native Linux/x86-64 little-endian, with the AArch64 port preserved, governed by
   [`docs/design/allocator.md`](docs/design/allocator.md). This is compatibility
   work: upstream algorithms and observable behavior remain authoritative, the
   exact pinned C implementation remains the differential oracle, and any
@@ -72,12 +72,12 @@ capability**, not a Rust wrapper for every exported C symbol.
   performance evidence. The C allocation ABI remains observable-boundary test
   work owned by `crabc-libc`; `crabc-rs` uses normal Rust allocation rather
   than exposing C allocation APIs.
-- The fixed allocator program retains private native Linux/x86-64
-  little-endian evidence as a paused historical profile. It does not make
-  x86-64 a supported `crabc` platform, provide public x86 allocator
-  integration or default-backend promotion, or authorize AArch64 emulation.
-  Its ledgers and reports remain architecture-specific and must not be merged
-  into the AArch64 public-support contract.
+- Allocator evidence alone does not make x86-64 a supported `crabc` platform
+  or justify backend promotion. Native integration and promotion require the
+  allocator and relevant owned-runtime gates; public support additionally
+  requires the full `x86-64.md` predicate. No AArch64 emulation is authorized.
+  Ledgers and reports remain architecture-specific and must not transfer
+  closure claims between targets.
 - `crabc` does not implement cryptographic hashes, password hashing, TLS,
   X.509, certificate validation, PRNG/DRBGs, or public-/symmetric-key
   algorithms. OS entropy such as `getrandom` is in scope. A compatibility API

@@ -58,18 +58,20 @@ until explicitly requested later.
 
 Do not introduce architecture abstractions merely for hypothetical future ports.
 
-Implement the cleanest correct AArch64 design first.
+Keep the existing AArch64 contract intact while implementing the explicitly
+opened native x86-64 programs.
 
 `crabc-rs` may separately gain a macOS AArch64 backend through libSystem, but **that does not make crabc itself portable**.
 
 Keep these concepts distinct.
 
-The existing `crabc-mimalloc` native Linux/x86-64 evidence remains a private
-fixed-allocator profile against the pinned C oracle. It is useful preserved
-evidence but does not itself establish x86 libc, loader, CRT, Rust-facade, or
-public-platform support; those are owned by the staged runtime program above.
-All fixed-mimalloc implementation, evidence expansion, integration, and
-performance work is paused pending explicit reprioritization. It never
+The user has also activated native Linux/x86-64 fixed-mimalloc implementation,
+qualification, and gated backend promotion under
+[`native-mimalloc.md`](native-mimalloc.md), in parallel with runtime parity.
+[`plan.md`](plan.md) coordinates their independent completion contracts.
+AArch64 native-mimalloc work is paused; preserve its implementation and
+architecture-qualified evidence. Allocator evidence alone does not establish
+x86 libc, loader, CRT, Rust-facade, or public-platform support. Neither program
 authorizes AArch64 emulation or a generic portability layer.
 
 ---
@@ -192,10 +194,11 @@ compatibility engineering, not an allocator-design project:
 
 - Preserve upstream algorithms, data structures, memory orderings, lifecycle
   behavior, and valid-program observable behavior until parity is established.
-- The production integration profile is Linux/AArch64 little-endian. The
-  preserved native Linux/x86-64 little-endian evidence is private and paused;
-  it does not authorize new allocator work, architecture or operating-system
-  abstractions, or a public-platform claim.
+- The active implementation and gated production-integration target is native
+  Linux/x86-64 little-endian. AArch64 allocator work and promotion are paused.
+  Preserve that target's contracts without transferring its evidence to x86.
+  Public x86 support still requires `x86-64.md`; no architecture or
+  operating-system abstraction is authorized by the allocator program.
 - An algorithmic divergence needs a written design note, deterministic
   differential evidence, and performance evidence before it is accepted.
 - The exact pinned C implementation remains a mandatory test and differential

@@ -3,24 +3,52 @@
 This file is the complete execution contract for finishing crabc's native
 mimalloc implementation.
 
+## Active target and scheduling — 2026-09-04
+
+**AArch64 native-mimalloc work is paused. Native Linux/x86-64 mimalloc work is
+active alongside the runtime parity program in [`x86-64.md`](x86-64.md).**
+This follows the user's reprioritization after merging `main-wip` into `main`.
+Use this native x86-64 host for implementation and evidence; do not emulate
+AArch64 or resume its qualification workload.
+
+Preserve the imported AArch64 implementation, source mappings, manifests,
+and exact-revision evidence. Its M0/M1 closure and partial M2 handoff remain
+AArch64 records. They do not establish x86 milestone completion. Shared
+source changes must preserve that target's contract, with target-specific
+boundaries where the ABI, TLS, page geometry, or Linux interface differs.
+
+The two active programs retain separate completion predicates. Allocator
+engine, source parity, and allocator qualification belong here; libc, loader,
+CRT, sysroot, and public x86 support belong to `x86-64.md`. Coordinate their
+allocation, errno, TCB/TLS, thread-exit, fork, and loader interfaces. Keep the
+currently selected C backend until the native allocator and its selected x86
+runtime integration gates justify a separate backend-promotion change.
+Neither track may report the other complete from its own passing tests.
+
+The active x86 milestone queue is in §26. The retained AArch64 handoff and
+chronologies in that section are paused provenance. This scheduling section
+supersedes their older instructions to continue AArch64 work. Native x86
+evidence must identify its architecture and exact revision throughout.
+
 When instructed:
 
-> finish the implementation of aarch64-only native mimalloc as described in
+> finish the implementation of native x86-64 mimalloc as described in
 > native-mimalloc.md
 
 treat that instruction as authorization to inspect and modify every relevant
 repository file, run all required tests and benchmarks, create implementation
-worktrees, launch the mandatory parallel workers described below, and continue
+worktrees, coordinate independent workers as described below, and continue
 through the final promotion gate. Do not stop after writing another plan,
 closing a bounded witness, or reporting an intermediate checkpoint. Continue
 from the first unmet objective gate until the Rust allocator is the verified
-default production allocator, unless the user explicitly narrows the scope.
+default allocator for the qualified x86 runtime, unless the user explicitly
+narrows the scope. This does not resume the paused AArch64 promotion track.
 
 The crucial framing is:
 
 > **Do not design a new allocator. Port pinned mimalloc v3.5.0 faithfully.**
 
-The objective is to remove C mimalloc from crabc's production dependency graph
+The objective is to remove C mimalloc from the selected x86 production dependency graph
 while retaining mimalloc's algorithms, ownership model, concurrency model,
 lifecycle behavior, ABI-visible semantics, and performance. This is
 compatibility engineering, not allocator research.
@@ -41,10 +69,10 @@ compatibility engineering, not allocator research.
    refactor: write or preserve a failing test, observe the expected failure,
    implement the smallest source-faithful change, then rerun the focused and
    relevant aggregate gates.
-5. Use at most eight concurrent Terra `max` implementation subagents in
-   isolated git worktrees for every substantial implementation wave. Do not
-   substitute Sol or another model tier unless the user explicitly changes
-   this rule. The parallel-worktree protocol in this file is mandatory.
+5. Follow the current user and repository agent-routing instructions. Use
+   independent workers when useful, with explicit ownership and isolated
+   worktrees for implementation. Do not use Terra or Sol unless the user
+   explicitly authorizes them. The ownership rules in §6 apply to any wave.
 6. Prefer deleting or bypassing temporary allocator-control scaffolding over
    extending it.
 7. Never weaken, rewrite, or reschedule an upstream workload merely to avoid a
@@ -63,7 +91,9 @@ artifact below its repository-local `.work/` directory. This includes
 temporary files, extracted upstream sources, implementation worktrees, Cargo
 targets, generated sysroots, reports, and fixtures. Create subdirectories as
 needed, for example `.work/tmp/`, `.work/worktrees/`, and `.work/target/`.
-For the canonical checkout this is `/Volumes/dev/d/crabc/.work`.
+Resolve this boundary from the actual checkout, not a machine-specific path.
+Keep allocator and runtime evidence in separate architecture-qualified
+subdirectories so concurrent work cannot overwrite the other track's state.
 
 Do not use `/tmp`, `/private/tmp`, `/var/tmp`, a home-directory scratch path,
 or any other worktree or temporary location outside `.work/`. If a tool's
@@ -99,27 +129,29 @@ separate reviewable change containing:
 - stress reruns;
 - performance reruns.
 
-## 1.2 Supported production platform
+## 1.2 Active development target and preserved production boundary
 
-The production target is deliberately narrow:
+The active native allocator target is deliberately narrow:
 
 - Linux only;
-- AArch64 little-endian only;
+- x86-64 little-endian;
 - the current crabc Linux kernel floor, currently Linux 5.10;
-- all Linux/AArch64 kernel page sizes that crabc claims;
-- the supported AArch64 virtual-address profiles;
+- the x86-64 page-size and virtual-address profiles established by its
+  target-specific Linux and pinned-mimalloc configuration probes;
 - the current pinned Rust nightly;
-- the current crabc owned CRT, loader, and sysroot;
-- hermetic Linux/AArch64 development, including Apple-Silicon Docker where
-  useful.
+- the staged x86 crabc owned CRT, loader, and sysroot when integration
+  reaches those runtime prerequisites;
+- hermetic native Linux/x86-64 development with pinned tools and C oracle.
 
-Default production code must remain valid for crabc's baseline AArch64 ISA.
-Optional newer-AArch64 optimizations must be separate compile-time profiles and
-must not become accidental baseline requirements.
+Public crabc support remains Linux/AArch64 until the runtime parity promotion
+gates pass. AArch64 allocator development and promotion are paused; preserve
+its accepted code, configuration, and evidence. Optional ISA optimizations
+must remain separate from each target's baseline requirements.
 
 Explicitly out of scope:
 
-- x86-64;
+- resuming AArch64 allocator implementation or qualification without new
+  user direction;
 - RISC-V;
 - macOS;
 - Windows;
@@ -132,9 +164,9 @@ Explicitly out of scope:
 - success-returning unsupported stubs;
 - glibc as normative behavior.
 
-Host, Miri, and Loom builds are verification instruments, not supported
-production targets. Do not spend implementation time running or repairing
-x86-64 production checks.
+Miri and Loom builds are verification instruments, not additional production
+targets. Native x86-64 checks are now an active implementation obligation;
+AArch64 results cannot substitute for them.
 
 ---
 
@@ -145,7 +177,7 @@ completion.
 
 ## 2.1 Pure-Rust allocator engine
 
-`crabc-mimalloc` must provide the Linux/AArch64 allocator engine with:
+`crabc-mimalloc` must provide the native Linux/x86-64 allocator engine with:
 
 - `#![no_std]`;
 - no production `alloc`;
@@ -221,7 +253,7 @@ The C ABI policy stays in `crabc-libc`. The allocator engine does not own
 
 ## 2.4 Applicable mimalloc v3.5.0 parity
 
-Every public v3.5.0 API and compile-time mode applicable to Linux/AArch64 must
+Every public v3.5.0 API and compile-time mode applicable to Linux/x86-64 must
 have a machine-readable status. Applicable interfaces must be implemented and
 verified before final completion. Platform-inapplicable items may be marked
 unsupported only with an explicit source-backed rationale.
@@ -229,7 +261,7 @@ unsupported only with an explicit source-backed rationale.
 Maintain separate dashboards for:
 
 1. malloc-engine readiness;
-2. complete Linux/AArch64 mimalloc v3.5.0 parity.
+2. complete Linux/x86-64 mimalloc v3.5.0 parity.
 
 The malloc engine is the immediate critical path. Optional API work must not
 delay the architecture convergence described below.
@@ -251,7 +283,7 @@ Final completion requires:
 - real-program corpus tests;
 - deterministic bounded stress;
 - a larger soak lane;
-- qualified AArch64 performance and memory reports;
+- qualified native x86-64 performance and memory reports;
 - default-backend production purity.
 
 ---
@@ -828,22 +860,24 @@ invalid-pointer or double-free behavior:
 
 ---
 
-# 6. Mandatory eight-worker Terra max execution
+# 6. Coordinated implementation work
 
-This project must use the available parallelism aggressively and safely.
+Use independently reviewable work packages across the allocator and runtime
+tracks. Current user and repository agent instructions govern model choice
+and concurrency; this document does not override them.
 
-## 6.1 Hard requirement
+## 6.1 Ownership requirement
 
 For every substantial implementation wave, the primary/root agent must:
 
-- launch no more than **8 Terra `max` subagents**;
+- use only the currently authorized models and available concurrency;
 - give each subagent its own isolated git worktree and branch;
-- assign each subagent an implementation deliverable;
+- assign each subagent a concrete implementation or verification deliverable;
 - keep the root slot for architecture, integration, review, conflict
   resolution, and final verification.
 
-Pure scouting, read-only code review, or a prose-only report does not satisfy
-this requirement.
+Read-only review and scouting may run alongside implementation when they
+resolve a concrete prerequisite or verify an independent boundary.
 
 Every subagent must produce one of:
 
@@ -852,10 +886,13 @@ Every subagent must produce one of:
 - an executable differential/stress/benchmark harness used by the gate;
 - a Loom/Miri/fault model used by the gate;
 - deletion/refactor code that removes temporary production scaffolding;
-- machine-readable gate/ratchet tooling.
+- machine-readable gate/ratchet tooling; or
+- an evidence-backed review, investigation, or contract update that resolves
+  the assigned prerequisite.
 
-Documentation-only assignments do not count. If a worker finishes early or is
-blocked, immediately reassign that slot to another implementation slice.
+Documentation and contract work are valid assignments when they remove a
+named ambiguity or blocker. Reassign workers only to useful dependency-ready
+work; an idle slot is not a reason to invent a leaf task.
 
 Use no more than eight worktrees whenever a substantial phase is active.
 Choose only independently mergeable slices; dependency ordering and constrained
@@ -873,7 +910,7 @@ Use the dedicated repository-local worktree directory, for example:
   w01-<topic>/
   w02-<topic>/
   ...
-  w15-<topic>/
+  w08-<topic>/
 ```
 
 Use behavior-named branches, for example:
@@ -882,7 +919,7 @@ Use behavior-named branches, for example:
 codex/native-mimalloc/wave-01/w01-initial-post-exit-free
 codex/native-mimalloc/wave-01/w02-upstream-stress
 ...
-codex/native-mimalloc/wave-01/w15-production-ratchet
+codex/native-mimalloc/wave-01/w08-production-ratchet
 ```
 
 Each worktree must use an isolated build output, for example:
@@ -1437,7 +1474,7 @@ The startup context may expose raw, nonowning:
 Do not call crabc's public libc ABI from the allocator. Do not use
 `/proc/self/environ` as startup plumbing.
 
-Use `crabc-core` for required raw Linux/AArch64 primitives. Preserve pinned
+Use `crabc-core` for required raw Linux/x86-64 primitives. Preserve pinned
 behavior for:
 
 - mmap/reservation;
@@ -1560,7 +1597,7 @@ Keep the current conservative quiescent bridge while the core ownership
 architecture is being replaced. Do not extend the temporary route registries
 to implement fork.
 
-Before default promotion, define and verify the final Linux/AArch64 crabc fork
+Before x86 default promotion, define and verify the final Linux/x86-64 crabc fork
 contract from pinned mimalloc behavior and crabc's libc placement.
 
 At minimum prove:
@@ -1612,7 +1649,7 @@ Include:
 
 For every item record:
 
-- applicable or inapplicable on Linux/AArch64;
+- applicable or inapplicable on Linux/x86-64;
 - exported;
 - implemented;
 - unit verified;
@@ -1860,7 +1897,7 @@ Do not spend time micro-optimizing temporary ledgers or route registries.
 ## 19.2 Final promotion bands
 
 Compare equivalent opaque C/Rust engine boundaries and fully integrated crabc
-builds on a qualified native Linux/AArch64 host.
+builds on a qualified native Linux/x86-64 host.
 
 Initial non-inferiority bands against exact pinned C v3.5.0:
 
@@ -1893,11 +1930,11 @@ Code size:
 Threshold changes are independent reviewed changes, not a way to make the
 current implementation pass.
 
-Apple-Silicon Docker is valid for development correctness and smoke. Final
-performance qualification requires a recorded native Linux/AArch64
-environment.
+Final performance qualification requires a recorded native Linux/x86-64
+environment. Retain prior AArch64 measurements with their original target;
+do not relabel them or use emulation as native evidence.
 
-## 19.3 AArch64 codegen audit
+## 19.3 Native x86-64 codegen audit
 
 Inspect optimized code for:
 
@@ -1923,12 +1960,31 @@ Look for:
 - unnecessary zeroing;
 - code duplication.
 
+Audit the actual x86-64 TLS access and atomic instruction sequences against
+the target ABI and pinned C oracle. AArch64 instruction checks remain in the
+paused target's records, not the x86 acceptance predicate.
+
 Optimize only after demonstrating a real regression or obviously bad generated
 sequence.
 
 ---
 
 # 20. Canonical commands
+
+The existing native x86 entry points are
+`./compat/allocator/run-x86_64.sh allocator --quick` and its closed evidence
+commands, plus `python3 compat/allocator/run.py --check --architecture x86_64
+--offline` for checked source contracts. These are partial evidence lanes.
+The runner currently rejects x86 M1/M2 mode selection; implementing
+architecture-qualified milestone manifests and executable gates is required
+work, not a passing or waived prerequisite.
+
+First bring the allocator launcher under the same checked `.work/` boundary
+as the runtime launcher; its legacy named Docker volumes are not the new
+work-storage contract. Thereafter add native x86 equivalents of the command
+capabilities below. Their `scripts/dev.sh` spellings describe the retained
+AArch64 interface, which is paused. Do not run those AArch64 workloads on
+this host or describe an unimplemented x86 equivalent as available.
 
 Maintain or add focused commands equivalent to:
 
@@ -1992,13 +2048,12 @@ high-water reporting.
 
 ## `allocator-perf --smoke`
 
-Runs reproducible development comparisons and architecture ratchets. It may
-run in Apple-Silicon Linux/AArch64 Docker but must identify the environment as
-unqualified for promotion when applicable.
+Runs reproducible native x86-64 development comparisons and architecture
+ratchets, identifying an unqualified environment as such when applicable.
 
 ## `allocator-perf --full`
 
-Runs the statistically qualified native AArch64 performance and memory suite
+Runs the statistically qualified native x86-64 performance and memory suite
 and emits the promotion report.
 
 ## `dev.sh check`
@@ -2139,7 +2194,7 @@ Complete all applicable:
 - debug;
 - secure;
 - guarded;
-- optional newer-AArch64 profile.
+- applicable optional x86-64 ISA profiles, without changing baseline requirements.
 
 ## Milestone 8 — full crabc-libc integration
 
@@ -2178,21 +2233,24 @@ All correctness ratchets remain green.
 
 Promotion is a small isolated change:
 
-- switch the default allocator feature to Rust;
-- prove C mimalloc is absent from the default production dependency graph;
+- switch the qualified x86 target's default allocator to Rust;
+- prove C mimalloc is absent from that target's default production dependency graph;
 - prove no C allocator object or shared library is in the default artifact
   graph;
 - retain exact C v3.5.0 as a test/performance oracle only;
 - regenerate compatibility and performance reports;
-- run every canonical command at the promotion commit.
+- run every applicable native x86 canonical command at the promotion commit.
 
-Do not combine promotion with allocator redesign.
+Do not combine promotion with allocator redesign or change the paused
+AArch64 target's selected backend. Its native C dependency remains outside
+the x86 production-graph purity claim.
 
 ## Milestone 11 — stabilization
 
 After promotion:
 
-- remove obsolete transitional features and wrappers;
+- remove obsolete x86 transitional features and wrappers without removing
+  anything still required by the paused AArch64 backend;
 - preserve the C oracle and differential/performance lanes;
 - preserve regression tests;
 - simplify feature flags;
@@ -2215,7 +2273,7 @@ Good commit subjects include:
 - `refactor(mimalloc): unify thread exit under collect-abandon`
 - `refactor(mimalloc): remove native client route registries`
 - `test(mimalloc): run unmodified pthread stress through shadow libc`
-- `perf(mimalloc): qualify aarch64 local and remote hot paths`
+- `perf(mimalloc): qualify x86-64 local and remote hot paths`
 - `feat(libc): promote native Rust mimalloc backend`
 
 Bad commit subjects include:
@@ -2271,7 +2329,7 @@ The final report must contain:
 - RSS/PSS/peak memory;
 - syscall and page-fault measurements;
 - code/data/final binary size;
-- AArch64 codegen findings;
+- native x86-64 codegen findings;
 - deliberate differences;
 - inapplicable upstream features;
 - default-promotion decision.
@@ -2335,19 +2393,19 @@ following are true at one commit.
 ## Performance
 
 - early architecture ratchets are satisfied;
-- final native AArch64 performance bands pass;
+- final native x86-64 performance bands pass;
 - memory bands pass;
 - no unexplained syscall/page-fault amplification remains;
-- AArch64 hot-path codegen is audited;
+- x86-64 hot-path codegen is audited;
 - at least three qualified full reports agree.
 
 ## Promotion
 
-- the Rust allocator is the default crabc allocator;
+- the Rust allocator is the default for the qualified x86 crabc runtime;
 - `libmimalloc-sys` and C mimalloc are absent from the default production
-  dependency and artifact graph;
+  dependency and artifact graph for that x86 target;
 - the pinned C implementation remains only as an oracle;
-- every canonical command passes at the promotion commit;
+- every applicable native x86 canonical command passes at the promotion commit;
 - compatibility and performance reports are regenerated;
 - the repository is clean.
 
@@ -2359,23 +2417,69 @@ there: continue until the missing gate is actually closed.
 
 # 25. Historical audited checkpoint
 
-The original execution sequence above is historical orientation, not the live
-backlog. Do not infer that its numbered actions or its old `main-wip` commit
-are complete. The live ledger below supersedes it for native mimalloc.
+The audited checkpoints and chronologies retained below are historical
+orientation, not the live backlog. Do not infer completion from their old
+commit references or numbered actions. Sections 0–24 remain the execution
+and acceptance contract; the active x86 handoff in §26 selects the current
+work. Its separately labeled AArch64 records are paused provenance.
 
 ---
 
 # 26. Native-mimalloc live ledger
 
-This is the current native-mimalloc progress record. It is deliberately concise
-rather than a commit log: `compat/allocator/port-map.toml` remains the
-machine-readable per-source status and generated reports remain the only
-runtime evidence. `STATUS.md` is repository-wide status and does not close or
-advance this AArch64 allocator ledger.
+This is the native-mimalloc progress record, with an active x86-64 queue and
+a separately preserved, paused AArch64 closure record.
+`compat/allocator/port-map.toml` remains the machine-readable per-source status;
+source coverage does not establish target-qualified runtime behavior.
+Generated native reports provide that evidence. `STATUS.md` is repository-wide
+status and does not close or advance allocator milestones.
 
-## Current handoff — 2026-09-03
+## Active x86-64 handoff — 2026-09-04
 
-Use this section to resume native allocator work. It supersedes older
+`be7e74ce` integrates the `main-wip` allocator work into `main`.
+`d2bb49ac` contains the x86 runtime dispatcher's mutable state within the
+checkout. Neither commit closes a native x86 allocator milestone. The
+existing x86 source/oracle evidence is a starting point, not transferred
+AArch64 M0/M1/M2 qualification.
+
+The next integrated wave must:
+
+1. Bring `compat/allocator/run-x86_64.sh` under the checked repository-local
+   `.work/` boundary before executing it. It currently uses named Docker
+   target/cache volumes. Cover temporary files, extracted sources, worktrees,
+   reports, caches, and symlink/override escape rejection as well.
+2. Revalidate the pinned x86 inventory, layouts, configuration, and C oracle
+   with the existing native quick/check surface. Record exact commands,
+   architecture, source revision, and source cleanliness. This is the M0
+   inventory contract, not allocator-engine parity.
+3. Establish architecture-qualified x86 M1/M2 contracts and executable gates.
+   `run.py` currently admits only x86 quick/check, not x86 M1/M2 closure.
+   Preserve the AArch64 manifests and their exact-revision records; do not
+   relabel them or their completed components as x86 evidence. Share neutral
+   definitions only where their target contract is genuinely identical.
+4. Close x86 M1, then all eight x86 M2 components, using fail-closed gates
+   and complete pinned-source behavior/ownership/failure matrices. Audit the
+   inherited seven partial AArch64 components and PageMap for x86 applicability;
+   even the preserved AArch64 PageMap completion is not an x86 pass. A selected
+   trace, check count, or empty placeholder contract cannot close a component.
+5. Proceed through M3–M11 in dependency order, without waiving correctness,
+   lifecycle, ABI, upstream API/mode parity, performance, promotion, or cleanup.
+
+Run this lane in parallel with `x86-64.md` where dependencies permit. Agree on
+errno, TLS/TCB, allocator initialization, thread-exit, fork, interposition,
+and loader ownership before changing shared interfaces. Give shared files one
+integration owner and use separate report/build paths. M8/M10 integration
+requires the relevant owned x86 runtime products; standalone allocator evidence
+cannot replace them. Keep the accepted C backend until qualified x86 promotion.
+
+The combined execution goal and final cross-track acceptance rule live in
+[`plan.md`](plan.md). Resume from the first unmet x86 gate, not the historical
+AArch64 continuation prompt below.
+
+## Paused AArch64 handoff — 2026-09-03
+
+Resume this AArch64 queue only after explicit future user direction. The
+following is its preserved state at suspension. It supersedes older
 "current" wording in the historical chronologies below; those records remain
 provenance, not a live work queue. `STATUS.md` is not the native allocator
 status record.
@@ -2401,7 +2505,7 @@ fault-injection, and four allocator-recursion checks.
 
 **Actual milestone state.** M0 is genuinely complete as an inventory/skeleton
 contract and M1 is genuinely complete as its six bounded foundations; neither
-claim means allocator-engine or lifecycle parity. M2 is the active closure
+claim means allocator-engine or lifecycle parity. At suspension, M2 was the active closure
 gate. `page-map` is its sole complete component. The seven still-partial
 components are `vm-primitives`, `metadata`, `bitmaps`, `arenas`,
 `initialization`, `fault-injection`, and `allocator-recursion`. M3 and every
@@ -2420,7 +2524,7 @@ native gate proves it. Apply the same rule to the remaining M2 components;
 keep fault injection and recursion as cross-cutting closure requirements, not
 late checklist items.
 
-### Continuation goal prompt
+### Paused AArch64 continuation prompt
 
 > Fully complete the Linux/AArch64 native mimalloc v3.5.0 port through every
 > applicable milestone M0–M11 in `native-mimalloc.md`, in order. Treat the
@@ -2442,7 +2546,7 @@ late checklist items.
 > Keep `native-mimalloc.md` as the native allocator status authority and do not
 > use `STATUS.md` to advance it.
 
-## Milestone closure
+## Preserved AArch64 milestone closure
 
 | Milestone | Status | Evidence and remaining closure condition |
 | --- | --- | --- |

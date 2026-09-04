@@ -6,6 +6,13 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
+Native x86-64 mimalloc implementation and qualification are also active under
+[`native-mimalloc.md`](native-mimalloc.md), in parallel with runtime parity.
+AArch64 allocator work is paused, with its imported implementation and
+exact-revision evidence preserved. [`plan.md`](plan.md) coordinates both
+programs; neither program's partial results close the other's gates, and the
+accepted C allocator remains default until qualified x86 backend promotion.
+
 The private `libc-rand-r` and `libc-pthread-*` static commands extend only
 leaf-level accounting: caller-owned `rand_r` state; condattr pshared/clock;
 mutexattr robust/protocol/pshared/type queries and type setting; mutex
