@@ -9,6 +9,7 @@ it never treats a source-only foundation slice as public target support.
 from __future__ import annotations
 
 import argparse
+from contextvars import ContextVar
 import hashlib
 import importlib.util
 import json
@@ -2343,6 +2344,21 @@ LOCALE_ERROR_STRING_SYMBOLS = ("__strerror_l", "strerror_l")
 
 class LedgerError(ValueError):
     """The parity ledger does not describe a reviewable closed contract."""
+
+
+VerifiedArtifactCacheEntry = tuple[
+    object,
+    str,
+    tuple[Mapping[str, Any], ...],
+]
+
+# A ledger pass has many named checks over the same verified-artifact lists.
+# Keep only already-successful structural validation in the current pass: a
+# later call, a direct helper call, and an invalid list must each validate
+# independently. ContextVar keeps nested or concurrent validation isolated.
+_verified_artifact_cache: ContextVar[
+    dict[int, VerifiedArtifactCacheEntry] | None
+] = ContextVar("x86_verified_artifact_cache", default=None)
 
 
 def require(condition: bool, message: str) -> None:
@@ -8928,6 +8944,14 @@ def require_verified_artifacts(
     """
     if value is None:
         return []
+    cache = _verified_artifact_cache.get()
+    cache_key = id(value)
+    if cache is not None:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            cached_value, cached_status, cached_records = cached
+            if cached_value is value and cached_status == status:
+                return list(cached_records)
     require(
         status in {"planned", "foundation-verified"},
         f"{location} is allowed only on a planned or foundation-verified family",
@@ -8970,6 +8994,10 @@ def require_verified_artifacts(
         )
         require_oracles(entry["oracle"], f"{item_location}.oracle")
         records.append(entry)
+    if cache is not None:
+        # Cache only after every structural predicate and source-owner path
+        # has succeeded, retaining `value` to make the identity key unambiguous.
+        cache[cache_key] = (value, status, tuple(records))
     return records
 
 
@@ -78953,6 +78981,26 @@ def require_unistd_header_trace_ownership(family: Mapping[str, Any]) -> None:
 
 
 def validate_ledger(
+    data: Mapping[str, Any],
+    *,
+    header_layout_manifest: Mapping[str, Any] | None = None,
+    header_layout_foundation_manifest: Mapping[str, Any] | None = None,
+    static_product_contract: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate one ledger with no reusable state beyond this invocation."""
+    token = _verified_artifact_cache.set({})
+    try:
+        return _validate_ledger(
+            data,
+            header_layout_manifest=header_layout_manifest,
+            header_layout_foundation_manifest=header_layout_foundation_manifest,
+            static_product_contract=static_product_contract,
+        )
+    finally:
+        _verified_artifact_cache.reset(token)
+
+
+def _validate_ledger(
     data: Mapping[str, Any],
     *,
     header_layout_manifest: Mapping[str, Any] | None = None,

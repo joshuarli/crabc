@@ -129,6 +129,113 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
 
+    def test_validate_ledger_reuses_successful_artifact_owner_checks_within_one_call(
+        self,
+    ) -> None:
+        data = self.data()
+        families = data["family"]
+        assert isinstance(families, list)
+        expected_checks = sum(
+            len(artifact["source_owners"])
+            for family in families
+            if isinstance(family, dict)
+            for artifact in family.get("verified_artifact", [])
+            if isinstance(artifact, dict)
+        )
+        observed_checks = 0
+        original_repository_path = ledger.repository_path
+
+        def count_artifact_owner_path_checks(path_text: str, location: str) -> Path:
+            nonlocal observed_checks
+            if ".verified_artifact[" in location and ".source_owners[" in location:
+                observed_checks += 1
+            return original_repository_path(path_text, location)
+
+        with mock.patch.object(
+            ledger, "repository_path", count_artifact_owner_path_checks
+        ):
+            ledger.validate_ledger(data)
+
+        self.assertEqual(observed_checks, expected_checks)
+
+    def test_validate_ledger_rechecks_mutated_artifacts_on_a_later_call(self) -> None:
+        data = self.data()
+        ledger.validate_ledger(data)
+
+        family = self.family(data, "libc.pthread-tls")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = artifacts[0]
+        assert isinstance(artifact, dict)
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        owners.append("compat/x86_64/not-a-real-artifact-owner")
+
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "does not exist: compat/x86_64/not-a-real-artifact-owner",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_direct_artifact_validation_does_not_reuse_a_prior_result(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.pthread-tls")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        ledger.require_verified_artifacts(
+            artifacts, "direct.verified_artifact", str(family["status"])
+        )
+
+        artifact = artifacts[0]
+        assert isinstance(artifact, dict)
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        owners.append("compat/x86_64/not-a-real-direct-artifact-owner")
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "does not exist: compat/x86_64/not-a-real-direct-artifact-owner",
+        ):
+            ledger.require_verified_artifacts(
+                artifacts, "direct.verified_artifact", str(family["status"])
+            )
+
+    def test_validate_ledger_restores_artifact_cache_after_reentrant_validation(self) -> None:
+        data = self.data()
+        nested_data = self.data()
+        nested_family = self.family(nested_data, "libc.headers-layouts")
+        nested_artifacts = nested_family["verified_artifact"]
+        assert isinstance(nested_artifacts, list)
+        nested_artifact = nested_artifacts[0]
+        assert isinstance(nested_artifact, dict)
+        nested_owners = nested_artifact["source_owners"]
+        assert isinstance(nested_owners, list)
+        nested_owners.append("compat/x86_64/not-a-real-reentrant-artifact-owner")
+
+        original_validate_header_layout_manifest = ledger.validate_header_layout_manifest
+        reentered = False
+
+        def validate_header_layout_manifest_with_reentrant_failure(
+            family: object, manifest: object
+        ) -> dict[str, int]:
+            nonlocal reentered
+            if not reentered:
+                reentered = True
+                with self.assertRaisesRegex(
+                    ledger.LedgerError,
+                    "does not exist: compat/x86_64/not-a-real-reentrant-artifact-owner",
+                ):
+                    ledger.validate_ledger(nested_data)
+            return original_validate_header_layout_manifest(family, manifest)
+
+        with mock.patch.object(
+            ledger,
+            "validate_header_layout_manifest",
+            validate_header_layout_manifest_with_reentrant_failure,
+        ):
+            ledger.validate_ledger(data)
+
+        self.assertTrue(reentered)
+
     def test_feature_archive_roster_rejects_unverified_or_default_surface_confusion(self) -> None:
         data = self.data()
         report = ledger.validate_feature_archive_roster(
