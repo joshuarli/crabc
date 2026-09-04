@@ -1747,6 +1747,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    ftw-header-abi) ;;", source)
         self.assertIn("    stat-ftw-header-source-form) ;;", source)
+        self.assertIn("    mount-header-source-form) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
         self.assertIn("    stddef-header-abi) ;;", source)
         self.assertIn(
@@ -1992,6 +1993,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "terminal-streams-header-topology",
             "link-header-source-form",
             "reboot-header-source-form",
+            "mount-header-source-form",
             "fcntl-event-header-topology",
         )
         expected_groups = tuple(
@@ -2155,6 +2157,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_reboot_header_source_form()', source)
         self.assertIn(
             'compat/x86_64/run_reboot_header_source_form.sh', source
+        )
+        self.assertIn('run_mount_header_source_form()', source)
+        self.assertIn(
+            'compat/x86_64/run_mount_header_source_form.sh', source
         )
         self.assertIn('run_fcntl_event_header_topology()', source)
         self.assertIn(
