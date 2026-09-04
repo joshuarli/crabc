@@ -2489,11 +2489,16 @@ fill makes a strong context. An error or short fill (`Ok(false)`) follows the
 source's continuation path, clears any temporary bytes, and marks the image
 weak. The source's `_mi_random_shuffle` core cannot be translated under the
 crypto policy, so `WeakObservations` serializes direct address, monotonic-clock,
-thread-pointer, process/thread-ID, and extra-seed observations into a
-domain-separated `ChaCha20LegacyCore` expansion. This is intentionally a
-dependency-owned substitute for the source weak-key expansion; it adds no
-entropy and does not create a second PRNG. `reinitialize_if_weak` retries direct
-entropy only for a weak image; strong images make no second syscall.
+thread-pointer, process/thread-ID, and the selected initializer's fixed-zero
+extra-seed observation into a domain-separated `ChaCha20LegacyCore` expansion.
+This is intentionally a dependency-owned substitute for the source weak-key
+expansion; it adds no entropy and does not create a second PRNG.
+`reinitialize_if_weak` retries direct entropy only for a weak image; strong
+images make no second syscall. The independent C/Rust trace compares only
+address-independent split, retry, forced-weak, and strong-no-op facts; exact
+weak-key bytes remain the explicitly accepted difference. The
+`src/init.c` automatic-process reinit caller and the normal-entropy warning
+remain lifecycle/diagnostics work outside this state-machine boundary.
 
 Both `TheapRandomImage` and temporary key/output block copies are zeroized.
 Normal Rust-owned bootstrap/test values run `Drop`; metadata release bypasses
