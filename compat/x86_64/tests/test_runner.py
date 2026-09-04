@@ -1746,6 +1746,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    header-declaration-macro-visibility-matrix) ;;", source)
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    ftw-header-abi) ;;", source)
+        self.assertIn("    stat-ftw-header-source-form) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
         self.assertIn("    stddef-header-abi) ;;", source)
         self.assertIn(
@@ -1893,6 +1894,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fanotify-header-abi",
             "dirent-header-abi",
             "ftw-header-abi",
+            "stat-ftw-header-source-form",
             "pathname-lifecycle-header-abi",
             "timeval-transitive-header-abi",
             "sys-time-direct-header-abi",

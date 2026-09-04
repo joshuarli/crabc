@@ -72,6 +72,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   fanotify-header-abi  verify selected x86 fanotify record-traversal C/C++ ABI profiles
   dirent-header-abi  verify selected x86 dirent C/C++ ABI and feature profiles
   ftw-header-abi  verify selected x86 ftw C/C++ ABI and feature profiles
+  stat-ftw-header-source-form  verify x86 sys/stat.h through ftw.h pinned-musl source forms
   pathname-lifecycle-header-abi  verify selected x86 pathname-lifecycle C/C++ ABI profiles
   ioctl-header-abi  verify selected direct sys/ioctl.h C/C++ ABI profile matrix
   link-header-source-form  verify x86 <link.h> pinned-musl include topology
@@ -2665,6 +2666,10 @@ run_dirent_header_abi() {
 
 run_ftw_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ftw_header_abi.sh
+}
+
+run_stat_ftw_header_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_stat_ftw_header_source_form.sh
 }
 
 run_pathname_lifecycle_header_abi() {
@@ -5274,6 +5279,7 @@ case "$command" in
     fanotify-header-abi) ;;
     dirent-header-abi) ;;
     ftw-header-abi) ;;
+    stat-ftw-header-source-form) ;;
     pathname-lifecycle-header-abi) ;;
     timeval-transitive-header-abi) ;;
     sys-time-direct-header-abi) ;;
@@ -5496,6 +5502,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ftw-header-abi takes no arguments"
         ensure_image
         run_ftw_header_abi
+        ;;
+    stat-ftw-header-source-form)
+        [ "$#" -eq 0 ] || fail "stat-ftw-header-source-form takes no arguments"
+        ensure_image
+        run_stat_ftw_header_source_form
         ;;
     pathname-lifecycle-header-abi)
         [ "$#" -eq 0 ] || fail "pathname-lifecycle-header-abi takes no arguments"

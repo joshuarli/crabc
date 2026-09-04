@@ -70,6 +70,33 @@ struct stat {
 #define S_IFIFO  0010000
 #define S_IFSOCK 0140000
 
+#if defined(__x86_64__)
+#define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
+#define S_ISCHR(mode)  (((mode) & S_IFMT) == S_IFCHR)
+#define S_ISBLK(mode)  (((mode) & S_IFMT) == S_IFBLK)
+#define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
+#define S_ISFIFO(mode) (((mode) & S_IFMT) == S_IFIFO)
+#define S_ISLNK(mode)  (((mode) & S_IFMT) == S_IFLNK)
+#define S_ISSOCK(mode) (((mode) & S_IFMT) == S_IFSOCK)
+
+#ifndef S_IRUSR
+#define S_ISUID 04000
+#define S_ISGID 02000
+#define S_ISVTX 01000
+#define S_IRUSR 0400
+#define S_IWUSR 0200
+#define S_IXUSR 0100
+#define S_IRWXU 0700
+#define S_IRGRP 0040
+#define S_IWGRP 0020
+#define S_IXGRP 0010
+#define S_IRWXG 0070
+#define S_IROTH 0004
+#define S_IWOTH 0002
+#define S_IXOTH 0001
+#define S_IRWXO 0007
+#endif
+#else
 #define S_ISDIR(m)  (((m) & S_IFMT) == S_IFDIR)
 #define S_ISCHR(m)  (((m) & S_IFMT) == S_IFCHR)
 #define S_ISBLK(m)  (((m) & S_IFMT) == S_IFBLK)
@@ -93,6 +120,7 @@ struct stat {
 #define S_ISUID 04000
 #define S_ISGID 02000
 #define S_ISVTX 01000
+#endif
 
 #define UTIME_NOW 0x3fffffff
 #define UTIME_OMIT 0x3ffffffe
@@ -101,20 +129,34 @@ struct stat {
 #define S_TYPEISSHM(buf) 0
 #define S_TYPEISTMO(buf) 0
 
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#if !defined(__x86_64__) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
 #define AT_FDCWD (-100)
 #define AT_SYMLINK_NOFOLLOW 0x100
 #endif
 
+#if defined(__x86_64__)
+int stat(const char *__restrict, struct stat *__restrict);
+#else
 int stat(const char *, struct stat *);
+#endif
 int fstat(int, struct stat *);
+#if defined(__x86_64__)
+int lstat(const char *__restrict, struct stat *__restrict);
+int fstatat(int, const char *__restrict, struct stat *__restrict, int);
+#else
 int lstat(const char *, struct stat *);
 int fstatat(int, const char *, struct stat *, int);
+#endif
 mode_t umask(mode_t);
 int fchmod(int, mode_t);
 int fchmodat(int, const char *, mode_t, int);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int lchmod(const char *, mode_t);
+#if defined(__x86_64__)
+#define S_IREAD S_IRUSR
+#define S_IWRITE S_IWUSR
+#define S_IEXEC S_IXUSR
+#endif
 #endif
 
 #if defined(_GNU_SOURCE)
@@ -199,6 +241,27 @@ int mknodat(int, const char *, mode_t, dev_t);
 int chmod(const char *, mode_t);
 int utimensat(int, const char *, const struct timespec[2], int);
 int futimens(int, const struct timespec[2]);
+
+#if defined(__x86_64__) && defined(_LARGEFILE64_SOURCE)
+#define stat64 stat
+#define fstat64 fstat
+#define lstat64 lstat
+#define fstatat64 fstatat
+#define blkcnt64_t blkcnt_t
+#define fsblkcnt64_t fsblkcnt_t
+#define fsfilcnt64_t fsfilcnt_t
+#define ino64_t ino_t
+#define off64_t off_t
+#endif
+
+#if defined(__x86_64__) && _REDIR_TIME64
+__REDIR(stat, __stat_time64);
+__REDIR(fstat, __fstat_time64);
+__REDIR(lstat, __lstat_time64);
+__REDIR(fstatat, __fstatat_time64);
+__REDIR(futimens, __futimens_time64);
+__REDIR(utimensat, __utimensat_time64);
+#endif
 
 #ifdef __cplusplus
 }
