@@ -238,7 +238,11 @@ mod tests {
         count.adjust(-2);
         assert_eq!(i64_load_relaxed(&count.current), 4);
         assert_eq!(i64_load_relaxed(&count.total), 8);
-        assert_eq!(i64_load_relaxed(&count.peak), 10);
+        assert_eq!(
+            i64_load_relaxed(&count.peak),
+            8,
+            "mi_stat_adjust_mt compares the old total to peak before it adds"
+        );
         count.adjust(2);
         assert_eq!(i64_load_relaxed(&count.total), 10);
         assert_eq!(i64_load_relaxed(&count.peak), 10);
