@@ -110,7 +110,7 @@ run_fixture() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo grep id mkdir nm objdump readelf rustup timeout; do
+for tool in ar awk cargo grep id mkdir nm objdump python3 readelf rustup timeout; do
     require_tool "$tool"
 done
 [ "$(id -u)" -eq 0 ] || fail "requires root for the fixture-only chroot"
@@ -119,8 +119,23 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_resolver_runtime_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-resolver-runtime.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+python3 -B - "$ROOT_DIR" "${TMPDIR:?requires checkout-local TMPDIR}" <<'PY'
+from pathlib import Path
+import sys
+root, temporary = map(Path, sys.argv[1:])
+if temporary.resolve(strict=True) != temporary or not temporary.is_relative_to(root / ".work"):
+    raise SystemExit("resolver fixture TMPDIR must be a physical checkout .work path")
+PY
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-resolver-runtime.XXXXXX")"
+cleanup() {
+    local status=$?
+    if [ "$status" -eq 0 ]; then
+        rm -rf -- "$work_dir"
+    else
+        printf 'Resolver failure artifacts retained: %s\n' "$work_dir" >&2
+    fi
+}
+trap cleanup EXIT
 cargo_target="$work_dir/cargo-target"
 fixture_root="$work_dir/fixture-root"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -193,6 +208,7 @@ done
     -I"$ROOT_DIR/include" compat/x86_64/libc_resolver_runtime_probe.c \
     -o "$reference"
 run_fixture "$reference" "pinned-musl resolver runtime"
+python3 -B "$ROOT_DIR/compat/x86_64/check_resolver_fixture_isolation.py" "$reference"
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl --features x86-resolver-runtime -- \
@@ -278,5 +294,6 @@ grep -Eq '\$0xb(,|[[:space:]]|$)' "$candidate_disassembly" ||
     fail "candidate lacks C-owned resolver snapshot munmap"
 
 run_fixture "$candidate" "freestanding resolver runtime"
+python3 -B "$ROOT_DIR/compat/x86_64/check_resolver_fixture_isolation.py" "$candidate"
 
 printf 'x86 static crabc-libc resolver runtime: PASS\n'

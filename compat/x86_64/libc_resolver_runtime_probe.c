@@ -18,12 +18,15 @@
 #endif
 
 #include <errno.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <resolv.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -190,7 +193,7 @@ static int serve_dns(int descriptor)
     return 0;
 }
 
-static int start_dns_server(void)
+static int start_dns_server(struct in_addr loopback)
 {
     struct sockaddr_in address = { 0 };
     int descriptor = socket(AF_INET, SOCK_DGRAM, 0);
@@ -198,7 +201,7 @@ static int start_dns_server(void)
     if (descriptor < 0) return -1;
     address.sin_family = AF_INET;
     address.sin_port = htons(53);
-    address.sin_addr.s_addr = htonl(0x7f000001u);
+    address.sin_addr = loopback;
     if (bind(descriptor, (const struct sockaddr *)&address, sizeof(address)) != 0) {
         close(descriptor);
         return -1;
@@ -286,7 +289,7 @@ static int check_thread_local_h_errno(void)
     return 0;
 }
 
-int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
+static int check_resolver_runtime(void)
 {
     static const unsigned char host_address[4] = { 192, 0, 2, 44 };
     static const unsigned char dns_address[4] = { 203, 0, 113, 9 };
@@ -298,12 +301,7 @@ int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
     unsigned char query[512];
     unsigned char compressed[sizeof(compressed_name)];
     struct __res_state *state;
-    int query_length, server, status, result;
-
-    if (argc != 2) return 1;
-    server = start_dns_server();
-    if (server < 0) return 2;
-    if (enter_fixture_root(argv[1]) != 0) return 3;
+    int query_length, result;
     errno = E2BIG;
     h_errno = NO_RECOVERY;
     if (res_init() != 0) return 4;
@@ -374,12 +372,45 @@ int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
     if (h_errno != 0)
         return 36;
 #endif
-    if (waitpid(server, &status, 0) != server || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
-        return 37;
     return 0;
 }
 
-#ifndef CRABC_RESOLVER_RUNTIME_FREESTANDING
+int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
+{
+    struct in_addr loopback;
+    char address[INET_ADDRSTRLEN], configuration[160];
+    pid_t process = getpid(), server, waited;
+    int result = 3, status, descriptor, length;
+    if (argc != 2 || process <= 0 || process > 0x7fffff) return 1;
+    /* Linux PIDs fit below 2^23. Each live fixture reserves its own address
+     * in 127/8, so parallel jobs in the same network namespace cannot share
+     * DNS state. bind still rejects an occupied endpoint, never SO_REUSEPORT.
+     * Keep port 53: the resolver's actual system-configuration contract is
+     * under test, not a fixture-only nameserver-port override. */
+    loopback.s_addr = htonl(0x7f800000u | (unsigned)process);
+    server = start_dns_server(loopback);
+    if (server < 0) return 2;
+    if (enter_fixture_root(argv[1]) == 0 &&
+        inet_ntop(AF_INET, &loopback, address, sizeof(address))) {
+        length = snprintf(configuration, sizeof(configuration),
+            "nameserver %s\nsearch fixture.test\noptions ndots:1 timeout:1 attempts:1\n",
+            address);
+        descriptor = open("/etc/resolv.conf", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (descriptor >= 0) {
+            int written = length > 0 && (size_t)length < sizeof(configuration) &&
+                write(descriptor, configuration, (size_t)length) == length;
+            if (close(descriptor) == 0 && written) result = check_resolver_runtime();
+        }
+    }
+    /* Every failing assertion must retire the server, including failures
+     * before the first query. Do not leave a recvfrom child to another job. */
+    if (result != 0) kill(server, SIGKILL);
+    do { waited = waitpid(server, &status, 0); } while (waited < 0 && errno == EINTR);
+    if (result != 0) return result;
+    return waited == server && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : 37;
+}
+
+#if !defined(CRABC_RESOLVER_RUNTIME_FREESTANDING) || defined(CRABC_RESOLVER_RUNTIME_INSTALLED)
 int main(int argc, char **argv)
 {
     return crabc_x86_64_resolver_runtime_probe(argc, argv);
