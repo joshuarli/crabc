@@ -41,7 +41,7 @@ int main(int argc, char **argv) {
         fputs("trace child did not stop\n", stderr);
         return 68;
     }
-    if (ptrace(PTRACE_SETOPTIONS, child, 0, PTRACE_O_TRACESYSGOOD) != 0
+    if (ptrace(PTRACE_SETOPTIONS, child, 0, PTRACE_O_TRACESYSGOOD | PTRACE_O_EXITKILL) != 0
         || ptrace(PTRACE_SYSCALL, child, 0, 0) != 0) {
         perror("ptrace setup");
         return 69;
@@ -94,6 +94,14 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        if (signal_number != SIGTRAP) {
+            // Suppressing SIGSEGV/SIGILL would re-execute the faulting
+            // instruction forever. Kill and reap this exact owned child.
+            fprintf(stderr, "candidate stopped by signal %d\n", signal_number);
+            kill(child, SIGKILL);
+            waitpid(child, &status, 0);
+            return 73;
+        }
         if (ptrace(PTRACE_SYSCALL, child, 0, 0) != 0) {
             perror("ptrace signal");
             return 77;

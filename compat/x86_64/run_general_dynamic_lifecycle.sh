@@ -19,6 +19,10 @@ PY
 bash "$FIXTURES/run_musl_oracle.sh"
 work="$(mktemp -d "$TMPDIR/general-dynamic-lifecycle.XXXXXX")"
 readonly work
+pie_model="${CRABC_GENERAL_DYNAMIC_LIFECYCLE_PIE_MODEL:-pie}"
+tls_model="${CRABC_GENERAL_DYNAMIC_LIFECYCLE_TLS_MODEL:-global-dynamic}"
+case "$pie_model" in pic) pie_flag=-fPIC ;; pie) pie_flag=-fPIE ;; *) exit 2 ;; esac
+case "$tls_model" in global-dynamic|initial-exec) ;; *) exit 2 ;; esac
 CARGO_TARGET_DIR="$work/loader-target" \
 RUSTFLAGS='-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic' \
     cargo build --locked --target x86_64-unknown-linux-musl -p crabc-ldso \
@@ -40,7 +44,7 @@ python3 -B "$ROOT/crt/build_x86_64.py" --general-dynamic-lifecycle \
 build_node() {
     local name="$1" anchor="$2" init="$3" fini="$4"
     shift 4
-    cc -fPIC -shared -nostdlib -fstack-protector-all -ftls-model=global-dynamic \
+    cc -fPIC -shared -nostdlib -fstack-protector-all -ftls-model="$tls_model" \
         -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,"$name.so" -Wl,-rpath,"$work" \
         -DANCHOR="$anchor" -DINIT_MARKER="$init" -DFINI_MARKER="$fini" \
         "$FIXTURES/general_dynamic_lifecycle_dso.c" "$@" -o "$work/$name.so"
@@ -55,18 +59,18 @@ build_applications() {
     [ -n "${REJECT_ENTRY:-}" ] && entry_flags=(-Wl,-e,"$REJECT_ENTRY")
     [ "$mode" = explicit ] && mode_flags=(-DEXPLICIT_EXIT)
     [ "$mode" = immediate ] && mode_flags=(-DIMMEDIATE_EXIT)
-    # PIC data access uses admitted GLOB_DAT; executable COPY relocations
-    # remain a separate general-loader/product requirement.
-    cc -nostdlib -fPIC -pie -fstack-protector-all -ftls-model=global-dynamic \
+    # The executable's initial TLS is owned from process entry. PIE mode
+    # exercises real COPY relocations; PIC mode remains its GOT regression.
+    cc -nostdlib "$pie_flag" -pie -fstack-protector-all -ftls-model=initial-exec \
         -Wl,--hash-style=sysv -Wl,-z,now -Wl,-E -Wl,--allow-shlib-undefined \
-        -Wl,--unresolved-symbols=ignore-all -Wl,--dynamic-linker,"$work/loader.so" \
+        -Wl,--dynamic-linker,"$work/loader.so" \
         -Wl,-rpath,"$work" "$work/crt/Scrt1.o" "$work/crt/crti.o" \
         "${mode_flags[@]}" "${entry_flags[@]}" "$FIXTURES/general_dynamic_lifecycle_main.c" \
         "$FIXTURES/general_dynamic_lifecycle_reject.S" \
         -Wl,--whole-archive "$work/consumer.a" -Wl,--no-whole-archive \
         -L"$work" -Wl,--no-as-needed -l:"$first.so" -l:"$second.so" \
         -l:libcrabc-dynamic.so "$work/crt/crtn.o" -o "$work/candidate"
-    /usr/local/bin/crabc-x86_64-musl-gcc -DMUSL_ORACLE -fPIC -pie -fstack-protector-all \
+    /usr/local/bin/crabc-x86_64-musl-gcc -DMUSL_ORACLE "$pie_flag" -pie -fstack-protector-all \
         -Wl,-E -Wl,-rpath,"$work" "${mode_flags[@]}" "$FIXTURES/general_dynamic_lifecycle_main.c" \
         -L"$work" -Wl,--no-as-needed -l:"$first.so" -l:"$second.so" -o "$work/oracle"
     readelf -dW "$work/oracle" >"$work/oracle.dynamic.txt"

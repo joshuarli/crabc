@@ -1,7 +1,7 @@
 //! General x86-64 initial `DT_NEEDED` graph transaction.
 //!
 //! This private package deliberately uses the checked ELF/parser/mapper and
-//! non-TLS relocation primitives in its parent module, but owns no fixed
+//! mapping primitives in its parent module, but owns no fixed
 //! object shape. `x86_64_initial_graph_state.rs` defines identity/topology;
 //! `x86_64_general_initial_loader_state.rs` is the one durable graph/object/
 //! map-provenance owner for both roots. The older fixed graph remains a
@@ -9,10 +9,12 @@
 //! separate `crabc_general_initial_tls_materialization_v1` sibling attaches
 //! one initial Variant-II TLS population to that same owner. Its ordinary cfg
 //! is not a RuntimeV1 producer; the separately cfg-selected general RuntimeV1
-//! handoff still excludes dynamic CRT handoff and runtime DSO mapping. The
+//! handoff excludes runtime DSO mapping. The
 //! optional general lifecycle feature retains dependency initialization and
 //! process-finalization plans in the same owner and passes x86 rtld_fini;
-//! it does not yet integrate executable lifecycle or runtime DSO admission.
+//! its dynamic-main-thread composition integrates owned executable lifecycle.
+//! `x86_64_general_relocation.rs` owns whole-graph relocation preflight,
+//! breadth-first symbol scope, deferred COPY, and retained initial-TLS offsets.
 
 use super::*;
 use super::x86_64_general_initial_loader_state::{
@@ -81,11 +83,12 @@ unsafe fn run_without_tls(main: Object, main_entry: u64, sp: usize, ldso_base: u
     }
 
     let object_count = state.object_count();
-    for index in 0..object_count {
+    {
         let objects = state
             .objects_during_transaction()
             .unwrap_or_else(|_| fail(b"state\n"));
-        if relocate(&objects[index], objects).is_none() {
+        let graph = state.graph_during_transaction().unwrap_or_else(|_| fail(b"state\n"));
+        if super::x86_64_general_relocation::relocate_initial_graph(graph, objects).is_none() {
             rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Relocation);
             fail(b"reloc\n");
         }
@@ -199,7 +202,7 @@ unsafe fn run_with_initial_tls(
         }
     }
 
-    for index in 0..state.object_count() {
+    {
         let objects = match state.objects() {
             Ok(objects) => objects,
             Err(_) => {
@@ -207,7 +210,14 @@ unsafe fn run_with_initial_tls(
                 return Err(b"tlsstate\n");
             }
         };
-        if unsafe { relocate(&objects[index], objects) }.is_none() {
+        let graph = match state.graph() {
+            Ok(graph) => graph,
+            Err(_) => {
+                rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsRegistry);
+                return Err(b"tlsstate\n");
+            }
+        };
+        if unsafe { super::x86_64_general_relocation::relocate_initial_graph(graph, objects) }.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relocation);
             return Err(b"reloc\n");
         }

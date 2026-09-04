@@ -27,6 +27,14 @@ transaction. Its direct evidence is
 yet select TLS, dlfcn, process finalization, CRT handoff, an installed
 dynamic product, or x86-64 support.
 
+`x86_64_general_relocation.rs` owns the general graph's relocation transaction:
+breadth-first symbol scope, whole-graph preflight, library/main word fixups,
+then variable-sized executable COPY. Initial-TLS compositions additionally
+admit general TPOFF64 against retained Variant-II module placements. The
+[general relocation contract and native gate](../compat/x86_64/general_relocations.md)
+record supported forms, exact ownership checks, and the protected-TLS
+ABI-versus-musl distinction; fixed/private roots remain separate regressions.
+
 The additive `x86_64-general-initial-lifecycle` integration feature uses that
 same general graph and retains dependency legacy init/fini plus init/fini
 arrays in its canonical owner. Initialization follows dependency order;

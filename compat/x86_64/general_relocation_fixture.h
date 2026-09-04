@@ -1,0 +1,20 @@
+struct copy_payload {
+    unsigned long *self;
+    unsigned char bytes[17];
+    unsigned long sentinel;
+};
+extern struct copy_payload copied_payload;
+extern unsigned char copied_bytes[64];
+extern int scope_value;
+extern __thread unsigned char high_tls[65];
+extern __thread unsigned char zero_tls[513];
+extern __thread unsigned long main_tls;
+extern __thread int interposed_tls;
+extern __thread int protected_tls;
+extern void _Exit(int) __attribute__((noreturn));
+extern void *provider_high_address(void);
+extern void *consumer_high_address(void);
+extern unsigned long *consumer_main_address(void);
+extern int provider_checks(void);
+extern int consumer_checks(void);
+extern int right_anchor(void);

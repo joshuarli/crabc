@@ -79,11 +79,15 @@ Immediate exit stops after `M`. `P` is executable preinit, uppercase S/L/R
 are dependency init, I/M executable init/main, b/a handlers, F executable
 fini, and lowercase r/l/s dependency fini.
 
+The [general relocation gate](general_relocations.md) additionally runs this
+same application as ordinary default PIE, exercising actual `environ` COPY
+relocation, and with GD or IE dependencies. Candidate links no longer use
+`--unresolved-symbols=ignore-all`; `--allow-shlib-undefined` retains normal
+runtime resolution for DSO imports, including the interpreter's TLS resolver.
+
 Remaining product conditions include installed shared-libc composition and
-sealed compiler-driver closure, general executable COPY/initial-exec TLS
-relocations, buffered dynamic stdio, allocator/pthread integration, runtime
+sealed compiler-driver closure, buffered dynamic stdio, allocator/pthread integration, runtime
 load/unload and TLS growth, and the broader campaign acceptance criteria.
-PIC addressing here deliberately avoids unsupported executable COPY
-relocations; it is not evidence that ordinary default-PIE relocation closure
-is complete. Standalone dependency lifecycle and legacy dynamic-main-thread
+The PIC variant remains a GOT-addressing regression, not a substitute for
+the ordinary PIE proof. Standalone dependency lifecycle and legacy dynamic-main-thread
 fixtures remain regression gates, not replacement product claims.

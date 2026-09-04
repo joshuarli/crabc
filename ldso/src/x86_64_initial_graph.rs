@@ -60,6 +60,9 @@ mod x86_64_general_initial_lifecycle;
 #[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_general_initial_graph.rs"]
 mod x86_64_general_initial_graph;
+#[cfg(crabc_general_initial_graph)]
+#[path = "x86_64_general_relocation.rs"]
+mod x86_64_general_relocation;
 #[cfg(any(
     crabc_loader_libc_tls_runtime_v1,
     crabc_general_initial_tls_materialization_v1
@@ -1501,13 +1504,12 @@ unsafe fn parse_mapped(
             DT_INIT_ARRAY => { if init_array_virtual_address.replace(value).is_some() { return None; } }
             DT_INIT_ARRAYSZ => { if init_array_byte_len.replace(value).is_some() { return None; } }
             DT_RUNPATH => { if runpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
-            // The fixed graphs use eager relocation.  Only the cfg-isolated
-            // initial-exec sibling admits DF_STATIC_TLS, and then the caller
-            // admits it solely for the one fixed leaf below; the established
-            // GNU-Dynamic artifact continues to reject it before any layout
-            // or relocation work.
+            // DF_STATIC_TLS denotes a consumer's initial-exec requirement,
+            // not a promise that only this object may supply its definition.
+            // General initial TLS assigns all modules retained placements;
+            // the older fixed IE sibling keeps its one-leaf restriction.
             DT_FLAGS => {
-                #[cfg(not(crabc_initial_exec_tls_graph))]
+                #[cfg(not(any(crabc_initial_exec_tls_graph, crabc_general_initial_tls_materialization_v1)))]
                 if value & DF_STATIC_TLS != 0 {
                     return None;
                 }
@@ -1533,24 +1535,26 @@ unsafe fn parse_mapped(
     if !mapped {
         // Scrt1's private `__crabc_*_array_*_address` bridges own dispatch;
         // the interpreter does not execute main entries or retain their
-        // pointers.  Require complete, nonempty, executable/main-load ranges
-        // so a malformed dynamic table cannot silently select another main
-        // lifecycle convention at this narrowly admitted boundary.
+        // pointers. Legacy private modes require all three nonempty arrays.
+        // General owned startup also admits a normal executable with no
+        // callbacks; absent tag pairs do not select another CRT convention.
         let init = owned_crt_main_init?;
         let fini = owned_crt_main_fini?;
-        let preinit_array = owned_crt_main_preinit_array?;
-        let preinit_array_len = owned_crt_main_preinit_array_len?;
-        let init_array = owned_crt_main_init_array?;
-        let init_array_len = owned_crt_main_init_array_len?;
-        let fini_array = owned_crt_main_fini_array?;
-        let fini_array_len = owned_crt_main_fini_array_len?;
         if !virtual_range_in_executable_load(phdr, phnum, init, 1)
             || !virtual_range_in_executable_load(phdr, phnum, fini, 1)
-            || !scrt1_array_in_load(phdr, phnum, preinit_array, preinit_array_len)
-            || !scrt1_array_in_load(phdr, phnum, init_array, init_array_len)
-            || !scrt1_array_in_load(phdr, phnum, fini_array, fini_array_len)
         {
             return None;
+        }
+        for pair in [
+            (owned_crt_main_preinit_array, owned_crt_main_preinit_array_len),
+            (owned_crt_main_init_array, owned_crt_main_init_array_len),
+            (owned_crt_main_fini_array, owned_crt_main_fini_array_len),
+        ] {
+            match pair {
+                (None, None) if cfg!(all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)) => {},
+                (Some(address), Some(length)) if scrt1_array_in_load(phdr, phnum, address, length) => {},
+                _ => return None,
+            }
         }
     }
     object.strsz = usize::try_from(strtab_byte_len?).ok()?;

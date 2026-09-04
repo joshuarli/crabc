@@ -235,7 +235,7 @@ expect_candidate_rejection_before_fs() {
     local case_name="$2"
     local output status
     set +e
-    output="$(cd "$work_dir" && env -i PATH=/usr/bin:/bin "$work_dir/no-arch-set-fs-trace" "$work_dir/main-crabc" 2>&1)"
+    output="$(cd "$work_dir" && env -i PATH=/usr/bin:/bin timeout 10 "$work_dir/no-arch-set-fs-trace" "$work_dir/main-crabc" 2>&1)"
     status=$?
     set -e
     if [ "$status" -ne 0 ] || ! grep -Fxq "$expected_message" <<<"$output"; then
@@ -390,7 +390,9 @@ expect_candidate_rejection_before_fs graph tls-overflow
 mv "$shared_binary.valid" "$shared_binary"
 
 rela_info_offset="$(rela_info_offset_for_type "$shared_binary" 16)" || fail 'fixture has no DTPMOD64 relocation to mutate'
-for mutation in unsupported:0 tpoff:18 tlsdesc:36; do
+# NONE and TPOFF64 are now admitted by the general relocation owner. Keep
+# this GD fixture's rejection checks on genuinely unsupported dynamic forms.
+for mutation in unsupported:65535 tpoff32:23 tlsdesc:36; do
     label="${mutation%%:*}"
     kind="${mutation##*:}"
     cp "$shared_binary" "$shared_binary.valid"
