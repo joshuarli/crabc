@@ -2010,6 +2010,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "mount-header-source-form",
             "klog-header-source-form",
             "cachectl-header-source-form",
+            "syslog-header-abi",
             "ioctl-header-source-form",
             "fcntl-event-header-topology",
         )

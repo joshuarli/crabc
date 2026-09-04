@@ -82,6 +82,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   mount-header-source-form  verify x86 <sys/mount.h> pinned-musl source form
   klog-header-source-form  verify x86 <sys/klog.h> pinned-musl macro surface
   cachectl-header-source-form  verify x86 <sys/cachectl.h> pinned-musl macro forms
+  syslog-header-abi  verify syslog profiles, C linkage, and SYSLOG_NAMES consumers
   fcntl-event-header-topology  verify x86 fcntl/event direct-header topology
   math-tgmath-source-form  verify x86 math/tgmath source forms and frozen AArch64 arm
   mman-mcl-onfault-header-source-form  verify x86 MCL_ONFAULT header form and frozen AArch64 arm
@@ -2834,6 +2835,10 @@ run_stdlib_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_stdlib_header_abi.sh
 }
 
+run_syslog_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_syslog_header_abi.sh
+}
+
 run_stdio_standard_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_stdio_standard_header_abi.sh
 }
@@ -5437,6 +5442,7 @@ case "$command" in
     mount-header-source-form) ;;
     klog-header-source-form) ;;
     cachectl-header-source-form) ;;
+    syslog-header-abi) ;;
     ioctl-header-source-form) ;;
     fcntl-event-header-topology) ;;
 
@@ -5757,6 +5763,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "stdlib-header-abi takes no arguments"
         ensure_image
         run_stdlib_header_abi
+        ;;
+    syslog-header-abi)
+        [ "$#" -eq 0 ] || fail "syslog-header-abi takes no arguments"
+        ensure_image
+        run_syslog_header_abi
         ;;
     getloadavg-header-abi)
         [ "$#" -eq 0 ] || fail "getloadavg-header-abi takes no arguments"
