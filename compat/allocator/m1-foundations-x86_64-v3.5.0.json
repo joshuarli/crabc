@@ -3,32 +3,511 @@
     {
       "id": "configuration-and-arithmetic",
       "native_status": "ready-for-native-evidence",
-      "remaining_conditions": []
+      "remaining_conditions": [],
+      "source_map_records": [
+        {
+          "required_status": "implemented",
+          "unit_id": "x86-64-width-and-bit-operations"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "core-layouts-and-configuration"
+        }
+      ],
+      "bounded_source_definitions": [
+        {
+          "evidence_check_ids": [
+            "alignment-and-slice-invariants",
+            "generic-alignment",
+            "pointer-alignment-zero"
+          ],
+          "id": "configuration-internal-scalar-helpers",
+          "required_definitions": [
+            "static inline bool _mi_is_power_of_two",
+            "static inline bool _mi_is_aligned",
+            "static inline uintptr_t _mi_align_up",
+            "static inline uintptr_t _mi_align_down",
+            "static inline uintptr_t _mi_divide_up",
+            "static inline size_t _mi_wsize_from_size"
+          ],
+          "source_anchor": {
+            "end_line": 574,
+            "member": "include/mimalloc/internal.h",
+            "sha256": "e365d0a684bc13622337c4ab45ae70027d7fb44c4a521ea3f1bc0c0fa51cd02b",
+            "start_line": 498
+          }
+        },
+        {
+          "evidence_check_ids": [
+            "alignment-and-slice-invariants"
+          ],
+          "id": "configuration-internal-slice-helpers",
+          "required_definitions": [
+            "static inline size_t mi_slice_count_of_size",
+            "static inline size_t mi_size_of_slices"
+          ],
+          "source_anchor": {
+            "end_line": 1309,
+            "member": "include/mimalloc/internal.h",
+            "sha256": "0e72af12b594c3c5149b5ed509851879aba0e29dd471cebf9b8cce77281580d5",
+            "start_line": 1301
+          }
+        }
+      ]
     },
     {
       "id": "atomics-locks-once-and-bootstrap",
       "native_status": "ready-for-native-evidence",
-      "remaining_conditions": []
+      "remaining_conditions": [],
+      "source_map_records": [
+        {
+          "required_status": "partial",
+          "unit_id": "atomic-operation-facade"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "process-and-thread-initialization"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "c-support-and-once"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "thread-local-heap-lifecycle"
+        }
+      ],
+      "once_call_site_dispositions": [
+        {
+          "configuration": "all selected builds",
+          "disposition": "deferred-to-m2",
+          "function": "_mi_page_map_init",
+          "reason": "page-map allocation and release publication are a later memory-substrate boundary",
+          "source": "src/page-map.c:361"
+        },
+        {
+          "configuration": "all selected builds",
+          "disposition": "m1-static-image-only",
+          "function": "mi_heap_main_init_once",
+          "reason": "the immutable initial images are checked here; full main-heap initialization, publication, and lifecycle remain outside M1",
+          "source": "src/init.c:211"
+        },
+        {
+          "configuration": "all selected builds",
+          "disposition": "deferred-to-m5",
+          "function": "mi_process_setup_auto_thread_done",
+          "reason": "automatic thread-exit registration and teardown are lifecycle work",
+          "source": "src/init.c:443"
+        },
+        {
+          "configuration": "all selected builds",
+          "disposition": "m1-bounded-once-envelope",
+          "function": "mi_process_init",
+          "reason": "the bounded identity-capable ProcessMain route proves active-racer blocking, recursive refusal, terminal publication before release, retained failure wakeup, and pre-body cancellation; options, OS, statistics, TLS-key/local, arena, automatic, and general lifecycle work remain M5",
+          "source": "src/init.c:589"
+        },
+        {
+          "configuration": "all selected builds",
+          "disposition": "deferred-to-m5",
+          "function": "mi_process_done",
+          "reason": "a separate source once instance, process destruction, and lifecycle remain M5; ProcessMainThread teardown is ticket-zero thread teardown, not this function",
+          "source": "src/init.c:653"
+        },
+        {
+          "configuration": "MI_TLS_MODEL_WINDOWS",
+          "disposition": "outside-m1",
+          "function": "_mi_tls_slots_init",
+          "reason": "Windows TLS-slot branch is outside the Linux/x86-64 target",
+          "source": "src/prim/prim-tls.c:124"
+        },
+        {
+          "configuration": "MI_TLS_MODEL_PTHREADS",
+          "disposition": "deferred-to-m5",
+          "function": "_mi_tls_slots_init",
+          "reason": "pthread-key allocation and destruction belong to the later TLS/process lifecycle",
+          "source": "src/prim/prim-tls.c:165"
+        },
+        {
+          "configuration": "MI_TLS_MODEL_FIXED",
+          "disposition": "outside-m1",
+          "function": "_mi_tls_slots_init",
+          "reason": "fixed TLS-slot branch is not the selected Linux/x86-64 pthread model",
+          "source": "src/prim/prim-tls.c:182"
+        },
+        {
+          "configuration": "MI_OSX_INTERPOSE && MI_SHARED_LIB_EXPORT",
+          "disposition": "outside-m1",
+          "function": "mi_get_default_zone",
+          "reason": "macOS malloc-zone interposition is outside the active platform",
+          "source": "src/prim/osx/alloc-override-zone.c:291"
+        },
+        {
+          "configuration": "Windows",
+          "disposition": "outside-m1",
+          "function": "win_enable_large_os_pages",
+          "reason": "Windows large-page privilege setup is outside the active platform",
+          "source": "src/prim/windows/prim.c:162"
+        },
+        {
+          "configuration": "Windows",
+          "disposition": "outside-m1",
+          "function": "_mi_prim_process_info",
+          "reason": "Windows psapi lazy loading is outside the active platform",
+          "source": "src/prim/windows/prim.c:610"
+        },
+        {
+          "configuration": "Windows && !MI_USE_RTLGENRANDOM",
+          "disposition": "outside-m1",
+          "function": "_mi_prim_random_buf",
+          "reason": "Windows bcrypt lazy loading is outside the active platform",
+          "source": "src/prim/windows/prim.c:721"
+        }
+      ],
+      "x86_local_checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "atomic-compare-exchange-order-pairs",
+          "target": "atomic::tests::word_compare_exchange_preserves_each_upstream_order_pair_and_updates_expected"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "atomic-fetch-operation-ordering",
+          "target": "atomic::tests::word_fetch_operations_return_the_previous_value_for_each_supported_ordering"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "atomic-signed-word-arithmetic",
+          "target": "atomic::tests::word_exchange_and_signed_word_arithmetic_return_the_old_value"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "atomic-pointer-operation-ordering",
+          "target": "atomic::tests::pointer_operations_keep_the_typed_pointer_and_expected_value"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "atomic-i64-statistics",
+          "target": "atomic::tests::signed_i64_statistics_operations_are_atomic_and_max_never_decreases"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "atomic-guard-exclusion",
+          "target": "atomic::tests::atomic_guard_excludes_a_second_entrant_and_releases_at_scope_exit"
+        }
+      ],
+      "bounded_source_definitions": [
+        {
+          "evidence_check_ids": [
+            "atomic-signed-word-arithmetic"
+          ],
+          "id": "atomic-signed-word-helpers",
+          "required_definitions": [
+            "static inline intptr_t mi_atomic_addi",
+            "static inline intptr_t mi_atomic_subi"
+          ],
+          "source_anchor": {
+            "end_line": 387,
+            "member": "include/mimalloc/atomic.h",
+            "sha256": "4d9cede54c578388a2581d8ea2b587aed76aa0d388afee308f6fe8b3fe3ad4a9",
+            "start_line": 379
+          }
+        },
+        {
+          "evidence_check_ids": [
+            "atomic-guard-exclusion"
+          ],
+          "id": "atomic-guard-protocol",
+          "required_definitions": [
+            "typedef _Atomic(uintptr_t) mi_atomic_guard_t",
+            "#define mi_atomic_guard"
+          ],
+          "source_anchor": {
+            "end_line": 401,
+            "member": "include/mimalloc/atomic.h",
+            "sha256": "76d24b9d079277c53c95ff520a4b186f6c6aa539defcbb75341fc2f0580b9028",
+            "start_line": 394
+          }
+        },
+        {
+          "evidence_check_ids": [
+            "private-lock-exclusion"
+          ],
+          "id": "linux-pthread-private-lock",
+          "required_definitions": [
+            "#elif defined(MI_USE_PTHREADS)",
+            "static inline bool mi_lock_try_acquire",
+            "static inline void mi_lock_acquire",
+            "static inline void mi_lock_release"
+          ],
+          "source_anchor": {
+            "end_line": 472,
+            "member": "include/mimalloc/atomic.h",
+            "sha256": "9a3b84aa7340cd721bdd3df0983e6cec82c8658e4f8fb7c1a420e8897eb1d0c7",
+            "start_line": 441
+          }
+        },
+        {
+          "evidence_check_ids": [
+            "allocator-once",
+            "once-preflight-cancellation-handoff"
+          ],
+          "id": "atomic-once-type-and-macro",
+          "required_definitions": [
+            "typedef struct mi_atomic_once_s",
+            "bool _mi_atomic_once_enter",
+            "#define mi_atomic_do_once"
+          ],
+          "source_anchor": {
+            "end_line": 557,
+            "member": "include/mimalloc/atomic.h",
+            "sha256": "ca98ac9ed3f0850a5b43b6adc2ab5936bf10d97f6164691ba2f5d5301e2bac73",
+            "start_line": 544
+          }
+        },
+        {
+          "evidence_check_ids": [
+            "empty-bootstrap-image",
+            "static-bootstrap-memid-image",
+            "static-bootstrap-relational-image"
+          ],
+          "id": "bootstrap-static-images",
+          "required_definitions": [
+            "static const mi_page_t mi_page_empty",
+            "#define MI_PAGE_QUEUES_EMPTY",
+            "static mi_decl_cache_align mi_tld_t mi_tld_detached",
+            "const mi_theap_t _mi_theap_empty"
+          ],
+          "source_anchor": {
+            "end_line": 145,
+            "member": "src/init.c",
+            "sha256": "f4a99b4f23f93410361f91f9fc5d00f3e4b809f314ab51e222d4d22bba29bb21",
+            "start_line": 15
+          }
+        }
+      ]
     },
     {
       "id": "provenance-and-represented-layouts",
       "native_status": "ready-for-native-evidence",
-      "remaining_conditions": []
+      "remaining_conditions": [],
+      "source_map_records": [
+        {
+          "required_status": "partial",
+          "unit_id": "core-layouts-and-configuration"
+        }
+      ],
+      "bounded_source_definitions": [
+        {
+          "evidence_check_ids": [
+            "memory-provenance",
+            "memory-id-constructor-variants"
+          ],
+          "id": "provenance-internal-memory-id-helpers",
+          "required_definitions": [
+            "static inline mi_memid_t _mi_memid_create_os",
+            "static inline mi_memid_t _mi_memid_create_static",
+            "static inline mi_memid_t _mi_memid_create_malloc",
+            "static inline size_t _mi_memid_size"
+          ],
+          "source_anchor": {
+            "end_line": 1369,
+            "member": "include/mimalloc/internal.h",
+            "sha256": "f9f47f4eedd632c060d85c75589c62f1fc6050e4872ebe03565e60762a3e761f",
+            "start_line": 1316
+          }
+        }
+      ]
     },
     {
       "id": "random-image",
       "native_status": "ready-for-native-evidence",
-      "remaining_conditions": []
+      "remaining_conditions": [],
+      "source_map_records": [
+        {
+          "required_status": "partial",
+          "unit_id": "random-state"
+        }
+      ]
     },
     {
       "id": "linux-raw-primitives",
       "native_status": "ready-for-native-evidence",
-      "remaining_conditions": []
+      "remaining_conditions": [],
+      "source_map_records": [
+        {
+          "required_status": "partial",
+          "unit_id": "os-allocation-policy"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "linux-unix-primitives"
+        }
+      ],
+      "prim_h_declaration_inventory": [
+        {
+          "classification": "m1-raw-boundary",
+          "name": "mi_os_mem_config_t",
+          "source_map_unit_id": "os-allocation-policy"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_mem_init",
+          "source_map_unit_id": "os-allocation-policy"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_free",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_alloc",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_commit",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_decommit",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_reset",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "exclusion_id": "prim-h-reuse-and-huge-page-allocation",
+          "name": "_mi_prim_reuse"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_protect",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "exclusion_id": "prim-h-reuse-and-huge-page-allocation",
+          "name": "_mi_prim_alloc_huge_os_pages"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_numa_node",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_numa_node_count",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_clock_now",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "exclusion_id": "prim-h-process-statistics",
+          "name": "mi_process_info_t"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "exclusion_id": "prim-h-process-statistics",
+          "name": "_mi_prim_process_info"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "exclusion_id": "prim-h-options-environment-and-diagnostics",
+          "name": "_mi_prim_out_stderr"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "exclusion_id": "prim-h-options-environment-and-diagnostics",
+          "name": "_mi_prim_getenv"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_random_buf",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "exclusion_id": "prim-h-automatic-thread-lifecycle",
+          "name": "_mi_prim_thread_init_auto_done"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "exclusion_id": "prim-h-automatic-thread-lifecycle",
+          "name": "_mi_prim_thread_done_auto_done"
+        },
+        {
+          "classification": "later-milestone-exclusion",
+          "exclusion_id": "prim-h-automatic-thread-lifecycle",
+          "name": "_mi_prim_thread_associate_default_theap"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_thread_is_in_threadpool",
+          "source_map_unit_id": "linux-unix-primitives"
+        },
+        {
+          "classification": "m1-raw-boundary",
+          "name": "_mi_prim_thread_yield",
+          "source_map_unit_id": "linux-unix-primitives"
+        }
+      ],
+      "bounded_source_definitions": [
+        {
+          "evidence_check_ids": [
+            "mapping-lifecycle",
+            "raw-primitive-c-rust-trace"
+          ],
+          "id": "os-memory-configuration-image",
+          "required_definitions": [
+            "static mi_os_mem_config_t mi_os_mem_config",
+            "bool _mi_os_has_overcommit",
+            "bool _mi_os_has_virtual_reserve",
+            "size_t _mi_os_page_size"
+          ],
+          "source_anchor": {
+            "end_line": 48,
+            "member": "src/os.c",
+            "sha256": "300050d75f9c0ce02828d18ccbf61dd8d7c8711b0f914bcbc947d9dbdc7d7b46",
+            "start_line": 16
+          }
+        }
+      ]
     },
     {
       "id": "compiler-tls-roots",
       "native_status": "ready-for-native-evidence",
-      "remaining_conditions": []
+      "remaining_conditions": [],
+      "source_map_records": [
+        {
+          "required_status": "partial",
+          "unit_id": "tls-interface-and-thread-identity"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "thread-local-heap-lifecycle"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "thread-local-storage-lifecycle"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "process-and-thread-initialization"
+        },
+        {
+          "required_status": "partial",
+          "unit_id": "platform-tls-roots"
+        }
+      ]
     }
   ],
   "execution": {
@@ -48,7 +527,8 @@
     "compiler-tls-same-tld-terminal-c-rust-trace",
     "compiler-tls-codegen",
     "x86-64-normal-engine-dependency-graph",
-    "x86-64-source-contract-inventories"
+    "x86-64-source-contract-inventories",
+    "x86-64-bounded-source-definitions"
   ],
   "milestone": {
     "completion_rule": "Native x86 M1 is complete only when this ready-for-native-evidence contract is executed by the canonical native x86 launcher: every exact source-test and layout inventory must match, every focused x86 Rust test and pinned-C/Rust differential must pass, the native C baseline and compiler-TLS codegen must pass, all named source-contract inventories must be current, and one clean source revision must remain unchanged during the run. The ready state is not completion and cannot be replaced by the preserved AArch64 M1 status or report.",
@@ -68,45 +548,65 @@
         "checks_sha256": "e04490ca91363b12cabcb94a4d61aa4449eee75295bc26684147fb5504eec32e",
         "id": "configuration-and-arithmetic",
         "layout_key_count": 71,
-        "layout_keys_sha256": "cff3e3fd23239e8b54a8652a184e198d34ac0beb514cad2c5be45f29a24d92c3"
+        "layout_keys_sha256": "cff3e3fd23239e8b54a8652a184e198d34ac0beb514cad2c5be45f29a24d92c3",
+        "source_boundary_count": 11,
+        "source_boundaries_sha256": "e026bc5a1276fac9bed9b4fb6019678f8fcdec0332c3e08a5c849a76e870144c"
       },
       {
         "check_count": 11,
         "checks_sha256": "7795cb3444e4f48731d98f88bac5c4eb867c907934fae10ab486a4aa1ab78020",
         "id": "atomics-locks-once-and-bootstrap",
         "layout_key_count": 148,
-        "layout_keys_sha256": "22804e407ce6ea26a53330aa49b1a39499a49ffaa3367ad25432b4522f227ee7"
+        "layout_keys_sha256": "22804e407ce6ea26a53330aa49b1a39499a49ffaa3367ad25432b4522f227ee7",
+        "source_boundary_count": 9,
+        "source_boundaries_sha256": "ebf95f25a33d628518edc18a2d9065b6cc40a403965ec5dc33263204365c3302",
+        "once_call_site_count": 12,
+        "once_call_site_shapes_sha256": "ca749e278d7ccd0abfbce87309231abe031c7136fcc459a25a0ca11e21b71442"
       },
       {
         "check_count": 3,
         "checks_sha256": "37ad8228bb206692f084e44ccb38293dd00d944073287283ff93753316491fdd",
         "id": "provenance-and-represented-layouts",
         "layout_key_count": 126,
-        "layout_keys_sha256": "1cdb22010f6802bea4d6c2b52220218ee85c504593c7efc9d56af99e34b3ed5b"
+        "layout_keys_sha256": "1cdb22010f6802bea4d6c2b52220218ee85c504593c7efc9d56af99e34b3ed5b",
+        "source_boundary_count": 5,
+        "source_boundaries_sha256": "524e30b51db9e81ec53fe110890bbfaf50e72264e2864c6c4e11b031f7705ed6"
       },
       {
         "check_count": 13,
         "checks_sha256": "ce794bd528a1883f77f6ebbcd24c4fc86542e01c2a201a11522310ba42dc9869",
         "id": "random-image",
         "layout_key_count": 27,
-        "layout_keys_sha256": "bc2125ed67abdc256e9417c97d890af187383922763c8eaa6ac732fd51e845a7"
+        "layout_keys_sha256": "bc2125ed67abdc256e9417c97d890af187383922763c8eaa6ac732fd51e845a7",
+        "source_boundary_count": 1,
+        "source_boundaries_sha256": "f7a9b61a75cb3c0a86e51732bfcad1292ac205449221dc841d2793766cd65c33"
       },
       {
         "check_count": 6,
         "checks_sha256": "5920fdcb3b20de0ec6e5ace578ef86a96da590f36877404ea994113b2a06f044",
         "id": "linux-raw-primitives",
         "layout_key_count": 0,
-        "layout_keys_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        "layout_keys_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_boundary_count": 5,
+        "source_boundaries_sha256": "cdd4832c5a60bb59bef7bf5eb1a6a0d9bb5e90c354d5fc94b4a0e98621a9a526",
+        "prim_h_declaration_count": 23,
+        "prim_h_declaration_names_sha256": "e8536393d5c7a7a18201b967a54e4b82ef1b01e87eeacb21f78b15303577b55c"
       },
       {
         "check_count": 7,
         "checks_sha256": "9b11c0a6a32c257bb1202759304633313dafc6eb319895cb751ceb0c27dcae83",
         "id": "compiler-tls-roots",
         "layout_key_count": 0,
-        "layout_keys_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        "layout_keys_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "source_boundary_count": 7,
+        "source_boundaries_sha256": "a3e71c1f967900a4ef5af6ef3a2a79887c3568d987cbf96be08537cfd72db38d"
       }
     ],
-    "purpose": "Exact check filters and selected layout-key vectors shared as source-shaped M1 inputs only. Their canonical JSON counts and digests are checked before x86 execution; no AArch64 component status, report, or source-map status is imported.",
+    "exclusion_boundary": {
+      "count": 17,
+      "sha256": "673780867a5e5bb30a137febb51aa6aa304fffd65841a7a5a55bfc9a7414dba7"
+    },
+    "purpose": "Exact check filters, selected layout-key vectors, source-boundary shapes, once-call-site shapes, prim.h declaration names, and exclusion identities shared as source-shaped M1 inputs only. Their canonical JSON counts and digests are checked before x86 execution; no AArch64 component status, report, or source-map status is imported.",
     "source_contract": {
       "path": "compat/allocator/m1-foundations-v3.5.0.json",
       "sha256": "73044a9fa746b17002a5c2f73123234a1c4d5a88d090dd8cba8030c3746dbe19"
@@ -129,5 +629,164 @@
     "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305",
     "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
     "version": "3.5.0"
-  }
+  },
+  "exclusions": [
+    {
+      "disposition": "deferred-to-m2-m3",
+      "id": "whole-types-and-internal-units",
+      "reason": "The whole include/mimalloc/types.h and include/mimalloc/internal.h units remain partial. The complete represented-layout component covers only mi_memkind_t, the complete mi_memid_t representation, selected page field types, the default-release mi_page_t image through memid, mi_page_kind_t, mi_page_queue_t, and the named pure memory-ID constructors. Heap/Theap/subprocess/TLD/arena/statistics representations and generic allocator algorithms remain separate nonclaims.",
+      "upstream_paths": [
+        "include/mimalloc/types.h",
+        "include/mimalloc/internal.h"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m2",
+      "id": "arena-and-external-memory-id-lifecycle",
+      "reason": "The M1 vector proves the mi_memid_t.mem.arena field representation only. mi_memid_arena, source arena-ID construction, the arena branch of _mi_memid_size, MI_MEM_EXTERNAL ownership transition, mi_arena_t, and mi_arena_pages_t require a live arena or externally managed mapping. Their pointer validity, slice bounds, slice-size policy, and ownership lifecycle belong to M2 arena management and are not implied by M1 layout parity.",
+      "upstream_paths": [
+        "include/mimalloc/types.h",
+        "include/mimalloc/internal.h",
+        "src/arena.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m7",
+      "id": "nondefault-page-layout-modes",
+      "reason": "The represented-layout component is restricted to the selected MI_PAGE_META_IS_ALIGNED=1, MI_ENCODE_FREELIST=0, MI_PADDING=0 release image. mi_page_t::keys and mi_padding_t are absent from that image; secure, encoded-freelist, padding, and other nondefault layout modes require their own option/mode contract and do not silently count as M1 coverage.",
+      "upstream_paths": [
+        "include/mimalloc/types.h"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m2-m3",
+      "id": "heap-theap-subprocess-and-tld-layout-lifecycles",
+      "reason": "mi_heap_t, mi_theap_t, mi_subproc_t, and mi_tld_t require later ownership, lock, thread, and page lifecycle acceptance. Existing prefix records remain bounded supporting evidence and are not a full C-layout or lifecycle claim in M1.",
+      "upstream_paths": [
+        "include/mimalloc/types.h",
+        "src/heap.c",
+        "src/theap.c",
+        "src/subproc.c",
+        "src/init.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m7",
+      "id": "statistics-representations-and-operations",
+      "reason": "mi_stats_t and all statistic-bearing type tails are M7 statistics work. Their absence is not hidden by the M1 default-page metadata layout proof.",
+      "upstream_paths": [
+        "include/mimalloc/types.h",
+        "src/stats.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m2",
+      "id": "prim-h-reuse-and-huge-page-allocation",
+      "reason": "_mi_prim_reuse has no Rust raw primitive, and _mi_prim_alloc_huge_os_pages plus its huge-page VM boundary are M2 VM-substrate work. The selected normal mapping witness does not claim either declaration.",
+      "upstream_paths": [
+        "include/mimalloc/prim.h",
+        "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m7",
+      "id": "prim-h-process-statistics",
+      "reason": "mi_process_info_t and _mi_prim_process_info are the M7 statistics surface. Rust ProcessUsage is available for later callers but is not M1 raw-primitive source-map evidence.",
+      "upstream_paths": [
+        "include/mimalloc/prim.h",
+        "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m7",
+      "id": "prim-h-options-environment-and-diagnostics",
+      "reason": "_mi_prim_getenv and _mi_prim_out_stderr belong to the M7 options/environment/diagnostics surface. This includes the _mi_warning_message reached by src/random.c when normal entropy fails. The selected primitive paths do not supply option parsing, environment policy, or diagnostic ownership.",
+      "upstream_paths": [
+        "include/mimalloc/prim.h",
+        "src/prim/unix/prim.c",
+        "src/options.c",
+        "src/random.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m5",
+      "id": "prim-h-automatic-thread-lifecycle",
+      "reason": "_mi_prim_thread_init_auto_done, _mi_prim_thread_done_auto_done, and _mi_prim_thread_associate_default_theap require the general automatic pthread/TLS lifecycle that M5 has not closed. The exact false _mi_prim_thread_is_in_threadpool observation is separately represented.",
+      "upstream_paths": [
+        "include/mimalloc/prim.h",
+        "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m5",
+      "id": "prim-c-automatic-process-lifecycle",
+      "reason": "src/prim/prim.c constructor/destructor calls to _mi_auto_process_init and _mi_auto_process_done are automatic process lifecycle work, not evidence that the generic primitive unit is ported.",
+      "upstream_paths": [
+        "src/prim/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m8",
+      "id": "prim-c-allocator-redirection-integration",
+      "reason": "src/prim/prim.c _mi_is_redirected, _mi_allocator_init, and _mi_allocator_done are allocator redirection and libc integration callbacks. The Linux raw primitive leaves do not represent that M8 boundary.",
+      "upstream_paths": [
+        "src/prim/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m2",
+      "id": "prim-unix-nondefault-vm-routes",
+      "reason": "The selected normal map witness excludes unix_mmap address hints, overmap alignment, large/huge allocation routes, NUMA mbind placement, and source os.c ownership/range wrappers. Those VM-substrate routes remain M2 work.",
+      "upstream_paths": [
+        "src/prim/unix/prim.c",
+        "src/os.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m7",
+      "id": "prim-unix-option-and-diagnostic-routes",
+      "reason": "The Unix THP option/prctl mutation, advice and secure/debug policy branches, and optional PR_SET_VMA anonymous-name diagnostic route remain M7 options/modes/diagnostics work.",
+      "upstream_paths": [
+        "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "outside-m1",
+      "id": "prim-unix-portability-fallback-routes",
+      "reason": "The C libc fallback wrappers, clock() fallback, and getrandom ENOSYS /dev/urandom fallback are not M1 evidence: the Linux 5.10 profile uses direct crabc-core primitives and does not add a portability layer.",
+      "upstream_paths": [
+        "src/prim/unix/prim.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m5",
+      "id": "random-reinit-process-hook",
+      "reason": "The selected random-image component proves the state-machine behavior of _mi_random_reinit_if_weak. Its automatic-process-initialization call site in src/init.c, including publication and lifecycle ordering, remains M5 lifecycle work and is not implied by the direct state witness.",
+      "upstream_paths": [
+        "src/init.c",
+        "src/random.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m5",
+      "id": "whole-prim-tls-lifecycle",
+      "reason": "The bounded 32-field compiler-TLS C/Rust trace proves selected initial roots/identity, count-sensitive regular reset, and a controlled cached-root/reference pair; the separate 40-field same-TLD differential now proves only the selected page-free src/init.c:mi_thread_theaps_done D/A queue-half entry (with ordered empty-prepass witnesses), terminal default/cached reset, heap/TLD-list detach, and logical final-release relations. It still excludes outer _mi_thread_done, regular-backing/fast teardown, TLD free, statistics/hooks, general cached-root switching, page-bearing attachment/collection, production deferred/retired prepasses, process or pthread lifecycle, and public allocator/runtime integration.",
+      "upstream_paths": [
+        "include/mimalloc/prim-tls.h",
+        "src/init.c",
+        "src/prim/prim-tls.c",
+        "src/prim/unix/prim-tls.c"
+      ]
+    },
+    {
+      "disposition": "outside-m1",
+      "id": "allocator-api-and-production-route",
+      "reason": "No selected M1 check is a public C allocator API, libc backend-selection, shadow-route, performance, or promotion proof.",
+      "upstream_paths": [
+        "include/mimalloc.h",
+        "src/alloc.c",
+        "src/alloc-override.c"
+      ]
+    }
+  ]
 }

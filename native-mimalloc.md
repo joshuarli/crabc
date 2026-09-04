@@ -1969,10 +1969,12 @@ sequence.
 The existing native x86 entry points are
 `./compat/allocator/run-x86_64.sh allocator --quick` and its closed evidence
 commands, plus `python3 compat/allocator/run.py --check --architecture x86_64
---offline` for checked source contracts. These are partial evidence lanes.
-The runner currently rejects x86 M1/M2 mode selection; implementing
-architecture-qualified milestone manifests and executable gates is required
-work, not a passing or waived prerequisite.
+--offline` for checked source contracts. `./compat/allocator/run-x86_64.sh
+allocator-m1` is the separate native x86 M1 command: it validates the x86
+contract, runs the private native baseline and finite C/Rust witnesses, and
+writes target-specific x86 evidence. Its executable availability is not a
+transferred AArch64 result or whole-engine parity. Native x86 M2 remains
+unavailable.
 
 The allocator launcher uses the checked `.work/allocator-x86_64/` boundary,
 separate from runtime build/cache state. Its optional
@@ -2448,11 +2450,12 @@ The next integrated wave must:
    with the existing native quick/check surface. Record exact commands,
    architecture, source revision, and source cleanliness. This is the M0
    inventory contract, not allocator-engine parity.
-3. Establish architecture-qualified x86 M1/M2 contracts and executable gates.
-   `run.py` currently admits only x86 quick/check, not x86 M1/M2 closure.
-   Preserve the AArch64 manifests and their exact-revision records; do not
-   relabel them or their completed components as x86 evidence. Share neutral
-   definitions only where their target contract is genuinely identical.
+3. Preserve the architecture-qualified x86 M1 contract and its executable
+   gate. `run.py` admits x86 quick/check and native `--m1`, while x86 M2
+   remains unavailable. Preserve the AArch64 manifests and their
+   exact-revision records; do not relabel them or their completed components
+   as x86 evidence. Share neutral definitions only where their target
+   contract is genuinely identical.
 4. Close x86 M1, then all eight x86 M2 components, using fail-closed gates
    and complete pinned-source behavior/ownership/failure matrices. Audit the
    inherited seven partial AArch64 components and PageMap for x86 applicability;

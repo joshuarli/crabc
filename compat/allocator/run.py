@@ -1050,6 +1050,116 @@ M1_RAW_PRIMITIVE_DECLARATION_CLASSIFICATIONS = frozenset(
     {"m1-raw-boundary", "later-milestone-exclusion"}
 )
 
+# The native M1 record uses the target-local source-map ratchet as its source
+# predicate.  Unlike the paused AArch64 port-map statuses, these are not a
+# completion claim: `partial` is a reviewed bounded source anchor and
+# `implemented` is the one narrower scalar source scope the x86 ratchet has
+# explicitly promoted.  The finite M1 source records below name every such
+# anchor; they cannot be replaced by the target-wide map's overall state.
+M1_X86_64_SOURCE_MAP_REQUIRED_STATUSES = frozenset({"implemented", "partial"})
+M1_X86_64_SOURCE_MAP_REFERENCES = {
+    "configuration-and-arithmetic": (
+        {"required_status": "implemented", "unit_id": "x86-64-width-and-bit-operations"},
+        {"required_status": "partial", "unit_id": "core-layouts-and-configuration"},
+    ),
+    "atomics-locks-once-and-bootstrap": (
+        {"required_status": "partial", "unit_id": "atomic-operation-facade"},
+        {"required_status": "partial", "unit_id": "process-and-thread-initialization"},
+        {"required_status": "partial", "unit_id": "c-support-and-once"},
+        {"required_status": "partial", "unit_id": "thread-local-heap-lifecycle"},
+    ),
+    "provenance-and-represented-layouts": (
+        {"required_status": "partial", "unit_id": "core-layouts-and-configuration"},
+    ),
+    "random-image": (
+        {"required_status": "partial", "unit_id": "random-state"},
+    ),
+    "linux-raw-primitives": (
+        {"required_status": "partial", "unit_id": "os-allocation-policy"},
+        {"required_status": "partial", "unit_id": "linux-unix-primitives"},
+    ),
+    "compiler-tls-roots": (
+        {"required_status": "partial", "unit_id": "tls-interface-and-thread-identity"},
+        {"required_status": "partial", "unit_id": "thread-local-heap-lifecycle"},
+        {"required_status": "partial", "unit_id": "thread-local-storage-lifecycle"},
+        {"required_status": "partial", "unit_id": "process-and-thread-initialization"},
+        {"required_status": "partial", "unit_id": "platform-tls-roots"},
+    ),
+}
+M1_X86_64_BOUNDED_SOURCE_DEFINITION_IDS = {
+    "configuration-and-arithmetic": (
+        "configuration-internal-scalar-helpers",
+        "configuration-internal-slice-helpers",
+    ),
+    "atomics-locks-once-and-bootstrap": (
+        "atomic-signed-word-helpers",
+        "atomic-guard-protocol",
+        "linux-pthread-private-lock",
+        "atomic-once-type-and-macro",
+        "bootstrap-static-images",
+    ),
+    "provenance-and-represented-layouts": (
+        "provenance-internal-memory-id-helpers",
+    ),
+    "linux-raw-primitives": (
+        "os-memory-configuration-image",
+    ),
+}
+# These checks extend only the native x86 M1 component.  They are deliberately
+# not added to the paused AArch64 manifest: the frozen record contributes its
+# finite source-test inventory as a status-free boundary, while native x86
+# must execute the facade operations that its new bounded atomic anchors name.
+M1_X86_64_LOCAL_CHECKS = {
+    "atomics-locks-once-and-bootstrap": (
+        {
+            "expected_passed_test_count": 1,
+            "id": "atomic-compare-exchange-order-pairs",
+            "target": "atomic::tests::word_compare_exchange_preserves_each_upstream_order_pair_and_updates_expected",
+        },
+        {
+            "expected_passed_test_count": 1,
+            "id": "atomic-fetch-operation-ordering",
+            "target": "atomic::tests::word_fetch_operations_return_the_previous_value_for_each_supported_ordering",
+        },
+        {
+            "expected_passed_test_count": 1,
+            "id": "atomic-signed-word-arithmetic",
+            "target": "atomic::tests::word_exchange_and_signed_word_arithmetic_return_the_old_value",
+        },
+        {
+            "expected_passed_test_count": 1,
+            "id": "atomic-pointer-operation-ordering",
+            "target": "atomic::tests::pointer_operations_keep_the_typed_pointer_and_expected_value",
+        },
+        {
+            "expected_passed_test_count": 1,
+            "id": "atomic-i64-statistics",
+            "target": "atomic::tests::signed_i64_statistics_operations_are_atomic_and_max_never_decreases",
+        },
+        {
+            "expected_passed_test_count": 1,
+            "id": "atomic-guard-exclusion",
+            "target": "atomic::tests::atomic_guard_excludes_a_second_entrant_and_releases_at_scope_exit",
+        },
+    ),
+}
+M1_X86_64_RAW_PRIMITIVE_SOURCE_MAP_UNIT_BY_NAME = {
+    "mi_os_mem_config_t": "os-allocation-policy",
+    "_mi_prim_mem_init": "os-allocation-policy",
+    "_mi_prim_free": "linux-unix-primitives",
+    "_mi_prim_alloc": "linux-unix-primitives",
+    "_mi_prim_commit": "linux-unix-primitives",
+    "_mi_prim_decommit": "linux-unix-primitives",
+    "_mi_prim_reset": "linux-unix-primitives",
+    "_mi_prim_protect": "linux-unix-primitives",
+    "_mi_prim_numa_node": "linux-unix-primitives",
+    "_mi_prim_numa_node_count": "linux-unix-primitives",
+    "_mi_prim_clock_now": "linux-unix-primitives",
+    "_mi_prim_random_buf": "linux-unix-primitives",
+    "_mi_prim_thread_is_in_threadpool": "linux-unix-primitives",
+    "_mi_prim_thread_yield": "linux-unix-primitives",
+}
+
 # This is a source-order contract, not a claim that the incomplete Rust port
 # has completed generic owner exit.  Each name fixes the source fact to its
 # pinned-v3.5.0 definition so a later contract edit cannot silently turn a
@@ -9202,13 +9312,13 @@ def validate_m1_foundations_contract(
 
 
 def _m1_x86_64_neutral_inventory() -> list[dict[str, Any]]:
-    """Read only target-neutral M1 inputs from the preserved AArch64 record.
+    """Read target-neutral M1 boundary shapes from the preserved record.
 
-    The old M1 manifest is retained as the canonical spelling of the finite
-    source filters and selected C/Rust layout vectors.  This helper
-    intentionally does not read its target, component statuses, source-map
-    claims, exclusions, or report state: those belong to the paused AArch64
-    contract and cannot establish any native x86 result.
+    The paused AArch64 record remains the canonical spelling of finite test,
+    layout, upstream-boundary, once-call-site, and ``prim.h`` inventories.
+    This helper deliberately strips its completion and port-map status claims:
+    x86 must state and validate its own source-map predicates below.  It
+    therefore shares source *shapes*, never AArch64 execution or closure.
     """
 
     contract = read_json(M1_FOUNDATIONS_CONTRACT)
@@ -9228,7 +9338,13 @@ def _m1_x86_64_neutral_inventory() -> list[dict[str, Any]]:
             raise HarnessError("shared M1 source inventory component order changed")
         raw_checks = raw_component.get("checks")
         raw_layout_keys = raw_component.get("layout_keys")
-        if not isinstance(raw_checks, list) or not isinstance(raw_layout_keys, list):
+        raw_references = raw_component.get("source_map_records")
+        if (
+            not isinstance(raw_checks, list)
+            or not isinstance(raw_layout_keys, list)
+            or not isinstance(raw_references, list)
+            or not raw_references
+        ):
             raise HarnessError(f"shared M1 source inventory {component_id} is incomplete")
 
         checks: list[dict[str, Any]] = []
@@ -9272,14 +9388,452 @@ def _m1_x86_64_neutral_inventory() -> list[dict[str, Any]]:
             raise HarnessError(
                 f"shared M1 source inventory {component_id} has an invalid layout vector"
             )
-        inventory.append(
+
+        source_boundaries: list[dict[str, str]] = []
+        boundary_keys: set[tuple[str, str, str]] = set()
+        for reference_index, raw_reference in enumerate(raw_references):
+            if not isinstance(raw_reference, Mapping):
+                raise HarnessError(
+                    f"shared M1 source inventory {component_id} source boundary "
+                    f"{reference_index} is invalid"
+                )
+            kind = raw_reference.get("kind")
+            expected_reference_keys = (
+                {"kind", "required_statuses", "upstream"}
+                if kind == "unit"
+                else {"kind", "name", "required_statuses", "upstream"}
+            )
+            if kind not in {"item", "unit"} or set(raw_reference) != expected_reference_keys:
+                raise HarnessError(
+                    f"shared M1 source inventory {component_id} source boundary "
+                    f"{reference_index} has an invalid shape"
+                )
+            upstream = raw_reference.get("upstream")
+            name = raw_reference.get("name", "")
+            if (
+                not isinstance(upstream, str)
+                or not upstream
+                or (kind == "item" and (not isinstance(name, str) or not name))
+            ):
+                raise HarnessError(
+                    f"shared M1 source inventory {component_id} source boundary "
+                    f"{reference_index} is invalid"
+                )
+            boundary_key = (str(kind), upstream, str(name))
+            if boundary_key in boundary_keys:
+                raise HarnessError(
+                    f"shared M1 source inventory {component_id} repeats a source boundary"
+                )
+            boundary_keys.add(boundary_key)
+            boundary = {"kind": str(kind), "upstream": upstream}
+            if kind == "item":
+                boundary["name"] = str(name)
+            source_boundaries.append(boundary)
+
+        component: dict[str, Any] = {
+            "checks": checks,
+            "id": component_id,
+            "layout_keys": list(raw_layout_keys),
+            "source_boundaries": source_boundaries,
+        }
+        if component_id == "atomics-locks-once-and-bootstrap":
+            raw_dispositions = raw_component.get("once_call_site_dispositions")
+            if not isinstance(raw_dispositions, list) or not raw_dispositions:
+                raise HarnessError("shared M1 bootstrap once-call-site inventory is invalid")
+            shapes: list[dict[str, str]] = []
+            for raw_disposition in raw_dispositions:
+                if not isinstance(raw_disposition, Mapping) or set(raw_disposition) != {
+                    "configuration",
+                    "disposition",
+                    "function",
+                    "reason",
+                    "source",
+                }:
+                    raise HarnessError("shared M1 bootstrap once-call-site inventory changed")
+                shape = {
+                    key: str(raw_disposition[key])
+                    for key in ("configuration", "function", "source")
+                }
+                if not all(shape.values()):
+                    raise HarnessError("shared M1 bootstrap once-call-site inventory is invalid")
+                shapes.append(shape)
+            component["once_call_site_shapes"] = shapes
+        if component_id == "linux-raw-primitives":
+            raw_declarations = raw_component.get("prim_h_declaration_inventory")
+            if not isinstance(raw_declarations, list) or not raw_declarations:
+                raise HarnessError("shared M1 raw primitive declaration inventory is invalid")
+            declarations: list[dict[str, str]] = []
+            for raw_declaration in raw_declarations:
+                if not isinstance(raw_declaration, Mapping) or set(raw_declaration) != {
+                    "classification",
+                    "name",
+                    "record_id",
+                }:
+                    raise HarnessError("shared M1 raw primitive declaration inventory changed")
+                declaration = {
+                    key: str(raw_declaration[key])
+                    for key in ("classification", "name", "record_id")
+                }
+                if not all(declaration.values()):
+                    raise HarnessError("shared M1 raw primitive declaration inventory is invalid")
+                declarations.append(declaration)
+            component["prim_h_declaration_inventory"] = declarations
+        inventory.append(component)
+    return inventory
+
+
+def _m1_x86_64_neutral_exclusion_boundary() -> list[dict[str, Any]]:
+    """Read only exclusion identities and source paths, never AArch64 state."""
+
+    contract = read_json(M1_FOUNDATIONS_CONTRACT)
+    raw_exclusions = contract.get("exclusions")
+    if not isinstance(raw_exclusions, list) or not raw_exclusions:
+        raise HarnessError("shared M1 exclusion boundary is invalid")
+    boundary: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for raw_exclusion in raw_exclusions:
+        if not isinstance(raw_exclusion, Mapping) or set(raw_exclusion) != {
+            "disposition",
+            "id",
+            "reason",
+            "upstream_paths",
+        }:
+            raise HarnessError("shared M1 exclusion boundary changed")
+        exclusion_id = raw_exclusion.get("id")
+        paths = raw_exclusion.get("upstream_paths")
+        if (
+            not isinstance(exclusion_id, str)
+            or not exclusion_id
+            or exclusion_id in seen_ids
+            or not isinstance(paths, list)
+            or not paths
+            or not all(isinstance(path, str) and path for path in paths)
+            or len(set(paths)) != len(paths)
+        ):
+            raise HarnessError("shared M1 exclusion boundary is invalid")
+        seen_ids.add(exclusion_id)
+        boundary.append({"id": exclusion_id, "upstream_paths": list(paths)})
+    return boundary
+
+
+def _m1_x86_64_once_call_site_dispositions(
+    neutral_inventory: Sequence[Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    """Retarget the fixed Linux source disposition prose without reusing status."""
+
+    contract = read_json(M1_FOUNDATIONS_CONTRACT)
+    raw_components = contract.get("components")
+    if not isinstance(raw_components, list):
+        raise HarnessError("shared M1 bootstrap disposition source is invalid")
+    raw_bootstrap = next(
+        (
+            component
+            for component in raw_components
+            if isinstance(component, Mapping)
+            and component.get("id") == "atomics-locks-once-and-bootstrap"
+        ),
+        None,
+    )
+    if not isinstance(raw_bootstrap, Mapping):
+        raise HarnessError("shared M1 bootstrap disposition source is absent")
+    raw_dispositions = raw_bootstrap.get("once_call_site_dispositions")
+    if not isinstance(raw_dispositions, list):
+        raise HarnessError("shared M1 bootstrap disposition source is invalid")
+    expected_shapes = next(
+        component["once_call_site_shapes"]
+        for component in neutral_inventory
+        if component["id"] == "atomics-locks-once-and-bootstrap"
+    )
+    dispositions: list[dict[str, str]] = []
+    for raw_disposition, expected_shape in zip(raw_dispositions, expected_shapes, strict=True):
+        if not isinstance(raw_disposition, Mapping):
+            raise HarnessError("shared M1 bootstrap disposition source is invalid")
+        disposition = {key: str(raw_disposition[key]) for key in raw_disposition}
+        if {
+            key: disposition.get(key)
+            for key in ("configuration", "function", "source")
+        } != expected_shape:
+            raise HarnessError("shared M1 bootstrap disposition source changed")
+        disposition["reason"] = disposition["reason"].replace(
+            "Linux/AArch64", "Linux/x86-64"
+        )
+        dispositions.append(disposition)
+    return dispositions
+
+
+def _m1_x86_64_exclusions() -> list[dict[str, Any]]:
+    """Retain the explicit bounded exclusions with x86-specific prose."""
+
+    contract = read_json(M1_FOUNDATIONS_CONTRACT)
+    raw_exclusions = contract.get("exclusions")
+    if not isinstance(raw_exclusions, list):
+        raise HarnessError("shared M1 exclusion source is invalid")
+    exclusions: list[dict[str, Any]] = []
+    for raw_exclusion in raw_exclusions:
+        if not isinstance(raw_exclusion, Mapping):
+            raise HarnessError("shared M1 exclusion source is invalid")
+        exclusion = dict(raw_exclusion)
+        reason = exclusion.get("reason")
+        if not isinstance(reason, str):
+            raise HarnessError("shared M1 exclusion source is invalid")
+        exclusion["reason"] = reason.replace("Linux/AArch64", "Linux/x86-64")
+        exclusions.append(exclusion)
+    return exclusions
+
+
+def _m1_x86_64_source_map_unit_statuses() -> dict[str, str]:
+    """Read the target-local source predicates used by the native M1 record."""
+
+    contract = read_json(X86_64_SOURCE_MAP_CONTRACT)
+    raw_units = contract.get("units")
+    if not isinstance(raw_units, list) or not raw_units:
+        raise HarnessError("native x86 M1 source map has no units")
+    statuses: dict[str, str] = {}
+    for raw_unit in raw_units:
+        if not isinstance(raw_unit, Mapping):
+            raise HarnessError("native x86 M1 source map unit is invalid")
+        unit_id = raw_unit.get("id")
+        status = raw_unit.get("status")
+        if (
+            not isinstance(unit_id, str)
+            or not unit_id
+            or unit_id in statuses
+            or not isinstance(status, str)
+        ):
+            raise HarnessError("native x86 M1 source map unit is invalid")
+        statuses[unit_id] = status
+    return statuses
+
+
+def _m1_x86_64_bounded_source_definitions(
+    component_id: str, raw_definitions: object, checks: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Validate native-only M1 source anchors outside broad source-map rows.
+
+    The target source map deliberately gives each upstream member one broad
+    ownership row.  Several finite M1 facts live outside those rows' selected
+    anchors (for example scalar helpers versus PageMap helpers in
+    ``internal.h``).  These narrow, hash-pinned records retain that source
+    fact without promoting any whole header or translation unit.
+    """
+
+    expected_ids = M1_X86_64_BOUNDED_SOURCE_DEFINITION_IDS.get(component_id)
+    if expected_ids is None:
+        if raw_definitions is not None:
+            raise HarnessError(
+                f"native x86 M1 component {component_id} has unexpected bounded source definitions"
+            )
+        return []
+    if not isinstance(raw_definitions, list) or not raw_definitions:
+        raise HarnessError(
+            f"native x86 M1 component {component_id} lacks bounded source definitions"
+        )
+    expected_check_ids = {str(check["id"]) for check in checks}
+    definitions: list[dict[str, Any]] = []
+    for raw_definition in raw_definitions:
+        if not isinstance(raw_definition, Mapping) or set(raw_definition) != {
+            "evidence_check_ids",
+            "id",
+            "required_definitions",
+            "source_anchor",
+        }:
+            raise HarnessError(
+                f"native x86 M1 component {component_id} bounded source definition changed"
+            )
+        definition_id = raw_definition.get("id")
+        required_definitions = raw_definition.get("required_definitions")
+        evidence_check_ids = raw_definition.get("evidence_check_ids")
+        source_anchor = raw_definition.get("source_anchor")
+        if (
+            not isinstance(definition_id, str)
+            or not definition_id
+            or not isinstance(required_definitions, list)
+            or not required_definitions
+            or not all(
+                isinstance(definition, str) and definition
+                for definition in required_definitions
+            )
+            or len(set(required_definitions)) != len(required_definitions)
+            or not isinstance(evidence_check_ids, list)
+            or not evidence_check_ids
+            or not all(
+                isinstance(check_id, str) and check_id in expected_check_ids
+                for check_id in evidence_check_ids
+            )
+            or len(set(evidence_check_ids)) != len(evidence_check_ids)
+            or not isinstance(source_anchor, Mapping)
+            or set(source_anchor) != {"end_line", "member", "sha256", "start_line"}
+        ):
+            raise HarnessError(
+                f"native x86 M1 component {component_id} bounded source definition is invalid"
+            )
+        member = source_anchor.get("member")
+        start_line = source_anchor.get("start_line")
+        end_line = source_anchor.get("end_line")
+        digest = source_anchor.get("sha256")
+        if (
+            not isinstance(member, str)
+            or not member
+            or Path(member).is_absolute()
+            or ".." in Path(member).parts
+            or not isinstance(start_line, int)
+            or isinstance(start_line, bool)
+            or not isinstance(end_line, int)
+            or isinstance(end_line, bool)
+            or start_line < 1
+            or end_line < start_line
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise HarnessError(
+                f"native x86 M1 component {component_id} bounded source anchor is invalid"
+            )
+        definitions.append(
             {
-                "checks": checks,
-                "id": component_id,
-                "layout_keys": list(raw_layout_keys),
+                "evidence_check_ids": list(evidence_check_ids),
+                "id": definition_id,
+                "required_definitions": list(required_definitions),
+                "source_anchor": dict(source_anchor),
             }
         )
-    return inventory
+    if [definition["id"] for definition in definitions] != list(expected_ids):
+        raise HarnessError(
+            f"native x86 M1 component {component_id} bounded source definition inventory changed"
+        )
+    return definitions
+
+
+def _m1_x86_64_local_checks(component_id: str, raw_checks: object) -> list[dict[str, Any]]:
+    """Validate x86-only source witnesses without extending the frozen record."""
+
+    expected_checks = M1_X86_64_LOCAL_CHECKS.get(component_id)
+    if expected_checks is None:
+        if raw_checks is not None:
+            raise HarnessError(f"native x86 M1 component {component_id} has unexpected local checks")
+        return []
+    expected_records = [dict(check) for check in expected_checks]
+    if raw_checks != expected_records:
+        raise HarnessError(f"native x86 M1 component {component_id} local check inventory changed")
+    for check in expected_records:
+        _m1_foundations_source_test_exists(str(check["target"]), str(check["id"]))
+    return expected_records
+
+
+def _m1_x86_64_bounded_source_definition_evidence(
+    summary: Mapping[str, Any], pin: Mapping[str, str], *, offline: bool
+) -> dict[str, Any]:
+    """Re-read every bounded x86 M1 source anchor from the verified archive."""
+
+    archive = fetch_archive(pin, offline)
+    records: list[dict[str, Any]] = []
+    try:
+        with tarfile.open(archive, mode="r:gz") as stream:
+            for component in summary["components"]:
+                for definition in component.get("bounded_source_definitions", []):
+                    anchor = definition["source_anchor"]
+                    member_name = f"{pin['archive_root']}/{anchor['member']}"
+                    members = [member for member in stream.getmembers() if member.name == member_name]
+                    if len(members) != 1 or not members[0].isfile():
+                        raise HarnessError(
+                            "native x86 M1 bounded source anchor is absent from the pinned archive: "
+                            + anchor["member"]
+                        )
+                    extracted = stream.extractfile(members[0])
+                    if extracted is None:
+                        raise HarnessError(
+                            "native x86 M1 cannot read bounded source anchor: " + anchor["member"]
+                        )
+                    with extracted:
+                        lines = extracted.read().splitlines(keepends=True)
+                    start = anchor["start_line"]
+                    end = anchor["end_line"]
+                    if end > len(lines):
+                        raise HarnessError(
+                            "native x86 M1 bounded source anchor exceeds its pinned member: "
+                            + anchor["member"]
+                        )
+                    payload = b"".join(lines[start - 1 : end])
+                    actual_digest = hashlib.sha256(payload).hexdigest()
+                    if actual_digest != anchor["sha256"]:
+                        raise HarnessError(
+                            "native x86 M1 bounded source anchor digest changed: "
+                            + definition["id"]
+                        )
+                    missing = [
+                        required
+                        for required in definition["required_definitions"]
+                        if required.encode("utf-8") not in payload
+                    ]
+                    if missing:
+                        raise HarnessError(
+                            "native x86 M1 bounded source anchor lacks required definitions "
+                            f"for {definition['id']}: " + ", ".join(missing)
+                        )
+                    records.append(
+                        {
+                            "component": component["id"],
+                            "evidence_check_ids": list(definition["evidence_check_ids"]),
+                            "id": definition["id"],
+                            "source_anchor": {
+                                "bytes": len(payload),
+                                "end_line": end,
+                                "member": anchor["member"],
+                                "sha256": actual_digest,
+                                "start_line": start,
+                            },
+                        }
+                    )
+    except (OSError, tarfile.TarError) as error:
+        raise HarnessError("native x86 M1 cannot read its pinned source archive") from error
+    return {
+        "record_count": len(records),
+        "records": records,
+        "scope": (
+            "bounded pinned-C source definitions outside the target-wide source-map "
+            "anchors; each row is linked to executed finite M1 checks"
+        ),
+        "status": "passed",
+    }
+
+
+def _m1_x86_64_raw_primitive_declarations(
+    neutral_inventory: Sequence[Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    """Assign every selected ``prim.h`` declaration to an x86 predicate or exclusion."""
+
+    source_declarations = next(
+        component["prim_h_declaration_inventory"]
+        for component in neutral_inventory
+        if component["id"] == "linux-raw-primitives"
+    )
+    declarations: list[dict[str, str]] = []
+    for source_declaration in source_declarations:
+        classification = source_declaration["classification"]
+        name = source_declaration["name"]
+        if classification == "m1-raw-boundary":
+            unit_id = M1_X86_64_RAW_PRIMITIVE_SOURCE_MAP_UNIT_BY_NAME.get(name)
+            if unit_id is None:
+                raise HarnessError(
+                    "native x86 M1 raw primitive has no target source-map predicate: " + name
+                )
+            declarations.append(
+                {
+                    "classification": classification,
+                    "name": name,
+                    "source_map_unit_id": unit_id,
+                }
+            )
+        elif classification == "later-milestone-exclusion":
+            declarations.append(
+                {
+                    "classification": classification,
+                    "exclusion_id": source_declaration["record_id"],
+                    "name": name,
+                }
+            )
+        else:
+            raise HarnessError("shared M1 raw primitive classification is invalid")
+    return declarations
 
 
 def _m1_inventory_digest(value: object) -> str:
@@ -9304,6 +9858,7 @@ def validate_x86_64_m1_foundations_contract(
 
     expected_keys = {
         "components",
+        "exclusions",
         "execution",
         "format",
         "global_evidence",
@@ -9357,6 +9912,7 @@ def validate_x86_64_m1_foundations_contract(
         "compiler-tls-codegen",
         "x86-64-normal-engine-dependency-graph",
         "x86-64-source-contract-inventories",
+        "x86-64-bounded-source-definitions",
     ]
     if contract.get("global_evidence") != expected_evidence:
         raise HarnessError("native x86 M1 foundations global evidence inventory changed")
@@ -9386,22 +9942,49 @@ def validate_x86_64_m1_foundations_contract(
         raise HarnessError("native x86 M1 foundations nonclaim inventory changed")
 
     neutral_inventory = _m1_x86_64_neutral_inventory()
-    expected_inventory_components = [
-        {
+    expected_inventory_components: list[dict[str, Any]] = []
+    for component in neutral_inventory:
+        inventory_component: dict[str, Any] = {
             "check_count": len(component["checks"]),
             "checks_sha256": _m1_inventory_digest(component["checks"]),
             "id": component["id"],
             "layout_key_count": len(component["layout_keys"]),
             "layout_keys_sha256": _m1_inventory_digest(component["layout_keys"]),
+            "source_boundary_count": len(component["source_boundaries"]),
+            "source_boundaries_sha256": _m1_inventory_digest(
+                component["source_boundaries"]
+            ),
         }
-        for component in neutral_inventory
-    ]
+        if "once_call_site_shapes" in component:
+            inventory_component["once_call_site_count"] = len(
+                component["once_call_site_shapes"]
+            )
+            inventory_component["once_call_site_shapes_sha256"] = _m1_inventory_digest(
+                component["once_call_site_shapes"]
+            )
+        if "prim_h_declaration_inventory" in component:
+            names = [
+                declaration["name"]
+                for declaration in component["prim_h_declaration_inventory"]
+            ]
+            inventory_component["prim_h_declaration_count"] = len(names)
+            inventory_component["prim_h_declaration_names_sha256"] = _m1_inventory_digest(
+                names
+            )
+        expected_inventory_components.append(inventory_component)
+    neutral_exclusion_boundary = _m1_x86_64_neutral_exclusion_boundary()
     expected_neutral_inventory = {
         "components": expected_inventory_components,
+        "exclusion_boundary": {
+            "count": len(neutral_exclusion_boundary),
+            "sha256": _m1_inventory_digest(neutral_exclusion_boundary),
+        },
         "purpose": (
-            "Exact check filters and selected layout-key vectors shared as source-shaped M1 "
-            "inputs only. Their canonical JSON counts and digests are checked before x86 "
-            "execution; no AArch64 component status, report, or source-map status is imported."
+            "Exact check filters, selected layout-key vectors, source-boundary shapes, "
+            "once-call-site shapes, prim.h declaration names, and exclusion identities shared "
+            "as source-shaped M1 inputs only. Their canonical JSON counts and digests are "
+            "checked before x86 execution; no AArch64 component status, report, or source-map "
+            "status is imported."
         ),
         "source_contract": {
             "path": relative(M1_FOUNDATIONS_CONTRACT),
@@ -9409,37 +9992,128 @@ def validate_x86_64_m1_foundations_contract(
         },
     }
     if contract.get("neutral_inventory") != expected_neutral_inventory:
-        raise HarnessError("native x86 M1 exact source-check or layout inventory changed")
+        raise HarnessError("native x86 M1 neutral source-boundary inventory changed")
 
     raw_components = contract.get("components")
     if not isinstance(raw_components, list) or len(raw_components) != len(neutral_inventory):
         raise HarnessError("native x86 M1 component inventory changed")
+    source_map_statuses = _m1_x86_64_source_map_unit_statuses()
+    expected_once_dispositions = _m1_x86_64_once_call_site_dispositions(neutral_inventory)
+    expected_prim_declarations = _m1_x86_64_raw_primitive_declarations(neutral_inventory)
     components: list[dict[str, Any]] = []
     for index, raw_component in enumerate(raw_components):
-        if not isinstance(raw_component, Mapping) or set(raw_component) != {
+        if not isinstance(raw_component, Mapping):
+            raise HarnessError(f"native x86 M1 component {index} has unexpected fields")
+        component_id = raw_component.get("id")
+        expected_component_keys = {
             "id",
             "native_status",
             "remaining_conditions",
-        }:
+            "source_map_records",
+        }
+        if component_id == "atomics-locks-once-and-bootstrap":
+            expected_component_keys.add("once_call_site_dispositions")
+        if component_id == "linux-raw-primitives":
+            expected_component_keys.add("prim_h_declaration_inventory")
+        if component_id in M1_X86_64_BOUNDED_SOURCE_DEFINITION_IDS:
+            expected_component_keys.add("bounded_source_definitions")
+        if component_id in M1_X86_64_LOCAL_CHECKS:
+            expected_component_keys.add("x86_local_checks")
+        if set(raw_component) != expected_component_keys:
             raise HarnessError(f"native x86 M1 component {index} has unexpected fields")
         neutral_component = neutral_inventory[index]
-        component_id = raw_component.get("id")
         if component_id != neutral_component["id"]:
             raise HarnessError("native x86 M1 component order or identity changed")
         if raw_component.get("native_status") != M1_X86_64_FOUNDATIONS_COMPONENT_STATUS:
             raise HarnessError(f"native x86 M1 component {component_id} has an invalid readiness state")
         if raw_component.get("remaining_conditions") != []:
             raise HarnessError(f"native x86 M1 component {component_id} has unreviewed conditions")
-        components.append(
-            {
-                "checks": list(neutral_component["checks"]),
-                "id": component_id,
-                "layout_keys": list(neutral_component["layout_keys"]),
-                "native_status": M1_X86_64_FOUNDATIONS_COMPONENT_STATUS,
-                "remaining_conditions": [],
-                "source_map_records": [],
-            }
+
+        expected_source_map_records = list(M1_X86_64_SOURCE_MAP_REFERENCES[component_id])
+        raw_source_map_records = raw_component.get("source_map_records")
+        if raw_source_map_records != expected_source_map_records:
+            raise HarnessError(
+                f"native x86 M1 component {component_id} source-map record inventory changed"
+            )
+        for source_map_record in expected_source_map_records:
+            unit_id = source_map_record["unit_id"]
+            required_status = source_map_record["required_status"]
+            actual_status = source_map_statuses.get(unit_id)
+            if required_status not in M1_X86_64_SOURCE_MAP_REQUIRED_STATUSES:
+                raise HarnessError(
+                    f"native x86 M1 component {component_id} has an invalid source-map status"
+                )
+            if actual_status != required_status:
+                raise HarnessError(
+                    f"native x86 M1 source-map record {unit_id} lacks required status "
+                    f"{required_status}"
+                )
+
+        local_checks = _m1_x86_64_local_checks(
+            component_id, raw_component.get("x86_local_checks")
         )
+        checks = [*neutral_component["checks"], *local_checks]
+        check_ids = [str(check["id"]) for check in checks]
+        if len(set(check_ids)) != len(check_ids):
+            raise HarnessError(f"native x86 M1 component {component_id} repeats a source check")
+        component: dict[str, Any] = {
+            "checks": checks,
+            "id": component_id,
+            "layout_keys": list(neutral_component["layout_keys"]),
+            "native_status": M1_X86_64_FOUNDATIONS_COMPONENT_STATUS,
+            "remaining_conditions": [],
+            "source_map_records": [dict(record) for record in expected_source_map_records],
+        }
+        bounded_source_definitions = _m1_x86_64_bounded_source_definitions(
+            component_id,
+            raw_component.get("bounded_source_definitions"),
+            checks,
+        )
+        if bounded_source_definitions:
+            component["bounded_source_definitions"] = bounded_source_definitions
+        if local_checks:
+            component["x86_local_checks"] = local_checks
+        if component_id == "atomics-locks-once-and-bootstrap":
+            if raw_component.get("once_call_site_dispositions") != expected_once_dispositions:
+                raise HarnessError(
+                    "native x86 M1 bootstrap once-call-site disposition inventory changed"
+                )
+            component["once_call_site_dispositions"] = [
+                dict(disposition) for disposition in expected_once_dispositions
+            ]
+        if component_id == "linux-raw-primitives":
+            if raw_component.get("prim_h_declaration_inventory") != expected_prim_declarations:
+                raise HarnessError("native x86 M1 raw primitive declaration inventory changed")
+            component["prim_h_declaration_inventory"] = [
+                dict(declaration) for declaration in expected_prim_declarations
+            ]
+        components.append(component)
+
+    expected_exclusions = _m1_x86_64_exclusions()
+    raw_exclusions = contract.get("exclusions")
+    if raw_exclusions != expected_exclusions:
+        raise HarnessError("native x86 M1 explicit exclusion inventory changed")
+    exclusions_by_id = {exclusion["id"]: exclusion for exclusion in expected_exclusions}
+    raw_primitive_component = next(
+        component for component in components if component["id"] == "linux-raw-primitives"
+    )
+    raw_primitive_source_units = {
+        record["unit_id"] for record in raw_primitive_component["source_map_records"]
+    }
+    for declaration in raw_primitive_component["prim_h_declaration_inventory"]:
+        if declaration["classification"] == "m1-raw-boundary":
+            if declaration["source_map_unit_id"] not in raw_primitive_source_units:
+                raise HarnessError(
+                    "native x86 M1 raw primitive declaration has no component source-map predicate"
+                )
+        elif declaration["classification"] == "later-milestone-exclusion":
+            exclusion = exclusions_by_id.get(declaration["exclusion_id"])
+            if exclusion is None or not exclusion["disposition"].startswith("deferred-to-m"):
+                raise HarnessError(
+                    "native x86 M1 raw primitive declaration lacks a later-milestone exclusion"
+                )
+        else:
+            raise HarnessError("native x86 M1 raw primitive declaration has an invalid classification")
 
     expected_source_contracts = [
         relative(X86_64_API_CONTRACT),
@@ -9460,7 +10134,7 @@ def validate_x86_64_m1_foundations_contract(
         "components": components,
         "execution": expected_execution,
         "global_evidence": expected_evidence,
-        "exclusions": [],
+        "exclusions": expected_exclusions,
         "milestone": {
             "completion_rule": milestone["completion_rule"],
             "id": "m1",
@@ -9642,13 +10316,13 @@ def _m1_foundations_run_exact_program_check(
     }, output
 
 
-def run_m1_foundations_checks(
+def run_x86_64_m1_foundations_checks(
     summary: Mapping[str, Any],
     test_program: Mapping[str, Any],
     *,
     already_executed_check_ids: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
-    """Run all remaining M1 source checks in one closed unit-binary batch."""
+    """Run all remaining native x86 M1 checks in one closed unit-binary batch."""
 
     execution = summary["execution"]
     assert isinstance(execution, Mapping)
@@ -9723,6 +10397,83 @@ def run_m1_foundations_checks(
     ]
 
 
+def run_m1_foundations_checks(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Run every paused AArch64 M1 check in its private Cargo target directory.
+
+    The native x86 path batches filters from one prepared unit binary.  The
+    frozen AArch64 record deliberately retains the existing individual Cargo
+    witnesses, so x86 speed work cannot change its execution evidence.
+    """
+
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
+    execution = summary["execution"]
+    assert isinstance(execution, Mapping)
+    records: list[dict[str, Any]] = []
+    for component in summary["components"]:
+        for check in component["checks"]:
+            command = m1_foundations_check_command(execution, check)
+            result = command_record(
+                command,
+                cwd=ROOT,
+                env=environment,
+                timeout_seconds=int(execution["timeout_seconds"]),
+            )
+            require_success(result, f"M1 foundations check {check['id']}")
+            output = str(result["stdout"]) + "\n" + str(result["stderr"])
+            passed_test_count = parse_rust_test_count(output)
+            if passed_test_count != check["expected_passed_test_count"]:
+                raise HarnessError(
+                    f"M1 foundations check {check['id']} passed {passed_test_count} tests; "
+                    f"expected {check['expected_passed_test_count']}"
+                )
+            records.append(
+                {
+                    "component": component["id"],
+                    "command": command,
+                    "evidence_scope": "focused-source-test",
+                    "id": check["id"],
+                    "passed_test_count": passed_test_count,
+                    "target": check["target"],
+                }
+            )
+    return records
+
+
+def _m1_foundations_run_aarch64_cargo_check(
+    *, timeout_seconds: int, target: str, evidence_name: str
+) -> tuple[dict[str, Any], str]:
+    """Run one frozen AArch64 M1 source witness through its original Cargo path."""
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--locked",
+        "--lib",
+        target,
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
+    result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=timeout_seconds,
+    )
+    require_success(result, evidence_name)
+    output = str(result["stdout"]) + "\n" + str(result["stderr"])
+    return {
+        "command": command,
+        "passed_test_count": parse_rust_test_count(output),
+        "target": target,
+    }, output
+
+
 def run_m1_raw_primitive_differential(
     pin: Mapping[str, str],
     *,
@@ -9741,8 +10492,6 @@ def run_m1_raw_primitive_differential(
     """
 
     require_native_architecture(architecture)
-    if test_program is None or check is None:
-        raise HarnessError("M1 raw differential requires its prepared Rust test program")
     compiler = require_tool("musl-gcc")
     archive = fetch_archive(pin, offline)
     with temporary_directory(prefix="crabc-mimalloc-m1-raw-source-") as temporary:
@@ -9754,11 +10503,21 @@ def run_m1_raw_primitive_differential(
             CONFIGURATION_PROFILES["release"],
         )
 
-    if check.get("target") != "os::tests::emit_m1_raw_c_rust_trace":
-        raise HarnessError("M1 raw differential lost its exact Rust source witness")
-    rust, rust_output = _m1_foundations_run_exact_program_check(
-        test_program, check, nocapture=True
-    )
+    target = "os::tests::emit_m1_raw_c_rust_trace"
+    if test_program is None:
+        if architecture != "aarch64" or check is not None:
+            raise HarnessError("native x86 M1 raw differential requires its prepared Rust test program")
+        rust, rust_output = _m1_foundations_run_aarch64_cargo_check(
+            timeout_seconds=timeout_seconds,
+            target=target,
+            evidence_name="Rust M1 raw-primitive trace",
+        )
+    else:
+        if check is None or check.get("target") != target:
+            raise HarnessError("M1 raw differential lost its exact Rust source witness")
+        rust, rust_output = _m1_foundations_run_exact_program_check(
+            test_program, check, nocapture=True
+        )
     rust_trace = parse_m1_raw_primitive_trace(rust_output)
     validate_m1_raw_primitive_trace_schema(rust_trace, source="Rust")
     passed_test_count = rust["passed_test_count"]
@@ -9804,8 +10563,6 @@ def run_m1_compiler_tls_differential(
     """
 
     require_native_architecture(architecture)
-    if test_program is None or check is None:
-        raise HarnessError("M1 compiler-TLS differential requires its prepared Rust test program")
     compiler = require_tool("musl-gcc")
     archive = fetch_archive(pin, offline)
     with temporary_directory(prefix="crabc-mimalloc-m1-compiler-tls-source-") as temporary:
@@ -9817,11 +10574,23 @@ def run_m1_compiler_tls_differential(
             CONFIGURATION_PROFILES["release"],
         )
 
-    if check.get("target") != "dynamic_theap::tests::emit_m1_compiler_tls_c_rust_trace":
-        raise HarnessError("M1 compiler-TLS differential lost its exact Rust source witness")
-    rust, rust_output = _m1_foundations_run_exact_program_check(
-        test_program, check, nocapture=True
-    )
+    target = "dynamic_theap::tests::emit_m1_compiler_tls_c_rust_trace"
+    if test_program is None:
+        if architecture != "aarch64" or check is not None:
+            raise HarnessError(
+                "native x86 M1 compiler-TLS differential requires its prepared Rust test program"
+            )
+        rust, rust_output = _m1_foundations_run_aarch64_cargo_check(
+            timeout_seconds=timeout_seconds,
+            target=target,
+            evidence_name="Rust M1 compiler-TLS trace",
+        )
+    else:
+        if check is None or check.get("target") != target:
+            raise HarnessError("M1 compiler-TLS differential lost its exact Rust source witness")
+        rust, rust_output = _m1_foundations_run_exact_program_check(
+            test_program, check, nocapture=True
+        )
     rust_trace = parse_m1_compiler_tls_trace(rust_output)
     validate_m1_compiler_tls_full_trace(rust_trace, source="Rust")
     passed_test_count = rust["passed_test_count"]
@@ -9870,10 +10639,6 @@ def run_m1_compiler_tls_same_tld_differential(
     """
 
     require_native_architecture(architecture)
-    if test_program is None or check is None:
-        raise HarnessError(
-            "M1 compiler-TLS same-TLD differential requires its prepared Rust test program"
-        )
     compiler = require_tool("musl-gcc")
     archive = fetch_archive(pin, offline)
     with temporary_directory(prefix="crabc-mimalloc-m1-compiler-tls-same-tld-source-") as temporary:
@@ -9885,11 +10650,23 @@ def run_m1_compiler_tls_same_tld_differential(
             CONFIGURATION_PROFILES["release"],
         )
 
-    if check.get("target") != "main_theap::tests::emit_m1_same_tld_terminal_c_rust_trace":
-        raise HarnessError("M1 compiler-TLS same-TLD differential lost its exact Rust source witness")
-    rust, rust_output = _m1_foundations_run_exact_program_check(
-        test_program, check, nocapture=True
-    )
+    target = "main_theap::tests::emit_m1_same_tld_terminal_c_rust_trace"
+    if test_program is None:
+        if architecture != "aarch64" or check is not None:
+            raise HarnessError(
+                "native x86 M1 same-TLD differential requires its prepared Rust test program"
+            )
+        rust, rust_output = _m1_foundations_run_aarch64_cargo_check(
+            timeout_seconds=timeout_seconds,
+            target=target,
+            evidence_name="Rust M1 compiler-TLS same-TLD terminal trace",
+        )
+    else:
+        if check is None or check.get("target") != target:
+            raise HarnessError("M1 compiler-TLS same-TLD differential lost its exact Rust source witness")
+        rust, rust_output = _m1_foundations_run_exact_program_check(
+            test_program, check, nocapture=True
+        )
     rust_trace = parse_m1_compiler_tls_same_tld_trace(rust_output)
     validate_m1_compiler_tls_same_tld_trace(rust_trace, source="Rust")
     passed_test_count = rust["passed_test_count"]
@@ -10147,6 +10924,14 @@ def m1_foundations_report(
             "source_map_records": list(component["source_map_records"]),
             "status": "complete" if complete else "partial",
         }
+        if "bounded_source_definitions" in component:
+            report_component["bounded_source_definitions"] = [
+                dict(definition) for definition in component["bounded_source_definitions"]
+            ]
+        if "x86_local_checks" in component:
+            report_component["x86_local_checks"] = [
+                dict(check) for check in component["x86_local_checks"]
+            ]
         if (
             component_id == "atomics-locks-once-and-bootstrap"
             and "once_call_site_dispositions" in component
@@ -10297,7 +11082,6 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
     contract = read_json(M1_FOUNDATIONS_CONTRACT)
     port_map = load_port_map()
     summary = validate_m1_foundations_contract(contract, pin, port_map)
-    test_program = _m1_foundations_test_program(summary["execution"], M1_FOUNDATIONS_CARGO_TARGET)
     shared_oracle = run_milestone0(
         offline=offline,
         generate_contracts=False,
@@ -10309,56 +11093,18 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
         pin,
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
-        test_program=test_program,
-        check=_m1_foundations_check_by_id(summary, "raw-primitive-c-rust-trace")[1],
     )
     compiler_tls_differential = run_m1_compiler_tls_differential(
         pin,
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
-        test_program=test_program,
-        check=_m1_foundations_check_by_id(summary, "compiler-tls-c-rust-trace")[1],
     )
     compiler_tls_same_tld_differential = run_m1_compiler_tls_same_tld_differential(
         pin,
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
-        test_program=test_program,
-        check=_m1_foundations_check_by_id(
-            summary, "compiler-tls-same-tld-terminal-c-rust-trace"
-        )[1],
     )
-    raw_component, raw_check = _m1_foundations_check_by_id(
-        summary, "raw-primitive-c-rust-trace"
-    )
-    compiler_tls_component, compiler_tls_check = _m1_foundations_check_by_id(
-        summary, "compiler-tls-c-rust-trace"
-    )
-    same_tld_component, same_tld_check = _m1_foundations_check_by_id(
-        summary, "compiler-tls-same-tld-terminal-c-rust-trace"
-    )
-    focused_checks = [
-        _m1_foundations_differential_check_record(
-            raw_component, raw_check, raw_primitive_differential
-        ),
-        _m1_foundations_differential_check_record(
-            compiler_tls_component, compiler_tls_check, compiler_tls_differential
-        ),
-        _m1_foundations_differential_check_record(
-            same_tld_component, same_tld_check, compiler_tls_same_tld_differential
-        ),
-        *run_m1_foundations_checks(
-            summary,
-            test_program,
-            already_executed_check_ids=frozenset(
-                {
-                    raw_check["id"],
-                    compiler_tls_check["id"],
-                    same_tld_check["id"],
-                }
-            ),
-        ),
-    ]
+    focused_checks = run_m1_foundations_checks(summary)
     source_after = m1_foundations_source_state()
     report = m1_foundations_report(
         contract=contract,
@@ -10456,6 +11202,9 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
     pin = load_pin()
     contract = read_json(M1_X86_64_FOUNDATIONS_CONTRACT)
     summary = validate_x86_64_m1_foundations_contract(contract, pin)
+    bounded_source_evidence = _m1_x86_64_bounded_source_definition_evidence(
+        summary, pin, offline=offline
+    )
     test_program = _m1_foundations_test_program(
         summary["execution"], M1_X86_64_FOUNDATIONS_CARGO_TARGET
     )
@@ -10525,7 +11274,7 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         _m1_foundations_differential_check_record(
             same_tld_component, same_tld_check, compiler_tls_same_tld_differential
         ),
-        *run_m1_foundations_checks(
+        *run_x86_64_m1_foundations_checks(
             summary,
             test_program,
             already_executed_check_ids=frozenset(
@@ -10563,6 +11312,9 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         dependency_graph_key="x86_64_normal_engine_dependency_graph",
     )
     report["shared_evidence"]["x86-64-source-contract-inventories"] = source_contract_evidence
+    report["shared_evidence"]["x86-64-bounded-source-definitions"] = (
+        bounded_source_evidence
+    )
     report["source_contracts"] = source_contract_evidence
     write_json(M1_X86_64_FOUNDATIONS_REPORT, report)
     return report

@@ -3941,6 +3941,288 @@ class ContractTests(unittest.TestCase):
                 RUNNER.load_pin(),
             )
 
+    def test_x86_m1_contract_rejects_a_missing_target_source_predicate(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_X86_64_FOUNDATIONS_CONTRACT)
+        malformed = json.loads(json.dumps(contract))
+        component = next(
+            component
+            for component in malformed["components"]
+            if component["id"] == "compiler-tls-roots"
+        )
+        component["source_map_records"].pop()
+
+        with self.assertRaisesRegex(RUNNER.HarnessError, "source-map record inventory changed"):
+            RUNNER.validate_x86_64_m1_foundations_contract(
+                malformed,
+                RUNNER.load_pin(),
+            )
+
+        missing_local_check = json.loads(json.dumps(contract))
+        bootstrap = next(
+            component
+            for component in missing_local_check["components"]
+            if component["id"] == "atomics-locks-once-and-bootstrap"
+        )
+        bootstrap["x86_local_checks"].pop()
+        with self.assertRaisesRegex(RUNNER.HarnessError, "local check inventory changed"):
+            RUNNER.validate_x86_64_m1_foundations_contract(
+                missing_local_check,
+                RUNNER.load_pin(),
+            )
+
+    def test_x86_m1_contract_rejects_a_mutated_prim_h_classification(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_X86_64_FOUNDATIONS_CONTRACT)
+        malformed = json.loads(json.dumps(contract))
+        raw_primitives = next(
+            component
+            for component in malformed["components"]
+            if component["id"] == "linux-raw-primitives"
+        )
+        raw_primitives["prim_h_declaration_inventory"][0]["classification"] = (
+            "later-milestone-exclusion"
+        )
+
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError, "raw primitive declaration inventory changed"
+        ):
+            RUNNER.validate_x86_64_m1_foundations_contract(
+                malformed,
+                RUNNER.load_pin(),
+            )
+
+    def test_x86_m1_contract_rejects_a_missing_once_or_exclusion_boundary(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_X86_64_FOUNDATIONS_CONTRACT)
+        missing_once = json.loads(json.dumps(contract))
+        bootstrap = next(
+            component
+            for component in missing_once["components"]
+            if component["id"] == "atomics-locks-once-and-bootstrap"
+        )
+        bootstrap["once_call_site_dispositions"].pop()
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError, "once-call-site disposition inventory changed"
+        ):
+            RUNNER.validate_x86_64_m1_foundations_contract(
+                missing_once,
+                RUNNER.load_pin(),
+            )
+
+        missing_exclusion = json.loads(json.dumps(contract))
+        missing_exclusion["exclusions"].pop()
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError, "explicit exclusion inventory changed"
+        ):
+            RUNNER.validate_x86_64_m1_foundations_contract(
+                missing_exclusion,
+                RUNNER.load_pin(),
+            )
+
+    def test_x86_m1_contract_rejects_a_bounded_source_or_source_map_regression(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_X86_64_FOUNDATIONS_CONTRACT)
+        missing_definition = json.loads(json.dumps(contract))
+        configuration = next(
+            component
+            for component in missing_definition["components"]
+            if component["id"] == "configuration-and-arithmetic"
+        )
+        configuration["bounded_source_definitions"].pop()
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError, "bounded source definition inventory changed"
+        ):
+            RUNNER.validate_x86_64_m1_foundations_contract(
+                missing_definition,
+                RUNNER.load_pin(),
+            )
+
+        source_map_regression = json.loads(
+            json.dumps(RUNNER.read_json(RUNNER.X86_64_SOURCE_MAP_CONTRACT))
+        )
+        source_unit = next(
+            unit
+            for unit in source_map_regression["units"]
+            if unit["id"] == "x86-64-width-and-bit-operations"
+        )
+        source_unit["status"] = "partial"
+        original_read_json = RUNNER.read_json
+
+        def read_json_with_status_regression(path: Path) -> dict[str, object]:
+            if path == RUNNER.X86_64_SOURCE_MAP_CONTRACT:
+                return source_map_regression
+            return original_read_json(path)
+
+        with mock.patch.object(
+            RUNNER, "read_json", side_effect=read_json_with_status_regression
+        ):
+            with self.assertRaisesRegex(RUNNER.HarnessError, "lacks required status"):
+                RUNNER.validate_x86_64_m1_foundations_contract(
+                    contract,
+                    RUNNER.load_pin(),
+                )
+
+    def test_m1_batch_rejects_missing_ignored_duplicate_or_miscounted_tests(self) -> None:
+        execution = {
+            "features": [],
+            "no_default_features": True,
+            "package": "crabc-mimalloc",
+            "rust_target": "x86_64-unknown-linux-musl",
+            "test_threads": 1,
+            "timeout_seconds": 300,
+        }
+        selected_check = {
+            "expected_passed_test_count": 1,
+            "id": "selected-check",
+            "target": "module::tests::selected",
+        }
+        summary = {
+            "components": [{"checks": [selected_check], "id": "component"}],
+            "execution": execution,
+        }
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            test_binary = Path(temporary) / "m1-tests"
+            test_binary.touch()
+            artifact_event = {
+                "executable": str(test_binary),
+                "profile": {"test": True},
+                "reason": "compiler-artifact",
+                "target": {"kind": ["lib"], "name": "crabc_mimalloc"},
+            }
+            with mock.patch.object(
+                RUNNER,
+                "command_record",
+                return_value={
+                    "status": 0,
+                    "stderr": "",
+                    "stdout": json.dumps(artifact_event) + "\n",
+                },
+            ) as build:
+                test_program = RUNNER._m1_foundations_test_program(
+                    execution, Path(temporary) / "cargo-target"
+                )
+            self.assertEqual(
+                build.call_args.args[0][:9],
+                [
+                    "cargo",
+                    "test",
+                    "-p",
+                    "crabc-mimalloc",
+                    "--no-default-features",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "--locked",
+                    "--lib",
+                ],
+            )
+
+            with mock.patch.object(
+                RUNNER,
+                "command_record",
+                return_value={"status": 0, "stderr": "", "stdout": "other::test: test\n"},
+            ):
+                with self.assertRaisesRegex(RUNNER.HarnessError, "lacks selected source tests"):
+                    RUNNER.run_x86_64_m1_foundations_checks(summary, test_program)
+
+            ignored = [
+                {"status": 0, "stderr": "", "stdout": "module::tests::selected: test\n"},
+                {
+                    "status": 0,
+                    "stderr": "",
+                    "stdout": "test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out;\n",
+                },
+            ]
+            with mock.patch.object(RUNNER, "command_record", side_effect=ignored):
+                with self.assertRaisesRegex(
+                    RUNNER.HarnessError, "did not pass every selected source test"
+                ):
+                    RUNNER.run_x86_64_m1_foundations_checks(summary, test_program)
+
+            miscounted = [
+                {"status": 0, "stderr": "", "stdout": "module::tests::selected: test\n"},
+                {
+                    "status": 0,
+                    "stderr": "",
+                    "stdout": (
+                        "test module::tests::selected ... ok\n"
+                        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;\n"
+                    ),
+                },
+            ]
+            with mock.patch.object(RUNNER, "command_record", side_effect=miscounted):
+                with self.assertRaisesRegex(RUNNER.HarnessError, "batch passed 2 tests"):
+                    RUNNER.run_x86_64_m1_foundations_checks(summary, test_program)
+
+            duplicate_summary = {
+                "components": [
+                    {"checks": [selected_check, dict(selected_check)], "id": "component"}
+                ],
+                "execution": execution,
+            }
+            with self.assertRaisesRegex(RUNNER.HarnessError, "duplicate focused check identities"):
+                RUNNER.run_x86_64_m1_foundations_checks(duplicate_summary, test_program)
+
+    def test_paused_aarch64_m1_checks_remain_individual_cargo_witnesses(self) -> None:
+        execution = {
+            "features": [],
+            "package": "crabc-mimalloc",
+            "test_threads": 1,
+            "timeout_seconds": 300,
+        }
+        summary = {
+            "components": [
+                {
+                    "checks": [
+                        {
+                            "expected_passed_test_count": 1,
+                            "id": "first",
+                            "target": "module::tests::first",
+                        },
+                        {
+                            "expected_passed_test_count": 1,
+                            "id": "second",
+                            "target": "module::tests::second",
+                        },
+                    ],
+                    "id": "component",
+                }
+            ],
+            "execution": execution,
+        }
+        success = {
+            "status": 0,
+            "stderr": "",
+            "stdout": (
+                "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; "
+                "0 filtered out;\n"
+            ),
+        }
+        with mock.patch.object(
+            RUNNER, "command_record", side_effect=[success, success]
+        ) as command_record:
+            records = RUNNER.run_m1_foundations_checks(summary)
+
+        self.assertEqual([record["id"] for record in records], ["first", "second"])
+        self.assertEqual(command_record.call_count, 2)
+        for call, target in zip(
+            command_record.call_args_list,
+            ["module::tests::first", "module::tests::second"],
+            strict=True,
+        ):
+            self.assertEqual(
+                call.args[0],
+                [
+                    "cargo",
+                    "test",
+                    "-p",
+                    "crabc-mimalloc",
+                    "--locked",
+                    "--lib",
+                    target,
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+            self.assertEqual(call.kwargs["env"]["CARGO_TARGET_DIR"], str(RUNNER.M1_FOUNDATIONS_CARGO_TARGET))
+
     def test_x86_m1_commands_select_the_native_target_and_unfeatured_engine(self) -> None:
         contract = RUNNER.read_json(RUNNER.M1_X86_64_FOUNDATIONS_CONTRACT)
         summary = RUNNER.validate_x86_64_m1_foundations_contract(
