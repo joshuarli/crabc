@@ -527,6 +527,7 @@ run_static_mode() {
     local label="$4"
     local consumer_kind="${5:-tls}"
     local candidate receipt candidate_output
+    local -a candidate_arguments=()
     local probe=libc_crt_static_tls_probe.c
     local expected_output=PIMBCAF
     local minimum_tls_alignment=4096
@@ -541,6 +542,12 @@ run_static_mode() {
             probe=owned_static_posix_probe.c
             expected_output='owned-static-posix: PASS'
             minimum_tls_alignment=1
+            ;;
+        stdio)
+            probe=owned_static_stdio_probe.c
+            expected_output=owned-stdio-ok
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/stream-data" "$mode_root/exit-data")
             ;;
         *) fail "unknown installed consumer: $consumer_kind" ;;
     esac
@@ -575,9 +582,16 @@ run_static_mode() {
     assert_final_static_image "$candidate" "$mode" "$mode_root/file-header" \
         "$mode_root/program-headers" "$mode_root/dynamic" "$mode_root/symbols" \
         "$mode_root/relocations" "$minimum_tls_alignment"
-    candidate_output="$(env -i "$candidate")" || fail "${label} candidate failed"
+    candidate_output="$(env -i "$candidate" "${candidate_arguments[@]}")" || fail "${label} candidate failed"
     [ "$candidate_output" = "$expected_output" ] ||
         fail "${label} candidate output drifted: $candidate_output"
+    if [ "$consumer_kind" = stdio ]; then
+        nm --defined-only "$candidate" | grep -Eq '[[:space:]]T[[:space:]]+__stdio_exit$' ||
+            fail "${label} lacks the strong owned stdio exit hook"
+        printf 'exit-flushed\n' >"$mode_root/expected-exit-data"
+        cmp "$mode_root/expected-exit-data" "$mode_root/exit-data" ||
+            fail "${label} did not flush its dynamic stream at ordinary exit"
+    fi
     assert_malformed_tls_rejected "$candidate" "$label"
     sha256sum "$candidate" | awk '{ print $1 }' >"$mode_root/candidate.sha256"
 }
@@ -743,6 +757,18 @@ reference_output="$(env -i "$header_consumer/posix-reference")" ||
 [ "$reference_output" = 'owned-static-posix: PASS' ] ||
     fail "pinned-musl POSIX reference output drifted: $reference_output"
 
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_stdio_probe.c" \
+    -o "$header_consumer/stdio-reference"
+reference_output="$(env -i "$header_consumer/stdio-reference" \
+    "$header_consumer/stdio-data" "$header_consumer/stdio-exit-data")" ||
+    fail "pinned-musl stdio reference failed"
+[ "$reference_output" = owned-stdio-ok ] ||
+    fail "pinned-musl stdio reference output drifted: $reference_output"
+printf 'exit-flushed\n' >"$header_consumer/expected-stdio-exit-data"
+cmp "$header_consumer/expected-stdio-exit-data" "$header_consumer/stdio-exit-data" ||
+    fail "pinned-musl stdio reference did not flush its dynamic stream at exit"
+
 common_compile=(
     gcc -std=c11 -D_GNU_SOURCE -fno-pie -ffreestanding -fno-builtin
     -fno-stack-protector -ftls-model=local-exec -nostdinc
@@ -771,6 +797,11 @@ audit_header_dependencies "$header_consumer/allocator.d" "$primary" \
     -o "$header_consumer/posix.o"
 audit_header_dependencies "$header_consumer/posix.d" "$primary" \
     "$ROOT_DIR/compat/x86_64/owned_static_posix_probe.c"
+"${common_compile[@]}" -MD -MF "$header_consumer/stdio.d" \
+    -c "$ROOT_DIR/compat/x86_64/owned_static_stdio_probe.c" \
+    -o "$header_consumer/stdio.o"
+audit_header_dependencies "$header_consumer/stdio.d" "$primary" \
+    "$ROOT_DIR/compat/x86_64/owned_static_stdio_probe.c"
 grep -Fq "$primary/usr/include/errno.h" "$dependency_file" ||
     fail "consumer dependency trace did not resolve installed errno.h"
 grep -Fq "$primary/usr/include/pthread.h" "$dependency_file" ||
@@ -799,7 +830,11 @@ run_static_mode "$primary" -static "$primary_consumer/posix-et-exec" "POSIX ET_E
 run_static_mode "$primary" -static-pie "$primary_consumer/posix-pie" "POSIX static PIE" posix
 run_static_mode "$extracted" -static "$extracted_consumer/posix-et-exec" "extracted POSIX ET_EXEC" posix
 run_static_mode "$extracted" -static-pie "$extracted_consumer/posix-pie" "extracted POSIX static PIE" posix
-for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie; do
+run_static_mode "$primary" -static "$primary_consumer/stdio-et-exec" "stdio ET_EXEC" stdio
+run_static_mode "$primary" -static-pie "$primary_consumer/stdio-pie" "stdio static PIE" stdio
+run_static_mode "$extracted" -static "$extracted_consumer/stdio-et-exec" "extracted stdio ET_EXEC" stdio
+run_static_mode "$extracted" -static-pie "$extracted_consumer/stdio-pie" "extracted stdio static PIE" stdio
+for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"
@@ -807,4 +842,4 @@ for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix
         "$extracted" "$extracted_consumer/$mode_root" "$mode_root"
 done
 
-printf 'x86 owned static sysroot dual-mode + extracted TLS, allocator, and POSIX consumers: PASS\n'
+printf 'x86 owned static sysroot dual-mode + extracted TLS, allocator, POSIX, and stdio consumers: PASS\n'

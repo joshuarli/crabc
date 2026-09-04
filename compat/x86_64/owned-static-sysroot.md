@@ -118,6 +118,16 @@ static modes, and extracted copies share the same source. PATH search,
 spawn/vfork, concurrent environment mutation, and cancellation are not proved
 by this consumer.
 
+`owned_static_stdio_probe.c` exercises the owned descriptor-stream engine in
+`owned_static_stdio.rs`: simultaneous dynamic streams, buffered and terminal
+output, positioning/pushback, errors, append/cloexec, recursive stream locking
+across threads, and the existing bounded formatter/scanner. Both installed
+modes and extracted copies must match pinned musl and flush an unclosed
+dynamic stream at ordinary exit. The final image must select the strong
+`__stdio_exit` hook. Scratch files are private to each consumer run.
+`freopen`, complete formatting/scanning, wide and memory/cookie streams,
+`popen`, cancellation, and fork-lock recovery remain unqualified.
+
 ## Deliberately unselected
 
 This tree has a deliberately narrow planned static driver and one private

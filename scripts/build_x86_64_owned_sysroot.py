@@ -67,6 +67,14 @@ REQUIRED_LIBC_SYMBOLS = frozenset(
         "exit",
         "pthread_create",
         "pthread_join",
+        "fdopen",
+        "flockfile",
+        "ftrylockfile",
+        "funlockfile",
+        "__stdio_exit",
+        "fflush",
+        "fprintf",
+        "fscanf",
     }
 )
 SCOPE = "private-static-pthread-tls-consumer-slice-not-family-completion-not-public-support"
