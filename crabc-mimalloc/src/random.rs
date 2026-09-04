@@ -105,6 +105,34 @@ impl Drop for TheapRandomImage {
 }
 
 impl TheapRandomImage {
+    // The release-oracle layout record is emitted from `types`' test module,
+    // while these fields remain private to the random-state owner. Keep that
+    // evidence boundary explicit instead of widening the mutable image API.
+    #[cfg(test)]
+    pub(crate) const INPUT_OFFSET: usize = core::mem::offset_of!(Self, input);
+    #[cfg(test)]
+    pub(crate) const OUTPUT_OFFSET: usize = core::mem::offset_of!(Self, output);
+    #[cfg(test)]
+    pub(crate) const OUTPUT_AVAILABLE_OFFSET: usize =
+        core::mem::offset_of!(Self, output_available);
+    #[cfg(test)]
+    pub(crate) const WEAK_OFFSET: usize = core::mem::offset_of!(Self, weak);
+
+    /// Returns the source-visible fields of the inert `_mi_theap_empty`
+    /// random image without exposing its mutable key/output arrays outside
+    /// their owner. The bootstrap C/Rust vector compares only this immutable
+    /// zero/weak shape, never a generated random value.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_static_empty_shape(&self) -> (bool, bool, i32, bool) {
+        (
+            self.input.iter().all(|word| *word == 0),
+            self.output.iter().all(|word| *word == 0),
+            self.output_available,
+            self.weak,
+        )
+    }
+
     /// Source's inert `_mi_theap_empty.random` image.
     #[inline]
     pub(crate) const fn empty_weak() -> Self {
@@ -124,16 +152,17 @@ impl TheapRandomImage {
     /// weak key expansion is dependency-owned; see [`WeakObservations`].
     #[inline]
     pub(crate) fn initialize(&mut self) {
-        self.initialize_ex(false, 0);
+        self.initialize_ex(false);
     }
 
     /// Performs `_mi_random_init_weak` for this already address-stable image.
     ///
-    /// The pinned source uses this only where the caller explicitly requests a
-    /// weak context. It never attempts OS entropy first.
+    /// The pinned wrapper has no caller-supplied seed: its sole
+    /// `mi_random_init_ex(..., true)` route passes zero to
+    /// `_mi_os_random_weak`. It never attempts OS entropy first.
     #[inline]
-    pub(crate) fn initialize_weak(&mut self, extra_seed: usize) {
-        self.initialize_ex(true, extra_seed);
+    pub(crate) fn initialize_weak(&mut self) {
+        self.initialize_ex(true);
     }
 
     /// Port of `_mi_random_reinit_if_weak`.
@@ -254,19 +283,32 @@ impl TheapRandomImage {
     }
 
     #[inline]
-    fn initialize_ex(&mut self, force_weak: bool, extra_seed: usize) {
+    fn initialize_ex(&mut self, force_weak: bool) {
         let mut key = [0; 32];
-        let weak = force_weak || !matches!(os::entropy_fill(&mut key), Ok(true));
+        let weak = force_weak || Self::normal_entropy_is_weak(os::entropy_fill(&mut key));
         if weak {
             // A failing kernel call may have written a partial key. It is not
             // entropy accepted by `_mi_prim_random_buf`, so wipe it before the
             // dependency-owned weak expansion overwrites all 32 bytes.
             key.zeroize();
-            WeakObservations::current(self.identity(), extra_seed).expand_into(&mut key);
+            // `mi_random_init_ex` always calls `_mi_os_random_weak(0)`. The
+            // source helper accepts an extra seed for unrelated callers, but
+            // `_mi_random_init_weak` does not widen this context initializer
+            // into such an API.
+            WeakObservations::current(self.identity(), 0).expand_into(&mut key);
         }
 
         self.chacha_init(&key, self.identity(), weak);
         key.zeroize();
+    }
+
+    /// Classifies `_mi_prim_random_buf`'s normal-initialization result.
+    ///
+    /// Its boolean means a complete fill, not merely a successful syscall, so
+    /// both an error and a short fill take the pinned weak continuation.
+    #[inline]
+    fn normal_entropy_is_weak(result: crabc_core::Result<bool>) -> bool {
+        !matches!(result, Ok(true))
     }
 
     #[cfg(test)]
@@ -341,6 +383,140 @@ impl TheapRandomImage {
     }
 }
 
+/// Address-independent facts from selected pinned `src/random.c` branches.
+///
+/// The release C layout producer records this exact vector beside the ABI
+/// layout keys. It deliberately avoids random keys, generated child output,
+/// and raw addresses: weak expansion contains the documented RustCrypto
+/// substitution, while a split child nonce is meaningful only relative to its
+/// stable destination address.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct M1RandomStateTrace {
+    pub(crate) split_parent_output_available: i32,
+    pub(crate) split_parent_consumed_words_cleared: bool,
+    pub(crate) split_parent_counter_low: u32,
+    pub(crate) split_parent_counter_high: u32,
+    pub(crate) split_child_output_available: i32,
+    pub(crate) split_child_counter_low: u32,
+    pub(crate) split_child_counter_high: u32,
+    pub(crate) split_child_weak: bool,
+    pub(crate) split_child_nonce_xor_destination: u64,
+    pub(crate) zero_retry_result: u64,
+    pub(crate) zero_retry_output_available: i32,
+    pub(crate) zero_retry_consumed_words_cleared: bool,
+    pub(crate) forced_weak_initialized: bool,
+    pub(crate) forced_weak: bool,
+    pub(crate) forced_weak_output_available: i32,
+    pub(crate) forced_weak_counter_low: u32,
+    pub(crate) forced_weak_counter_high: u32,
+    pub(crate) forced_weak_nonce_xor_destination: u64,
+    pub(crate) strong_reinit_attempted: bool,
+    pub(crate) strong_reinit_state_preserved: bool,
+    pub(crate) strong_reinit_fingerprint: u64,
+}
+
+#[cfg(test)]
+impl TheapRandomImage {
+    /// Emits only source-state facts that can be compared across independent
+    /// C and Rust processes. This covers the selected 64-bit split and
+    /// zero-result retry paths, forced weak initialization, and the strong
+    /// `_mi_random_reinit_if_weak` no-op branch. The weak reinitialization
+    /// success/error branches use the focused entropy-fault tests below: their
+    /// keys are intentionally not a C/Rust equality claim.
+    pub(crate) fn m1_source_state_trace() -> M1RandomStateTrace {
+        const KEY: [u8; 32] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+            0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+        ];
+        const NONCE: u64 = 0x0000_0000_4a00_0000;
+        const COUNTER: u64 = 0x0900_0000_0000_0001;
+
+        let mut parent = Self::empty_weak();
+        let mut parent_key = KEY;
+        parent.initialize_from_material(EntropyMaterial::weak(&mut parent_key), NONCE);
+        parent.input[12] = COUNTER as u32;
+        parent.input[13] = (COUNTER >> 32) as u32;
+        let mut child = Self {
+            input: [u32::MAX; 16],
+            output: [u32::MAX; OUTPUT_WORDS],
+            output_available: 7,
+            weak: false,
+        };
+        let child_identity = child.identity();
+        parent.split_into(&mut child);
+
+        let mut zero_retry = Self::empty_weak();
+        let mut retry_key = KEY;
+        zero_retry.initialize_from_material(EntropyMaterial::secure(&mut retry_key), NONCE);
+        zero_retry.output = [0; OUTPUT_WORDS];
+        zero_retry.output[2] = 0x1122_3344;
+        zero_retry.output[3] = 0x5566_7788;
+        zero_retry.output_available = OUTPUT_WORDS_I32;
+        let zero_retry_result = zero_retry.next();
+
+        let mut forced_weak = Self::empty_weak();
+        let forced_weak_identity = forced_weak.identity();
+        forced_weak.initialize_weak();
+
+        let mut strong = Self::empty_weak();
+        let mut strong_key = KEY;
+        strong.initialize_from_material(EntropyMaterial::secure(&mut strong_key), NONCE);
+        strong.input[12] = COUNTER as u32;
+        strong.input[13] = (COUNTER >> 32) as u32;
+        for (index, word) in strong.output.iter_mut().enumerate() {
+            *word = index as u32;
+        }
+        strong.output_available = 3;
+        let strong_before = strong.m1_state_fingerprint();
+        let strong_reinit_attempted = strong.reinitialize_if_weak();
+        let strong_after = strong.m1_state_fingerprint();
+
+        M1RandomStateTrace {
+            split_parent_output_available: parent.output_available,
+            split_parent_consumed_words_cleared: parent.output[0] == 0 && parent.output[1] == 0,
+            split_parent_counter_low: parent.input[12],
+            split_parent_counter_high: parent.input[13],
+            split_child_output_available: child.output_available,
+            split_child_counter_low: child.input[12],
+            split_child_counter_high: child.input[13],
+            split_child_weak: child.weak,
+            split_child_nonce_xor_destination: child.nonce() ^ child_identity,
+            zero_retry_result,
+            zero_retry_output_available: zero_retry.output_available,
+            zero_retry_consumed_words_cleared: zero_retry.output[..4] == [0; 4],
+            forced_weak_initialized: forced_weak.is_initialized(),
+            forced_weak: forced_weak.weak,
+            forced_weak_output_available: forced_weak.output_available,
+            forced_weak_counter_low: forced_weak.input[12],
+            forced_weak_counter_high: forced_weak.input[13],
+            forced_weak_nonce_xor_destination: forced_weak.nonce() ^ forced_weak_identity,
+            strong_reinit_attempted,
+            strong_reinit_state_preserved: strong_before == strong_after,
+            strong_reinit_fingerprint: strong_after,
+        }
+    }
+
+    #[inline]
+    fn nonce(&self) -> u64 {
+        u64::from(self.input[14]) | (u64::from(self.input[15]) << 32)
+    }
+
+    #[inline]
+    fn m1_state_fingerprint(&self) -> u64 {
+        let mut fingerprint = 0xcbf2_9ce4_8422_2325u64;
+        for word in self.input.iter().chain(self.output.iter()) {
+            fingerprint ^= u64::from(*word);
+            fingerprint = fingerprint.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        fingerprint ^= u64::from(self.output_available as u32);
+        fingerprint = fingerprint.wrapping_mul(0x0000_0100_0000_01b3);
+        fingerprint ^= u64::from(u8::from(self.weak));
+        fingerprint.wrapping_mul(0x0000_0100_0000_01b3)
+    }
+}
+
 /// Direct, non-secret observations used only after source entropy fails.
 ///
 /// Pinned `src/random.c:_mi_os_random_weak` combines an ASLR address and a
@@ -405,7 +581,7 @@ impl WeakObservations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::mem::{align_of, needs_drop, offset_of, size_of};
+    use core::mem::{align_of, needs_drop, size_of};
 
     const KEY: [u8; 32] = [
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
@@ -445,10 +621,10 @@ mod tests {
     fn source_layout_and_chacha_initialization_keep_all_words_authoritative() {
         assert_eq!(size_of::<TheapRandomImage>(), 136);
         assert_eq!(align_of::<TheapRandomImage>(), 4);
-        assert_eq!(offset_of!(TheapRandomImage, input), 0);
-        assert_eq!(offset_of!(TheapRandomImage, output), 64);
-        assert_eq!(offset_of!(TheapRandomImage, output_available), 128);
-        assert_eq!(offset_of!(TheapRandomImage, weak), 132);
+        assert_eq!(TheapRandomImage::INPUT_OFFSET, 0);
+        assert_eq!(TheapRandomImage::OUTPUT_OFFSET, 64);
+        assert_eq!(TheapRandomImage::OUTPUT_AVAILABLE_OFFSET, 128);
+        assert_eq!(TheapRandomImage::WEAK_OFFSET, 132);
         assert!(needs_drop::<TheapRandomImage>());
 
         let mut context = TheapRandomImage::empty_weak();
@@ -612,6 +788,40 @@ mod tests {
     }
 
     #[test]
+    fn source_split_and_reinitialization_state_machine_has_address_independent_record() {
+        let trace = TheapRandomImage::m1_source_state_trace();
+
+        assert_eq!(trace.split_parent_output_available, 14);
+        assert!(trace.split_parent_consumed_words_cleared);
+        assert_eq!(trace.split_parent_counter_low, 2);
+        assert_eq!(trace.split_parent_counter_high, 0x0900_0000);
+        assert_eq!(trace.split_child_output_available, OUTPUT_WORDS_I32);
+        assert_eq!(trace.split_child_counter_low, 1);
+        assert_eq!(trace.split_child_counter_high, 0);
+        assert!(trace.split_child_weak);
+        assert_eq!(
+            trace.split_child_nonce_xor_destination,
+            0xe4e7_f110_1559_3bd1,
+            "the child nonce is its stable destination address XOR the first parent word pair"
+        );
+
+        assert_eq!(trace.zero_retry_result, 0x1122_3344_5566_7788);
+        assert_eq!(trace.zero_retry_output_available, 12);
+        assert!(trace.zero_retry_consumed_words_cleared);
+
+        assert!(trace.forced_weak_initialized);
+        assert!(trace.forced_weak);
+        assert_eq!(trace.forced_weak_output_available, 0);
+        assert_eq!(trace.forced_weak_counter_low, 0);
+        assert_eq!(trace.forced_weak_counter_high, 0);
+        assert_eq!(trace.forced_weak_nonce_xor_destination, 0);
+
+        assert!(!trace.strong_reinit_attempted);
+        assert!(trace.strong_reinit_state_preserved);
+        assert_ne!(trace.strong_reinit_fingerprint, 0);
+    }
+
+    #[test]
     fn weak_observations_have_a_dependency_owned_deterministic_expansion() {
         let observations = WeakObservations {
             context_identity: 0x0123_4567_89ab_cdef,
@@ -665,18 +875,31 @@ mod tests {
     }
 
     #[test]
-    fn forced_weak_initialization_skips_entropy_and_uses_its_extra_seed() {
+    fn normal_entropy_initialization_treats_a_short_fill_as_weak() {
+        assert!(!TheapRandomImage::normal_entropy_is_weak(Ok(true)));
+        assert!(TheapRandomImage::normal_entropy_is_weak(Ok(false)));
+        assert!(TheapRandomImage::normal_entropy_is_weak(Err(
+            crabc_core::Errno::NOMEM
+        )));
+    }
+
+    #[test]
+    fn forced_weak_initialization_skips_entropy_without_a_caller_seed() {
         let fault = os::fault::install(os::fault::Plan::at(
             os::fault::Point::Entropy,
             1,
             crabc_core::Errno::NOMEM,
         ));
         let mut context = TheapRandomImage::empty_weak();
-        context.initialize_weak(0xfeed_face_cafe_beef);
+        context.initialize_weak();
 
         assert_eq!(fault.observed(), 0, "source weak init must skip getrandom");
         assert!(context.is_initialized());
         assert!(context.is_weak());
+        assert_eq!(context.output, [0; OUTPUT_WORDS]);
+        assert_eq!(context.output_available, 0);
+        assert_eq!(context.input[12], 0);
+        assert_eq!(context.input[13], 0);
     }
 
     #[test]
@@ -689,15 +912,31 @@ mod tests {
 
         let mut strong = TheapRandomImage::empty_weak();
         strong.initialize_from_material(secure_material(KEY), NONCE);
+        strong.input[12] = 0x1020_3040;
+        strong.input[13] = 0x5060_7080;
+        strong.output = [0xa5a5_a5a5; OUTPUT_WORDS];
+        strong.output_available = 6;
+        let strong_before = strong.m1_state_fingerprint();
         assert!(!strong.reinitialize_if_weak());
         assert_eq!(fault.observed(), 0, "strong state must skip getrandom");
+        assert_eq!(strong.m1_state_fingerprint(), strong_before);
 
         let mut weak = TheapRandomImage::empty_weak();
         weak.initialize_from_material(weak_material(KEY), NONCE);
+        let weak_identity = weak.identity();
+        weak.input[12] = 0x1020_3040;
+        weak.input[13] = 0x5060_7080;
+        weak.output = [0xa5a5_a5a5; OUTPUT_WORDS];
+        weak.output_available = 6;
         assert!(weak.reinitialize_if_weak());
         assert_eq!(fault.observed(), 1, "weak state must retry getrandom");
         assert!(weak.is_weak(), "failed retry continues through weak initialization");
         assert!(weak.is_initialized());
+        assert_eq!(weak.output, [0; OUTPUT_WORDS]);
+        assert_eq!(weak.output_available, 0);
+        assert_eq!(weak.input[12], 0);
+        assert_eq!(weak.input[13], 0);
+        assert_eq!(weak.nonce(), weak_identity);
     }
 
     #[test]
@@ -705,9 +944,21 @@ mod tests {
         let _fault = os::fault::install(os::fault::Plan::disabled());
         let mut weak = TheapRandomImage::empty_weak();
         weak.initialize_from_material(weak_material(KEY), NONCE);
+        let weak_identity = weak.identity();
+        weak.input[12] = 0x1020_3040;
+        weak.input[13] = 0x5060_7080;
+        weak.output = [0xa5a5_a5a5; OUTPUT_WORDS];
+        weak.output_available = 6;
 
         assert!(weak.reinitialize_if_weak());
         assert!(!weak.is_weak());
+        assert_eq!(weak.output, [0; OUTPUT_WORDS]);
+        assert_eq!(weak.output_available, 0);
+        assert_eq!(weak.input[12], 0);
+        assert_eq!(weak.input[13], 0);
+        assert_eq!(weak.nonce(), weak_identity);
+        let strong_fingerprint = weak.m1_state_fingerprint();
         assert!(!weak.reinitialize_if_weak());
+        assert_eq!(weak.m1_state_fingerprint(), strong_fingerprint);
     }
 }

@@ -6,7 +6,9 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:184-214,305-360,536-592`
 // (`mi_heap_main_init_once`, `_mi_thread_init_with_heap`, and
-// `mi_process_init_once`) and `src/subproc.c:29-46,95-101`.
+// `mi_process_init_once`), `src/libc.c:115-140`
+// (`_mi_atomic_once_enter`/`_mi_atomic_once_release` through `once.rs`), and
+// `src/subproc.c:29-46,95-101`.
 
 //! Source-ordered main-process initialization.
 //!
@@ -30,6 +32,7 @@ use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
+use crate::compiler_tls::current_thread_identity;
 use crate::main_theap::{
     MainStaticAttachmentStorage, MainStaticHeapFoundation,
     MainStaticHeapFoundationError, MainStaticHeapLease, MainStaticTheapAttachment,
@@ -40,6 +43,7 @@ use crate::main_static_page::{
     MainStaticFirstArenaPageAllocator, MainStaticFirstArenaPageAllocatorBeginError,
 };
 use crate::meta::{MetaAllocator, MetaError};
+use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
 use crate::os::MemoryConfig;
 use crate::page_map::PageMapHeader;
 use crate::process_arena::{
@@ -66,22 +70,30 @@ const RETAINED: u8 = 3;
 /// image, PageMap, TLD, or TLS root live, so retrying as if the process were
 /// cold would invent an unsafe second startup branch.
 pub(crate) struct ProcessMainInitializationStorage {
+    /// The source-shaped once gate retains its private lock from the winning
+    /// COLD claim until this coordinator has Release-published READY or
+    /// RETAINED.  A different caller therefore waits as pinned
+    /// `_mi_atomic_once_enter` does, while the stored source thread identity
+    /// lets a recursive caller decline without waiting on itself.
+    process_once: AllocatorOnce,
     state: AtomicU8,
     config: UnsafeCell<MaybeUninit<MemoryConfig>>,
     subprocess: AtomicPtr<MainSubprocess>,
     page_map_storage: AtomicPtr<ProcessPageMapStorage>,
 }
 
-// SAFETY: COLD -> INITIALIZING is an exclusive CAS. The final configuration,
-// subprocess, and PageMap-storage pointer are written before READY's Release
-// publication and never replaced. A live `ProcessMainThread` remains
-// current-thread-only through its contained main attachment; READY leases are
-// immutable process-root witnesses only.
+// SAFETY: `process_once` makes COLD -> INITIALIZING exclusive and retains its
+// private lock until the final state is Release-published. The final
+// configuration, subprocess, and PageMap-storage pointer are written before
+// READY's Release publication and never replaced. A live
+// `ProcessMainThread` remains current-thread-only through its contained main
+// attachment; READY leases are immutable process-root witnesses only.
 unsafe impl Sync for ProcessMainInitializationStorage {}
 
 impl ProcessMainInitializationStorage {
     const fn new() -> Self {
         Self {
+            process_once: AllocatorOnce::new(),
             state: AtomicU8::new(COLD),
             config: UnsafeCell::new(MaybeUninit::uninit()),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
@@ -110,8 +122,9 @@ impl ProcessMainInitializationStorage {
     /// and must retain the returned `ProcessMainThread` until its explicit
     /// teardown or terminal retention. It must not concurrently construct a
     /// generic ticket-zero TLD, mutate compiler-TLS roots, or independently
-    /// initialize the same source-main storage. The coordinator itself rejects
-    /// any unsafe reentry after it wins the initial CAS.
+    /// initialize the same source-main storage. The coordinator blocks a
+    /// distinct racing caller until its source-shaped once release, while a
+    /// recursive caller deliberately receives the explicit reentry refusal.
     pub(crate) unsafe fn initialize(
         &'static self,
         config: MemoryConfig,
@@ -119,12 +132,14 @@ impl ProcessMainInitializationStorage {
         // SAFETY: the process statics all have process lifetime and the
         // caller upholds the current-thread lifecycle contract above.
         unsafe {
-            self.initialize_with_components(
+            self.initialize_with_components_after_claim(
                 config,
                 MainStaticAttachmentStorage::global(),
                 MainSubprocess::global(),
                 MetaAllocator::global(),
                 ProcessPageMapStorage::global(),
+                || {},
+                || {},
             )
         }
     }
@@ -147,53 +162,150 @@ impl ProcessMainInitializationStorage {
     ) -> Result<ProcessMainThread, ProcessMainInitError> {
         // SAFETY: forwarded unchanged to the common source-order transition.
         unsafe {
-            self.initialize_with_components(
+            self.initialize_with_components_after_claim(
                 config,
                 main_static,
                 subprocess,
                 metadata,
                 page_map_storage,
+                || {},
+                || {},
             )
         }
     }
 
-    unsafe fn initialize_with_components(
+    /// Runs the isolated source-order transition and pauses after it claims
+    /// the process-once state, before any source image is touched.
+    ///
+    /// This exists solely to let the process coordinator's race regression
+    /// hold the exact pre-publication interval. Production callers always use
+    /// the no-op hook through [`Self::initialize`].
+    #[cfg(test)]
+    unsafe fn initialize_with_test_components_after_claim(
         &'static self,
         config: MemoryConfig,
         main_static: &'static MainStaticAttachmentStorage,
         subprocess: &'static MainSubprocess,
         metadata: core::pin::Pin<&'static MetaAllocator>,
         page_map_storage: &'static ProcessPageMapStorage,
+        after_claim: impl FnOnce(),
     ) -> Result<ProcessMainThread, ProcessMainInitError> {
-        match self.state.load(Ordering::Acquire) {
-            COLD => {}
-            INITIALIZING => return Err(ProcessMainInitError::Initializing),
-            READY => return Err(ProcessMainInitError::AlreadyInitialized),
-            RETAINED | _ => return Err(ProcessMainInitError::Retained),
+        // SAFETY: forwarded unchanged to the common source-order transition.
+        unsafe {
+            self.initialize_with_components_after_claim(
+                config,
+                main_static,
+                subprocess,
+                metadata,
+                page_map_storage,
+                after_claim,
+                || {},
+            )
+        }
+    }
+
+    /// Runs the isolated source-order transition and pauses after it
+    /// Release-publishes its terminal state but before it releases the source
+    /// once lock. This exists solely for the terminal-publication race
+    /// regression; production callers always use a no-op hook.
+    #[cfg(test)]
+    unsafe fn initialize_with_test_components_before_release(
+        &'static self,
+        config: MemoryConfig,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        page_map_storage: &'static ProcessPageMapStorage,
+        before_release: impl FnOnce(),
+    ) -> Result<ProcessMainThread, ProcessMainInitError> {
+        // SAFETY: forwarded unchanged to the common source-order transition.
+        unsafe {
+            self.initialize_with_components_after_claim(
+                config,
+                main_static,
+                subprocess,
+                metadata,
+                page_map_storage,
+                || {},
+                before_release,
+            )
+        }
+    }
+
+    unsafe fn initialize_with_components_after_claim<F, G>(
+        &'static self,
+        config: MemoryConfig,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        page_map_storage: &'static ProcessPageMapStorage,
+        after_claim: F,
+        before_release: G,
+    ) -> Result<ProcessMainThread, ProcessMainInitError>
+    where
+        F: FnOnce(),
+        G: FnOnce(),
+    {
+        let observed = self.state.load(Ordering::Acquire);
+        let current_thread = match current_thread_identity() {
+            Some(identity) => identity,
+            // The selected native compiler-TLS path always supplies an
+            // identity. Without one, a COLD caller cannot join the once
+            // protocol and an in-flight caller cannot be classified as the
+            // owner, so preserve the existing fail-closed responses. A
+            // terminal observation can still be reported: it grants no
+            // source capability and is the only no-identity fast path around
+            // the once release envelope.
+            None => match observed {
+                COLD => {
+                    return Err(ProcessMainInitError::Preflight(
+                        MainStaticTheapError::InvalidCurrentThread,
+                    ));
+                }
+                INITIALIZING => return Err(ProcessMainInitError::Initializing),
+                READY => return Err(ProcessMainInitError::AlreadyInitialized),
+                RETAINED | _ => return Err(ProcessMainInitError::Retained),
+            },
+        };
+        let once_thread = OnceThreadId::new(current_thread.get()).ok_or(
+            ProcessMainInitError::Preflight(MainStaticTheapError::InvalidCurrentThread),
+        )?;
+
+        let Some(completion) = self
+            .process_once
+            .enter(once_thread)
+            .map_err(ProcessMainInitError::Lock)?
+        else {
+            return self.outcome_after_process_once();
+        };
+
+        // `AllocatorOnce::enter` won its 0 -> current-thread transition while
+        // retaining the private lock. That is the source-equivalent exclusive
+        // process claim: a distinct racer now blocks before it can preflight
+        // or touch the source body.
+        debug_assert_eq!(self.state.load(Ordering::Acquire), COLD);
+
+        // This Rust-only preflight remains retryable, so it must happen while
+        // the source once envelope is held but before the body selects any
+        // static source state. A rejection therefore reopens the once state
+        // and leaves this coordinator COLD exactly as it did before the once
+        // gate existed; a waiting distinct caller can then become the next
+        // serialized preflight owner.
+        if let Err(error) = MainStaticTheapAttachment::preflight_current_roots() {
+            // SAFETY: preflight ran before static selection, heap foundation,
+            // metadata readiness, PageMap creation, or TLS-root publication,
+            // so no part of the guarded source body has started.
+            unsafe { completion.cancel_before_body() }.map_err(ProcessMainInitError::Lock)?;
+            return Err(ProcessMainInitError::Preflight(error));
         }
 
-        // This preflight is intentionally before both the process-once claim
-        // and static selection. A foreign root/current-thread observation is
-        // pure: it leaves the process storage, ticket sequence, static Heap,
-        // metadata owner, and PageMap untouched.
-        MainStaticTheapAttachment::preflight_current_roots()
-            .map_err(ProcessMainInitError::Preflight)?;
-        if self
-            .state
-            .compare_exchange(COLD, INITIALIZING, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return match self.state.load(Ordering::Acquire) {
-                INITIALIZING => Err(ProcessMainInitError::Initializing),
-                READY => Err(ProcessMainInitError::AlreadyInitialized),
-                RETAINED | _ => Err(ProcessMainInitError::Retained),
-            };
-        }
+        self.state.store(INITIALIZING, Ordering::Release);
+        after_claim();
 
         let mut selection = match subprocess.reserve_static_bootstrap() {
             Ok(selection) => selection,
             Err(error) => {
-                self.mark_retained();
+                self.publish_terminal_state_and_release(completion, RETAINED);
                 return Err(ProcessMainInitError::BootstrapSelection(error));
             }
         };
@@ -205,42 +317,43 @@ impl ProcessMainInitializationStorage {
             Ok(foundation) => foundation,
             Err(error) => {
                 selection.retain();
-                self.mark_retained();
+                self.publish_terminal_state_and_release(completion, RETAINED);
                 return Err(ProcessMainInitError::HeapFoundation(error));
             }
         };
-        let metadata_ready = match metadata.prepare_for_main_subprocess(config, subprocess) {
-            Ok(ready) => ready,
+        let metadata_bound = match metadata.prepare_for_main_subprocess(config, subprocess) {
+            Ok(bound) => bound,
             Err(error) => {
                 selection.retain();
-                self.mark_retained();
+                self.publish_terminal_state_and_release(completion, RETAINED);
                 return Err(ProcessMainInitError::Metadata(error));
             }
         };
-        debug_assert!(metadata_ready.matches(metadata));
-        debug_assert!(core::ptr::eq(metadata_ready.subprocess().as_ptr(), subprocess.as_ptr()));
-        debug_assert_eq!(metadata_ready.memory_config(), config);
+        debug_assert!(metadata_bound.matches(metadata));
+        debug_assert!(core::ptr::eq(metadata_bound.subprocess().as_ptr(), subprocess.as_ptr()));
+        debug_assert_eq!(metadata_bound.memory_config(), config);
 
         let page_map = match page_map_storage.initialize(config, subprocess) {
             Ok(page_map) => page_map,
             Err(error) => {
                 selection.retain();
-                self.mark_retained();
+                self.publish_terminal_state_and_release(completion, RETAINED);
                 return Err(ProcessMainInitError::PageMap(error));
             }
         };
 
         // SAFETY: preflight established current-thread/root ownership; the
-        // COLD -> INITIALIZING CAS and selected linear token exclude another
+        // source-shaped once claim and selected linear token exclude another
         // ticket-zero route; `foundation` exists in its final static slot;
-        // detached metadata is ready; and the exact selected PageMap has been
-        // initialized before compiler-TLS root publication.
+        // detached metadata identity is bound but has no backing; and the
+        // exact selected PageMap has
+        // been initialized before compiler-TLS root publication.
         let attachment = match unsafe {
             MainStaticTheapAttachment::begin_after_heap_foundation(foundation, selection)
         } {
             Ok(attachment) => attachment,
             Err(error) => {
-                self.mark_retained();
+                self.publish_terminal_state_and_release(completion, RETAINED);
                 return Err(ProcessMainInitError::InitialThread(error));
             }
         };
@@ -251,7 +364,7 @@ impl ProcessMainInitializationStorage {
         self.subprocess.store(subprocess.as_ptr(), Ordering::Release);
         self.page_map_storage
             .store(core::ptr::from_ref(page_map_storage).cast_mut(), Ordering::Release);
-        self.state.store(READY, Ordering::Release);
+        self.publish_terminal_state_and_release_with_hook(completion, READY, before_release);
 
         let ready = ProcessMainReadyLease {
             storage: self,
@@ -311,6 +424,64 @@ impl ProcessMainInitializationStorage {
     fn mark_retained(&self) {
         self.state.store(RETAINED, Ordering::Release);
     }
+
+    /// Classifies a caller that did not receive the source once completion
+    /// token.
+    ///
+    /// A distinct caller can reach this only after `AllocatorOnce` releases
+    /// its retained private lock, and `publish_terminal_state_and_release`
+    /// stores READY or RETAINED before that release. Therefore INITIALIZING
+    /// here is specifically the same-thread recursive/reentry refusal, not a
+    /// transient result for a racing caller. `COLD` can occur in the small
+    /// interval after a once claim but before this coordinator records
+    /// INITIALIZING, or during the documented pre-body cancellation handoff;
+    /// both retain the same safe reentry meaning.
+    #[inline]
+    fn outcome_after_process_once(&self) -> Result<ProcessMainThread, ProcessMainInitError> {
+        match self.state.load(Ordering::Acquire) {
+            COLD | INITIALIZING => Err(ProcessMainInitError::Initializing),
+            READY => Err(ProcessMainInitError::AlreadyInitialized),
+            RETAINED | _ => Err(ProcessMainInitError::Retained),
+        }
+    }
+
+    /// Publishes one terminal process result before releasing the retained
+    /// source-shaped once lock.
+    ///
+    /// `AllocatorOnceCompletion::complete` stores its source `tid = 1` with
+    /// Release ordering and then unlocks. Keeping the process state store
+    /// before that operation gives a blocked nonrecursive caller one complete
+    /// release chain: it cannot return until both the final state and all
+    /// preceding source-root writes are visible. Its possible futex-wake error
+    /// occurs after that atomic unlock; as in the C void release, it cannot
+    /// revoke an already-published terminal result or reopen/retry startup.
+    fn publish_terminal_state_and_release(
+        &self,
+        completion: AllocatorOnceCompletion<'_>,
+        terminal_state: u8,
+    ) {
+        self.publish_terminal_state_and_release_with_hook(completion, terminal_state, || {});
+    }
+
+    fn publish_terminal_state_and_release_with_hook<F>(
+        &self,
+        completion: AllocatorOnceCompletion<'_>,
+        terminal_state: u8,
+        before_release: F,
+    ) where
+        F: FnOnce(),
+    {
+        debug_assert!(matches!(terminal_state, READY | RETAINED));
+        self.state.store(terminal_state, Ordering::Release);
+        before_release();
+        // The source macro's release is void. `AllocatorOnceCompletion` has
+        // already published and atomically unlocked before a wake error can
+        // be reported, so changing READY to RETAINED here would race an
+        // awakened caller and falsely imply a retry boundary. Preserve the
+        // immutable terminal result and intentionally mirror the source's
+        // no-retry release policy.
+        let _completion_result = completion.complete();
+    }
 }
 
 static PROCESS_MAIN_INITIALIZATION: ProcessMainInitializationStorage =
@@ -322,6 +493,13 @@ pub(crate) enum ProcessMainInitError {
     /// The current thread or compiler-TLS roots were not eligible before any
     /// process source state was selected.
     Preflight(MainStaticTheapError),
+    /// The source-shaped once gate could not acquire its private futex lock.
+    /// Terminal-completion wake failures are intentionally handled like C's
+    /// void release: their atomic publication/unlock already happened, so
+    /// they preserve the existing terminal result rather than creating a
+    /// retry. A pre-body cancellation wake failure reaches this variant after
+    /// it atomically reopens the retryable COLD state.
+    Lock(crabc_core::Errno),
     Initializing,
     AlreadyInitialized,
     Retained,
@@ -628,7 +806,7 @@ mod tests {
     };
     use crate::main_heap_page::MainHeapThreadProcessPageAllocator;
     use crate::main_heap_thread::MainHeapThreadAttachment;
-    use crate::meta::MetaAllocator;
+    use crate::meta::{MetaAllocator, MetaError};
     use crate::os::{fault, MapAccess, PageSize};
     use crate::process_arena::{ProcessPageArenaLease, ProcessSharedArenaStorage};
     use crate::single_thread::PageAllocatorEngine;
@@ -636,7 +814,9 @@ mod tests {
     use crate::tld::{ThreadLocalDataError, ThreadLocalDataOwner};
     use crate::types::Theap;
     use std::ptr::NonNull;
+    use std::sync::mpsc;
     use std::thread;
+    use std::time::{Duration, Instant};
 
     fn memory_config() -> MemoryConfig {
         MemoryConfig::from_observations(
@@ -645,6 +825,17 @@ mod tests {
             false,
             false,
         )
+    }
+
+    fn wait_for_process_once_contender(storage: &ProcessMainInitializationStorage) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !storage.process_once.test_is_contended() {
+            assert!(
+                Instant::now() < deadline,
+                "the distinct caller must reach the retained source once gate before release"
+            );
+            thread::yield_now();
+        }
     }
 
     fn fixture() -> (
@@ -689,11 +880,10 @@ mod tests {
                 ready.page_map().unwrap().root().unwrap(),
                 "the coordinator publishes the exact process PageMap root"
             );
-            assert!(metadata.test_is_ready_for(config, subprocess));
-            assert_ne!(
-                metadata.test_private_page_map_address().unwrap(),
-                ready.page_map().unwrap().page_map().unwrap() as *const _ as usize,
-                "the detached metadata map is never reused as the global PageMap"
+            assert!(metadata.test_is_bound_for(config, subprocess));
+            assert!(
+                metadata.test_private_page_map_address().is_none(),
+                "source startup binds the detached metadata Theap but does not map its first arena"
             );
             assert!(
                 ProcessSharedArenaStorage::global().test_is_cold(),
@@ -710,6 +900,303 @@ mod tests {
         })
         .join()
         .expect("process-main initialization test thread completes");
+    }
+
+    #[test]
+    fn process_main_once_blocks_a_distinct_racer_until_release_and_refuses_reentry() {
+        let config = memory_config();
+        let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+        let (claimed_sender, claimed_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (initialized_sender, initialized_receiver) = mpsc::channel();
+        let (teardown_sender, teardown_receiver) = mpsc::channel();
+
+        let initializer = thread::spawn(move || {
+            let mut owner = unsafe {
+                storage.initialize_with_test_components_after_claim(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                    || {
+                        assert!(matches!(
+                            storage.initialize_with_test_components(
+                                config,
+                                main_static,
+                                subprocess,
+                                metadata,
+                                page_map_storage,
+                            ),
+                            Err(ProcessMainInitError::Initializing)
+                        ));
+                        claimed_sender
+                            .send(())
+                            .expect("the race witness remains live");
+                        release_receiver
+                            .recv()
+                            .expect("the race witness releases the initializer");
+                    },
+                )
+            }
+            .expect("the selected process-main source sequence initializes");
+            initialized_sender
+                .send(())
+                .expect("the race witness remains live");
+            teardown_receiver
+                .recv()
+                .expect("the race witness requests ticket-zero teardown");
+            owner
+                .teardown()
+                .expect("the bounded ticket-zero owner tears down");
+        });
+
+        claimed_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the first caller holds the source once state before publication");
+
+        let (racer_started_sender, racer_started_receiver) = mpsc::channel();
+        let (racer_result_sender, racer_result_receiver) = mpsc::channel();
+        let racer = thread::spawn(move || {
+            let mut foreign = Theap::empty();
+            set_default_theap(NonNull::from(&mut foreign));
+            racer_started_sender
+                .send(())
+                .expect("the race witness remains live");
+            let result = unsafe {
+                storage.initialize_with_test_components(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            };
+            set_default_theap(NonNull::new(empty_default_theap_ptr()).unwrap());
+            racer_result_sender
+                .send(matches!(result, Err(ProcessMainInitError::AlreadyInitialized)))
+                .expect("the race witness remains live");
+        });
+        racer_started_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the distinct caller begins while initialization is held");
+        wait_for_process_once_contender(storage);
+        assert!(
+            racer_result_receiver
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "a distinct caller must remain blocked until the source once release"
+        );
+        release_sender
+            .send(())
+            .expect("the initializer remains held at the source once boundary");
+        initialized_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the initializer publishes its final source roots");
+        let racer_observed_ready = racer_result_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the blocked distinct caller observes the released process state");
+
+        teardown_sender
+            .send(())
+            .expect("the initialized ticket-zero owner remains live");
+        racer.join().expect("the distinct caller completes");
+        initializer
+            .join()
+            .expect("the source initializer completes teardown");
+
+        assert!(
+            racer_observed_ready,
+            "a foreign-root caller returns only after the initializer release-publishes READY"
+        );
+    }
+
+    #[test]
+    fn process_main_once_blocks_a_terminal_ready_observer_until_once_release() {
+        let config = memory_config();
+        let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+        let (published_sender, published_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (initialized_sender, initialized_receiver) = mpsc::channel();
+        let (teardown_sender, teardown_receiver) = mpsc::channel();
+
+        let initializer = thread::spawn(move || {
+            let mut owner = unsafe {
+                storage.initialize_with_test_components_before_release(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                    || {
+                        published_sender
+                            .send(())
+                            .expect("the terminal-release witness remains live");
+                        release_receiver
+                            .recv()
+                            .expect("the terminal-release witness releases the initializer");
+                    },
+                )
+            }
+            .expect("the selected process-main source sequence initializes");
+            initialized_sender
+                .send(())
+                .expect("the terminal-release witness remains live");
+            teardown_receiver
+                .recv()
+                .expect("the terminal-release witness requests ticket-zero teardown");
+            owner
+                .teardown()
+                .expect("the bounded ticket-zero owner tears down");
+        });
+
+        published_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the initializer publishes READY before releasing the source once gate");
+        assert_eq!(storage.state.load(Ordering::Acquire), READY);
+
+        let (racer_result_sender, racer_result_receiver) = mpsc::channel();
+        let racer = thread::spawn(move || {
+            let result = unsafe {
+                storage.initialize_with_test_components(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            };
+            racer_result_sender
+                .send(matches!(result, Err(ProcessMainInitError::AlreadyInitialized)))
+                .expect("the terminal-release witness remains live");
+        });
+
+        wait_for_process_once_contender(storage);
+        assert!(
+            racer_result_receiver
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "READY alone must not let a caller bypass the retained source once lock"
+        );
+        release_sender
+            .send(())
+            .expect("the initializer remains held at the terminal source once boundary");
+        initialized_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the initializer returns only after releasing the source once gate");
+        assert!(
+            racer_result_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the terminal observer wakes after the source once release"),
+            "the terminal observer receives the immutable READY outcome"
+        );
+
+        teardown_sender
+            .send(())
+            .expect("the initialized ticket-zero owner remains live");
+        racer.join().expect("the terminal observer completes");
+        initializer
+            .join()
+            .expect("the terminal-release initializer completes teardown");
+    }
+
+    #[test]
+    fn process_main_once_wakes_a_distinct_racer_with_retained_after_failure() {
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Map,
+            1,
+            crabc_core::Errno::NOMEM,
+        ));
+        let config = memory_config();
+        let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+        let (claimed_sender, claimed_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (initializer_result_sender, initializer_result_receiver) = mpsc::channel();
+
+        let initializer = thread::spawn(move || {
+            let result = unsafe {
+                storage.initialize_with_test_components_after_claim(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                    || {
+                        claimed_sender
+                            .send(())
+                            .expect("the failure-race witness remains live");
+                        release_receiver
+                            .recv()
+                            .expect("the failure-race witness releases the initializer");
+                    },
+                )
+            };
+            initializer_result_sender
+                .send(matches!(
+                    result,
+                    Err(ProcessMainInitError::PageMap(
+                        ProcessPageMapError::Initialization(crabc_core::Errno::NOMEM)
+                    ))
+                ))
+                .expect("the failure-race witness remains live");
+        });
+
+        claimed_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the failing caller holds the source once state before publication");
+
+        let (racer_started_sender, racer_started_receiver) = mpsc::channel();
+        let (racer_result_sender, racer_result_receiver) = mpsc::channel();
+        let racer = thread::spawn(move || {
+            racer_started_sender
+                .send(())
+                .expect("the failure-race witness remains live");
+            let result = unsafe {
+                storage.initialize_with_test_components(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            };
+            racer_result_sender
+                .send(matches!(result, Err(ProcessMainInitError::Retained)))
+                .expect("the failure-race witness remains live");
+        });
+        racer_started_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the distinct caller begins while failure initialization is held");
+        wait_for_process_once_contender(storage);
+        assert!(
+            racer_result_receiver
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "a distinct caller must remain blocked until the source once release"
+        );
+        release_sender
+            .send(())
+            .expect("the failing initializer remains held at the source once boundary");
+        assert!(
+            initializer_result_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the initializer reaches its injected terminal failure"),
+            "the injected source-order global PageMap failure remains observable"
+        );
+        let racer_observed_retained = racer_result_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the blocked distinct caller observes the retained process state");
+
+        racer.join().expect("the distinct failing caller completes");
+        initializer
+            .join()
+            .expect("the failing source initializer completes");
+        fault.set(fault::Plan::disabled());
+
+        assert!(
+            racer_observed_retained,
+            "a distinct caller returns only after the initializer release-publishes RETAINED"
+        );
     }
 
     #[test]
@@ -736,13 +1223,27 @@ mod tests {
             assert_eq!(subprocess.live_thread_count(), 0);
             assert!(!page_map_storage.test_has_published_root());
             set_default_theap(NonNull::new(empty_default_theap_ptr()).unwrap());
+
+            let mut retry = unsafe {
+                storage.initialize_with_test_components(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("a preflight-only rejection leaves the process once state retryable");
+            retry
+                .teardown()
+                .expect("the retried ticket-zero owner tears down");
         })
         .join()
         .expect("preflight-rejection test thread completes");
     }
 
     #[test]
-    fn metadata_prepare_failure_after_heap_foundation_never_publishes_a_global_map_or_tls_root() {
+    fn process_main_binds_metadata_before_global_page_map_failure() {
         thread::spawn(|| {
             let config = memory_config();
             let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
@@ -751,6 +1252,7 @@ mod tests {
                 1,
                 crabc_core::Errno::NOMEM,
             ));
+
             assert!(matches!(
                 unsafe {
                     storage.initialize_with_test_components(
@@ -761,10 +1263,25 @@ mod tests {
                         page_map_storage,
                     )
                 },
-                Err(ProcessMainInitError::Metadata(MetaError::InitializationFailed))
+                Err(ProcessMainInitError::PageMap(
+                    ProcessPageMapError::Initialization(crabc_core::Errno::NOMEM)
+                ))
             ));
+            assert_eq!(fault.observed(), 1);
             fault.set(fault::Plan::disabled());
 
+            assert!(
+                metadata.test_is_bound_for(config, subprocess),
+                "the source-static detached image binds before the global PageMap attempt"
+            );
+            assert!(
+                subprocess.test_has_published_metadata_theap(),
+                "the initialized detached Theap is published through the selected source subprocess before the global PageMap attempt",
+            );
+            assert!(
+                metadata.test_private_page_map_address().is_none(),
+                "the failed global PageMap attempt cannot have formed metadata backing"
+            );
             assert_eq!(storage.state.load(Ordering::Acquire), RETAINED);
             assert_eq!(subprocess.total_thread_count(), 0);
             assert_eq!(subprocess.live_thread_count(), 0);
@@ -776,7 +1293,61 @@ mod tests {
             ));
         })
         .join()
-        .expect("metadata-failure test thread completes");
+        .expect("global-PageMap-ordering test thread completes");
+    }
+
+    #[test]
+    fn process_main_defers_private_metadata_backing_until_first_demand() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let mut owner = unsafe {
+                storage.initialize_with_test_components(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the source-order process startup binds empty detached metadata");
+
+            assert!(metadata.test_is_bound_for(config, subprocess));
+            assert!(
+                metadata.test_private_page_map_address().is_none(),
+                "process startup must not form detached metadata backing before its first request"
+            );
+
+            let fault = fault::install(fault::Plan::at(
+                fault::Point::Map,
+                1,
+                crabc_core::Errno::NOMEM,
+            ));
+            assert!(matches!(
+                metadata.zalloc_for_main_subprocess(config, subprocess, 8),
+                Err(MetaError::InitializationFailed)
+            ));
+            assert_eq!(fault.observed(), 1);
+            assert!(
+                metadata.test_private_page_map_address().is_none(),
+                "an unpublished first-backing failure leaves no private PageMap"
+            );
+            fault.set(fault::Plan::disabled());
+
+            let mut allocation = metadata
+                .zalloc_for_main_subprocess(config, subprocess, 8)
+                .expect("the first detached metadata request creates its private backing");
+            assert!(metadata.test_private_page_map_address().is_some());
+            metadata
+                .free(&mut allocation)
+                .expect("the first metadata capability releases through its detached owner");
+
+            owner
+                .teardown()
+                .expect("the bounded ticket-zero owner tears down");
+        })
+        .join()
+        .expect("deferred-metadata-backing test thread completes");
     }
 
     #[test]

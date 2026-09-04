@@ -7,6 +7,7 @@ import pathlib
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -17,6 +18,19 @@ SPEC.loader.exec_module(BUILD)
 
 
 class BuildContractTests(unittest.TestCase):
+    def test_native_consumers_are_separate_from_production_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            (root / "fixtures").mkdir()
+            (root / "fixtures/probe.c").write_text("int main(void) { return 0; }\n")
+            (root / "src").mkdir()
+            (root / "src/lib.rs").write_text("#![no_std]\n")
+            with mock.patch.object(BUILD, "ROOT", root):
+                self.assertEqual(BUILD.source_files(), [root / "src/lib.rs"])
+                (root / "src/fallback.c").write_text("void fallback(void) {}\n")
+                with self.assertRaisesRegex(BUILD.BuildError, "native source is forbidden"):
+                    BUILD.source_files()
+
     def test_symbol_contract_has_no_memory_or_atomic_exports(self) -> None:
         symbols = set(BUILD.EXPECTED_SYMBOLS)
         self.assertTrue(symbols)
@@ -59,7 +73,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(completed.stdout.strip(), "Cargo.lock")
 
     def test_source_build_feature_parser_rejects_feature_drift(self) -> None:
-        target = pathlib.Path("/tmp/crabc-source-build-target")
+        target = ROOT.parent / ".work/tmp/crabc-source-build-target"
         good = (
             f"rustc --crate-name core --out-dir {target}\n"
             f"rustc --crate-name compiler_builtins --extern core={target}/core.rmeta "
@@ -75,9 +89,11 @@ class BuildContractTests(unittest.TestCase):
 
     def test_source_build_environment_seals_native_and_codegen_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            environment = BUILD.source_build_environment(pathlib.Path(temporary), ("-C", "panic=abort"))
+            stage = pathlib.Path(temporary)
+            environment = BUILD.source_build_environment(stage, ("-C", "panic=abort"))
         self.assertEqual(environment["CARGO_INCREMENTAL"], "0")
         self.assertEqual(environment["CARGO_ENCODED_RUSTFLAGS"], "-C\x1fpanic=abort")
+        self.assertEqual(environment["TMPDIR"], str(stage / "source-build-tmp"))
         for key in BUILD.SEALED_SOURCE_BUILD_ENVIRONMENT_KEYS - {"CARGO_ENCODED_RUSTFLAGS"}:
             self.assertNotIn(key, environment)
 

@@ -1,0 +1,67 @@
+--- a/test/test-stress.c
++++ b/test/test-stress.c
+@@ -25,2 +25,10 @@
+-#include <mimalloc.h>
+-#include <mimalloc-stats.h>
++/*
++ * This reviewed source adaptation runs the upstream allocation, transfer,
++ * realloc, cookie, and cleanup workload through the selected
++ * `native-mimalloc-shadow` libc. `USE_STD_MALLOC` is deliberate here: it
++ * names the standard C calls whose selected libc definitions are the native
++ * runtime under test, rather than linking an upstream mimalloc ABI.
++ */
++typedef struct mi_subproc_id_s {
++  void* _mi_subproc_id;
++} mi_subproc_id_t;
+@@ -27,0 +36,16 @@
++#if !defined(USE_STD_MALLOC)
++#error "the native-shadow stress fixture requires standard C allocation calls"
++#endif
++#if defined(MI_USE_HEAPS)
++#error "the native-shadow stress fixture excludes upstream heap APIs"
++#endif
++#if defined(MI_HEAP_WALK)
++#error "the native-shadow stress fixture excludes upstream theap traversal APIs"
++#endif
++#if defined(TEST_STRESS_SUBPROCS) && TEST_STRESS_SUBPROCS
++#error "the native-shadow stress fixture excludes upstream subprocess stress"
++#endif
++#if defined(TEST_LEAK) && TEST_LEAK
++#error "the native-shadow stress fixture excludes the upstream leak mode"
++#endif
++
+@@ -41,0 +66,4 @@
++#if NTHREADS != 4
++#error "the native-shadow stress fixture requires four pthread workers"
++#endif
++
+@@ -78,0 +107,3 @@
++#if ALLOW_LARGE
++#error "the native-shadow stress fixture excludes large-object mode"
++#endif
+@@ -79,0 +111 @@
++
+@@ -269,0 +302,9 @@
++static void free_transferred_item(intptr_t tid, void* p) {
++  (void)tid;
++  free_items(p);
++}
++
++static void free_transferred_item_in_fresh_worker(void* p) {
++  run_os_threads(subproc_null, 1, &free_transferred_item, p);
++}
++
+@@ -308 +349 @@
+-        free_items(p);
++        free_transferred_item_in_fresh_worker(p);
+@@ -343 +384 @@
+-      free_items(p);
++      free_transferred_item_in_fresh_worker(p);
+@@ -437,0 +479,5 @@
++  if (THREADS != 4 || SCALE != 1 || ITER != 2 || main_participates || allow_large_objects) {
++    fprintf(stderr, "the native-shadow stress contract requires four pthread workers, scale 1, and two iterations\n");
++    return 1;
++  }
++
+@@ -473,0 +520 @@
++  printf("crabc native shadow pthread stress ok\n");

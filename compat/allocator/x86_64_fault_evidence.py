@@ -88,7 +88,7 @@ TEST_LANES = (
     ),
     FaultLane(
         identifier="metadata-map-commit-retry",
-        test_filter="meta::tests::map_and_commit_failure_leave_the_owner_retryable_and_unpublished",
+        test_filter="meta::tests::map_and_commit_failure_leave_the_owner_retryable_without_private_backing",
         fault_points=("Map", "Commit"),
         expected_pass_count=1,
         state_preservation=(

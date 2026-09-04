@@ -9,14 +9,21 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `include/mimalloc/types.h:37,64-250,
+// Source map: pinned mimalloc v3.5.0 `include/mimalloc/types.h:37-250,
 // 463-492,545-557,612,716-718` (normal-release constants),
-// `include/mimalloc/bits.h:49-69,119-145` and
+// `include/mimalloc/bits.h:33-145` and
 // `include/mimalloc/internal.h:717-719` (word and two-level page-map
 // constants), `src/bitmap.h:94-105` (bitmap-bounded arena constants), and
-// `CMakeLists.txt:7-18,415-454,684-693,772-774` (default Release switches).
-// This module freezes only the Linux/AArch64 and Linux/x86-64 little-endian
-// default-release profiles; it is not a runtime configuration mechanism.
+// `CMakeLists.txt:7-24,161-192,280-340,361-454,647-693,769-774` (selected
+// normal-release switches and the deliberately excluded Armv8.3-a path).
+// The selected M1 branch is LP64, little-endian Linux/AArch64 normal release:
+// debug, secure, guarded, padding, tracking, checked-free, free-small, flat
+// page-map, and SIMD branches are all inactive; separate page metadata and
+// large pages are active. `MI_ARENA_SLICE_SHIFT` and
+// `MI_BCHUNK_BITS_SHIFT` are C/Rust checked as the actual selected macros, not
+// re-derived formulas. The C oracle deliberately keeps the project Armv8.0
+// baseline instead of CMake's optional Armv8.3-a path. This module is not a
+// runtime configuration mechanism or a port of unselected CMake modes.
 
 pub(crate) const WORD_SIZE: usize = core::mem::size_of::<usize>();
 pub(crate) const KIB: usize = 1024;
@@ -120,6 +127,7 @@ mod tests {
 
     #[test]
     fn default_release_constants_match_the_pinned_linux_64_profiles() {
+        assert_eq!(WORD_SIZE, 8);
         assert_eq!(MAX_ALIGN_SIZE, 16);
         assert_eq!(SECURE_LEVEL, 0);
         assert_eq!(DEBUG_LEVEL, 0);
@@ -130,11 +138,17 @@ mod tests {
         assert!(!ENCODE_FREELIST);
         assert!(!GUARDED);
         assert!(!OPT_SIMD);
+        assert_eq!(PADDING_SIZE, 0);
+        assert_eq!(PADDING_WSIZE, 0);
         assert_eq!(PAGE_KEY_COUNT, 1);
+        assert!(ENABLE_LARGE_PAGES);
         assert!(PAGE_META_IS_SEPARATED);
         assert!(PAGE_META_IS_ALIGNED);
+        assert_eq!(PAGE_META_ALIGNED_CHUNKS, WORD_SIZE);
+        assert_eq!(PAGE_META_ALIGNED_COUNT, WORD_SIZE * BCHUNK_BITS);
 
         assert_eq!(ARENA_SLICE_SHIFT, 16);
+        assert_eq!(BCHUNK_BITS_SHIFT, 9);
         assert_eq!(ARENA_SLICE_SIZE, 64 * KIB);
         assert_eq!(BCHUNK_BITS, 512);
         assert_eq!(ARENA_CHUNK_SIZE, 32 * MIB);
@@ -150,6 +164,7 @@ mod tests {
         assert_eq!(PAGES_DIRECT, 129);
         assert_eq!(MAX_SINGLETON_BIN, 60);
         assert_eq!(MAX_ALLOC_SIZE, isize::MAX as usize);
+        assert!(!PAGE_MAP_FLAT);
         assert_eq!(PAGE_MAP_SUB_COUNT, 8192);
         #[cfg(target_arch = "aarch64")]
         {

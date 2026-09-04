@@ -1,0 +1,470 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-architecture-gate",
+  "upstream": {
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "current": "shadow_subset",
+    "final_required": "promotion_qualified",
+    "static_analysis_cannot_close_final_gate": true,
+    "meaning": "This manifest records the nondefault native-mimalloc-shadow source path and its bounded evidence. Source/module inspection can show selected temporary scaffolding, but final hot-path values require independently generated promotion-qualified runtime and artifact evidence from a reviewed producer schema."
+  },
+  "runtime_evidence": {
+    "format": 1,
+    "schema": "crabc-mimalloc-architecture-runtime-evidence",
+    "promotion_benchmark_producer": {
+      "schema": null,
+      "status": "not-registered",
+      "required_metrics": [
+        "cross_thread_free_throughput_ratio",
+        "four_thread_local_throughput_ratio",
+        "metadata_plateau_after_warmup",
+        "single_thread_throughput_ratio"
+      ],
+      "required_observations": [
+        "native and pinned-C per-sample measurements for every required workload and lane",
+        "sample-count, warmup, ordering, host, CPU, toolchain, artifact, and workload provenance",
+        "machine-evaluated promotion thresholds derived from the recorded samples"
+      ]
+    }
+  },
+  "selected_production": {
+    "package": "crabc-libc",
+    "feature": "native-mimalloc-shadow",
+    "target": "aarch64-unknown-linux-musl",
+    "libc_manifest": "libc/Cargo.toml",
+    "c_abi_source": "libc/src/c_abi.rs",
+    "native_boundary_source": "libc/src/allocator_native_mimalloc.rs",
+    "engine_root_source": "crabc-mimalloc/src/lib.rs",
+    "runtime_source": "crabc-mimalloc/src/runtime_lifecycle.rs",
+    "page_map_source": "crabc-mimalloc/src/process_page_map.rs",
+    "sources": [
+      "libc/Cargo.toml",
+      "libc/src/c_abi.rs",
+      "libc/src/allocator_native_mimalloc.rs",
+      "crabc-mimalloc/src/lib.rs",
+      "crabc-mimalloc/src/runtime_lifecycle.rs",
+      "crabc-mimalloc/src/main_static_page.rs",
+      "crabc-mimalloc/src/main_heap_page.rs",
+      "crabc-mimalloc/src/process_arena.rs",
+      "crabc-mimalloc/src/process_page_map.rs"
+    ]
+  },
+  "caller_identity_first_free_dispatch": {
+    "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+    "function": "native_free",
+    "caller_identity_patterns": [
+      "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\("
+    ],
+    "pointer_dispatch_patterns": [
+      "\\blookup_page_for_live_client\\s*\\(",
+      "\\bcanonical_remote_block_for_live_client_at\\s*\\("
+    ],
+    "maximum_phase_a_identity_matches": 1,
+    "phase_a_bridge": {
+      "phase": "A",
+      "marker": "CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE",
+      "source_anchor_pattern": "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\(",
+      "removal_condition": "Remove CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE when native_free derives owner and abandoned-state authority from pointer-to-page dispatch, before any caller-identity branch, under promotion_qualified evidence. Until then, the exact marker text must occur inside native_free before or at its sole caller-identity branch.",
+      "final_acceptance": false
+    }
+  },
+  "phase_bc_call_graph": {
+    "meaning": "These Phase-B/C rules inspect only syntactic call-site may-reachability from the selected native allocator entries. They deliberately separate a callee definition, test-only code, and a production function that is not reachable from those entries. A selected-source graph can expose retained scaffolding or a missing source projection, but cannot prove dynamic call frequency, emitted-artifact behavior, or final runtime absence.",
+    "sources": [
+      "crabc-mimalloc/src/runtime_lifecycle.rs",
+      "crabc-mimalloc/src/main_static_page.rs",
+      "crabc-mimalloc/src/main_heap_page.rs",
+      "crabc-mimalloc/src/process_arena.rs",
+      "crabc-mimalloc/src/process_page_map.rs"
+    ],
+    "cfg_environment": {
+      "flags": {
+        "miri": false,
+        "test": false
+      },
+      "features": {
+        "native-runtime-test-audit": false,
+        "native-runtime-test-fault": false,
+        "test-adapter": false
+      },
+      "key_values": {
+        "target_arch": "aarch64",
+        "target_endian": "little",
+        "target_os": "linux"
+      }
+    },
+    "entry_points": [
+      {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "function": "native_allocate_aligned",
+        "public": true
+      },
+      {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "function": "native_free",
+        "public": true
+      },
+      {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "function": "native_reallocate",
+        "public": true
+      },
+      {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "function": "native_usable_size",
+        "public": true
+      }
+    ],
+    "ratchets": {
+      "caller_identity_first_native_free": {
+        "entry_points": [
+          {
+            "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "function": "native_free",
+            "public": true
+          }
+        ],
+        "patterns": {
+          "caller_identity_branch": "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\("
+        },
+        "direction": "maximum",
+        "final_required": 0,
+        "covered_metrics": []
+      },
+      "per_call_scheduler_park_resume": {
+        "patterns": {
+          "page_owner_state_access": "\\.page_owner_state\\b",
+          "park": "\\.suspend\\s*\\(",
+          "resume": "\\.resume\\s*\\("
+        },
+        "direction": "maximum",
+        "final_required": 0,
+        "covered_metrics": [
+          "local_hot_path_process_scheduler_ops",
+          "per_call_engine_park_resume"
+        ]
+      },
+      "long_pagemap_mutation_lease": {
+        "patterns": {
+          "begin_page_lifecycle": "\\.begin_page_lifecycle\\s*\\(",
+          "resume_mutation_lease": "\\.into_mutation_lease\\s*\\("
+        },
+        "direction": "maximum",
+        "final_required": 0,
+        "covered_metrics": [
+          "local_hot_path_global_pagemap_leases"
+        ]
+      },
+      "ledger_owner_registry_scans": {
+        "patterns": {
+          "live_owner_registry_access": "\\bNATIVE_LIVE_REMOTE_OWNER\\b",
+          "post_exit_route_registry_access": "\\bNATIVE_POST_EXIT_ROUTE\\b",
+          "client_ledger_access": "\\bclients\\.",
+          "current_slot_claim": "\\.claim_current_slot(?:_excluding_held_route|_while_holding_live_remote_owner)?\\s*\\(",
+          "exact_client_claim": "\\.claim_exact_client\\s*\\(",
+          "client_ledger_lookup": "\\.native_client_for_block\\s*\\("
+        },
+        "direction": "maximum",
+        "final_required": 0,
+        "covered_metrics": [
+          "local_operation_owner_registry_scans",
+          "local_operation_client_ledger_scans",
+          "remote_free_owner_registry_scans"
+        ]
+      },
+      "page_local_remote_free_projection": {
+        "entry_points": [
+          {
+            "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "function": "native_free",
+            "public": true
+          }
+        ],
+        "patterns": {
+          "live_page_lookup": "\\.lookup_page_for_live_client\\s*\\(",
+          "canonical_remote_block": "\\bPage::canonical_remote_block_for_live_client_at\\s*\\(",
+          "atomic_remote_push": "\\bremote_free::push\\s*\\("
+        },
+        "direction": "minimum_per_pattern",
+        "final_required": "runtime-proven page-local remote-free dispatch",
+        "covered_metrics": []
+      }
+    },
+    "runtime_evidence_required": {
+      "phase_b": {
+        "persistent_thread_local_owner": true,
+        "local_steady_state": {
+          "process_scheduler_ops": 0,
+          "global_pagemap_mutation_leases": 0,
+          "owner_registry_scans": 0,
+          "client_ledger_scans": 0,
+          "per_call_engine_park_resume": false
+        }
+      },
+      "phase_c": {
+        "native_free_pointer_first": true,
+        "pointer_to_page_lookup": true,
+        "canonical_block_recovery": true,
+        "page_local_remote_publication": true,
+        "owner_or_thread_count_dependent_lookup": false
+      }
+    }
+  },
+  "metrics": {
+    "local_hot_path_process_scheduler_ops": {
+      "final_required": 0,
+      "unit": "process-global scheduler operations per steady-state local allocator operation",
+      "source_limit": "A selected source indicator proves the current route retains scheduler machinery, not an exact dynamic operation count."
+    },
+    "local_hot_path_global_pagemap_leases": {
+      "final_required": 0,
+      "unit": "global PageMap mutation leases per steady-state local allocator operation",
+      "source_limit": "A selected source indicator proves the current route retains the lease machinery, not an exact dynamic operation count."
+    },
+    "local_operation_owner_registry_scans": {
+      "final_required": 0,
+      "unit": "owner-registry scans per local allocator operation",
+      "source_limit": "Source matching records the registry traversal implementation; runtime tracing is required to attribute it to every local operation."
+    },
+    "local_operation_client_ledger_scans": {
+      "final_required": 0,
+      "unit": "client-ledger scans per local allocator operation",
+      "source_limit": "Source matching records the selected ledger and traversal implementation; runtime tracing is required for operation counts."
+    },
+    "remote_free_owner_registry_scans": {
+      "final_required": 0,
+      "unit": "owner-registry scans per remote free",
+      "source_limit": "Source matching records the exact-client owner traversal; runtime tracing is required for a dynamic complexity claim."
+    },
+    "extra_control_bytes_per_live_allocation": {
+      "final_required": 0,
+      "unit": "extra non-page-local control bytes per live allocation",
+      "source_limit": "Selected ledger types establish that extra control metadata remains, but only a layout/runtime probe can measure bytes per live allocation."
+    },
+    "per_call_engine_park_resume": {
+      "final_required": false,
+      "unit": "per-call engine park/resume",
+      "source_limit": "Selected suspend/resume definitions and calls are an architecture warning, not a proof that each public call exercises them."
+    },
+    "exited_owner_admission_survives_thread_exit": {
+      "final_required": false,
+      "unit": "exited-owner admission survives until a later worker completion",
+      "source_limit": "The admission-carrying route fields show the temporary representation remains selected; a lifecycle probe is required to prove final behavior."
+    },
+    "single_thread_throughput_ratio": {
+      "final_required": "promotion-qualified",
+      "unit": "native-to-pinned-C single-thread local throughput ratio",
+      "source_limit": "This is a qualified runtime measurement; selected source cannot establish a throughput ratio."
+    },
+    "four_thread_local_throughput_ratio": {
+      "final_required": "promotion-qualified",
+      "unit": "native-to-pinned-C four-thread independent-local throughput ratio",
+      "source_limit": "This is a qualified runtime measurement; selected source cannot establish a throughput ratio."
+    },
+    "cross_thread_free_throughput_ratio": {
+      "final_required": "promotion-qualified",
+      "unit": "native-to-pinned-C cross-thread-free throughput ratio",
+      "source_limit": "This is a qualified runtime measurement; selected source cannot establish a throughput ratio."
+    },
+    "metadata_plateau_after_warmup": {
+      "final_required": true,
+      "unit": "metadata high-water plateaus after warmup",
+      "source_limit": "This is a runtime high-water observation; selected source cannot establish a plateau."
+    }
+  },
+  "forbidden_scaffolding": {
+    "patterns": {
+      "prepared_owner_exit_clients": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+PreparedOwnerExitClients\\b"
+      },
+      "live_remote_owner_registry": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+NativeLiveRemoteOwnerRegistry\\b"
+      },
+      "post_exit_route_registry": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+NativePostExitRouteRegistry\\b"
+      },
+      "process_global_page_owner_scheduler": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bpage_owner_state\\s*:\\s*AtomicUsize\\b"
+      },
+      "per_call_parked_engine": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+RuntimeParkedPersistentPageEngine\\b"
+      },
+      "exited_owner_admission_claim": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+LaterThreadAdmissionClaim\\b"
+      },
+      "geometry_shaped_post_exit_route": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\benum\\s+NativePostExitFreeRoute\\b"
+      }
+    }
+  },
+  "phase_ef_forbidden_scaffolding": {
+    "meaning": "Phase E requires page/process-abandonment post-exit operations rather than an exact-client route. Phase F then deletes the selected production registry, route variants, semantic route/client-ledger scans, and normal-lifecycle failure routes. Rust visibility does not exempt an implementation symbol: every cfg-selected production declaration is checked. The separately named default-off audit declarations are sampled under their audit feature and must not leak into the production cfg selection.",
+    "production_symbols": {
+      "rules": {
+        "native_post_exit_route_registry": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "struct",
+          "name": "NativePostExitRouteRegistry"
+        },
+        "native_post_exit_free_route_aggregate": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "enum_variant",
+          "enum": "NativePostExitFreeRoute",
+          "name": "Aggregate"
+        },
+        "native_post_exit_free_route_sole_mapped_regular": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "enum_variant",
+          "enum": "NativePostExitFreeRoute",
+          "name": "SoleMappedRegular"
+        }
+      }
+    },
+    "semantic_route_or_ledger_scans": {
+      "rules": {
+        "post_exit_registry_exact_free_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "free_exact",
+          "all_of": [
+            "\\bself\\.head\\.load\\s*\\(",
+            "\\bwhile\\s*!current\\.is_null\\s*\\(\\s*\\)",
+            "\\bnode\\.storage\\.free_exact\\s*\\("
+          ]
+        },
+        "post_exit_registry_usable_size_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "usable_size_exact",
+          "all_of": [
+            "\\bself\\.head\\.load\\s*\\(",
+            "\\bwhile\\s*!current\\.is_null\\s*\\(\\s*\\)",
+            "\\bnode\\.storage\\.usable_size_exact\\s*\\("
+          ]
+        },
+        "post_exit_registry_completion_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "finish_completions_for_owner",
+          "all_of": [
+            "\\bself\\.head\\.load\\s*\\(",
+            "\\bwhile\\s*!current\\.is_null\\s*\\(\\s*\\)",
+            "\\bnode\\.storage\\.finish_completion_for_owner\\s*\\("
+          ]
+        },
+        "detached_route_client_ledger_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "take_for_native_free",
+          "all_of": [
+            "\\bentries\\.iter_mut\\s*\\(\\)\\.find_map\\s*\\(",
+            "\\btake_detached_client_for_native_free\\s*\\("
+          ]
+        },
+        "prepared_owner_exit_client_ledger_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "native_client_for_block",
+          "all_of": [
+            "\\bfor\\s+slot\\s+in\\s+0\\.\\.self\\.slot_count\\s*\\(\\)\\s*\\{",
+            "\\bPreparedOwnerExitClientState::Live\\b"
+          ]
+        }
+      }
+    },
+    "normal_lifecycle_failure_routes": {
+      "rules": {
+        "aggregate_route_normal_lifecycle_failure": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "free_remaining_in_fresh_runtime_worker_with_publisher",
+          "all_of": [
+            "\\bmatch\\s+finish_current_thread_after_user_destructors\\s*\\(\\s*\\)",
+            "\\bThreadFinishResult::Retained\\b",
+            "\\bTicketZeroOwnerExitFreeOutcome::(?:Finished|Retained|Poisoned)\\b"
+          ]
+        },
+        "sole_mapped_regular_route_normal_lifecycle_failure": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "reclaim_and_finish",
+          "all_of": [
+            "\\bmatch\\s+finish_current_thread_after_user_destructors\\s*\\(\\s*\\)",
+            "\\bThreadFinishResult::Retained\\b",
+            "\\bTicketZeroOwnerExitReclaimOutcome::(?:Finished|Retained|Poisoned)\\b"
+          ]
+        }
+      }
+    },
+    "test_only_audits": {
+      "feature": "native-runtime-test-audit",
+      "rules": {
+        "post_exit_registry_audit_type": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "struct",
+          "name": "NativePostExitRouteRegistryAudit",
+          "public": true
+        },
+        "post_exit_registry_audit_query": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "function",
+          "name": "native_post_exit_registry_test_audit",
+          "public": true
+        }
+      }
+    },
+    "ratchet_baseline": {
+      "production_symbol_ceiling": {
+        "native_post_exit_route_registry": 1,
+        "native_post_exit_free_route_aggregate": 1,
+        "native_post_exit_free_route_sole_mapped_regular": 1
+      },
+      "semantic_route_or_ledger_scan_ceiling": {
+        "post_exit_registry_exact_free_scan": 1,
+        "post_exit_registry_usable_size_scan": 1,
+        "post_exit_registry_completion_scan": 1,
+        "detached_route_client_ledger_scan": 1,
+        "prepared_owner_exit_client_ledger_scan": 4
+      },
+      "normal_lifecycle_failure_route_ceiling": {
+        "aggregate_route_normal_lifecycle_failure": 1,
+        "sole_mapped_regular_route_normal_lifecycle_failure": 1
+      }
+    }
+  },
+  "contracts": {
+    "canonical_upstream_stress": "compat/allocator/upstream-stress-v3.5.0.json"
+  },
+  "ratchet_baseline": {
+    "static_signal_ceiling": {
+      "local_hot_path_process_scheduler_ops": 10,
+      "local_hot_path_global_pagemap_leases": 3,
+      "local_operation_owner_registry_scans": 14,
+      "local_operation_client_ledger_scans": 9,
+      "remote_free_owner_registry_scans": 16,
+      "extra_control_bytes_per_live_allocation": 2,
+      "per_call_engine_park_resume": 19,
+      "exited_owner_admission_survives_thread_exit": 9,
+      "single_thread_throughput_ratio": 0,
+      "four_thread_local_throughput_ratio": 0,
+      "cross_thread_free_throughput_ratio": 0,
+      "metadata_plateau_after_warmup": 0
+    },
+    "phase_bc_selected_production_reachable_ceiling": {
+      "caller_identity_first_native_free": 1,
+      "per_call_scheduler_park_resume": 41,
+      "long_pagemap_mutation_lease": 9,
+      "ledger_owner_registry_scans": 62
+    },
+    "phase_bc_selected_production_reachable_floor_per_pattern": {
+      "page_local_remote_free_projection": {
+        "live_page_lookup": 1,
+        "canonical_remote_block": 1,
+        "atomic_remote_push": 1
+      }
+    }
+  }
+}

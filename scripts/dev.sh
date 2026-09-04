@@ -2,15 +2,164 @@
 # Native Alpine/AArch64 development entry point.
 #
 # The image contains a pinned musl reference and Rust toolchain. The source
-# tree and target directory remain outside the image so normal edit/build loops
-# do not rebuild it.
+# tree and repository-local mutable work directory remain outside the image so
+# normal edit/build loops do not rebuild it.
 set -euo pipefail
 
-readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly WORK_BOUNDARY="$ROOT_DIR/.work"
+
+# Docker interprets an unqualified --volume source as a named volume. Resolve
+# every mutable host path before creating it so no configuration can turn that
+# convenience syntax, a `..` traversal, or a symlink into an escape from the
+# checkout-local .work boundary.
+normalize_absolute_path() {
+    local path="${1#/}"
+    local component
+    local last_index
+    local normalized=""
+    local -a components=()
+
+    while [ -n "$path" ]; do
+        if [[ "$path" == */* ]]; then
+            component="${path%%/*}"
+            path="${path#*/}"
+        else
+            component="$path"
+            path=""
+        fi
+        case "$component" in
+            ""|.)
+                ;;
+            ..)
+                if [ "${#components[@]}" -gt 0 ]; then
+                    last_index=$((${#components[@]} - 1))
+                    unset "components[$last_index]"
+                fi
+                ;;
+            *)
+                components+=("$component")
+                ;;
+        esac
+    done
+
+    for component in "${components[@]}"; do
+        normalized="$normalized/$component"
+    done
+    printf '%s\n' "${normalized:-/}"
+}
+
+resolve_existing_directory() {
+    local candidate="$1"
+    local existing="$candidate"
+    local missing_component
+    local missing_suffix=""
+    local physical_existing
+
+    # Resolve every existing prefix physically before making the missing tail.
+    # This catches a symlink below .work before `mkdir -p` could follow it.
+    while [ ! -e "$existing" ] && [ ! -L "$existing" ]; do
+        missing_component="${existing##*/}"
+        missing_suffix="/$missing_component$missing_suffix"
+        existing="${existing%/*}"
+        if [ -z "$existing" ]; then
+            existing="/"
+        fi
+    done
+    if ! physical_existing="$(cd -P "$existing" 2>/dev/null && pwd)"; then
+        return 1
+    fi
+    if [ -z "$missing_suffix" ]; then
+        printf '%s\n' "$physical_existing"
+    elif [ "$physical_existing" = "/" ]; then
+        printf '%s\n' "$missing_suffix"
+    else
+        printf '%s%s\n' "$physical_existing" "$missing_suffix"
+    fi
+}
+
+path_is_within_work_boundary() {
+    [ "$1" = "$WORK_BOUNDARY" ] || [[ "$1" == "$WORK_BOUNDARY/"* ]]
+}
+
+configuration_error() {
+    printf 'ERROR: %s\n' "$*" >&2
+    return 1
+}
+
+resolve_bounded_directory() {
+    local name="$1"
+    local configured_path="$2"
+    local relative_base="$3"
+    local candidate
+    local resolved
+
+    if [[ "/$configured_path/" == */../* ]]; then
+        configuration_error "$name must not contain '..' path components: $configured_path"
+        return 1
+    fi
+    if [[ "$configured_path" == *:* ]]; then
+        configuration_error "$name must be a host directory path, not Docker mount syntax: $configured_path"
+        return 1
+    fi
+    if [[ "$configured_path" = /* ]]; then
+        candidate="$configured_path"
+    else
+        candidate="$relative_base/$configured_path"
+    fi
+    candidate="$(normalize_absolute_path "$candidate")"
+    if ! resolved="$(resolve_existing_directory "$candidate")"; then
+        configuration_error "$name must name a directory: $candidate"
+        return 1
+    fi
+    if ! path_is_within_work_boundary "$resolved"; then
+        configuration_error "$name must resolve below $WORK_BOUNDARY: $resolved"
+        return 1
+    fi
+    printf '%s\n' "$resolved"
+}
+
+resolve_container_bind_directory() {
+    local name="$1"
+    local configured_path="$2"
+    local relative_base="$3"
+
+    # A bare word is Docker's named-volume syntax. Require an explicit host
+    # path marker for overrides, then apply the same physical boundary check.
+    if [[ "$configured_path" != /* && "$configured_path" != .* ]]; then
+        configuration_error "$name must be an explicit host path; named Docker volumes are not allowed: $configured_path"
+        return 1
+    fi
+    resolve_bounded_directory "$name" "$configured_path" "$relative_base"
+}
+
+if ! resolved_work_boundary="$(resolve_existing_directory "$WORK_BOUNDARY")"; then
+    printf 'ERROR: checkout work boundary is not a directory: %s\n' "$WORK_BOUNDARY" >&2
+    exit 2
+fi
+if [ "$resolved_work_boundary" != "$WORK_BOUNDARY" ]; then
+    printf 'ERROR: checkout work boundary must resolve to %s, not %s\n' \
+        "$WORK_BOUNDARY" "$resolved_work_boundary" >&2
+    exit 2
+fi
+
+work_dir_input="${CRABC_WORK_DIR:-$WORK_BOUNDARY}"
+if ! WORK_DIR="$(resolve_bounded_directory CRABC_WORK_DIR "$work_dir_input" "$ROOT_DIR")"; then
+    exit 2
+fi
+readonly WORK_DIR
+target_volume_input="${CRABC_TARGET_VOLUME:-$WORK_DIR/target}"
+if ! TARGET_VOLUME="$(resolve_container_bind_directory CRABC_TARGET_VOLUME "$target_volume_input" "$WORK_DIR")"; then
+    exit 2
+fi
+readonly TARGET_VOLUME
+cargo_volume_input="${CRABC_CARGO_VOLUME:-$WORK_DIR/cargo}"
+if ! CARGO_VOLUME="$(resolve_container_bind_directory CRABC_CARGO_VOLUME "$cargo_volume_input" "$WORK_DIR")"; then
+    exit 2
+fi
+readonly CARGO_VOLUME
 readonly PLATFORM="linux/arm64"
 readonly IMAGE="${CRABC_DEV_IMAGE:-crabc-dev:aarch64}"
-readonly TARGET_VOLUME="${CRABC_TARGET_VOLUME:-crabc-target-aarch64}"
-readonly CARGO_VOLUME="${CRABC_CARGO_VOLUME:-crabc-cargo-aarch64}"
 
 usage() {
     cat <<'EOF'
@@ -43,8 +192,13 @@ Commands:
   sysroot-smoke <archive>
                       smoke-test one packaged sysroot archive without rebuilding it
   lua [options]       build Lua 5.4 through the owned crabc sysroot
-  allocator --quick|--full
+  allocator --quick|--full|--churn|--soak|--tls-terminal-prototype
                       build/check the pinned mimalloc v3.5.0 C-oracle baseline
+  allocator-m1        run the current-commit M1 foundations evidence gate
+  allocator-m2        run the current-commit partial M2 memory-substrate gate
+  allocator-upstream [options]
+                      run exact pinned upstream pthread stress on the native shadow libc
+  allocator-shadow    run the nondefault native-mimalloc libc ABI/pthread shadow gate
   allocator-tls       prove private initial-exec allocator TLS codegen
   allocator-perf --smoke|--full
                       request allocator comparison evidence (unavailable until its milestone)
@@ -57,9 +211,14 @@ Commands:
   environment         write reproducibility metadata for compatibility reports
   shell               open a shell in the development image
 
-The image and containers are always requested as linux/arm64. `target/` and
-the Cargo download cache use Docker volumes so the macOS host does not need a
-Rust installation.
+The image and containers are always requested as linux/arm64. Mutable build
+state is confined to this checkout's `.work/` boundary: targets live in
+`.work/target`, Cargo's download cache lives in `.work/cargo`, and reports and
+scratch state live below `.work/`. `CRABC_WORK_DIR` may select another physical
+descendant of `.work/`. `CRABC_TARGET_VOLUME` and `CRABC_CARGO_VOLUME` accept
+only explicit host paths below that boundary; relative overrides resolve from
+the selected work directory. Docker named volumes, `..` path components,
+symlink escapes, and external paths are rejected.
 EOF
 }
 
@@ -85,11 +244,46 @@ ensure_image() {
     fi
 }
 
+prepare_work_dir() {
+    mkdir -p \
+        "$WORK_DIR" \
+        "$WORK_DIR/target" \
+        "$WORK_DIR/cargo" \
+        "$WORK_DIR/reports" \
+        "$WORK_DIR/allocator-cache" \
+        "$WORK_DIR/tmp" \
+        "$TARGET_VOLUME" \
+        "$CARGO_VOLUME"
+}
+
 run_in_container() {
+    prepare_work_dir
     local rustix_source_host="${CRABC_RUSTIX_SOURCE_HOST:-$ROOT_DIR/../rustix}"
     local rustybench_source_host="${CRABC_RUSTYBENCH_SOURCE_HOST:-$ROOT_DIR/../rustybench}"
+    local git_common_dir=""
+    local git_common_physical=""
     local -a rustix_mount=()
     local -a rustybench_mount=()
+    local -a git_common_mount=()
+    if [ "${1:-}" = "--allocator-git-common-dir" ]; then
+        shift
+        if ! git_common_dir="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)"; then
+            configuration_error "allocator evidence requires a Git worktree with a readable common directory"
+            return 1
+        fi
+        if [[ "$git_common_dir" != /* ]] || [ ! -d "$git_common_dir" ]; then
+            configuration_error "allocator evidence Git common directory is not an existing absolute path: $git_common_dir"
+            return 1
+        fi
+        if ! git_common_physical="$(cd -P "$git_common_dir" && pwd)"; then
+            configuration_error "allocator evidence Git common directory cannot be resolved physically: $git_common_dir"
+            return 1
+        fi
+        if [ "$git_common_dir" != "$git_common_physical" ]; then
+            configuration_error "allocator evidence Git common directory must be a physical path: $git_common_dir"
+            return 1
+        fi
+    fi
     if [ -d "$rustix_source_host" ]; then
         # The comparison harness treats Rustix only as a pinned test oracle.
         # Keep a user checkout read-only, outside the worktree, and expose its
@@ -111,6 +305,13 @@ run_in_container() {
             --volume "$rustybench_source_host:/opt/rustybench:ro"
         )
     fi
+    if [ -n "$git_common_dir" ]; then
+        # A linked worktree's .git file records its common directory as a
+        # host-absolute path. Mount that one Git metadata directory read-only
+        # at the same path only for an attested command, so in-container Git
+        # can read the worktree state without making source metadata mutable.
+        git_common_mount=(--volume "$git_common_dir:$git_common_dir:ro")
+    fi
     # The bind-mounted checkout can be owned by the host runner while the
     # container queries it as root. Scope Git's ownership exception to this
     # one mount instead of mutating a shared global config.
@@ -118,15 +319,22 @@ run_in_container() {
         docker run --rm --init
         --platform "$PLATFORM"
         --workdir /workspace
-        --env CARGO_HOME=/opt/cargo
+        # Keep the image's Rust toolchain visible at /opt/cargo/bin while
+        # directing Cargo's mutable registry and git caches into .work.
+        --env CARGO_HOME=/workspace/.work/cargo
+        # Python harnesses must not leave bytecode caches in the source mount.
+        --env PYTHONDONTWRITEBYTECODE=1
         --env LIBC_TEST_DIR=/opt/libc-test
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib
+        --env CRABC_WORK_DIR=/workspace/.work
+        --env TMPDIR=/workspace/.work/tmp
         --env GIT_CONFIG_COUNT=1
         --env GIT_CONFIG_KEY_0=safe.directory
         --env GIT_CONFIG_VALUE_0=/workspace
         --volume "$ROOT_DIR:/workspace"
+        --volume "$WORK_DIR:/workspace/.work"
         --volume "$TARGET_VOLUME:/workspace/target"
-        --volume "$CARGO_VOLUME:/opt/cargo"
+        --volume "$CARGO_VOLUME:/workspace/.work/cargo"
     )
     if [ -d "$rustix_source_host" ]; then
         docker_args+=("${rustix_mount[@]}")
@@ -134,8 +342,18 @@ run_in_container() {
     if [ -d "$rustybench_source_host" ]; then
         docker_args+=("${rustybench_mount[@]}")
     fi
+    if [ -n "$git_common_dir" ]; then
+        docker_args+=("${git_common_mount[@]}")
+    fi
     docker_args+=("$IMAGE" "$@")
     "${docker_args[@]}"
+}
+
+run_allocator_evidence() {
+    # The runner attests source provenance in every lane. A linked worktree's
+    # .git file names its common directory with a host-absolute path, so grant
+    # each attested allocator run the same read-only metadata mount.
+    run_in_container --allocator-git-common-dir python3 compat/allocator/run.py "$@"
 }
 
 # Resolver evidence must not inherit Docker's host-derived DNS configuration.
@@ -144,18 +362,23 @@ run_in_container() {
 # verifies that boundary before temporarily installing its three loopback
 # nameservers and restores the file before it exits.
 run_in_resolver_container() {
+    prepare_work_dir
     docker run --rm --init \
         --platform "$PLATFORM" \
         --network none \
         --dns 127.0.0.1 \
         --workdir /workspace \
-        --env CARGO_HOME=/opt/cargo \
+        --env CARGO_HOME=/workspace/.work/cargo \
+        --env PYTHONDONTWRITEBYTECODE=1 \
         --env LIBC_TEST_DIR=/opt/libc-test \
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
+        --env CRABC_WORK_DIR=/workspace/.work \
+        --env TMPDIR=/workspace/.work/tmp \
         --env CRABC_RESOLVER_NETWORK_ISOLATED=1 \
         --volume "$ROOT_DIR:/workspace" \
+        --volume "$WORK_DIR:/workspace/.work" \
         --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/opt/cargo" \
+        --volume "$CARGO_VOLUME:/workspace/.work/cargo" \
         "$IMAGE" "$@"
 }
 
@@ -440,19 +663,193 @@ case "$command" in
         fi
         case "$1" in
             --quick)
-                run_in_container python3 compat/allocator/run.py --quick
+                run_allocator_evidence --quick
                 ;;
             --full)
-                # This runner builds the complete Milestone 0 C oracle before
-                # reporting the exact later feature that makes the full matrix
-                # unavailable. It never turns an absent Rust lane into a pass.
-                run_in_container python3 compat/allocator/run.py --full
+                # This runner builds the complete C-oracle/M4 boundary, runs
+                # the recorded 128-cycle M5 lifecycle lane, and reports each
+                # reviewed unmet M5 gate without turning absent Rust work into
+                # a pass.
+                run_allocator_evidence --full
+                ;;
+            --churn)
+                # This bounded lane repeats the mixed-local and live-owner
+                # remote-free pthread witnesses under a watchdog; it is not a
+                # general allocator pass.
+                run_allocator_evidence --churn
+                ;;
+            --soak)
+                # This opt-in larger lane uses the same pointer-private
+                # witnesses and a longer watchdog. It is lifecycle stability
+                # evidence, not a general allocator pass.
+                run_allocator_evidence --soak
+                ;;
+            --tls-terminal-prototype)
+                # This is the standalone C half of the selected same-TLD
+                # terminal trace. It does not by itself write an M1 report
+                # or select a libc allocator backend.
+                run_allocator_evidence --m1-tls-terminal-prototype
                 ;;
             *)
                 usage >&2
                 exit 2
                 ;;
         esac
+        ;;
+    allocator-m1)
+        ensure_image
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        # This is an acceptance-record producer, not a synonym for a green
+        # allocator milestone. It returns the runner's intentional unmet-M1
+        # status while the checked contract has remaining conditions.
+        run_allocator_evidence --m1
+        ;;
+    allocator-m2)
+        ensure_image
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        # This is an acceptance-record producer, not a synonym for a green
+        # allocator milestone. It returns the runner's intentional unmet-M2
+        # status while the checked substrate contract has remaining conditions.
+        run_allocator_evidence --m2
+        ;;
+    allocator-upstream)
+        ensure_image
+        # Build the owned runtime first, then capture the exact compiler-artifact
+        # emitted by the selected nondefault libc build. The runner binds both
+        # selected libc outputs to that record before starting stress.
+        run_in_container cargo build --workspace --locked
+        run_in_container cargo build --workspace --release --locked
+        run_in_container python3 scripts/build_owned_sysroot.py
+        selected_libc_build_record=".work/target/compat/allocator/upstream-stress/selected-libc-build.json"
+        run_in_container python3 compat/allocator/upstream-stress/run.py \
+            --capture-selected-libc-build "$selected_libc_build_record"
+        run_in_container python3 scripts/run_owned_test_suite.py \
+            --sysroot target/crabc-sysroot \
+            --loader target/debug/libldso.so \
+            -- python3 compat/allocator/upstream-stress/run.py \
+                --libc-build-record "$selected_libc_build_record" "$@"
+        ;;
+    allocator-shadow)
+        ensure_image
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        # C stays the production allocator. Build the ordinary workspace and
+        # owned sysroot first because the C fixtures need the normal loader
+        # and installed aliases, then build the selected shadow libc *last*.
+        # The generic `test` command deliberately rebuilds the default
+        # workspace runtime, so it cannot serve as evidence for this feature.
+        run_in_container cargo build --workspace
+        run_in_container cargo build --workspace --release
+        run_in_container python3 scripts/build_owned_sysroot.py
+        # Preserve and attest the ordinary C-backed dynamic libc before the
+        # feature build replaces target/debug/libc.so. The paired runner later
+        # compiles the same normalized local C trace against this snapshot and
+        # the selected Rust artifact; it does not create runtime selection.
+        run_in_container python3 compat/allocator/shadow-abi-matrix/run.py capture
+        run_in_container cargo build -p crabc-libc --features native-mimalloc-shadow
+        run_in_container python3 scripts/run_owned_test_suite.py \
+            --sysroot target/crabc-sysroot \
+            --loader target/debug/libldso.so \
+            -- python3 compat/allocator/shadow-abi-matrix/run.py run
+        # The direct runtime regressions keep live-owner PageMap remote
+        # publication observable without selecting the ordinary C allocator
+        # artifact before the C ABI fixture exercises the selected shared object.
+        run_in_container cargo test -p crabc-mimalloc \
+            --test native_live_remote_free \
+            --test native_two_live_remote_owners \
+            --test native_live_remote_owner_registry_reuse \
+            --test native_page_local_live_remote_protocol \
+            --test native_post_exit_claimed_remote_producers \
+            --test native_pointer_first_initial_foreign_free \
+            -- --test-threads=1
+        # These direct tests compile scalar-only lifecycle and admission audits
+        # behind their own default-off feature. They establish that pointer-
+        # first post-exit operations leave B teardown independent of A and
+        # that a live owner-exit source head CAS retries real PageMap-derived
+        # foreign publications.
+        run_in_container cargo test -p crabc-mimalloc \
+            --features native-runtime-test-audit \
+            --test native_multiple_post_exit_completions \
+            --test native_terminal_completion_live_remote_free \
+            --test native_concurrent_post_exit_os_singletons \
+            --test native_concurrent_mixed_post_exit_completions \
+            --test native_persistent_worker_fastpath \
+            --test native_pointer_first_current_owner_reallocate \
+            --test native_pointer_first_usable_size \
+            --test native_owner_exit_collection_race \
+            --test native_ordinary_mapped_medium_reclaim \
+            -- --test-threads=1
+        # The next-`munmap` injection is a separately gated direct witness:
+        # a failed OS terminal release must retain its PageMap source without
+        # making B's independently empty owner terminal.
+        run_in_container cargo test -p crabc-mimalloc \
+            --features native-runtime-test-audit,native-runtime-test-fault \
+            --test native_post_exit_failed_os_release \
+            --test native_post_exit_terminal_owner_retention \
+            --test native_pointer_first_post_exit_os_release \
+            -- --test-threads=1
+        # A joined pointer-first source publication is collected during A's
+        # ordinary persistent-owner teardown before a fresh releaser frees
+        # A's surviving client through process PageMap/page state.
+        run_in_container cargo test -p crabc-mimalloc \
+            --test native_source_published_live_owner_exit \
+            --test native_concurrent_post_exit_page_release \
+            -- --test-threads=1
+        run_in_container env RUSTC_WRAPPER="/workspace/scripts/rustc_test_host_tool_wrapper.sh" \
+            python3 scripts/run_owned_test_suite.py \
+            --sysroot target/crabc-sysroot \
+            --loader target/debug/libldso.so \
+            -- cargo test -q -p crabc-libc --features native-mimalloc-shadow \
+            --test allocator \
+            --test native_mimalloc_shadow_abi \
+            --test native_mimalloc_owner_exit \
+            --test native_mimalloc_retired_owner_exit \
+            --test native_mimalloc_two_owner_exit \
+            --test native_mimalloc_three_owner_exit \
+            --test native_mimalloc_post_exit_split_releaser \
+            --test native_mimalloc_aggregate_reclaim \
+            --test native_mimalloc_owner_exit_realloc \
+            --test native_mimalloc_live_remote_free \
+            --test native_mimalloc_live_remote_from_parked_worker \
+            --test native_mimalloc_source_published_exit \
+            --test native_mimalloc_source_published_live_owner_exit \
+            --test native_mimalloc_post_exit_source_published_successor \
+            --test native_mimalloc_post_exit_source_published_all_free_proof \
+            --test native_mimalloc_two_live_remote_owners \
+            --test native_mimalloc_initial_post_exit_free \
+            --test native_mimalloc_initial_remote_free \
+            --test native_mimalloc_parallel_local_workers \
+            --test native_mimalloc_cabi_local_worker_scaling \
+            --test native_mimalloc_concurrent_session_start \
+            --test native_mimalloc_many_local_allocations \
+            --test native_mimalloc_initial_live_local_worker \
+            --test native_mimalloc_initial_live_owner_exit \
+            --test native_mimalloc_initial_free_while_owner_exit \
+            --test native_mimalloc_initial_live_parallel_workers \
+            --test native_mimalloc_many_owner_exit_allocations \
+            --test native_mimalloc_concurrent_post_exit_release \
+            --test native_mimalloc_post_exit_concurrent_realloc \
+            --test native_mimalloc_concurrent_owner_exit \
+            --test native_mimalloc_live_remote_owner_exit \
+            --test pthread_atfork \
+            --test pthread_create_join_tls_regression \
+            -- --test-threads=1
+        # Keep the source-derived pthread workload outside the one-thread
+        # prefixed adapter. This wrapper stages the exact owned loader and
+        # debug libc aliases before the runner selects the native-shadow
+        # `libc.so` for all standard C allocation calls.
+        run_in_container python3 scripts/run_owned_test_suite.py \
+            --sysroot target/crabc-sysroot \
+            --loader target/debug/libldso.so \
+            -- python3 compat/allocator/run.py --native-shadow-stress
         ;;
     allocator-tls)
         ensure_image

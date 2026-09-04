@@ -1,0 +1,329 @@
+{
+  "format": 1,
+  "schema": "crabc-libc-native-mimalloc-shadow-abi-matrix",
+  "scope": {
+    "claim": "one deterministic local C malloc/free/realloc semantic comparison between separately attested ordinary C-backed and nondefault Rust-native libc artifacts, plus two source-faithful nonlocal realloc requirements that can become musl differentials only after their exact fixtures and runtime evidence are activated",
+    "target": "linux-aarch64-little-endian",
+    "kernel_baseline": "5.10",
+    "not_a_promotion_gate": true,
+    "not_a_runtime_selector": true,
+    "not_a_general_lifecycle_claim": true,
+    "nonlocal_musl_differentials_are_required": true,
+    "purpose": "Preserve the ordinary libc artifact before native-mimalloc-shadow selection, then run the same normalized public C trace through both explicitly selected dynamic libc artifacts and record exact semantic matches or named known reds. The two named nonlocal realloc cases are required source-faithful pinned-musl 1.2.6 differentials: their exact fixtures must run through musl and the selected native artifact with identical required streams."
+  },
+  "fixture": {
+    "path": "tests/fixtures/native_mimalloc_shadow_backend_matrix_test.c",
+    "sha256": "b9aa6a19a86002f0fb2ca6745f5ff654b7d3a347f0882776830b54dd2a9f7afa",
+    "language": "C11",
+    "compile_flags": [
+      "-fPIE",
+      "-pie",
+      "-fno-builtin"
+    ],
+    "link_flags": [
+      "-Wl,--allow-shlib-undefined"
+    ],
+    "link_libraries": [
+      "-l:libc.so"
+    ]
+  },
+  "backends": [
+    {
+      "id": "ordinary-c-mimalloc",
+      "cargo_features": [
+        "default"
+      ],
+      "selection": "snapshot target/debug/libc.so before native-mimalloc-shadow is built",
+      "fallback": false,
+      "exported_free_route": {
+        "symbol": "free",
+        "required_callee_suffix": "mi_free>",
+        "forbidden_callee_suffix": "native_free>"
+      }
+    },
+    {
+      "id": "native-rust-mimalloc-shadow",
+      "cargo_features": [
+        "default",
+        "native-mimalloc-shadow"
+      ],
+      "selection": "build crabc-libc with native-mimalloc-shadow after the ordinary artifact is snapshotted",
+      "fallback": false,
+      "native_pointer_first_guard": {
+        "required_elf_identity": {
+          "class": "ELF64",
+          "data": "little-endian",
+          "type": "DYN",
+          "machine": "AArch64"
+        },
+        "required_debug_sections": [
+          ".debug_info",
+          ".debug_line"
+        ],
+        "forbidden_c_backend_symbol_prefix": "mi_",
+        "exports": [
+          {
+            "symbol": "free",
+            "binding": "GLOBAL",
+            "visibility": "DEFAULT",
+            "entry_source_path": "libc/src/allocator_native_mimalloc.rs",
+            "native_dwarf_name": "native_free",
+            "native_dwarf_source_path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "pointer_first_dwarf_provenance": [
+              "native_free_pointer_first_local",
+              "native_free_pointer_first_nonlocal"
+            ]
+          },
+          {
+            "symbol": "realloc",
+            "binding": "GLOBAL",
+            "visibility": "DEFAULT",
+            "entry_source_path": "libc/src/allocator_native_mimalloc.rs",
+            "native_dwarf_name": "native_reallocate",
+            "native_dwarf_source_path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "pointer_first_dwarf_provenance": [
+              "native_reallocate_pointer_first_local",
+              "native_reallocate_pointer_first_nonlocal"
+            ]
+          },
+          {
+            "symbol": "malloc_usable_size",
+            "binding": "GLOBAL",
+            "visibility": "DEFAULT",
+            "entry_source_path": "libc/src/program_utils_exports.rs",
+            "native_dwarf_name": "native_usable_size",
+            "native_dwarf_source_path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "pointer_first_dwarf_provenance": [
+              "lookup_live_allocation"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "semantic_cases": [
+    {
+      "id": "free-null-preserves-errno",
+      "operations": [
+        "free"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "malloc-local-content-and-errno",
+      "operations": [
+        "malloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "realloc-grow-preserves-prefix-and-errno",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "realloc-shrink-preserves-prefix-and-errno",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "realloc-null-zero-result",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "freeable-misaligned-preserves-errno",
+        "native-rust-mimalloc-shadow": "freeable-aligned-preserves-errno"
+      },
+      "comparison": "known-red",
+      "reason": "The ordinary C-backed artifact returns a freeable but non-16-byte-aligned zero-size result, while the selected native shadow returns a freeable 16-byte-aligned result. Both preserve the fixture's incoming errno. This is a recorded public-C ABI red, not an accepted musl-equivalence result."
+    },
+    {
+      "id": "realloc-zero-result",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "distinct-aligned-preserves-errno",
+        "native-rust-mimalloc-shadow": "distinct-aligned-preserves-errno"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "realloc-failure-preserves-source-and-sets-enomem",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "free-local-preserves-errno",
+      "operations": [
+        "free"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    }
+  ],
+  "musl_differential_required_cases": [
+    {
+      "id": "foreign-worker-realloc",
+      "fixture": {
+        "path": "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c",
+        "sha256": "21de25f80f6743c3422c68fc09d452eed24e23b74b00aa49adf9f57c91fe414a",
+        "language": "C11",
+        "compile_flags": [
+          "-fPIE",
+          "-pie",
+          "-fno-builtin"
+        ],
+        "selected_link_flags": [
+          "-Wl,--allow-shlib-undefined"
+        ],
+        "selected_link_libraries": [
+          "-l:libc.so"
+        ],
+        "musl_link_flags": [],
+        "musl_link_libraries": [
+          "-lc"
+        ]
+      },
+      "operations": [
+        "realloc"
+      ],
+      "classification": "musl-differential-required",
+      "activation": "required",
+      "expected": {
+        "status": 0,
+        "stdout": "native mimalloc shadow foreign realloc ok\n",
+        "stderr": ""
+      },
+      "reason": "This one synchronized live-owner foreign realloc is a required source-faithful pinned-musl differential. An intentional-divergence or native-only acceptance is forbidden."
+    },
+    {
+      "id": "post-owner-exit-realloc",
+      "fixture": {
+        "path": "tests/fixtures/native_mimalloc_owner_exit_realloc_test.c",
+        "sha256": "9e65b7bfaa7689ed4d8fffecebc9ea6d8bcff5935bad4eca82e24f6d581f83ee",
+        "language": "C11",
+        "compile_flags": [
+          "-fPIE",
+          "-pie",
+          "-fno-builtin"
+        ],
+        "selected_link_flags": [
+          "-Wl,--allow-shlib-undefined"
+        ],
+        "selected_link_libraries": [
+          "-l:libc.so"
+        ],
+        "musl_link_flags": [],
+        "musl_link_libraries": [
+          "-lc"
+        ]
+      },
+      "operations": [
+        "realloc"
+      ],
+      "classification": "musl-differential-required",
+      "activation": "required",
+      "expected": {
+        "status": 0,
+        "stdout": "native mimalloc owner exit realloc ok\n",
+        "stderr": ""
+      },
+      "reason": "This one serialized post-owner-exit realloc is a required source-faithful pinned-musl differential. An intentional-divergence or native-only acceptance is forbidden."
+    }
+  ],
+  "intentionally_blocked_cases": [
+    {
+      "id": "foreign-worker-free-routing",
+      "status": "blocked",
+      "reason": "General foreign-worker free routing remains outside this bounded matrix. The named `foreign-worker-realloc` fixture above is not part of this block: it is a required pinned-musl differential."
+    },
+    {
+      "id": "owner-exit-routing-outside-selected-realloc",
+      "status": "blocked",
+      "reason": "General owner-exit, deferred-release, and cross-owner routing remain outside this bounded matrix. The named `post-owner-exit-realloc` fixture above is not part of this block: it is a required pinned-musl differential."
+    },
+    {
+      "id": "dso-interposition-and-static-linking",
+      "status": "blocked",
+      "reason": "The existing native_mimalloc_shadow_abi integration target owns weak binding, DSO JUMP_SLOT, and selected archive checks. This matrix uses one dynamically linked executable per artifact."
+    },
+    {
+      "id": "address-reuse-usable-size-and-page-layout",
+      "status": "blocked",
+      "reason": "Those are allocator implementation details, not stable C ABI semantic facts, and comparing them would falsely require the Rust port to reproduce private layout choices."
+    }
+  ],
+  "execution": {
+    "compiler": "crabc-cc from the installed owned crabc sysroot",
+    "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
+    "owned_test_launcher": "scripts/run_owned_test_suite.py",
+    "expected_dynamic_dependencies": [
+      "libc.so"
+    ],
+    "process_attempts_per_backend": 1,
+    "watchdog_seconds": 15,
+    "runtime_library_selection": "LD_LIBRARY_PATH contains exactly the directory holding the selected backend libc.so after inherited loader overrides are removed, and the fixture carries no RPATH or RUNPATH that could select another libc.so",
+    "pinned_musl_oracle": {
+      "compiler": "musl-gcc",
+      "version": "1.2.6",
+      "library_root": "/opt/musl-1.2.6/lib",
+      "provenance": "The pinned Docker image builds musl 1.2.6 from the SHA-256-verified upstream release under /opt/musl-1.2.6 and exposes its wrapper as musl-gcc; the host/system musl is not an oracle."
+    },
+    "link_provenance": {
+      "driver_default_libraries": [],
+      "driver_opt_out": "-nodefaultlibs",
+      "selected_library_flag": "-l:libc.so",
+      "linker_trace_flag": "-Wl,--trace",
+      "owned_builtins_path": "usr/lib/libcrabc-builtins.a",
+      "reason": "The selected libc.so has no DSO SONAME, so a direct filesystem input would encode its path in DT_NEEDED. The matrix instead disables sealed-driver defaults, supplies exactly one selected -L directory with -l:libc.so, and proves the resolved input through the permitted linker trace."
+    },
+    "artifact_snapshot": "The ordinary C-backed libc.so and its Cargo feature attestation are copied before the native feature build; the native artifact is attested from target/debug after that build."
+  },
+  "report": {
+    "format": 1,
+    "schema": "crabc-libc-native-mimalloc-shadow-abi-matrix-report",
+    "path": "compat/reports/allocator/shadow-abi-matrix/latest.json",
+    "atomic_publish": true,
+    "file_artifact_record_fields": [
+      "path",
+      "bytes",
+      "sha256"
+    ],
+    "byte_stream_record_fields": [
+      "bytes",
+      "sha256",
+      "hex"
+    ]
+  }
+}

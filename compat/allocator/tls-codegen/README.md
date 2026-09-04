@@ -29,6 +29,9 @@ default TLS model as a negative control. It explicitly clears
 target-wide setting in `.cargo/config.toml`; that object must contain
 `R_AARCH64_TLSDESC_CALL` for every root. This demonstrates that the explicit
 initial-exec flag is required; it is not redundant source documentation.
+Both AArch64 control builds use the checked-in lockfile with `--locked` in
+addition to their existing `--offline` requirement, so neither control can
+silently refresh `Cargo.lock`.
 
 This proves the exact bounded rlib codegen shape, not production integration.
 Rust has no per-static TLS-model attribute: the initial-exec choice is a crate
@@ -56,7 +59,8 @@ and is not claimed to be zero. The `crabc-core` `%fs:0` test is a
 compilation/runtime regression for that source boundary, not independent
 oracle evidence. The object and relocation inspection in this runner is the
 native x86-64 codegen evidence. The report is written separately to
-`compat/reports/allocator/tls-codegen-x86_64.json`.
+`.work/reports/allocator/tls-codegen-x86_64.json` by default, or below the
+configured `CRABC_WORK_DIR`.
 
 The probe build uses `--locked` but deliberately not `--offline`: its first
 native run may populate the architecture-local Cargo volume from the checked-in

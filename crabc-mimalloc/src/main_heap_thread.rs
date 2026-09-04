@@ -37,6 +37,9 @@ use core::marker::PhantomData;
 use core::mem::size_of;
 use core::ptr::NonNull;
 
+#[cfg(test)]
+use core::ffi::c_void;
+
 use crate::arena::ArenaView;
 use crate::bootstrap::{TheapPageSession, empty_default_theap_ptr, theap_page_session_sealed};
 use crate::compiler_tls::{
@@ -44,6 +47,9 @@ use crate::compiler_tls::{
     fast_slot_peek, is_empty_dynamic_backing, set_cached_theap, set_default_theap,
     set_fast_slot,
 };
+use crate::deferred_free::DeferredFreeInvocationError;
+#[cfg(test)]
+use crate::deferred_free::{DeferredFreeTestCallback, DeferredFreeTestObserver};
 use crate::main_theap::{
     MainStaticHeapLease, MainStaticHeapLeaseError,
 };
@@ -67,6 +73,35 @@ enum MainHeapThreadAttachmentState {
     DrainingPages,
     TornDown,
     Poisoned,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MainHeapThreadOwnerLocalPageEngineState {
+    Missing,
+    Idle,
+    Borrowed,
+    Terminal,
+}
+
+// This marker belongs to the one source attachment permitted by the current
+// thread's compiler-TLS roots. It carries no pointer or registry identity: the
+// attachment's root/list validation supplies that proof, while this linear
+// state alone prevents a second persistent engine and makes unfinished Drop
+// permanently ineligible for fresh begin or attachment teardown.
+#[thread_local]
+static mut OWNER_LOCAL_PAGE_ENGINE_STATE: MainHeapThreadOwnerLocalPageEngineState =
+    MainHeapThreadOwnerLocalPageEngineState::Missing;
+
+#[inline]
+fn owner_local_page_engine_state() -> MainHeapThreadOwnerLocalPageEngineState {
+    // SAFETY: the current thread alone reads its compiler-TLS lifecycle byte.
+    unsafe { OWNER_LOCAL_PAGE_ENGINE_STATE }
+}
+
+#[inline]
+fn set_owner_local_page_engine_state(state: MainHeapThreadOwnerLocalPageEngineState) {
+    // SAFETY: the current thread alone writes its compiler-TLS lifecycle byte.
+    unsafe { OWNER_LOCAL_PAGE_ENGINE_STATE = state };
 }
 
 /// One source-boundary failure while attaching or retiring a later thread's
@@ -93,9 +128,36 @@ pub(crate) enum MainHeapThreadAttachmentError {
     /// A caller attempted a pre- or post-fast-slot operation in the wrong
     /// side of the explicit source thread-exit page-drain transition.
     PageDrainState,
+    /// A Rust-owned persistent page-engine state token has temporarily
+    /// suspended this attachment's borrowed page session.  The attachment
+    /// cannot begin a second page engine, enter source thread teardown, or
+    /// be treated as no-page until that exact token resumes its session or is
+    /// explicitly retained terminally.
+    PersistentPageEngineSuspended,
+    /// A persistent page-engine state token was offered to an attachment that
+    /// did not record its matching suspended session.  This is a rejected
+    /// capability mismatch; no page, root, or TLD state has changed.
+    PersistentPageEngineMissing,
+    /// This attachment already has one continuously stored owner-local page
+    /// engine. Neither a duplicate engine nor direct attachment teardown may
+    /// cross that linear ownership boundary.
+    OwnerLocalPageEngineActive,
+    /// An owner-local allocator callback tried to enter another page operation
+    /// before the first short source projection returned.
+    OwnerLocalPageEngineReentrant,
+    /// No owner-local engine is currently claimed by this attachment.
+    OwnerLocalPageEngineMissing,
+    /// An unfinished owner-local engine was dropped or its lifecycle otherwise
+    /// lost a safe retry boundary. The attachment and its page state remain
+    /// terminally retained.
+    OwnerLocalPageEngineTerminal,
     ListOwnership,
     TheapList(ThreadLocalTheapListError),
     TheapClear,
+    /// The retained Theap no longer named its live callback TLD at the
+    /// source deferred-free boundary. The attachment is kept terminal rather
+    /// than allowing an old metadata pointer to cross teardown.
+    DeferredFree(DeferredFreeInvocationError),
     SharedCount,
     TornDown,
     Poisoned,
@@ -109,6 +171,17 @@ pub(crate) enum MainHeapThreadPageSessionError {
     /// A later-thread metadata TLD must never claim ticket zero, which belongs
     /// to the source-static main TLD.
     FirstTicket,
+}
+
+/// Linear compiler-TLS claim for one continuously stored later-main page
+/// engine. It owns no attachment reference, so the TLS payload can store the
+/// attachment and engine in sibling fields without a self-reference.
+#[must_use = "an owner-local page-engine claim must finish or retain its attachment terminally"]
+pub(crate) struct MainHeapThreadOwnerLocalPageEngineLease {
+    thread: crate::types::LiveThreadId,
+    thread_sequence: usize,
+    finished: bool,
+    _not_send_or_sync: PhantomData<*mut ()>,
 }
 
 /// A failed later-thread construction that either made no retained source
@@ -141,6 +214,24 @@ pub(crate) struct MainHeapThreadAttachment<'main> {
     /// engine could not release. No later-thread owner-exit traversal exists
     /// yet, so retaining this token is terminal and poisons the attachment.
     terminal_os_release: Option<OsAlignedPageOwner>,
+    /// The page engine itself may be stored separately from this attachment
+    /// between allocator calls so TLS can own both without a self-reference.
+    /// While true, the detached engine-state token is the only authority that
+    /// may resume a normal page session.  Direct no-page teardown and a fresh
+    /// page session reject rather than losing its PageMap/arena/OS state.
+    page_engine_suspended: bool,
+    /// A private source-order observer used only by focused lifecycle tests.
+    /// It is deliberately attachment-local: the production public callback
+    /// registration ABI requires a future whole-process pointer-domain and
+    /// re-entry contract.
+    #[cfg(test)]
+    deferred_free_test_observer: Option<DeferredFreeTestObserver>,
+    /// One focused test-only fault at the final attachment boundary after a
+    /// successful page drain. It never models a production fallback or route;
+    /// it proves that the outer persistent owner retains `AttachmentOnly`
+    /// rather than reconstructing a drained page engine.
+    #[cfg(test)]
+    detached_process_page_finish_failures: usize,
     state: MainHeapThreadAttachmentState,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
@@ -180,6 +271,30 @@ impl<'main> MainHeapThreadAttachment<'main> {
         metadata: core::pin::Pin<&'static MetaAllocator>,
         config: MemoryConfig,
     ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
+        // Preserve the common constructor's no-side-effect admission checks:
+        // a rejected current-thread/root image must not even publish the
+        // test fixture's metadata identity.
+        if current_thread_identity().is_none() {
+            return Err(MainHeapThreadAttachmentBeginError::Rejected(
+                MainHeapThreadAttachmentError::InvalidCurrentThread,
+            ));
+        }
+        if !roots_are_pristine_for_later_main_attachment() {
+            return Err(MainHeapThreadAttachmentBeginError::Rejected(
+                MainHeapThreadAttachmentError::RootsNotPristine,
+            ));
+        }
+        // The test-only fixture establishes the same process preparation
+        // edge that production completes before it admits later threads. The
+        // main-heap lease carries the exact selected source-main identity;
+        // this is identity-only and cannot take metadata backing.
+        metadata
+            .prepare_for_main_subprocess(config, main_heap.subprocess())
+            .map_err(|error| {
+                MainHeapThreadAttachmentBeginError::Rejected(
+                    MainHeapThreadAttachmentError::TheapMetadata(error),
+                )
+            })?;
         // SAFETY: test callers carry the same root/current-thread ownership
         // proof and retain the leaked metadata fixture for the full lifetime.
         unsafe { Self::begin_with_metadata(main_heap, metadata, config) }
@@ -224,6 +339,11 @@ impl<'main> MainHeapThreadAttachment<'main> {
             thread,
             counted_in_main_heap: false,
             terminal_os_release: None,
+            page_engine_suspended: false,
+            #[cfg(test)]
+            deferred_free_test_observer: None,
+            #[cfg(test)]
+            detached_process_page_finish_failures: 0,
             state: MainHeapThreadAttachmentState::Preparing,
             _not_send_or_sync: PhantomData,
         };
@@ -284,6 +404,48 @@ impl<'main> MainHeapThreadAttachment<'main> {
         &mut self,
     ) -> Result<MainHeapThreadPageSession<'_, 'main>, MainHeapThreadPageSessionError> {
         MainHeapThreadPageSession::begin(self)
+    }
+
+    /// Revalidates this already-attached source owner for one short operation
+    /// of its continuously stored owner-local page engine.
+    ///
+    /// Unlike [`Self::page_session`], this projection accepts pages already
+    /// owned by the attachment. It neither suspends the source owner nor
+    /// changes its fast-slot, list, or page-count state; the caller must keep
+    /// the matching engine continuously alive and bind this view only for the
+    /// duration of one synchronous local operation.
+    #[inline]
+    pub(crate) fn owner_local_page_session(
+        &mut self,
+    ) -> Result<MainHeapThreadPageSession<'_, 'main>, MainHeapThreadPageSessionError> {
+        MainHeapThreadPageSession::begin_owner_local(self)
+    }
+
+    /// Installs one attachment-local deferred-free observer for a focused
+    /// source-order regression.
+    ///
+    /// # Safety
+    ///
+    /// `context` and every value it reaches must remain valid until this
+    /// attachment finishes or is intentionally retained terminally. The
+    /// callback is observational only: it must not retain metadata pointers,
+    /// mutate allocator state, or unwind across the invocation boundary.
+    #[cfg(test)]
+    pub(crate) unsafe fn test_install_deferred_free_observer(
+        &mut self,
+        callback: DeferredFreeTestCallback,
+        context: NonNull<c_void>,
+    ) -> bool {
+        if self.ensure_attached_current().is_err() || self.deferred_free_test_observer.is_some() {
+            return false;
+        }
+        // SAFETY: the caller supplies the synchronous callback/context
+        // lifetime proof documented above. This field remains private to the
+        // exact attachment and is consumed before its TLD can tear down.
+        self.deferred_free_test_observer = Some(unsafe {
+            DeferredFreeTestObserver::new(callback, context)
+        });
+        true
     }
 
     /// Finishes source `_mi_thread_done` after the pthread runtime has run all
@@ -409,7 +571,28 @@ impl<'main> MainHeapThreadAttachment<'main> {
     pub(crate) unsafe fn finish_after_detached_process_page_route(
         &mut self,
     ) -> Result<(), MainHeapThreadAttachmentError> {
+        #[cfg(test)]
+        if self.detached_process_page_finish_failures != 0 {
+            self.detached_process_page_finish_failures -= 1;
+            return Err(MainHeapThreadAttachmentError::TheapProjection);
+        }
         self.finish_after_page_drain()
+    }
+
+    /// Makes the next selected final attachment-boundary attempts fail before
+    /// any root/list/TLD mutation.
+    ///
+    /// This is test-only evidence for the consuming collect-abandon wrapper.
+    /// It deliberately cannot select production cleanup, a scheduler, a
+    /// registry, or a page route.
+    #[cfg(test)]
+    pub(crate) fn test_fail_detached_process_page_finish_times(&mut self, failures: usize) {
+        assert_ne!(failures, 0, "the focused post-drain fault has one selected attempt");
+        assert_eq!(
+            self.detached_process_page_finish_failures, 0,
+            "one attachment owns at most one focused post-drain fault plan"
+        );
+        self.detached_process_page_finish_failures = failures;
     }
 
     fn initialize_and_publish(&mut self) -> Result<(), MainHeapThreadAttachmentError> {
@@ -483,8 +666,75 @@ impl<'main> MainHeapThreadAttachment<'main> {
         &mut self,
         require_empty: bool,
     ) -> Result<(), MainHeapThreadAttachmentError> {
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Missing => {}
+            MainHeapThreadOwnerLocalPageEngineState::Idle => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineActive);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineReentrant);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal);
+            }
+        }
+        self.prevalidate_attached_page_drain_without_owner_local(require_empty)
+    }
+
+    fn prevalidate_attached_page_drain_without_owner_local(
+        &mut self,
+        require_empty: bool,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
+        if self.page_engine_suspended {
+            return Err(MainHeapThreadAttachmentError::PersistentPageEngineSuspended);
+        }
         self.ensure_attached_current()?;
         self.prevalidate_page_drain_common(require_empty, true)
+    }
+
+    /// Validates the exact opposite half of the persistent-engine handoff.
+    ///
+    /// A suspended state token deliberately leaves the attachment's source
+    /// roots, Theap, TLD, and any live pages in place, but releases the Rust
+    /// borrow that would otherwise make TLS storage self-referential.  Only
+    /// that token may call this path to re-form one ordinary page session.
+    /// The marker is cleared only after every fallible preflight has passed,
+    /// so a rejected resume leaves the old token and attachment unchanged.
+    fn resume_persistent_page_engine(&mut self) -> Result<(), MainHeapThreadAttachmentError> {
+        if !self.page_engine_suspended {
+            return Err(MainHeapThreadAttachmentError::PersistentPageEngineMissing);
+        }
+        self.ensure_attached_current()?;
+        self.prevalidate_page_drain_common(false, true)?;
+        if self.terminal_os_release.is_some() {
+            return Err(MainHeapThreadAttachmentError::Poisoned);
+        }
+        if self
+            .tld
+            .as_ref()
+            .ok_or(MainHeapThreadAttachmentError::Poisoned)?
+            .sequence()
+            .get()
+            == 0
+        {
+            return Err(MainHeapThreadAttachmentError::PersistentPageEngineMissing);
+        }
+        self.page_engine_suspended = false;
+        Ok(())
+    }
+
+    /// Records that the current normal page session has moved its engine
+    /// state into a separate typed owner.  This is not source allocator
+    /// behavior; it is the Rust storage boundary which makes a persistent
+    /// TLS-owned page engine possible without manufacturing a second mutable
+    /// borrow of the attachment.
+    fn suspend_persistent_page_engine(&mut self) -> Result<(), MainHeapThreadAttachmentError> {
+        self.ensure_attached_current()?;
+        if self.page_engine_suspended {
+            return Err(MainHeapThreadAttachmentError::PersistentPageEngineSuspended);
+        }
+        self.page_engine_suspended = true;
+        Ok(())
     }
 
     #[inline]
@@ -544,10 +794,12 @@ impl<'main> MainHeapThreadAttachment<'main> {
         {
             return Err(MainHeapThreadAttachmentError::RootOwnership);
         }
-        if !self
-            .current_tld_mut()?
-            .has_exact_theap_member(theap_pointer)
-        {
+        // SAFETY: this attachment retains the exact live typed image and its
+        // current TLD remains exclusively owned at this validation boundary.
+        if !unsafe {
+            self.current_tld_mut()?
+                .has_exact_theap_member(theap_pointer)
+        } {
             return Err(MainHeapThreadAttachmentError::ListOwnership);
         }
         let mut heap = self
@@ -733,6 +985,81 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
         Ok(Self { attachment })
     }
 
+    fn begin_owner_local(
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    ) -> Result<Self, MainHeapThreadPageSessionError> {
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Idle => {}
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                return Err(MainHeapThreadPageSessionError::Attachment(
+                    MainHeapThreadAttachmentError::OwnerLocalPageEngineReentrant,
+                ));
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {
+                return Err(MainHeapThreadPageSessionError::Attachment(
+                    MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal,
+                ));
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Missing => {
+                return Err(MainHeapThreadPageSessionError::Attachment(
+                    MainHeapThreadAttachmentError::OwnerLocalPageEngineMissing,
+                ));
+            }
+        }
+        attachment
+            .prevalidate_attached_page_drain_without_owner_local(false)
+            .map_err(MainHeapThreadPageSessionError::Attachment)?;
+        if attachment.terminal_os_release.is_some() {
+            return Err(MainHeapThreadPageSessionError::Attachment(
+                MainHeapThreadAttachmentError::Poisoned,
+            ));
+        }
+        if attachment
+            .tld
+            .as_ref()
+            .ok_or(MainHeapThreadPageSessionError::Attachment(
+                MainHeapThreadAttachmentError::Poisoned,
+            ))?
+            .sequence()
+            .get()
+            == 0
+        {
+            return Err(MainHeapThreadPageSessionError::FirstTicket);
+        }
+        // Every attachment/root/list check has succeeded and no fallible step
+        // remains. Publish the synchronous borrow only now, so a rejection
+        // leaves the persistent engine idle and retryable.
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Borrowed);
+        Ok(Self { attachment })
+    }
+
+    /// Re-forms one normal page session from the only suspended persistent
+    /// engine-state token for `attachment`.
+    ///
+    /// This intentionally differs from [`Self::begin`]: a persistent engine
+    /// may still own live pages, so requiring an empty Theap here would make
+    /// TLS storage impossible.  The attachment-local suspended marker is the
+    /// missing uniqueness proof.  It is set only while the exact engine state
+    /// is held by `MainHeapThreadPausedProcessPageAllocator`, and is cleared
+    /// only after all current-thread/root/list checks succeed.
+    pub(crate) fn resume_persistent(
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    ) -> Result<Self, MainHeapThreadPageSessionError> {
+        attachment
+            .resume_persistent_page_engine()
+            .map_err(MainHeapThreadPageSessionError::Attachment)?;
+        Ok(Self { attachment })
+    }
+
+    /// Detaches this Rust borrow while retaining the source page owner in the
+    /// attachment and moving the matching engine state into a typed external
+    /// token.  A second normal session or no-page teardown now rejects until
+    /// that token resumes, so this cannot silently become a no-page
+    /// attachment merely because its engine is no longer on the stack.
+    pub(crate) fn suspend_persistent(&mut self) -> Result<(), MainHeapThreadAttachmentError> {
+        self.attachment.suspend_persistent_page_engine()
+    }
+
     /// The source old `thread_total_count` value belongs to the retained
     /// metadata TLD. It is never supplied independently by a page wrapper.
     #[inline]
@@ -752,6 +1079,21 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
     #[inline]
     pub(crate) fn main_heap_lease(&self) -> MainStaticHeapLease<'main> {
         self.attachment.main_heap
+    }
+
+    /// Forwards the private attachment-local deferred-free observer while the
+    /// normal page engine still owns the live source Theap/TLD pair.
+    #[cfg(test)]
+    pub(crate) unsafe fn test_install_deferred_free_observer(
+        &mut self,
+        callback: DeferredFreeTestCallback,
+        context: NonNull<c_void>,
+    ) -> bool {
+        // SAFETY: forwarded unchanged to the attachment-local test boundary.
+        unsafe {
+            self.attachment
+                .test_install_deferred_free_observer(callback, context)
+        }
     }
 
     #[inline]
@@ -790,6 +1132,152 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
     }
 }
 
+impl MainHeapThreadOwnerLocalPageEngineLease {
+    /// Claims the current attachment's compiler-TLS owner after an ordinary
+    /// empty page session has established its exact root/list/thread identity.
+    pub(crate) fn claim(
+        session: &MainHeapThreadPageSession<'_, '_>,
+    ) -> Result<Self, MainHeapThreadAttachmentError> {
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Missing => {}
+            MainHeapThreadOwnerLocalPageEngineState::Idle => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineActive);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineReentrant);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal);
+            }
+        }
+        let thread = session
+            .thread_id()
+            .ok_or(MainHeapThreadAttachmentError::InvalidCurrentThread)?;
+        if current_thread_identity() != Some(thread) {
+            return Err(MainHeapThreadAttachmentError::InvalidCurrentThread);
+        }
+        let thread_sequence = session.thread_sequence();
+        if thread_sequence == 0 {
+            return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineMissing);
+        }
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Idle);
+        Ok(Self {
+            thread,
+            thread_sequence,
+            finished: false,
+            _not_send_or_sync: PhantomData,
+        })
+    }
+
+    /// Consumes the continuously stored owner-local claim into the one-way
+    /// source owner-exit drain. Every fallible attachment preflight completes
+    /// before the fixed fast slot or compiler-TLS owner state changes.
+    pub(crate) fn begin_thread_exit_drain<'attachment, 'main>(
+        &mut self,
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    ) -> Result<MainHeapThreadPageDrainSession<'attachment, 'main>, MainHeapThreadAttachmentError> {
+        self.precheck_access()?;
+        attachment.prevalidate_attached_page_drain_without_owner_local(false)?;
+        if attachment.terminal_os_release.is_some() {
+            return Err(MainHeapThreadAttachmentError::Poisoned);
+        }
+        set_fast_slot(None);
+        attachment.state = MainHeapThreadAttachmentState::DrainingPages;
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Missing);
+        self.finished = true;
+        Ok(MainHeapThreadPageDrainSession { attachment })
+    }
+
+    /// Checks the compiler-TLS linear/reentry state before the caller forms a
+    /// new mutable attachment or page-session projection.
+    pub(crate) fn precheck_access(&self) -> Result<(), MainHeapThreadAttachmentError> {
+        if self.finished {
+            return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineMissing);
+        }
+        if current_thread_identity() != Some(self.thread) || self.thread_sequence == 0 {
+            return Err(MainHeapThreadAttachmentError::InvalidCurrentThread);
+        }
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Idle => Ok(()),
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineReentrant)
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal)
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Missing => {
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineMissing)
+            }
+        }
+    }
+
+    /// Releases the linear compiler-TLS claim only after the page engine has
+    /// proved quiescent and disarmed its own conservative Drop.
+    pub(crate) fn finish(&mut self) -> Result<(), MainHeapThreadAttachmentError> {
+        self.precheck_access()?;
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Missing);
+        self.finished = true;
+        Ok(())
+    }
+
+    /// Marks the consumed owner claim terminal after the fast slot changed
+    /// but a source queue transition could not complete. The outer owner
+    /// retains the exact engine only for fail-closed lifetime accounting; it
+    /// must not form another drain from this claim.
+    #[inline]
+    pub(crate) fn retain_terminal_after_thread_exit_failure(&mut self) {
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Terminal);
+        self.finished = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_begin_borrowed_state(&mut self) {
+        self.precheck_access()
+            .expect("the test reentry marker starts from one idle owner");
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Borrowed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_end_borrowed_state(&mut self) {
+        MainHeapThreadAttachment::end_owner_local_page_engine_access();
+        self.precheck_access()
+            .expect("the test reentry marker restores the idle owner");
+    }
+}
+
+impl Drop for MainHeapThreadOwnerLocalPageEngineLease {
+    fn drop(&mut self) {
+        if !self.finished {
+            MainHeapThreadAttachment::latch_unfinished_owner_local_page_engine();
+        }
+    }
+}
+
+impl MainHeapThreadAttachment<'_> {
+    /// Restores the persistent owner to idle after one synchronous short
+    /// source projection, including panic unwinding.
+    pub(crate) fn end_owner_local_page_engine_access() {
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Idle);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {}
+            MainHeapThreadOwnerLocalPageEngineState::Missing
+            | MainHeapThreadOwnerLocalPageEngineState::Idle => {
+                set_owner_local_page_engine_state(
+                    MainHeapThreadOwnerLocalPageEngineState::Terminal,
+                );
+            }
+        }
+    }
+
+    /// Permanently prevents fresh page-engine entry and attachment teardown
+    /// after an unfinished owner lost its explicit consuming finish boundary.
+    pub(crate) fn latch_unfinished_owner_local_page_engine() {
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Terminal);
+    }
+}
+
 /// A post-fast-slot, pre-list-detach page owner for one later metadata Theap
 /// linked to the static main Heap.
 ///
@@ -801,6 +1289,49 @@ pub(crate) struct MainHeapThreadPageDrainSession<'attachment, 'main> {
     attachment: &'attachment mut MainHeapThreadAttachment<'main>,
 }
 
+/// The disjoint TLD half of a source owner-exit deferred-free invocation.
+///
+/// It is created before the queue coordinator lends its exclusive `Theap`.
+/// The cursor contains only the matching TLD projection and scalar observer;
+/// it cannot form an attachment, queue, PageMap, arena, or allocator borrow
+/// while that coordinator owns the Theap reference.
+pub(crate) struct MainHeapThreadOwnerExitDeferredFree {
+    theap: NonNull<Theap>,
+    tld: NonNull<crate::types::ThreadLocalData>,
+    #[cfg(test)]
+    observer: Option<DeferredFreeTestObserver>,
+}
+
+impl MainHeapThreadOwnerExitDeferredFree {
+    #[inline]
+    pub(crate) const fn theap(&self) -> NonNull<Theap> { self.theap }
+
+    /// Runs the source heartbeat/callback phase through the coordinator's
+    /// exact Theap borrow. The stored TLD is a disjoint attachment field and
+    /// remains valid until the enclosing drain finishes or is retained.
+    pub(crate) fn collect(
+        &mut self,
+        theap: &mut Theap,
+        force: bool,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
+        if !core::ptr::eq(core::ptr::from_mut(theap), self.theap.as_ptr()) {
+            return Err(MainHeapThreadAttachmentError::TheapProjection);
+        }
+        #[cfg(test)]
+        let collect = crate::deferred_free::collect_with_test_observer(
+            self.theap,
+            self.tld,
+            force,
+            self.observer,
+        );
+        #[cfg(not(test))]
+        let collect = crate::deferred_free::collect(self.theap, self.tld, force);
+        collect
+            .map(|_| ())
+            .map_err(MainHeapThreadAttachmentError::DeferredFree)
+    }
+}
+
 impl<'attachment, 'main> MainHeapThreadPageDrainSession<'attachment, 'main> {
     /// Returns the process-static main Heap lifetime witness retained by this
     /// still-linked later Theap. A post-exit route may keep this copy after
@@ -809,6 +1340,78 @@ impl<'attachment, 'main> MainHeapThreadPageDrainSession<'attachment, 'main> {
     #[inline]
     pub(crate) fn main_heap_lease(&self) -> MainStaticHeapLease<'main> {
         self.attachment.main_heap
+    }
+
+    /// Returns whether a source owner-exit traversal has already retained an
+    /// ambiguous post-fast-slot state. Such a drain can no longer enter the
+    /// ordinary all-free/no-page finalizer merely because some queue/count
+    /// fields were detached before the failure.
+    #[inline]
+    pub(crate) fn owner_exit_is_terminal(&self) -> bool {
+        self.attachment.state == MainHeapThreadAttachmentState::Poisoned
+    }
+
+    /// Records a failed source owner-exit traversal after its route may have
+    /// detached queue/count state without completing a typed process route.
+    ///
+    /// This is deliberately attachment-local: it keeps the original Theap,
+    /// TLD, and worker lifecycle from being finalized through the normal
+    /// no-page path while the retained engine/lease remains the only exact
+    /// owner of the ambiguous page state.
+    #[inline]
+    pub(crate) fn retain_terminal_owner_exit(&mut self) {
+        self.attachment.state = MainHeapThreadAttachmentState::Poisoned;
+    }
+
+    /// Executes the source `_mi_deferred_free` phase while both metadata
+    /// images remain live, after the fixed fast slot has cleared and before a
+    /// page collector can retire, release, or queue-detach a page.
+    ///
+    /// The callback registration ABI remains absent. Production still takes
+    /// the source heartbeat step; a private test observer proves the exact
+    /// ordering without giving arbitrary code allocator mutation authority.
+    pub(crate) fn collect_deferred_free_before_page_collection(
+        &mut self,
+        force: bool,
+    ) -> Result<u64, MainHeapThreadAttachmentError> {
+        self.attachment.ensure_draining_current()?;
+        #[cfg(test)]
+        let observer = self.attachment.deferred_free_test_observer;
+        let theap = NonNull::new(self.attachment.theap_pointer()?)
+            .ok_or(MainHeapThreadAttachmentError::TheapProjection)?;
+        let tld = {
+            let tld = self.attachment.current_tld_mut()?;
+            NonNull::from(tld)
+        };
+        #[cfg(test)]
+        let collect = crate::deferred_free::collect_with_test_observer(
+            theap, tld, force, observer,
+        );
+        #[cfg(not(test))]
+        let collect = crate::deferred_free::collect(theap, tld, force);
+        collect.map_err(MainHeapThreadAttachmentError::DeferredFree)
+    }
+
+    /// Splits out only the TLD side of the deferred-free source phase before
+    /// the generic queue coordinator borrows this session's Theap. This is a
+    /// field-level separation: no whole attachment reference is retained by
+    /// the returned cursor.
+    pub(crate) fn owner_exit_deferred_free_cursor(
+        &mut self,
+    ) -> Result<MainHeapThreadOwnerExitDeferredFree, MainHeapThreadAttachmentError> {
+        self.attachment.ensure_draining_current()?;
+        let theap = NonNull::new(self.attachment.theap_pointer()?)
+            .ok_or(MainHeapThreadAttachmentError::TheapProjection)?;
+        let tld = {
+            let tld = self.attachment.current_tld_mut()?;
+            NonNull::from(tld)
+        };
+        Ok(MainHeapThreadOwnerExitDeferredFree {
+            theap,
+            tld,
+            #[cfg(test)]
+            observer: self.attachment.deferred_free_test_observer,
+        })
     }
 
     /// Consumes this empty post-fast-slot session into its underlying later

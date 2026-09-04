@@ -9,25 +9,91 @@
   },
   "source_regions": [
     "src/init.c:151-157,305-360,377-421",
+    "src/theap.c:89-152,228-306,414-449",
     "src/arena.c:341-406,525-569,674-723,781-821,951-1114,1129-1213,1240-1282",
     "src/page-map.c:228-365",
-    "src/alloc.c:29-159,379-451"
+    "src/alloc.c:29-159,379-451",
+    "src/free.c:62-97,372-418,396-417,479-515",
+    "src/page.c:150-269"
   ],
   "adapter_package": "crabc-mimalloc-runtime-ticket-zero-adapter",
   "header": "compat/allocator/runtime-ticket-zero-adapter/crabc-mimalloc-runtime-ticket-zero-test.h",
   "fixture": "compat/allocator/runtime-ticket-zero-adapter/runtime-ticket-zero-fixture.c",
+  "fixture_invocation": {
+    "cycle_argument": "--worker-cycles",
+    "churn_stress_seed": "0xd1b54a32d192ed03",
+    "churn_watchdog_seconds": 30,
+    "churn_worker_cycles": 128,
+    "default_stress_seed": "0x9e3779b97f4a7c15",
+    "default_worker_cycles": 3,
+    "maximum_worker_cycles": 1024,
+    "soak_stress_seed": "0x94d049bb133111eb",
+    "soak_watchdog_seconds": 180,
+    "soak_worker_cycles": 1024,
+    "stress_seed_argument": "--stress-seed",
+    "worker_routes_per_cycle": 2
+  },
   "expected_adapter_symbols": [
     "crabc_ticket_zero_test_free",
     "crabc_ticket_zero_test_init",
+    "crabc_ticket_zero_test_lifecycle_audit",
     "crabc_ticket_zero_test_malloc",
     "crabc_ticket_zero_test_realloc",
+    "crabc_ticket_zero_test_worker_mixed_roundtrip",
+    "crabc_ticket_zero_test_worker_remote_free_roundtrip",
     "crabc_ticket_zero_test_worker_roundtrip",
     "crabc_ticket_zero_test_zalloc"
   ],
+  "lifecycle_audit": {
+    "fixture_stdout_fields": [
+      "worker_cycles",
+      "process_active",
+      "page_owner_ready",
+      "page_map_registered_entries",
+      "page_map_published_submaps",
+      "page_map_lazy_submap_allocations",
+      "arena_registry_entries",
+      "live_tlds",
+      "metadata_live_capabilities",
+      "metadata_high_water_capabilities",
+      "shared_later_theaps",
+      "abandoned_regular_pages",
+      "os_abandoned_pages_empty"
+    ],
+    "fixture_stdout_prefix": "runtime ticket-zero lifecycle audit ",
+    "fixture_success_line": "runtime ticket-zero allocator ok",
+    "report": {
+      "audit_snapshot_count": "worker_cycles + 1",
+      "post_warm_cycle_count": "worker_cycles - 1",
+      "status": "passed",
+      "warm_baseline": "the exact first-complete-cycle scalar fixture record"
+    }
+  },
+  "soak_report": {
+    "evidence_scope": "bounded-private-ticket-zero-soak",
+    "format": 1,
+    "git_read_environment": {
+      "GIT_OPTIONAL_LOCKS": "0"
+    },
+    "mode": "soak",
+    "nonclaims": [
+      "does not consume or unblock an M5 gate",
+      "does not establish general cross-thread, post-exit, upstream-pthread, or large-object acceptance",
+      "does not establish a selected or default crabc-libc native-mimalloc allocator backend"
+    ],
+    "relative_path": "reports/allocator/runtime-ticket-zero-soak-1024.json",
+    "requires_clean_git_source": true,
+    "requires_source_before_equals_after": true,
+    "schema": "crabc-mimalloc-runtime-ticket-zero-soak-report",
+    "status": "passed"
+  },
   "caller_contract": [
     "The fixture is one fresh Linux/AArch64 process and calls init once with its original thread's nonzero AT_PAGESZ value.",
     "Every allocation, reallocation, and free is serialized on that original thread.",
-    "After the original thread frees every adapter allocation, one fresh pthread may make one pointer-free worker round trip; it creates and finishes one scoped later-main page engine before its normal worker teardown.",
+    "After the original thread frees every adapter allocation, one fresh pthread may make one pointer-free narrow worker round trip or one pointer-private persistent mixed-local worker round trip; either creates and finishes one later-main page engine before its normal worker teardown.",
+    "The persistent worker keeps one engine through multiple simultaneously live small, medium, large, singleton, and multi-page singleton allocations, checks their contents, locally reuses freed small and medium blocks, and frees every block before engine finish; no pointer crosses the worker boundary.",
+    "After the original thread frees every adapter allocation, one fresh pthread may become remote-free owner A. The adapter starts and joins two private publisher pthreads B/C; only opaque logical publication capabilities reach them, A false-collects and reuses both remote blocks while still live, and then A frees every block before normal teardown.",
+    "After every scheduled worker joins, the original thread may request one test-only scalar lifecycle audit. It reports process/page-owner readiness and aggregate PageMap, arena registry, live-TLD, metadata-capability, shared-Theap, regular-abandoned, and OS-abandoned-list state only; it cannot identify or operate on a pointer, page, route, allocator, or release capability. The first complete schedule cycle warms immutable capacity; every later cycle and the final ticket-zero allocation/free must reproduce that quiescent snapshot.",
     "Only current pointers returned by this adapter may reach its realloc or free entry points.",
     "No shutdown is exposed: the permanent source-shaped ticket-zero page owner remains live until process exit.",
     "The adapter exports no malloc, free, or mi_* ELF symbol and never selects crabc-libc's production backend."
@@ -38,7 +104,10 @@
     "realloc preserves the initialized prefix",
     "zalloc returns zeroed bytes",
     "after all exact allocations free, the owner releases only its Rust PageMap lifecycle lease",
-    "one fresh worker can borrow that dormant published pair for an empty scoped later-main page-engine round trip and finish its normal attachment",
+    "one fresh worker can borrow that dormant published pair for the retained narrow scoped page-engine round trip and finish its normal attachment",
+    "the default three, or one caller-selected bounded count of, fresh workers can each retain one engine through the pointer-private mixed local small/medium/large/singleton/multi-page workload, locally reuse freed small and medium blocks, free all blocks, and restore normal attachment teardown",
+    "the default three, or one caller-selected bounded count of, fresh remote-free owners A can each create and join B/C, publish two exact full-small-page blocks through the real remote head, false-collect and reuse both while A stays live, free all blocks, and restore normal attachment teardown",
+    "the fixture accepts no arguments for its default three worker cycles and default unsigned-64-bit schedule seed, or at most one each of `--worker-cycles N` for decimal N in 1..1024 and `--stress-seed SEED` for a base-0 unsigned-64-bit literal in either order; every cycle executes each of the two pointer-private worker routes exactly once in a deterministic seed-shuffled order. The first completed cycle is the scalar lifecycle-audit warmup; each later cycle and the final ticket-zero allocation/free must match that audit's quiescent baseline. `allocator --churn` selects 128 with seed `0xd1b54a32d192ed03` under a 30-second watchdog, while opt-in `allocator --soak` selects 1024 with seed `0x94d049bb133111eb` under a 180-second watchdog",
     "ticket zero reactivates afterward through the same first arena"
   ],
   "compile_requirements": {

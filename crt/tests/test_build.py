@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -13,9 +14,21 @@ from pathlib import Path
 
 CRT_ROOT = Path(__file__).resolve().parents[1]
 BUILDER = CRT_ROOT / "build.py"
+SPEC = importlib.util.spec_from_file_location("crabc_crt_build", BUILDER)
+assert SPEC is not None and SPEC.loader is not None
+BUILD = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = BUILD
+SPEC.loader.exec_module(BUILD)
 
 
 class CrtBuildTests(unittest.TestCase):
+    def test_builder_owns_its_rustc_temporary_directory(self) -> None:
+        temporary = CRT_ROOT.parent / ".work/tmp/crt-build-environment"
+        environment = BUILD.deterministic_environment(temporary)
+
+        self.assertEqual(environment["TMPDIR"], str(temporary.resolve()))
+        self.assertTrue(temporary.is_dir())
+
     def test_builder_produces_all_aarch64_objects_with_recorded_commands(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "objects"

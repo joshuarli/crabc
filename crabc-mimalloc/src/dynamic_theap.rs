@@ -75,7 +75,7 @@
 extern crate std;
 
 use core::cell::Cell;
-use core::marker::PhantomData;
+use core::marker::{PhantomData, PhantomPinned};
 use core::mem::size_of;
 use core::pin::Pin;
 use core::ptr::NonNull;
@@ -96,17 +96,27 @@ use crate::owned_tls_key_registry::{
 use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
 use crate::subproc::MainSubprocess;
-use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner, ThreadLocalKey};
+use crate::thread_local::{
+    ThreadLocalBackingError, ThreadLocalBackingOwner, ThreadLocalBackingTeardownFailure,
+    ThreadLocalKey,
+};
 use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError, ThreadLocalDataOwner};
 use crate::types::{
     DynamicTheapPageMode, Heap, HeapOsAbandonedPageListError, MemoryId, Page, PageQueue,
-    Theap, TheapDynamicInitError, TheapOwner, ThreadLocalTheapListError,
+    LiveThreadId, Theap, TheapDynamicInitError, TheapOwner, ThreadLocalData,
+    ThreadLocalTheapListError,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DynamicAttachmentState {
     Preparing,
     Attached,
+    /// The source regular TLS slot is cleared, but the selected backing
+    /// release rejected before it could claim its exact Malloc capability.
+    /// The backing root, key lease, TLD, Theap, Heap binding, and cached
+    /// reference remain live solely so this owner can resume that release.
+    /// It must not replay the attached-slot preflight or re-publish a slot.
+    AwaitingBackingRelease,
     /// The source regular TLS slot is cleared, so an abandoned-page free can
     /// no longer reclaim this Theap. The page-map/arena/Theap/TLD ownership
     /// stays live until the dedicated page-drain owner has released or
@@ -282,6 +292,353 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
+/// In-place, later-worker storage for one persistent source TLD/Theap pair.
+///
+/// Pinned `mi_thread_init_with_heap` creates its TLD and Theap once, publishes
+/// the Theap through the regular TLS slot, and then leaves that source image
+/// installed for arbitrary local allocator work.  This storage is the narrow
+/// Rust owner for that same shape: it pins the lifecycle authority in the
+/// worker-owned runtime record while [`DynamicTheapAttachment`] keeps the
+/// actual metadata-backed TLD/Theap and regular compiler-TLS slot alive.
+///
+/// It deliberately does not discover a worker through a process registry or
+/// resume/park an allocation engine around [`Self::with_local`].  A runtime
+/// that owns thread creation must allocate this storage before entering the
+/// worker, pin it for the worker's complete allocator lifetime, and call
+/// [`Self::teardown`] after user destructors.  The only integration seam is
+/// that runtime-owned pinned storage plus the pinned local `Heap` image; no
+/// global owner table is involved.
+#[must_use = "a persistent worker TLD/Theap storage must be explicitly torn down or retained"]
+pub(crate) struct PersistentWorkerTheapStorage<'heap> {
+    attachment: Option<DynamicTheapAttachment<'heap>>,
+    thread: Option<LiveThreadId>,
+    state: PersistentWorkerTheapStorageState,
+    _pinned: PhantomPinned,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistentWorkerTheapStorageState {
+    Vacant,
+    Attached,
+    TornDown,
+    /// The inner attachment retained source state after an incomplete
+    /// construction. It must stay pinned and is intentionally not reusable.
+    Retained,
+}
+
+/// One refusal or retained-source-state result from the persistent worker
+/// attachment boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PersistentWorkerTheapStorageError {
+    InvalidCurrentThread,
+    NotAttached,
+    AlreadyAttached,
+    TornDown,
+    Retained,
+    /// The current native thread does not own this pinned storage record.
+    WrongThread,
+    Attachment(DynamicTheapError),
+}
+
+/// A short direct-local projection of one persistent worker attachment.
+///
+/// This carries only the source-local Heap, TLD, and Theap. It cannot detach
+/// either list, clear the regular TLS slot, or release metadata; those
+/// transitions remain exclusive to [`PersistentWorkerTheapStorage::teardown`].
+/// A future allocator hot path can operate through this projection without
+/// moving a session out of TLS or acquiring a process-wide lifecycle lock.
+pub(crate) struct PersistentWorkerTheapLocal<'local> {
+    heap: &'local mut Heap,
+    tld: &'local mut ThreadLocalData,
+    theap: &'local mut Theap,
+    thread: LiveThreadId,
+}
+
+/// Stable addresses of the source-local images retained by one attached
+/// worker. These are observations, not dereference authority: callers must
+/// acquire [`PersistentWorkerTheapStorage::with_local`] for local mutation.
+///
+/// The addresses stay valid only while the same pinned storage remains
+/// attached on its originating worker. A later `teardown` removes the source
+/// regular TLS slot and releases these metadata images, so no address may be
+/// retained or dereferenced beyond that boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PersistentWorkerTheapAddresses {
+    heap: usize,
+    tld: usize,
+    theap: usize,
+}
+
+impl PersistentWorkerTheapAddresses {
+    #[inline]
+    pub(crate) const fn heap(self) -> usize {
+        self.heap
+    }
+
+    #[inline]
+    pub(crate) const fn tld(self) -> usize {
+        self.tld
+    }
+
+    #[inline]
+    pub(crate) const fn theap(self) -> usize {
+        self.theap
+    }
+}
+
+impl PersistentWorkerTheapLocal<'_> {
+    #[inline]
+    pub(crate) const fn thread(&self) -> LiveThreadId {
+        self.thread
+    }
+
+    #[inline]
+    pub(crate) fn heap(&mut self) -> &mut Heap {
+        self.heap
+    }
+
+    #[inline]
+    pub(crate) fn tld(&mut self) -> &mut ThreadLocalData {
+        self.tld
+    }
+
+    #[inline]
+    pub(crate) fn theap(&mut self) -> &mut Theap {
+        self.theap
+    }
+}
+
+impl<'heap> PersistentWorkerTheapStorage<'heap> {
+    /// Creates vacant worker-owned storage. It becomes address-stable only
+    /// after the caller pins it and passes it to [`Self::attach_in_place`].
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self {
+            attachment: None,
+            thread: None,
+            state: PersistentWorkerTheapStorageState::Vacant,
+            _pinned: PhantomPinned,
+            _not_send_or_sync: PhantomData,
+        }
+    }
+
+    /// Attaches one later worker to a caller-pinned source Heap and stores the
+    /// resulting TLD/Theap authority in this exact pinned worker record.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns the current worker's complete allocator lifecycle.
+    /// `self` and `heap` must remain pinned and live until successful
+    /// [`Self::teardown`], or until an incomplete source owner is deliberately
+    /// retained. The process must already have selected ticket-zero through
+    /// the main-thread path. No competing owner may mutate this worker's
+    /// compiler-TLS roots, regular key, TLD, or Theap.
+    pub(crate) unsafe fn attach_in_place(
+        self: Pin<&mut Self>,
+        config: MemoryConfig,
+        heap: Pin<&'heap mut Heap>,
+    ) -> Result<(), PersistentWorkerTheapStorageError> {
+        self.as_ref().get_ref().ensure_vacant()?;
+        // SAFETY: the caller forwards the exact exclusive worker/heap proof
+        // required by the source-shaped dynamic attachment constructor.
+        let attachment = unsafe { DynamicTheapAttachment::begin(config, heap) };
+        // SAFETY: `self` remains pinned for this call and every stored
+        // attachment borrows only the separately pinned Heap image.
+        unsafe { self.install_attachment(attachment) }
+    }
+
+    /// Projects the same persistent TLD/Theap for one direct local operation.
+    ///
+    /// The closure is synchronous and receives only source-local mutable
+    /// state. Returning ends the projection but leaves the attachment, its
+    /// regular TLS entry, and its metadata allocations installed unchanged.
+    /// In particular, repeated calls do not move, park, or resume the owner.
+    pub(crate) fn with_local<R>(
+        self: Pin<&mut Self>,
+        operation: impl FnOnce(PersistentWorkerTheapLocal<'_>) -> R,
+    ) -> Result<R, PersistentWorkerTheapStorageError> {
+        // SAFETY: this method never moves the pinned storage or its optional
+        // attachment. Its only mutation is borrowed through the attachment.
+        let storage = unsafe { Pin::get_unchecked_mut(self) };
+        storage.ensure_attached_current()?;
+        let attachment = storage
+            .attachment
+            .as_mut()
+            .ok_or(PersistentWorkerTheapStorageError::Retained)?;
+        let local = attachment
+            .local_parts()
+            .map_err(PersistentWorkerTheapStorageError::Attachment)?;
+        Ok(operation(local))
+    }
+
+    /// Returns the stable in-place source-image addresses for this attached
+    /// worker after checking the same current-thread, compiler-TLS root,
+    /// cached-reference, and list-membership invariants as local work.
+    ///
+    /// This is an observation seam for direct local-operation integration and
+    /// diagnostics. It does not create a global lookup path or a mutable raw
+    /// owner; [`Self::with_local`] remains the only local-operation projection.
+    pub(crate) fn addresses(
+        self: Pin<&mut Self>,
+    ) -> Result<PersistentWorkerTheapAddresses, PersistentWorkerTheapStorageError> {
+        // SAFETY: address observation does not move the pinned storage or
+        // mutate the attached Theap/TLD/Heap state.
+        let storage = unsafe { Pin::get_unchecked_mut(self) };
+        storage.ensure_attached_current()?;
+        storage
+            .attachment
+            .as_mut()
+            .ok_or(PersistentWorkerTheapStorageError::Retained)?
+            .local_addresses()
+            .map_err(PersistentWorkerTheapStorageError::Attachment)
+    }
+
+    /// Performs source thread teardown after user destructors and after every
+    /// source page has become releasable or been handed to the owner-exit
+    /// coordinator.
+    ///
+    /// `DynamicTheapAttachment::teardown` is the hard precondition judge: it
+    /// refuses a nonzero page count before clearing the regular slot or
+    /// detaching either list. On every error this pinned storage retains the
+    /// exact inner owner for diagnosis or its one source-permitted retry; it
+    /// is never reset into a fresh worker record.
+    pub(crate) fn teardown(
+        self: Pin<&mut Self>,
+    ) -> Result<(), PersistentWorkerTheapStorageError> {
+        // SAFETY: as in `with_local`, the field is not moved while borrowed.
+        let storage = unsafe { Pin::get_unchecked_mut(self) };
+        storage.ensure_attached_current()?;
+        let attachment = storage
+            .attachment
+            .as_mut()
+            .ok_or(PersistentWorkerTheapStorageError::Retained)?;
+        attachment
+            .teardown()
+            .map_err(PersistentWorkerTheapStorageError::Attachment)?;
+        storage.attachment = None;
+        storage.thread = None;
+        storage.state = PersistentWorkerTheapStorageState::TornDown;
+        Ok(())
+    }
+
+    /// Returns the captured source identity while the worker remains attached.
+    #[inline]
+    pub(crate) fn thread(
+        self: Pin<&mut Self>,
+    ) -> Result<LiveThreadId, PersistentWorkerTheapStorageError> {
+        // SAFETY: immutable access does not move the pinned storage.
+        let storage = unsafe { self.get_unchecked_mut() };
+        storage.ensure_attached_current()?;
+        storage
+            .thread
+            .ok_or(PersistentWorkerTheapStorageError::Retained)
+    }
+
+    /// Test-only isolated-component constructor. It keeps the production seam
+    /// at [`Self::attach_in_place`] while allowing focused tests to prove the
+    /// persistent worker shape without using any process-global registry.
+    #[cfg(test)]
+    unsafe fn attach_in_place_with_components(
+        self: Pin<&mut Self>,
+        config: MemoryConfig,
+        heap: Pin<&'heap mut Heap>,
+        subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>,
+        registry: &'static OwnedThreadLocalKeyRegistry,
+    ) -> Result<(), PersistentWorkerTheapStorageError> {
+        self.as_ref().get_ref().ensure_vacant()?;
+        // SAFETY: the isolated fixtures carry the same process-lifetime
+        // component and current-worker exclusivity proof as production.
+        let attachment = unsafe {
+            DynamicTheapAttachment::begin_with_components(
+                config, heap, subprocess, metadata, registry,
+            )
+        };
+        // SAFETY: this preserves the caller's pin while installing only the
+        // source attachment returned by the constructor above.
+        unsafe { self.install_attachment(attachment) }
+    }
+
+    unsafe fn install_attachment(
+        self: Pin<&mut Self>,
+        result: Result<DynamicTheapAttachment<'heap>, DynamicTheapBeginError<'heap>>,
+    ) -> Result<(), PersistentWorkerTheapStorageError> {
+        // SAFETY: this private constructor path is the only mutation before
+        // `Attached`; it does not move an already installed attachment.
+        let storage = unsafe { Pin::get_unchecked_mut(self) };
+        match storage.state {
+            PersistentWorkerTheapStorageState::Vacant => {}
+            PersistentWorkerTheapStorageState::Attached => {
+                return Err(PersistentWorkerTheapStorageError::AlreadyAttached);
+            }
+            PersistentWorkerTheapStorageState::TornDown => {
+                return Err(PersistentWorkerTheapStorageError::TornDown);
+            }
+            PersistentWorkerTheapStorageState::Retained => {
+                return Err(PersistentWorkerTheapStorageError::Retained);
+            }
+        }
+
+        let thread = current_thread_identity()
+            .ok_or(PersistentWorkerTheapStorageError::InvalidCurrentThread)?;
+        match result {
+            Ok(attachment) => {
+                storage.attachment = Some(attachment);
+                storage.thread = Some(thread);
+                storage.state = PersistentWorkerTheapStorageState::Attached;
+                Ok(())
+            }
+            Err(DynamicTheapBeginError::Rejected(error)) => {
+                Err(PersistentWorkerTheapStorageError::Attachment(error))
+            }
+            Err(DynamicTheapBeginError::Retained { error, attachment }) => {
+                storage.attachment = Some(attachment);
+                storage.thread = Some(thread);
+                storage.state = PersistentWorkerTheapStorageState::Retained;
+                Err(PersistentWorkerTheapStorageError::Attachment(error))
+            }
+        }
+    }
+
+    fn ensure_attached_current(&self) -> Result<(), PersistentWorkerTheapStorageError> {
+        match self.state {
+            PersistentWorkerTheapStorageState::Vacant => {
+                Err(PersistentWorkerTheapStorageError::NotAttached)
+            }
+            PersistentWorkerTheapStorageState::TornDown => {
+                Err(PersistentWorkerTheapStorageError::TornDown)
+            }
+            PersistentWorkerTheapStorageState::Retained => {
+                Err(PersistentWorkerTheapStorageError::Retained)
+            }
+            PersistentWorkerTheapStorageState::Attached => match (
+                self.thread,
+                current_thread_identity(),
+            ) {
+                (Some(expected), Some(current)) if expected == current => Ok(()),
+                (_, Some(_)) => Err(PersistentWorkerTheapStorageError::WrongThread),
+                (_, None) => Err(PersistentWorkerTheapStorageError::InvalidCurrentThread),
+            },
+        }
+    }
+
+    fn ensure_vacant(&self) -> Result<(), PersistentWorkerTheapStorageError> {
+        match self.state {
+            PersistentWorkerTheapStorageState::Vacant => Ok(()),
+            PersistentWorkerTheapStorageState::Attached => {
+                Err(PersistentWorkerTheapStorageError::AlreadyAttached)
+            }
+            PersistentWorkerTheapStorageState::TornDown => {
+                Err(PersistentWorkerTheapStorageError::TornDown)
+            }
+            PersistentWorkerTheapStorageState::Retained => {
+                Err(PersistentWorkerTheapStorageError::Retained)
+            }
+        }
+    }
+}
+
 /// The only heap-local capability that may outlive a dynamic attachment's
 /// source thread after a bounded arena page has already been abandoned.
 ///
@@ -396,6 +753,8 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     /// terminal owner that cannot finish teardown must stay alive (or be
     /// deliberately leaked) for as long as its thread/TLS/process state and
     /// heap storage can be observed; dropping it must not manufacture cleanup.
+    /// Process initialization must already have bound and published the global
+    /// metadata image; this later-ticket path never performs that preparation.
     /// Ticket zero is explicitly reserved for `MainStaticTheapAttachment`;
     /// this method returns `FirstTicketReserved` without consuming it.
     pub(crate) unsafe fn begin(
@@ -454,7 +813,9 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     /// # Safety
     ///
     /// The obligations are identical to [`Self::begin`], and all components
-    /// must name the same selected main-subprocess identity.
+    /// must name the same selected main-subprocess identity. `metadata` and
+    /// `subprocess` must already have completed
+    /// [`MetaAllocator::prepare_for_main_subprocess`].
     unsafe fn begin_with_components(
         config: MemoryConfig,
         heap: Pin<&'heap mut Heap>,
@@ -622,6 +983,56 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             .ok_or(DynamicTheapError::Poisoned)
     }
 
+    /// Borrows the source-local state already retained by this live later
+    /// worker. This is the direct hot-path seam: it validates the exact
+    /// regular TLS slot, cached root/reference, intrusive memberships, and
+    /// current identity, then returns only the local Heap/TLD/Theap image.
+    ///
+    /// No page-map mutation lease, process scheduler, registry lookup, or
+    /// session transition occurs here. The caller may perform local source
+    /// work and must return before attachment teardown can begin.
+    fn local_parts(
+        &mut self,
+    ) -> Result<PersistentWorkerTheapLocal<'_>, DynamicTheapError> {
+        self.prevalidate_attached_page_drain(false)?;
+        let thread = self.thread;
+        let (heap, tld, allocation) = self.heap_tld_theap_mut()?;
+        let theap = allocation
+            .dynamic_theap_mut()
+            .ok_or(DynamicTheapError::TheapProjection)?;
+        Ok(PersistentWorkerTheapLocal {
+            heap,
+            tld,
+            theap,
+            thread,
+        })
+    }
+
+    /// Observes the source-local address triple only after the same complete
+    /// attached-state validation as a direct local operation. The values are
+    /// never inserted into a registry and this method does not lend mutable
+    /// access through them.
+    fn local_addresses(
+        &mut self,
+    ) -> Result<PersistentWorkerTheapAddresses, DynamicTheapError> {
+        self.prevalidate_attached_page_drain(false)?;
+        let heap = core::ptr::from_ref(self.heap_ref()).addr();
+        let tld = self
+            .tld
+            .as_mut()
+            .ok_or(DynamicTheapError::Poisoned)?
+            .current_mut()
+            .map_err(DynamicTheapError::ThreadLocalData)
+            .map(|tld| core::ptr::from_mut(tld).addr())?;
+        let theap = self
+            .theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .map(|theap| core::ptr::from_mut(theap).addr())
+            .ok_or(DynamicTheapError::TheapProjection)?;
+        Ok(PersistentWorkerTheapAddresses { heap, tld, theap })
+    }
+
     /// Borrows this exact attachment as one non-abandoning page lifecycle.
     ///
     /// The returned session holds `&mut self`, so safe code cannot clear the
@@ -765,10 +1176,24 @@ impl<'heap> DynamicTheapAttachment<'heap> {
 
     /// Clears the dynamic regular TLS backing before thread-exit page
     /// abandonment, matching `_mi_thread_locals_thread_done` before
-    /// `mi_thread_theaps_done`. The resulting [`DynamicAttachmentState::DrainingPages`]
-    /// retains the page map, arena image, Theap, Heap, and TLD until a narrow
-    /// page-drain owner has accounted for every page.
+    /// `mi_thread_theaps_done`. A selected pre-claim Malloc-release failure
+    /// leaves the attachment in [`DynamicAttachmentState::AwaitingBackingRelease`];
+    /// re-entry resumes only that retained backing release. On success the
+    /// resulting [`DynamicAttachmentState::DrainingPages`] retains the page
+    /// map, arena image, Theap, Heap, and TLD until a narrow page-drain owner
+    /// has accounted for every page.
     fn begin_page_drain(&mut self) -> Result<(), DynamicTheapError> {
+        match self.state {
+            DynamicAttachmentState::Attached => {}
+            DynamicAttachmentState::AwaitingBackingRelease => {
+                return self.finish_backing_release();
+            }
+            DynamicAttachmentState::TornDown => return Err(DynamicTheapError::TornDown),
+            DynamicAttachmentState::Preparing
+            | DynamicAttachmentState::DrainingPages
+            | DynamicAttachmentState::AwaitingKeyRelease
+            | DynamicAttachmentState::Poisoned => return Err(DynamicTheapError::Poisoned),
+        }
         self.prevalidate_attached_page_drain(false)?;
         let key = self.binding()?.key();
         let clear_slot = {
@@ -785,16 +1210,46 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         if !slot_cleared {
             return Err(self.poison(DynamicTheapError::SlotOwnership));
         }
+        // C has no typed failure result here. Rust's selected Malloc boundary
+        // can nevertheless prove an entry rejection happened before it
+        // claimed the exact capability. Record the irreversible outer slot
+        // transition before that release so a retry cannot replay the
+        // attached-slot preflight or restore the slot.
+        self.state = DynamicAttachmentState::AwaitingBackingRelease;
+        self.finish_backing_release()
+    }
+
+    /// Completes only the retained current-thread backing release after a
+    /// dynamic attachment has already cleared its regular slot. A retryable
+    /// error retains every outer capability and stays in
+    /// `AwaitingBackingRelease`; any other failure is terminal because the
+    /// outer source state can no longer be reconstructed safely.
+    fn finish_backing_release(&mut self) -> Result<(), DynamicTheapError> {
+        self.ensure_awaiting_backing_release_current()?;
+        if !self
+            .binding
+            .as_ref()
+            .is_some_and(|binding| !binding.slot_bound)
+        {
+            return Err(self.poison(DynamicTheapError::SlotOwnership));
+        }
         let backing_teardown = match self.backing.as_mut() {
-            Some(backing) => backing.teardown(),
+            Some(backing) => backing.teardown_classified(),
             None => return Err(self.poison(DynamicTheapError::Poisoned)),
         };
-        if let Err(error) = backing_teardown {
-            return Err(self.poison(DynamicTheapError::Backing(error)));
+        match backing_teardown {
+            Ok(()) => {
+                self.backing = None;
+                self.state = DynamicAttachmentState::DrainingPages;
+                Ok(())
+            }
+            Err(ThreadLocalBackingTeardownFailure::Retryable(error)) => {
+                Err(DynamicTheapError::Backing(error))
+            }
+            Err(ThreadLocalBackingTeardownFailure::Terminal(error)) => {
+                Err(self.poison(DynamicTheapError::Backing(error)))
+            }
         }
-        self.backing = None;
-        self.state = DynamicAttachmentState::DrainingPages;
-        Ok(())
     }
 
     /// Performs the bounded no-page teardown sequence. A direct no-page
@@ -809,6 +1264,10 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             DynamicAttachmentState::Attached => {
                 self.prevalidate_attached_page_drain(true)?;
                 self.begin_page_drain()?;
+            }
+            DynamicAttachmentState::AwaitingBackingRelease => {
+                self.begin_page_drain()?;
+                self.prevalidate_draining_page_teardown()?;
             }
             DynamicAttachmentState::DrainingPages => self.prevalidate_draining_page_teardown()?,
             DynamicAttachmentState::TornDown => return Err(DynamicTheapError::TornDown),
@@ -830,6 +1289,37 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     ) -> Result<(), DynamicTheapError> {
         if let Err(error) = self.restore_empty_cached_root_and_release(theap_pointer) {
             return Err(self.poison(error));
+        }
+
+        self.complete_page_drain_after_cached_root_reset(theap_pointer)
+    }
+
+    /// Completes only the post-cached-reset suffix of the no-page dynamic
+    /// teardown. The private split keeps the source order inspectable: a
+    /// caller must first have completed the cached-root store and paired
+    /// 2 -> 1 release, then may detach lists and metadata. It is not the
+    /// broader `src/init.c:mi_thread_theaps_done` composite lifecycle.
+    fn complete_page_drain_after_cached_root_reset(
+        &mut self,
+        theap_pointer: *mut Theap,
+    ) -> Result<(), DynamicTheapError> {
+        if self.cached_root_bound
+            || !self.roots.cached_is_canonical_empty()
+            || !core::ptr::eq(cached_theap().as_ptr(), self.roots.cached.as_ptr())
+        {
+            return Err(self.poison(DynamicTheapError::RootOwnership));
+        }
+        let cached_refcount = match self
+            .theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .map(|theap| theap.refcount())
+        {
+            Some(refcount) => refcount,
+            None => return Err(self.poison(DynamicTheapError::TheapProjection)),
+        };
+        if cached_refcount != 1 {
+            return Err(self.poison(DynamicTheapError::CachedReference));
         }
 
         let detach_heap = match self.heap_and_tld_mut() {
@@ -1118,17 +1608,24 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             return Err(DynamicTheapError::CachedReference);
         }
         let tld_member = match self.tld.as_mut() {
-            Some(tld) => tld
-                .current_mut()
-                .map_err(DynamicTheapError::ThreadLocalData)?
-                .has_exact_theap_member(theap_pointer),
+            Some(tld) => {
+                // SAFETY: this attachment retains the exact live typed image
+                // and exclusively owns its current TLD list at this boundary.
+                unsafe {
+                    tld.current_mut()
+                        .map_err(DynamicTheapError::ThreadLocalData)?
+                        .has_exact_theap_member(theap_pointer)
+                }
+            }
             None => return Err(DynamicTheapError::Poisoned),
         };
         let heap = self.heap_ref();
         if !matches_thread
             || !bound_to_subprocess
             || !tld_member
-            || !heap.has_exact_theap_member(theap_pointer)
+            // SAFETY: this attachment retains the exact live typed image and
+            // its private Heap list has no competing owner at this boundary.
+            || !unsafe { heap.has_exact_theap_member(theap_pointer) }
             || !heap.matches_dynamic_binding(
                 subprocess,
                 key.raw() as usize,
@@ -1199,17 +1696,24 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             return Err(DynamicTheapError::CachedReference);
         }
         let tld_member = match self.tld.as_mut() {
-            Some(tld) => tld
-                .current_mut()
-                .map_err(DynamicTheapError::ThreadLocalData)?
-                .has_exact_theap_member(theap_pointer),
+            Some(tld) => {
+                // SAFETY: this attachment retains the exact live typed image
+                // and exclusively owns its current TLD list at this boundary.
+                unsafe {
+                    tld.current_mut()
+                        .map_err(DynamicTheapError::ThreadLocalData)?
+                        .has_exact_theap_member(theap_pointer)
+                }
+            }
             None => return Err(DynamicTheapError::Poisoned),
         };
         let heap = self.heap_ref();
         if !matches_thread
             || !bound_to_subprocess
             || !tld_member
-            || !heap.has_exact_theap_member(theap_pointer)
+            // SAFETY: this attachment retains the exact live typed image and
+            // its private Heap list has no competing owner at this boundary.
+            || !unsafe { heap.has_exact_theap_member(theap_pointer) }
             || !heap.matches_dynamic_binding(
                 subprocess,
                 key.raw() as usize,
@@ -1289,17 +1793,24 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             return Err(DynamicTheapError::CachedReference);
         }
         let tld_member = match self.tld.as_mut() {
-            Some(tld) => tld
-                .current_mut()
-                .map_err(DynamicTheapError::ThreadLocalData)?
-                .has_exact_theap_member(theap_pointer),
+            Some(tld) => {
+                // SAFETY: this attachment retains the exact live typed image
+                // and exclusively owns its current TLD list at this boundary.
+                unsafe {
+                    tld.current_mut()
+                        .map_err(DynamicTheapError::ThreadLocalData)?
+                        .has_exact_theap_member(theap_pointer)
+                }
+            }
             None => return Err(DynamicTheapError::Poisoned),
         };
         let heap = self.heap_ref();
         if !matches_thread
             || !bound_to_subprocess
             || !tld_member
-            || !heap.has_exact_theap_member(theap_pointer)
+            // SAFETY: this attachment retains the exact live typed image and
+            // its private Heap list has no competing owner at this boundary.
+            || !unsafe { heap.has_exact_theap_member(theap_pointer) }
             || !heap.matches_dynamic_binding(subprocess, key.raw() as usize)
         {
             return Err(DynamicTheapError::ListOwnership);
@@ -1450,11 +1961,28 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             },
             DynamicAttachmentState::TornDown => Err(DynamicTheapError::TornDown),
             DynamicAttachmentState::Preparing
+            | DynamicAttachmentState::AwaitingBackingRelease
             | DynamicAttachmentState::DrainingPages
             | DynamicAttachmentState::AwaitingKeyRelease
             | DynamicAttachmentState::Poisoned => {
                 Err(DynamicTheapError::Poisoned)
             }
+        }
+    }
+
+    #[inline]
+    fn ensure_awaiting_backing_release_current(&self) -> Result<(), DynamicTheapError> {
+        match self.state {
+            DynamicAttachmentState::AwaitingBackingRelease => match current_thread_identity() {
+                Some(thread) if thread == self.thread => Ok(()),
+                Some(_) | None => Err(DynamicTheapError::InvalidCurrentThread),
+            },
+            DynamicAttachmentState::TornDown => Err(DynamicTheapError::TornDown),
+            DynamicAttachmentState::Preparing
+            | DynamicAttachmentState::Attached
+            | DynamicAttachmentState::DrainingPages
+            | DynamicAttachmentState::AwaitingKeyRelease
+            | DynamicAttachmentState::Poisoned => Err(DynamicTheapError::Poisoned),
         }
     }
 
@@ -1468,6 +1996,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             DynamicAttachmentState::TornDown => Err(DynamicTheapError::TornDown),
             DynamicAttachmentState::Preparing
             | DynamicAttachmentState::Attached
+            | DynamicAttachmentState::AwaitingBackingRelease
             | DynamicAttachmentState::AwaitingKeyRelease
             | DynamicAttachmentState::Poisoned => Err(DynamicTheapError::Poisoned),
         }
@@ -1658,6 +2187,18 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
             .get()
     }
 
+    /// The only selected retained engine state that may re-enter
+    /// `begin_thread_exit_drain`: its regular heap-key slot is already clear
+    /// and it may resume only the pre-claim Malloc backing release. This is
+    /// intentionally separate from ordinary page-engine admission below.
+    #[inline]
+    pub(crate) fn is_awaiting_backing_release(&self) -> bool {
+        matches!(
+            self.attachment.state,
+            DynamicAttachmentState::AwaitingBackingRelease
+        )
+    }
+
     #[inline]
     fn dynamic_theap(&self) -> &Theap {
         self.attachment
@@ -1695,8 +2236,10 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
     /// Consumes this live page-session borrow into the source thread-exit
     /// page-drain state. The attachment clears its regular TLS backing first,
     /// so later abandoned frees cannot reclaim this Theap through its dynamic
-    /// heap key. On error the caller retains this exact session/engine; a
-    /// post-mutation error has already poisoned the attachment.
+    /// heap key. On error the caller retains this exact session/engine: a
+    /// selected pre-claim backing-release failure may resume its exact
+    /// release, while every other post-mutation error has poisoned the
+    /// attachment.
     pub(crate) fn begin_thread_exit_drain(
         self,
     ) -> Result<DynamicTheapPageDrainSession<'attach, 'heap>, (Self, DynamicTheapError)> {
@@ -1845,6 +2388,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
             }
             (DynamicAttachmentState::Preparing, _)
             | (DynamicAttachmentState::Attached, _)
+            | (DynamicAttachmentState::AwaitingBackingRelease, _)
             | (DynamicAttachmentState::AwaitingKeyRelease, _)
             | (DynamicAttachmentState::TornDown, _)
             | (DynamicAttachmentState::Poisoned, _) => {
@@ -1928,7 +2472,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
         let heap = self.attachment.heap_mut();
         // SAFETY: forwarded from this method's dynamic page-drain ownership
         // proof; Heap serializes its private OS-list mutation internally.
-        unsafe { heap.push_os_abandoned_page(&mut *page.as_ptr()) }
+        unsafe { heap.push_os_abandoned_page(page) }
     }
 
     /// Proves that a bounded OS-singleton aggregate starts from the empty
@@ -1960,7 +2504,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
         let heap = self.attachment.heap_mut();
         // SAFETY: forwarded from this method's all-free handoff proof; Heap
         // serializes its private OS-list mutation internally.
-        unsafe { heap.remove_os_abandoned_page(&mut *page.as_ptr()) }
+        unsafe { heap.remove_os_abandoned_page(page) }
     }
 
     #[cfg(test)]
@@ -1986,6 +2530,21 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
     #[inline]
     fn thread_id(&self) -> Option<crate::types::LiveThreadId> {
         Some(self.attachment.thread)
+    }
+
+    #[inline]
+    fn permits_ordinary_page_operations(&self) -> bool {
+        // This gate adds only the new retained backing-release boundary.
+        // Existing terminal fixture paths can still consume their engine to
+        // quiesce already-owned pages before retaining the poisoned outer
+        // attachment; treating every non-Attached state as unavailable would
+        // strand that established cleanup path. `AwaitingBackingRelease` is
+        // the one state whose retained regular-key/root ownership makes every
+        // ordinary engine operation invalid until its exact drain retry.
+        !matches!(
+            self.attachment.state,
+            DynamicAttachmentState::AwaitingBackingRelease
+        )
     }
 
     #[inline]
@@ -2215,7 +2774,8 @@ mod tests {
         SMALL_SIZE_MAX, WORD_SIZE,
     };
     use crate::compiler_tls::{
-        dynamic_backing_peek, is_empty_dynamic_backing, set_cached_theap,
+        dynamic_backing_peek, is_empty_dynamic_backing, m1_compiler_tls_first_regular_slot_fields,
+        m1_compiler_tls_image_trace_fields, set_cached_theap, set_fast_slot,
     };
     use crate::os::{PageSize, fault};
     use crate::os_page::PublishedOsAlignedPage;
@@ -2306,12 +2866,14 @@ mod tests {
         DynamicThreadExitSingletonRemoteFreeFailure,
     };
     use crate::tld::ThreadLocalDataOwner;
+    use crate::thread_local::{ThreadLocalBackingOwner, ThreadLocalKey, ThreadLocalSlotIndex};
     use crate::types::{
         BIN_BLOCK_SIZES, MemoryKind, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
     };
     use core::ptr::null_mut;
     use std::alloc::{Layout, alloc_zeroed, dealloc};
     use std::boxed::Box;
+    use std::sync::{Barrier, mpsc};
     use std::thread;
     use std::vec::Vec;
 
@@ -2373,9 +2935,14 @@ mod tests {
         Pin<&'static MetaAllocator>,
         &'static OwnedThreadLocalKeyRegistry,
     ) {
+        let subprocess = MainSubprocess::test_static_owner();
+        let metadata = MetaAllocator::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source process publishes metadata before dynamic demand");
         (
-            MainSubprocess::test_static_owner(),
-            MetaAllocator::test_static_owner(),
+            subprocess,
+            metadata,
             OwnedThreadLocalKeyRegistry::test_static_owner(),
         )
     }
@@ -9834,12 +10401,12 @@ mod tests {
                 page_map,
             );
             let first = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its first OS-aligned singleton");
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first OS singleton is PageMap-published");
             let second = allocator
-                .allocate_aligned(8 * crate::config::KIB + 1, 256 * crate::config::KIB)
+                .allocate_aligned(16 * crate::config::KIB + 1, 256 * crate::config::KIB)
                 .expect("the fixture creates its distinct OS-aligned singleton");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second OS singleton is PageMap-published");
@@ -9976,7 +10543,7 @@ mod tests {
                 page_map,
             );
             let block = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates one OS-aligned singleton");
             let page = NonNull::new(unsafe { allocator.page_for_block(block) })
                 .expect("the OS singleton remains PageMap-published");
@@ -10033,12 +10600,12 @@ mod tests {
                 page_map,
             );
             let first = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its first OS singleton");
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first OS singleton remains PageMap-published");
             let second = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its second OS singleton");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second OS singleton remains PageMap-published");
@@ -10100,14 +10667,14 @@ mod tests {
             );
             let fault = fault::install(fault::Plan::disabled());
             let first = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its first OS singleton");
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first OS singleton remains PageMap-published");
             let first_published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), first_page) }
                 .expect("the first OS singleton retains its clipped release token");
             let second = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its second OS singleton");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second OS singleton remains PageMap-published");
@@ -12419,7 +12986,15 @@ mod tests {
                 page.as_ptr(),
                 "the two-block route starts from one shared large page"
             );
-            let (memory, bin, slice_start, span_size, slice_index, arena_ptr) = {
+            let (
+                memory,
+                bin,
+                slice_start,
+                span_size,
+                page_map_slice_count,
+                slice_index,
+                arena_ptr,
+            ) = {
                 // SAFETY: both client blocks are live and the source page has
                 // not crossed its dynamic thread-exit owner boundary.
                 let page_ref = unsafe { page.as_ref() };
@@ -12431,6 +13006,16 @@ mod tests {
                     .and_then(|arena| arena.slice_start(arena_memory.slice_index as usize))
                     .expect("the dynamic large span begins in its published arena");
                 let span_size = arena_memory.slice_count as usize * ARENA_SLICE_SIZE;
+                let page_start_offset = unsafe { page_ref.start() }
+                    .addr()
+                    .checked_sub(slice_start.addr())
+                    .expect("the large page area starts within its arena span");
+                let page_map_slice_count = crate::page::page_map_slice_count(
+                    page_ref.block_size(),
+                    page_ref.reserved(),
+                    page_start_offset,
+                )
+                .expect("the large page has source PageMap geometry");
                 let bin = crate::size_class::bin(page_ref.block_size())
                     .expect("the regular large page has one source bin");
                 assert_eq!(memory.kind(), MemoryKind::Arena);
@@ -12445,11 +13030,16 @@ mod tests {
                 );
                 assert!(page_ref.reserved() > 2);
                 assert_eq!(page_ref.used(), 2);
+                assert_eq!(
+                    page_map_slice_count, 63,
+                    "page-map.c clips the furthest-interior-pointer range below the 64-slice arena span"
+                );
                 (
                     memory,
                     bin,
                     slice_start,
                     span_size,
+                    page_map_slice_count,
                     arena_memory.slice_index as usize,
                     arena_memory.arena,
                 )
@@ -12512,13 +13102,23 @@ mod tests {
                     "large queue removal leaves the no-op direct-cache image empty"
                 );
             }
-            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+            for offset in
+                (0..page_map_slice_count * ARENA_SLICE_SIZE).step_by(ARENA_SLICE_SIZE)
+            {
                 assert_eq!(
                     handoff.test_page_map_entry(slice_start.wrapping_add(offset)),
                     page.as_ptr(),
-                    "mapped abandonment retains every large-span PageMap entry"
+                    "mapped abandonment retains every source-registered large PageMap entry"
                 );
             }
+            assert!(
+                handoff
+                    .test_page_map_entry(
+                        slice_start.wrapping_add(page_map_slice_count * ARENA_SLICE_SIZE),
+                    )
+                    .is_null(),
+                "the final arena slice is source-owned slack, not PageMap-reachable page area"
+            );
 
             // SAFETY: this exact first live block leaves one client block in
             // the source page, so the normal failed-reclaim tail must
@@ -12545,11 +13145,13 @@ mod tests {
             assert_eq!(unsafe { page.as_ref().used() }, 1);
             assert_eq!(handoff.test_abandoned_count(), Some(1));
             assert!(handoff.test_dynamic_abandoned_page_is_set());
-            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+            for offset in
+                (0..page_map_slice_count * ARENA_SLICE_SIZE).step_by(ARENA_SLICE_SIZE)
+            {
                 assert_eq!(
                     handoff.test_page_map_entry(slice_start.wrapping_add(offset)),
                     page.as_ptr(),
-                    "the first normal free preserves every large-span PageMap entry"
+                    "the first normal free preserves every source-registered large PageMap entry"
                 );
             }
 
@@ -13086,9 +13688,20 @@ mod tests {
                 .and_then(|arena| arena.slice_start(arena_memory.slice_index as usize))
                 .expect("the complete large source span begins in its arena");
             let span_size = arena_memory.slice_count as usize * ARENA_SLICE_SIZE;
+            let page_start_offset = unsafe { page_ref.start() }
+                .addr()
+                .checked_sub(slice_start.addr())
+                .expect("the large page area starts within its arena span");
+            let page_map_slice_count = crate::page::page_map_slice_count(
+                page_ref.block_size(),
+                page_ref.reserved(),
+                page_start_offset,
+            )
+            .expect("the large page has source PageMap geometry");
             let bin = crate::size_class::bin(page_ref.block_size())
                 .expect("the large page has one source bin");
             assert_eq!(span_size / ARENA_SLICE_SIZE, 64);
+            assert_eq!(page_map_slice_count, 63);
 
             let mut drain = match allocator.begin_thread_exit_drain() {
                 Ok(drain) => drain,
@@ -13143,11 +13756,13 @@ mod tests {
                     "collection failure preserves the large no-op direct-cache image"
                 );
             }
-            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+            for offset in
+                (0..page_map_slice_count * ARENA_SLICE_SIZE).step_by(ARENA_SLICE_SIZE)
+            {
                 assert_eq!(
                     drain.test_page_map_entry(slice_start.wrapping_add(offset)),
                     page.as_ptr(),
-                    "collection failure preserves every large-span PageMap entry"
+                    "collection failure preserves every source-registered large PageMap entry"
                 );
             }
 
@@ -13187,8 +13802,20 @@ mod tests {
                 .and_then(|arena| arena.slice_start(arena_memory.slice_index as usize))
                 .expect("the complete large source span begins in its arena");
             let span_size = arena_memory.slice_count as usize * ARENA_SLICE_SIZE;
+            let page_start_offset = unsafe { page_ref.start() }
+                .addr()
+                .checked_sub(slice_start.addr())
+                .expect("the large page area starts within its arena span");
+            let page_map_slice_count = crate::page::page_map_slice_count(
+                page_ref.block_size(),
+                page_ref.reserved(),
+                page_start_offset,
+            )
+            .expect("the large page has source PageMap geometry");
             let bin = crate::size_class::bin(page_ref.block_size())
                 .expect("the large page has one source bin");
+            assert_eq!(span_size / ARENA_SLICE_SIZE, 64);
+            assert_eq!(page_map_slice_count, 63);
 
             let mut drain = match allocator.begin_thread_exit_drain() {
                 Ok(drain) => drain,
@@ -13242,11 +13869,13 @@ mod tests {
                     "false collection failure preserves the large no-op direct-cache image"
                 );
             }
-            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+            for offset in
+                (0..page_map_slice_count * ARENA_SLICE_SIZE).step_by(ARENA_SLICE_SIZE)
+            {
                 assert_eq!(
                     drain.test_page_map_entry(slice_start.wrapping_add(offset)),
                     page.as_ptr(),
-                    "false collection failure preserves every large-span PageMap entry"
+                    "false collection failure preserves every source-registered large PageMap entry"
                 );
             }
 
@@ -21067,14 +21696,18 @@ mod tests {
                 "a rejected key release cannot clear or stale the live slot"
             );
             let heap = owner.heap_ref();
-            assert!(heap.has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe { heap.has_exact_theap_member(theap_pointer) });
             assert!(heap.matches_dynamic_binding(subprocess, key.raw() as usize));
             let heap_fields = heap.test_main_static_fields();
             assert_eq!(heap_fields.memid.kind(), MemoryKind::None);
             assert_eq!(heap_fields.theap_slot, key.raw() as usize);
             assert_eq!(heap_fields.numa_node, -1);
             let tld = owner.tld.as_mut().unwrap().current_mut().unwrap();
-            assert!(tld.has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe { tld.has_exact_theap_member(theap_pointer) });
             assert!(tld.test_theap_head_is(theap_pointer));
             let fields = owner
                 .theap
@@ -21112,6 +21745,481 @@ mod tests {
         .expect("the current-thread attachment test completes");
     }
 
+    /// Selects the non-exclusive `_mi_theap_alloc` metadata branch together
+    /// with its later-TLD owner. The independent registry bitmap is retained
+    /// after attachment teardown, so the final registry shutdown makes the
+    /// capability accounting boundary explicit instead of attributing that
+    /// process-owned image to the Theap/TLD pair.
+    #[test]
+    fn nonexclusive_dynamic_theap_releases_its_exact_malloc_metadata_lifecycle() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "ticket zero uses source-static storage before the later dynamic branch"
+            );
+            let roots_before = UnrelatedRoots::capture();
+
+            let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
+            let theap_pointer = owner
+                .theap_pointer()
+                .expect("the attached owner retains its exact dynamic Theap");
+            let tld = owner
+                .tld
+                .as_mut()
+                .expect("the attached owner retains its later TLD")
+                .current_mut()
+                .expect("the later TLD remains current while its Theap is attached");
+            assert_eq!(tld.thread_sequence().get(), 1);
+            assert_eq!(tld.memory_id().kind(), MemoryKind::Malloc);
+            assert!(tld.is_attached_to_main_subprocess(subprocess));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe { tld.has_exact_theap_member(theap_pointer) });
+            assert!(
+                !owner.heap_ref().test_main_static_fields().has_exclusive_arena,
+                "the selected source branch is the non-exclusive _mi_meta_zalloc path"
+            );
+            assert_eq!(
+                owner
+                    .theap
+                    .as_ref()
+                    .expect("the attached owner retains its Theap allocation")
+                    .memory_id()
+                    .kind(),
+                MemoryKind::Malloc,
+                "the non-exclusive source branch obtains Theap metadata through _mi_meta_zalloc"
+            );
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe {
+                owner.heap_ref().has_exact_theap_member(theap_pointer)
+            });
+            assert_eq!(subprocess.total_thread_count(), 2);
+            assert_eq!(subprocess.live_thread_count(), 1);
+            let attached_audit = metadata.test_allocation_audit();
+            assert_eq!(attached_audit.live_capability_count, 4);
+            assert_eq!(attached_audit.high_water_capability_count, 4);
+
+            owner
+                .teardown()
+                .expect("the no-page non-exclusive attachment tears down in source owner order");
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(registry.test_live_lease_count(), 0);
+            assert!(owner.heap_ref().test_main_static_fields().theaps_empty);
+            assert!(owner.theap.is_none(), "teardown consumes the exact Theap capability");
+            assert!(owner.tld.is_none(), "teardown consumes the exact later-TLD capability");
+            assert!(owner.backing.is_none(), "teardown consumes the regular TLS backing capability");
+            assert!(roots_before.still_matches());
+            let after_attachment = metadata.test_allocation_audit();
+            assert_eq!(after_attachment.live_capability_count, 1);
+            assert_eq!(after_attachment.high_water_capability_count, 4);
+
+            registry
+                .shutdown()
+                .expect("the explicit quiescent registry release frees its distinct bitmap image");
+            let after_registry = metadata.test_allocation_audit();
+            assert_eq!(after_registry.live_capability_count, 0);
+            assert_eq!(after_registry.high_water_capability_count, 4);
+        })
+        .join()
+        .expect("the non-exclusive dynamic Theap metadata lifecycle completes");
+    }
+
+    /// A selected `MetaRelease::Malloc` entry failure occurs after the source
+    /// regular slot has been cleared but before the backing capability is
+    /// claimed. The outer attachment must retain that exact owner for retry;
+    /// treating it as terminal would strand a live backing root, TLD, Theap,
+    /// Heap binding, and linear regular-key lease.
+    #[test]
+    fn dynamic_theap_backing_release_recursive_entry_retains_outer_lifecycle_for_retry() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let roots_before = UnrelatedRoots::capture();
+            let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
+            let key = owner.key().expect("the attached owner retains its regular key");
+            let theap = owner
+                .theap_pointer()
+                .expect("the attached owner retains its typed dynamic Theap");
+            let backing_before = dynamic_backing_peek()
+                .expect("the attached owner publishes one regular dynamic backing root");
+            // SAFETY: `owner` retains the exact live backing capability until
+            // the successful retry below.
+            let backing_memory_before = unsafe { backing_before.as_ref() }.memory_id();
+            let attached_audit = metadata.test_allocation_audit();
+            assert_eq!(attached_audit.live_capability_count, 4);
+            assert_eq!(registry.test_live_lease_count(), 1);
+            assert_eq!(subprocess.live_thread_count(), 1);
+
+            assert_eq!(
+                metadata.test_with_held_backing_entry(|| owner.teardown()),
+                Ok(Err(DynamicTheapError::Backing(
+                    ThreadLocalBackingError::Metadata(MetaError::RecursiveEntry)
+                ))),
+                "the selected backing free rejects before it can claim the live Malloc capability"
+            );
+            assert_eq!(
+                owner.state,
+                DynamicAttachmentState::AwaitingBackingRelease,
+                "a pre-claim backing rejection retains only its outer backing-release continuation"
+            );
+            assert_eq!(
+                dynamic_backing_peek(),
+                Some(backing_before),
+                "the failed backing free cannot clear or replace its exact root"
+            );
+            // SAFETY: the failed release retained the same live backing
+            // capability and the owner remains the only current-thread
+            // lifecycle authority.
+            let backing_memory_after = unsafe { backing_before.as_ref() }.memory_id();
+            let backing_malloc_before = backing_memory_before
+                .malloc_memory()
+                .expect("the regular backing has selected Malloc provenance");
+            let backing_malloc_after = backing_memory_after
+                .malloc_memory()
+                .expect("the retained regular backing keeps Malloc provenance");
+            assert_eq!(backing_memory_after.kind(), backing_memory_before.kind());
+            assert_eq!(backing_malloc_after.base, backing_malloc_before.base);
+            assert_eq!(backing_malloc_after.size, backing_malloc_before.size);
+            assert_eq!(
+                backing_memory_after.is_pinned(),
+                backing_memory_before.is_pinned()
+            );
+            assert_eq!(
+                backing_memory_after.initially_committed(),
+                backing_memory_before.initially_committed()
+            );
+            assert_eq!(
+                backing_memory_after.initially_zero(),
+                backing_memory_before.initially_zero()
+            );
+            assert_eq!(
+                owner.backing.as_mut().unwrap().get(key),
+                Ok(null_mut()),
+                "the regular slot is cleared before the source backing release"
+            );
+            assert!(
+                owner.binding.as_ref().is_some_and(|binding| !binding.slot_bound),
+                "the exact regular-key lease remains live but cannot name a cleared slot"
+            );
+            assert_eq!(cached_theap().as_ptr(), theap);
+            assert!(owner.cached_root_bound);
+            assert!(owner.theap.is_some());
+            assert!(owner.tld.is_some());
+            let heap = owner.heap_ref();
+            // SAFETY: the retained attachment still owns the one-member
+            // private Heap list while its exact backing capability awaits
+            // the pre-claim retry.
+            assert!(unsafe { heap.has_exact_theap_member(theap) });
+            assert!(heap.test_theap_head_is(theap));
+            let tld = owner
+                .tld
+                .as_mut()
+                .expect("the retained attachment keeps its current TLD")
+                .current_mut()
+                .expect("the retained attachment keeps its initialized TLD image");
+            // SAFETY: this current-thread owner serializes the retained
+            // one-member TLD list through the selected retry boundary.
+            assert!(unsafe { tld.has_exact_theap_member(theap) });
+            assert!(tld.test_theap_head_is(theap));
+            let fields = owner
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .expect("the retained attachment keeps its typed dynamic Theap")
+                .test_main_static_fields();
+            assert_eq!(fields.refcount, 2);
+            assert_eq!(
+                owner
+                    .theap
+                    .as_ref()
+                    .and_then(MetaAllocation::dynamic_theap)
+                    .expect("the retained attachment keeps its dynamic Theap projection")
+                    .page_count(),
+                0
+            );
+            assert_eq!(metadata.test_allocation_audit(), attached_audit);
+            assert_eq!(registry.test_live_lease_count(), 1);
+            assert_eq!(subprocess.live_thread_count(), 1);
+
+            owner
+                .teardown()
+                .expect("the exact outer owner resumes after the entry guard drops");
+            assert_eq!(owner.state, DynamicAttachmentState::TornDown);
+            assert!(owner.backing.is_none());
+            assert!(owner.binding.is_none());
+            assert!(owner.tld.is_none());
+            assert!(owner.theap.is_none());
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 1);
+            assert_eq!(registry.test_live_lease_count(), 0);
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert!(roots_before.still_matches());
+
+            registry
+                .shutdown()
+                .expect("the quiescent registry releases its distinct bitmap capability");
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 0);
+        })
+        .join()
+        .expect("the retryable dynamic backing release remains on its native thread");
+    }
+
+    /// The page-engine entry retains its exact engine on a selected backing
+    /// entry rejection, so re-entering it must resume the backing release
+    /// rather than replaying the now-cleared attached-slot preflight.
+    #[test]
+    fn dynamic_thread_exit_drain_resumes_a_retryable_backing_release() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let metadata = owner
+                .tld
+                .as_ref()
+                .expect("the attached owner retains its later TLD")
+                .metadata();
+            let session = owner
+                .page_session()
+                .expect("the non-abandoning attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(WORD_SIZE, false)
+                .expect("the live dynamic page engine creates one regular page before thread exit");
+            let bin = crate::size_class::bin(WORD_SIZE)
+                .expect("the selected direct-small request has one regular bin");
+            let direct_index = crate::invariants::word_count(WORD_SIZE)
+                .expect("the selected direct-small request has one direct-cache index");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the pre-exit dynamic allocation remains PageMap-published");
+            // SAFETY: `block` is this test's sole current allocation. Its
+            // all-free retirement preserves the existing page image for the
+            // selected post-slot-clear allocation refusal below.
+            unsafe { allocator.free(block) }
+                .expect("the pre-exit dynamic allocation returns to its exact page");
+            let queue_count_before_retry = allocator.queue_count(bin);
+            let direct_before_retry = allocator.direct_page(direct_index);
+            assert_eq!(queue_count_before_retry, Some(1));
+            assert_eq!(direct_before_retry, Some(page.as_ptr()));
+            let mut allocator = match metadata
+                .test_with_held_backing_entry(|| allocator.begin_thread_exit_drain())
+            {
+                Ok(Err(DynamicThreadExitDrainFailure::Retained { engine, error })) => {
+                    assert_eq!(
+                        error,
+                        DynamicTheapError::Backing(ThreadLocalBackingError::Metadata(
+                            MetaError::RecursiveEntry
+                        )),
+                        "the page-engine transition retains only the selected pre-claim release"
+                    );
+                    engine
+                }
+                Ok(Ok(_)) => panic!("the held backing entry cannot complete thread exit"),
+                Err(error) => panic!("the isolated metadata entry acquires its guard: {error:?}"),
+            };
+
+            assert_eq!(
+                allocator.allocate(WORD_SIZE, false),
+                None,
+                "a retained AwaitingBackingRelease engine cannot resume ordinary allocation after its regular slot clears"
+            );
+            assert_eq!(allocator.queue_count(bin), queue_count_before_retry);
+            assert_eq!(allocator.direct_page(direct_index), direct_before_retry);
+            // SAFETY: `block` remains an address within this retained page;
+            // this focused lookup reads its still-published PageMap entry and
+            // does not revive the freed client allocation.
+            assert_eq!(
+                unsafe { allocator.page_for_block(block) },
+                page.as_ptr(),
+                "the retained engine preserves the exact PageMap publication until its dedicated drain"
+            );
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("the retained page engine resumes its exact backing release: {error:?}");
+                }
+            };
+            assert!(
+                drain.test_dynamic_regular_slot_is_clear(),
+                "the retry resumes after the source regular slot has already cleared"
+            );
+            assert_eq!(
+                drain.test_page_count(),
+                1,
+                "the retry carries the unchanged retired page into its dedicated drain rather than resuming allocation"
+            );
+            assert!(drain.finish());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    /// Emits the finite address-independent compiler-TLS M1 record compared
+    /// to two pinned C executables: the constructor-suppressed source image,
+    /// then the normal regular-backing and cached-root primitives. This is not
+    /// a claim that Rust models `src/init.c:mi_thread_theaps_done` as one
+    /// same-TLD composite teardown; its static/default and dynamic/cached
+    /// owners remain intentionally separate.
+    #[test]
+    fn emit_m1_compiler_tls_c_rust_trace() {
+        let image = thread::spawn(m1_compiler_tls_image_trace_fields)
+            .join()
+            .expect("the fresh compiler-TLS image reader completes");
+
+        let regular = thread::spawn(|| {
+            let (subprocess, metadata, _) = fixture();
+            let mut owner = unsafe {
+                ThreadLocalBackingOwner::begin_with_metadata(metadata, subprocess, memory_config())
+            }
+            .expect("the isolated regular backing starts from the source empty root");
+            let key = ThreadLocalKey::from_parts(
+                ThreadLocalSlotIndex::new(0).expect("zero is a valid regular index"),
+                1,
+            )
+            .expect("the first source regular key is representable");
+            let mut payload = 0x5ausize;
+            owner
+                .set(key, core::ptr::from_mut(&mut payload).cast())
+                .expect("the first non-null regular slot grows to sixteen entries");
+            let backing = dynamic_backing_peek().expect("the live regular image is installed");
+            let backing_count = unsafe { backing.as_ref() }.count();
+            let (slot0_version, slot0_value_nonnull) = unsafe {
+                m1_compiler_tls_first_regular_slot_fields(backing)
+            };
+            let default_before = default_theap();
+            let cached_before = cached_theap();
+            set_fast_slot(Some(NonNull::from(&mut payload).cast()));
+            let fast_nonnull = fast_slot_peek().is_some();
+
+            // `ThreadLocalBackingOwner::teardown` performs the source
+            // metadata-free then dynamic-root-clear prefix. `threadlocal.c`
+            // subsequently clears its independent fast root; spell that
+            // separate source action directly instead of calling composite
+            // `compiler_tls::reset_for_thread_teardown`.
+            owner
+                .teardown()
+                .expect("the positive-count regular backing frees before root clear");
+            set_fast_slot(None);
+
+            [
+                backing_count,
+                slot0_version,
+                slot0_value_nonnull as usize,
+                fast_nonnull as usize,
+                dynamic_backing_peek().is_none() as usize,
+                fast_slot_peek().is_none() as usize,
+                (default_theap() == default_before) as usize,
+                (cached_theap() == cached_before) as usize,
+            ]
+        })
+        .join()
+        .expect("the isolated regular backing trace completes");
+
+        let cache = thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
+            let theap_pointer = owner
+                .theap_pointer()
+                .expect("the cached primitive owns one initialized dynamic Theap");
+            let empty_before = crate::bootstrap::empty_default_theap().refcount();
+            let enter_refcount = owner
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .expect("the typed attachment projects its dynamic Theap")
+                .refcount();
+            let cached_is_dynamic = core::ptr::eq(cached_theap().as_ptr(), theap_pointer);
+            let empty_enter = crate::bootstrap::empty_default_theap().refcount();
+            assert_eq!(enter_refcount, 2);
+            assert!(cached_is_dynamic);
+
+            // The source clears regular backing before it resets cached. The
+            // dynamic attachment uses the same prefix and then exposes the
+            // exact cached store/release pair for this finite witness only.
+            owner
+                .begin_page_drain()
+                .expect("the no-page source owner clears its regular backing first");
+            owner
+                .restore_empty_cached_root_and_release(theap_pointer)
+                .expect("the source cached root resets before list detach");
+            let cached_is_empty = core::ptr::eq(
+                cached_theap().as_ptr(),
+                crate::bootstrap::empty_default_theap_ptr(),
+            );
+            let reset_refcount = owner
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .expect("the dynamic Theap remains typed through cached reset")
+                .refcount();
+            let empty_reset = crate::bootstrap::empty_default_theap().refcount();
+            assert_eq!(reset_refcount, 1);
+            assert!(cached_is_empty);
+            owner
+                .complete_page_drain_after_cached_root_reset(theap_pointer)
+                .expect("the post-cached-reset source suffix tears down normally");
+
+            [
+                empty_before,
+                cached_is_dynamic as usize,
+                enter_refcount,
+                empty_enter,
+                cached_is_empty as usize,
+                reset_refcount,
+                empty_reset,
+            ]
+        })
+        .join()
+        .expect("the finite cached-root primitive trace completes");
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value);
+            };
+        }
+
+        std::println!("CRABC_MI_M1_TLS_TRACE_BEGIN");
+        emit!("m1.tls.image.dynamic.is_empty", image[0]);
+        emit!("m1.tls.image.dynamic.count", image[1]);
+        emit!("m1.tls.image.dynamic.memid.base_is_null", image[2]);
+        emit!("m1.tls.image.dynamic.memid.size", image[3]);
+        emit!("m1.tls.image.dynamic.memid.kind", image[4]);
+        emit!("m1.tls.image.dynamic.memid.pinned", image[5]);
+        emit!("m1.tls.image.dynamic.memid.initially_committed", image[6]);
+        emit!("m1.tls.image.dynamic.memid.initially_zero", image[7]);
+        emit!("m1.tls.image.dynamic.slot0.version", image[8]);
+        emit!("m1.tls.image.dynamic.slot0.value_is_null", image[9]);
+        emit!("m1.tls.image.fast_is_null", image[10]);
+        emit!("m1.tls.image.default_is_empty", image[11]);
+        emit!("m1.tls.image.cached_is_empty", image[12]);
+        emit!("m1.tls.image.helper_is_null", image[13]);
+        emit!("m1.tls.image.identity.nonzero", image[14]);
+        emit!("m1.tls.image.identity.not_helper", image[15]);
+        emit!("m1.tls.image.empty_theap.refcount", image[16]);
+        emit!("m1.tls.regular.before.count", regular[0]);
+        emit!("m1.tls.regular.before.slot0.version", regular[1]);
+        emit!("m1.tls.regular.before.slot0.value_nonnull", regular[2]);
+        emit!("m1.tls.regular.before.fast_nonnull", regular[3]);
+        emit!("m1.tls.regular.after.dynamic_is_null", regular[4]);
+        emit!("m1.tls.regular.after.fast_is_null", regular[5]);
+        emit!("m1.tls.regular.after.default_unchanged", regular[6]);
+        emit!("m1.tls.regular.after.cached_unchanged", regular[7]);
+        emit!("m1.tls.cache.initial.empty_refcount", cache[0]);
+        emit!("m1.tls.cache.enter.cached_is_dynamic", cache[1]);
+        emit!("m1.tls.cache.enter.dynamic_refcount", cache[2]);
+        emit!("m1.tls.cache.enter.empty_refcount", cache[3]);
+        emit!("m1.tls.cache.reset.cached_is_empty", cache[4]);
+        emit!("m1.tls.cache.reset.dynamic_refcount", cache[5]);
+        emit!("m1.tls.cache.reset.empty_refcount", cache[6]);
+        std::println!("CRABC_MI_M1_TLS_TRACE_END");
+    }
+
     #[test]
     fn nonzero_page_rejection_is_wholly_pre_mutation_and_recovery_detaches_after_page_removal() {
         thread::spawn(|| {
@@ -21138,14 +22246,22 @@ mod tests {
                 theap_pointer.cast(),
                 "the regular slot is untouched before the page-count rejection"
             );
-            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
-            assert!(owner
-                .tld
-                .as_mut()
-                .unwrap()
-                .current_mut()
-                .unwrap()
-                .has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe {
+                owner.heap_ref().has_exact_theap_member(theap_pointer)
+            });
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe {
+                owner
+                    .tld
+                    .as_mut()
+                    .unwrap()
+                    .current_mut()
+                    .unwrap()
+                    .has_exact_theap_member(theap_pointer)
+            });
             assert_eq!(subprocess.live_thread_count(), 1);
             assert!(owner
                 .theap
@@ -21240,14 +22356,22 @@ mod tests {
                 1,
                 "the paired cached reference was released before detach"
             );
-            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
-            assert!(owner
-                .tld
-                .as_mut()
-                .unwrap()
-                .current_mut()
-                .unwrap()
-                .has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe {
+                owner.heap_ref().has_exact_theap_member(theap_pointer)
+            });
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe {
+                owner
+                    .tld
+                    .as_mut()
+                    .unwrap()
+                    .current_mut()
+                    .unwrap()
+                    .has_exact_theap_member(theap_pointer)
+            });
             assert!(owner
                 .theap
                 .as_mut()
@@ -21271,6 +22395,16 @@ mod tests {
         thread::spawn(|| {
             let (subprocess, metadata, registry) = fixture();
             consume_static_ticket(subprocess, metadata);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "ticket zero leaves the isolated metadata owner without a live capability"
+            );
+            assert_eq!(
+                metadata.test_allocation_audit().high_water_capability_count,
+                0,
+                "ticket zero does not raise the later metadata lifetime watermark"
+            );
             let roots = UnrelatedRoots::capture();
             let dynamic_before = dynamic_backing_peek();
             let fault = fault::install(fault::Plan::at(
@@ -21294,6 +22428,16 @@ mod tests {
             ));
             assert_eq!(subprocess.total_thread_count(), 2);
             assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "a failed later-TLD request has no metadata capability to retain"
+            );
+            assert_eq!(
+                metadata.test_allocation_audit().high_water_capability_count,
+                0,
+                "the rejected later-TLD request never manufactures a transient capability"
+            );
             assert_eq!(dynamic_backing_peek(), dynamic_before);
             assert!(roots.still_matches());
             fault.set(fault::Plan::disabled());
@@ -21317,8 +22461,17 @@ mod tests {
             ));
             assert_eq!(subprocess.total_thread_count(), 3);
             assert_eq!(subprocess.live_thread_count(), 0);
+            let after_theap_failure = metadata.test_allocation_audit();
+            assert_eq!(after_theap_failure.live_capability_count, 1);
+            assert_eq!(after_theap_failure.high_water_capability_count, 2);
             assert!(is_empty_dynamic_backing(dynamic_backing_peek().unwrap()));
             assert!(roots.still_matches());
+            registry
+                .shutdown()
+                .expect("the rejected Theap path leaves only the quiescent registry bitmap");
+            let after_registry = metadata.test_allocation_audit();
+            assert_eq!(after_registry.live_capability_count, 0);
+            assert_eq!(after_registry.high_water_capability_count, 2);
         })
         .join()
         .expect("allocation failures leave no live dynamic attachment");
@@ -21515,14 +22668,22 @@ mod tests {
             assert_eq!(subprocess.live_thread_count(), 1);
             assert!(roots.still_matches());
             assert!(is_empty_dynamic_backing(dynamic_backing_peek().unwrap()));
-            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
-            assert!(owner
-                .tld
-                .as_mut()
-                .unwrap()
-                .current_mut()
-                .unwrap()
-                .has_exact_theap_member(theap_pointer));
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member private Heap list for this observation.
+            assert!(unsafe {
+                owner.heap_ref().has_exact_theap_member(theap_pointer)
+            });
+            // SAFETY: the fixture retains the live typed image and owns its
+            // one-member current TLD list for this observation.
+            assert!(unsafe {
+                owner
+                    .tld
+                    .as_mut()
+                    .unwrap()
+                    .current_mut()
+                    .unwrap()
+                    .has_exact_theap_member(theap_pointer)
+            });
             assert!(owner
                 .theap
                 .as_mut()
@@ -22337,5 +23498,176 @@ mod tests {
             assert!(valid, "dynamic full-large exit trace diverged from pinned C");
             DynamicPageFixtureOutcome::TearDown
         });
+    }
+
+    #[test]
+    fn persistent_worker_storage_keeps_one_theap_across_local_operations() {
+        #[derive(Clone, Copy, Debug)]
+        struct Observation {
+            thread: LiveThreadId,
+            addresses: PersistentWorkerTheapAddresses,
+        }
+
+        let workers = 2;
+        let barrier = std::sync::Arc::new(Barrier::new(workers));
+        let (sender, receiver) = mpsc::channel();
+        let mut joins = std::vec::Vec::new();
+
+        for _ in 0..workers {
+            let barrier = barrier.clone();
+            let sender = sender.clone();
+            joins.push(thread::spawn(move || {
+                let (subprocess, metadata, registry) = fixture();
+                consume_static_ticket(subprocess, metadata);
+                let mut storage = Box::pin(PersistentWorkerTheapStorage::new());
+                unsafe {
+                    storage
+                        .as_mut()
+                        .attach_in_place_with_components(
+                            memory_config(),
+                            pinned_empty_heap(),
+                            subprocess,
+                            metadata,
+                            registry,
+                        )
+                }
+                .expect("the prepared worker attaches one persistent TLD/Theap");
+
+                let thread = storage
+                    .as_mut()
+                    .thread()
+                    .expect("the attached worker retains its native identity");
+                let before_first_operation = storage
+                    .as_mut()
+                    .addresses()
+                    .expect("the attached worker exposes its validated in-place images");
+                storage
+                    .as_mut()
+                    .with_local(|mut local| {
+                        assert_eq!(local.thread(), thread);
+                        assert_eq!(
+                            local.heap() as *mut Heap as usize,
+                            before_first_operation.heap()
+                        );
+                        assert_eq!(
+                            local.tld() as *mut ThreadLocalData as usize,
+                            before_first_operation.tld()
+                        );
+                        assert_eq!(
+                            local.theap() as *mut Theap as usize,
+                            before_first_operation.theap()
+                        );
+                        assert_eq!(local.theap().page_count(), 0);
+                        local.theap().note_page_added();
+                        assert_eq!(local.theap().page_count(), 1);
+                        assert!(local.theap().note_page_removed());
+                    })
+                    .expect("the first local operation projects the attached source image");
+                let after_first_operation = storage
+                    .as_mut()
+                    .addresses()
+                    .expect("the first operation retains the validated in-place images");
+                storage
+                    .as_mut()
+                    .with_local(|mut local| {
+                        assert_eq!(local.thread(), thread);
+                        assert_eq!(local.theap().page_count(), 0);
+                    })
+                    .expect("the second local operation keeps the source image installed");
+                let after_second_operation = storage
+                    .as_mut()
+                    .addresses()
+                    .expect("the second operation does not park or replace the attachment");
+                assert_eq!(before_first_operation, after_first_operation);
+                assert_eq!(after_first_operation, after_second_operation);
+
+                barrier.wait();
+                storage
+                    .as_mut()
+                    .teardown()
+                    .expect("the quiescent persistent worker tears down in source order");
+                sender
+                    .send(Observation {
+                        thread,
+                        addresses: after_second_operation,
+                    })
+                    .expect("the parent receives the completed worker observation");
+            }));
+        }
+        drop(sender);
+
+        let first = receiver
+            .recv()
+            .expect("the first overlapping worker completes");
+        let second = receiver
+            .recv()
+            .expect("the second overlapping worker completes");
+        for join in joins {
+            join.join()
+                .expect("the worker-local persistence check does not panic");
+        }
+
+        assert_ne!(first.thread, second.thread);
+        assert_ne!(first.addresses.heap(), second.addresses.heap());
+        assert_ne!(first.addresses.tld(), second.addresses.tld());
+        assert_ne!(first.addresses.theap(), second.addresses.theap());
+    }
+
+    #[test]
+    fn persistent_worker_storage_rejects_teardown_until_local_pages_are_quiescent() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let mut storage = Box::pin(PersistentWorkerTheapStorage::new());
+            unsafe {
+                storage
+                    .as_mut()
+                    .attach_in_place_with_components(
+                        memory_config(),
+                        pinned_empty_heap(),
+                        subprocess,
+                        metadata,
+                        registry,
+                    )
+            }
+            .expect("the prepared worker attaches one persistent TLD/Theap");
+
+            let before_live_page = storage
+                .as_mut()
+                .addresses()
+                .expect("the attached worker exposes its stable source images");
+
+            storage
+                .as_mut()
+                .with_local(|mut local| local.theap().note_page_added())
+                .expect("the source-local operation records its live page before teardown");
+            assert_eq!(
+                storage.as_mut().teardown(),
+                Err(PersistentWorkerTheapStorageError::Attachment(
+                    DynamicTheapError::PageCountNonZero
+                )),
+                "teardown must retain the TLS/TLD/Theap owner before clearing a live page"
+            );
+            assert_eq!(
+                storage
+                    .as_mut()
+                    .addresses()
+                    .expect("a rejected teardown keeps the in-place source images attached"),
+                before_live_page,
+            );
+            storage
+                .as_mut()
+                .with_local(|mut local| {
+                    assert_eq!(local.theap().page_count(), 1);
+                    assert!(local.theap().note_page_removed());
+                })
+                .expect("a rejected preflight leaves the persistent owner installed");
+            storage
+                .as_mut()
+                .teardown()
+                .expect("the same worker tears down only after the local page is quiescent");
+        })
+        .join()
+        .expect("the teardown-precondition worker remains on its native identity");
     }
 }

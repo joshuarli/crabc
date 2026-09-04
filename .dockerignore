@@ -1,0 +1,10 @@
+# Keep repository-local development scratch data out of Docker build contexts.
+.work/
+
+# Git metadata and generated build/release output are not image inputs.
+.git/
+target/
+dist/
+compat/reports/
+compat/lua/.cache/
+compat/allocator/.cache/

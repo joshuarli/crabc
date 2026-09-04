@@ -76,10 +76,12 @@ use crate::config::{
 };
 use crate::invariants;
 use crate::lock::PrivateLock;
-use crate::os::{MapAccess, Mapping, MemoryConfig};
+use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation};
 use crate::page_map::PageMapHeader;
 use crate::process_page_map::{
-    ProcessPageMapError, ProcessPageMapLease, ProcessPageMapMutationLease,
+    MappedAbandonedClaimAccess, MappedAbandonedClaimCompletion,
+    MappedAbandonedClaimOutcome, ProcessPageMapError, ProcessPageMapLease,
+    ProcessPageMapMutationLease,
 };
 use crate::subproc::MainSubprocess;
 
@@ -434,29 +436,53 @@ impl ProcessSharedArenaStorage {
         // map call. No retry can observe COLD until either unpublished setup
         // released its map or a terminal retained owner records it.
         self.state.store(INITIALIZING, Ordering::Release);
-        let mapping = match Mapping::map_aligned_for_allocator(
+        let base_owner = match NormalOsAllocation::allocate_aligned_base(
             pair.config,
             length,
             ARENA_ALIGNMENT,
             access,
         ) {
             Ok(mapping) => mapping,
-            Err(error) => {
-                self.state.store(COLD, Ordering::Release);
-                return ProcessSharedArenaReservationAttempt::Rejected(
-                    ProcessSharedArenaReserveError::Mapping(error),
-                );
+            Err(failure) => {
+                let error = failure.error();
+                return match failure.into_mapping() {
+                    None => {
+                        self.state.store(COLD, Ordering::Release);
+                        ProcessSharedArenaReservationAttempt::Rejected(
+                            ProcessSharedArenaReserveError::Mapping(error),
+                        )
+                    }
+                    Some(mapping) => {
+                        // An aligned-map cleanup edge failed after this final
+                        // slot was reserved. Retain the exact live range and
+                        // make the source sidecar terminal instead of
+                        // reopening COLD for an overlapping retry.
+                        // SAFETY: INITIALIZING is private to this held lock,
+                        // no arena was published, and this final slot remains
+                        // uninitialized on the map-failure path.
+                        unsafe { self.write_retained_mapping(mapping) };
+                        self.state.store(RETAINED, Ordering::Release);
+                        ProcessSharedArenaReservationAttempt::Retained(
+                            ProcessSharedArenaReserveError::Mapping(error),
+                        )
+                    }
+                };
             }
         };
-        let candidate = match ProcessArenaCandidate::from_pair_and_mapping(pair, &mapping) {
+        let candidate = match ProcessArenaCandidate::from_pair_and_mapping(
+            pair,
+            base_owner.mapping(),
+        ) {
             Ok(candidate) => candidate,
             Err(error) => {
+                let (mapping, _) = base_owner.into_mapping_and_memory();
                 self.state.store(COLD, Ordering::Release);
                 return self.release_unpublished_os_reservation(mapping, error);
             }
         };
+        let (mapping, memory) = base_owner.into_mapping_and_memory();
 
-        match self.install_cold(candidate, mapping, ManagedArenaBacking::RegularOs) {
+        match self.install_cold(candidate, mapping, ManagedArenaBacking::RegularOs(memory)) {
             ProcessSharedArenaInstallAttempt::Ready(lease) => {
                 ProcessSharedArenaReservationAttempt::Ready(lease)
             }
@@ -589,13 +615,12 @@ impl ProcessSharedArenaStorage {
                     false,
                     Some(commit_hook),
                 ),
-                ManagedArenaBacking::RegularOs => manage_os_in_place(
+                ManagedArenaBacking::RegularOs(memory) => manage_os_in_place(
                     &self.registry,
                     candidate.base,
                     candidate.length,
                     candidate.pair.config.page_size(),
-                    initially_committed,
-                    initially_zero,
+                    memory,
                     -1,
                     false,
                     Some(commit_hook),
@@ -933,9 +958,9 @@ impl ProcessSharedArenaLease {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
-    fn registry_count(self) -> Result<usize, ProcessSharedArenaError> {
+    pub(crate) fn test_registry_count(self) -> Result<usize, ProcessSharedArenaError> {
         self.ensure_ready()?;
         Ok(self.storage.registry.count())
     }
@@ -1005,6 +1030,85 @@ impl ProcessPageArenaLease {
     ) -> Result<ProcessPageMapMutationLease, ProcessPageArenaLeaseError> {
         self.page_map
             .begin_page_lifecycle()
+            .map_err(ProcessPageArenaLeaseError::PageMap)
+    }
+
+    /// Runs one nonblocking mapped-abandoned claim attempt after this lease
+    /// has proved the PageMap and arena belong to the same process image.
+    ///
+    /// This is only the short source `lookup -> bitmap -> low-owner` claim
+    /// boundary. It does not begin an ordinary page-engine lifecycle or enter
+    /// W03's blocking terminal-mutation path. The closure receives one scoped
+    /// map capability and must return its concrete no-candidate, claimed-range,
+    /// or terminal-retained completion. A competing normal lifecycle returns
+    /// clean [`MappedAbandonedClaimOutcome::Busy`] before the closure runs.
+    ///
+    /// # Safety
+    ///
+    /// The caller must satisfy
+    /// [`ProcessPageMapLease::try_with_validated_mapped_abandoned_claim`]'s
+    /// exact selected-range, complete-claim, span-validation, and
+    /// terminal-retention contract. This pair proves only stable process
+    /// map/arena identity; it does not prove that the selected bitmap bit names
+    /// a live PageMap page or transfer that page's owner by itself. The
+    /// claimed token is the sole post-validation A-to-B transfer right; it
+    /// must remain coupled to the caller's reclaim, reabandon, release, or
+    /// terminal-retention owner after this short closure ends.
+    #[inline]
+    pub(crate) unsafe fn try_with_mapped_abandoned_claim(
+        self,
+        operation: impl for<'map> FnOnce(
+            MappedAbandonedClaimAccess<'map>,
+        ) -> MappedAbandonedClaimCompletion,
+    ) -> MappedAbandonedClaimOutcome {
+        // SAFETY: the caller supplies the delegated selected-range and
+        // terminal-owner contract; this pairing preserves process identity.
+        unsafe {
+            self.page_map
+                .try_with_validated_mapped_abandoned_claim(self, operation)
+        }
+    }
+
+    /// Blocks only for W03's one exact post-owner-exit terminal mutation
+    /// after this pair's map/arena identity has already been proven.
+    ///
+    /// This delegates the PageMap's deliberately exceptional blocking
+    /// boundary. It does not alter ordinary `begin_page_lifecycle` admission,
+    /// create a general PageMap lock, or grant another page/route owner.
+    ///
+    /// # Safety
+    ///
+    /// The caller must satisfy
+    /// [`ProcessPageMapLease::begin_blocking_exact_post_owner_exit_mutation`]'s
+    /// W07-claim, exact-terminal-tail, and explicit-release-or-retention
+    /// contract.
+    #[inline]
+    pub(crate) unsafe fn begin_blocking_exact_post_owner_exit_mutation(
+        self,
+    ) -> Result<ProcessPageMapMutationLease, ProcessPageArenaLeaseError> {
+        // SAFETY: the caller supplies the delegated W03 exact-terminal
+        // mutation contract; this pairing only preserves map/arena identity.
+        unsafe { self.page_map.begin_blocking_exact_post_owner_exit_mutation() }
+            .map_err(ProcessPageArenaLeaseError::PageMap)
+    }
+
+    /// Borrows the paired process PageMap for structural operations on exact
+    /// ranges whose complete page lifetime the caller owns.
+    ///
+    /// # Safety
+    ///
+    /// The caller must satisfy
+    /// [`ProcessPageMapLease::page_map_for_owned_ranges`]'s exact-range,
+    /// no-overlap, metadata-lifetime, and unregister-before-release contract.
+    /// The paired arena identity does not add global PageMap mutation or
+    /// terminal-release authority.
+    #[inline]
+    pub(crate) unsafe fn page_map_for_owned_ranges(
+        self,
+    ) -> Result<&'static crate::page_map::PageMap, ProcessPageArenaLeaseError> {
+        // SAFETY: the caller supplies the delegated exact-range PageMap
+        // operation contract; this pairing only preserves map/arena identity.
+        unsafe { self.page_map.page_map_for_owned_ranges() }
             .map_err(ProcessPageArenaLeaseError::PageMap)
     }
 
@@ -1218,7 +1322,7 @@ struct DefaultOsArenaReservation {
 #[derive(Clone, Copy)]
 enum ManagedArenaBacking {
     External,
-    RegularOs,
+    RegularOs(crate::types::MemoryId),
 }
 
 /// Immutable process-image identity selected before mapping a new arena.
@@ -1371,10 +1475,18 @@ static PROCESS_SHARED_ARENA: ProcessSharedArenaStorage = ProcessSharedArenaStora
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arena::ArenaId;
+    use core::{cell::Cell, ptr::NonNull};
+    use crate::arena::{
+        manage_os_in_place, ArenaId, ArenaRegistry, ManageArenaError,
+    };
     use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE, ARENA_SLICE_SIZE};
-    use crate::os::{fault, MapAccess, PageSize};
-    use crate::process_page_map::ProcessPageMapStorage;
+    use crate::os::{fault, MapAccess, NormalOsAllocation, PageSize};
+    use crate::process_page_map::{
+        MappedAbandonedClaimCompletion, MappedAbandonedClaimOutcome,
+        MappedAbandonedClaimRetainedReason, ProcessPageMapError,
+        ProcessPageMapStorage,
+    };
+    use crate::types::{MemoryId, Page};
     use crabc_core::Errno;
 
     fn memory_config() -> MemoryConfig {
@@ -1405,6 +1517,19 @@ mod tests {
         .expect("map one source-sized arena backing")
     }
 
+    fn paired_claim_fixture(config: MemoryConfig) -> ProcessPageArenaLease {
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let shared = match ProcessSharedArenaStorage::test_static_owner()
+            .install_one_owned_external_arena(page_map, one_arena_mapping(config))
+        {
+            Ok(shared) => shared,
+            Err(_) => panic!("the isolated process arena publishes"),
+        };
+        ProcessPageArenaLease::join(page_map, shared)
+            .expect("the matching process map and arena form one claim capability")
+    }
+
     #[test]
     fn explicit_os_reservation_publishes_one_os_arena_for_reserved_and_committed_requests() {
         for access in [MapAccess::Reserved, MapAccess::Committed] {
@@ -1419,16 +1544,143 @@ mod tests {
                 Err(_) => panic!("one caller-selected regular OS arena reserves and publishes"),
             };
             let arena = lease.arena().expect("the reserved OS arena remains published");
-            assert_eq!(arena.arena().memid.kind(), crate::types::MemoryKind::Os);
-            assert_eq!(arena.arena().memid.initially_committed(), access == MapAccess::Committed);
-            assert!(arena.arena().memid.initially_zero());
-            assert_eq!(lease.registry_count().unwrap(), 1);
+            let mapping = unsafe { storage.mapping_for_commit() };
+            let mapping_base = mapping.base().expect("the published sidecar retains the base");
+            let mapping_length = mapping
+                .length()
+                .expect("the published sidecar retains the full extent");
+            let memory = arena.arena().memid;
+            assert_eq!(memory.kind(), crate::types::MemoryKind::Os);
+            assert_eq!(memory.os_memory().unwrap().base, mapping_base);
+            assert_eq!(memory.os_memory().unwrap().size, mapping_length);
+            assert_eq!(memory.initially_committed(), access == MapAccess::Committed);
+            assert!(memory.initially_zero());
+            assert_eq!(lease.test_registry_count().unwrap(), 1);
             assert_eq!(
                 unsafe { page_map.page_map().unwrap().checked_lookup(arena.slice_start(0).unwrap()) },
                 core::ptr::null_mut(),
                 "reservation publishes no page before a typed page owner begins"
             );
         }
+    }
+
+    #[test]
+    fn normal_os_base_handoff_preserves_full_provenance_until_one_arena_publication() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let pair = ProcessArenaPair::from_page_map(page_map)
+            .expect("the initialized process map supplies one selected pair");
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+
+        let normal = NormalOsAllocation::allocate_aligned_base(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Reserved,
+        )
+        .expect("the selected normal aligned OS allocation succeeds");
+        let base = normal
+            .mapping()
+            .base()
+            .expect("the base-only handoff retains its mapping base");
+        let length = normal
+            .mapping()
+            .length()
+            .expect("the base-only handoff retains its complete mapped extent");
+        let source_memory = normal
+            .memory_id()
+            .expect("the base-only handoff retains its normal OS provenance");
+        assert_eq!(base.addr() % ARENA_ALIGNMENT, 0);
+        assert_eq!(source_memory.kind(), crate::types::MemoryKind::Os);
+        assert!(!source_memory.is_pinned());
+        assert!(!source_memory.initially_committed());
+        assert!(source_memory.initially_zero());
+        let candidate = ProcessArenaCandidate::from_pair_and_mapping(pair, normal.mapping())
+            .expect("only the aligned normal base owner forms one arena candidate");
+        let (mapping, handed_memory) = normal.into_mapping_and_memory();
+
+        let lease = match storage.install_cold(
+            candidate,
+            mapping,
+            ManagedArenaBacking::RegularOs(handed_memory),
+        ) {
+            ProcessSharedArenaInstallAttempt::Ready(lease) => lease,
+            ProcessSharedArenaInstallAttempt::Returned { .. }
+            | ProcessSharedArenaInstallAttempt::Retained(_) => {
+                panic!("the selected normal base owner publishes one arena")
+            }
+        };
+
+        let retained = unsafe { storage.mapping_for_commit() };
+        assert_eq!(retained.base().unwrap(), base);
+        assert_eq!(retained.length().unwrap(), length);
+        assert_eq!(source_memory.os_memory().unwrap().base, base);
+        assert_eq!(source_memory.os_memory().unwrap().size, length);
+        assert_eq!(handed_memory.os_memory().unwrap().base, base);
+        assert_eq!(handed_memory.os_memory().unwrap().size, length);
+
+        let arena_memory = lease.arena().unwrap().arena().memid;
+        assert_eq!(arena_memory.kind(), crate::types::MemoryKind::Os);
+        assert_eq!(arena_memory.os_memory().unwrap().base, base);
+        assert_eq!(arena_memory.os_memory().unwrap().size, length);
+        assert_eq!(arena_memory.initially_committed(), false);
+        assert!(arena_memory.initially_zero());
+    }
+
+    #[test]
+    fn regular_os_management_rejects_nonexact_provenance_without_consuming_the_mapping() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let normal = NormalOsAllocation::allocate_aligned_base(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Reserved,
+        )
+        .expect("the selected normal aligned OS allocation succeeds");
+        let base = normal
+            .mapping()
+            .base()
+            .expect("the base-only handoff retains its mapping base");
+        let length = normal
+            .mapping()
+            .length()
+            .expect("the base-only handoff retains its complete mapped extent");
+        let (mut mapping, _) = normal.into_mapping_and_memory();
+        let registry = ArenaRegistry::new(core::ptr::null_mut());
+        let page = config.page_size().bytes();
+        let invalid_memory = [
+            MemoryId::external(base, length, false, false, true),
+            MemoryId::os(base, length, false, true, true),
+            MemoryId::os(base, length - page, false, true, false),
+        ];
+
+        for memory in invalid_memory {
+            assert_eq!(
+                unsafe {
+                    manage_os_in_place(
+                        &registry,
+                        base,
+                        length,
+                        config.page_size(),
+                        memory,
+                        -1,
+                        false,
+                        None,
+                    )
+                },
+                Err(ManageArenaError::InvalidRegion),
+            );
+            assert_eq!(registry.count(), 0);
+            assert_eq!(mapping.base(), Ok(base));
+            assert_eq!(mapping.length(), Ok(length));
+        }
+
+        mapping
+            .unmap()
+            .expect("rejected provenance leaves the exact normal mapping with its caller");
     }
 
     #[test]
@@ -1450,7 +1702,7 @@ mod tests {
             !arena.arena().memid.initially_committed(),
             "the non-overcommit fixture preserves source lazy page commitment"
         );
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
         assert!(
             unsafe { page_map.page_map().unwrap().checked_lookup(arena.slice_start(0).unwrap()) }
                 .is_null(),
@@ -1637,7 +1889,7 @@ mod tests {
         ));
         assert_eq!(fault.observed(), 0, "a foreign root rejects before mapping");
         assert_eq!(selected.root().unwrap(), root);
-        assert_eq!(selected.registry_count().unwrap(), 1);
+        assert_eq!(selected.test_registry_count().unwrap(), 1);
     }
 
     #[test]
@@ -1671,7 +1923,7 @@ mod tests {
             Err(_) => panic!("the selected source pair retries after successful unmap"),
         };
         assert_eq!(lease.root().unwrap(), root);
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
         assert_eq!(lease.arena().unwrap().arena().memid.kind(), crate::types::MemoryKind::Os);
     }
 
@@ -1711,6 +1963,43 @@ mod tests {
         assert_eq!(fault.observed(), 0, "the retained reservation never loses its mapping to a retry");
     }
 
+    #[cfg(not(miri))]
+    #[test]
+    fn explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup() {
+        let mut config = memory_config();
+        config.test_force_full_aligned_map_trim();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            2,
+            Errno::NOMEM,
+        ));
+
+        assert!(matches!(
+            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved),
+            Err(ProcessSharedArenaReserveFailure::Retained {
+                error: ProcessSharedArenaReserveError::Mapping(Errno::NOMEM),
+            })
+        ));
+        assert_eq!(storage.test_state(), RETAINED);
+        assert_eq!(storage.registry.count(), 0);
+
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(matches!(
+            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved),
+            Err(ProcessSharedArenaReserveFailure::Retained {
+                error: ProcessSharedArenaReserveError::Retained,
+            })
+        ));
+        assert_eq!(
+            fault.observed(),
+            0,
+            "the retained aligned-map owner prevents an overlapping reservation retry"
+        );
+    }
+
     fn take_returned_mapping(
         failure: ProcessSharedArenaInstallFailure,
     ) -> (ProcessSharedArenaError, Mapping) {
@@ -1739,7 +2028,7 @@ mod tests {
         assert_eq!(lease.root().unwrap(), root);
         assert_eq!(lease.memory_config().unwrap(), config);
         assert_eq!(lease.subprocess().unwrap().as_ptr(), subprocess.as_ptr());
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
         let arena = lease.arena().unwrap();
         assert_eq!(arena.slice_start(0), Some(base));
         assert_eq!(arena.size(), Some(ARENA_MIN_SIZE));
@@ -1770,7 +2059,7 @@ mod tests {
             Err(_) => panic!("the process-owned mapping commits its arena metadata"),
         };
         assert_eq!(lease.root().unwrap(), root);
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
         let arena = lease.arena().expect("the committed reserved arena publishes");
         assert_eq!(arena.slice_start(0), Some(base));
 
@@ -1868,6 +2157,241 @@ mod tests {
     }
 
     #[test]
+    fn paired_mapped_abandoned_claim_access_is_nonblocking_and_leaves_a_clean_root_reusable() {
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let shared = match ProcessSharedArenaStorage::test_static_owner()
+            .install_one_owned_external_arena(page_map, one_arena_mapping(config))
+        {
+            Ok(shared) => shared,
+            Err(_) => panic!("the isolated process arena publishes"),
+        };
+        let pair = ProcessPageArenaLease::join(page_map, shared)
+            .expect("the matching process map and arena form one claim capability");
+
+        let held = pair
+            .begin_page_lifecycle()
+            .expect("the fixture holds the ordinary long PageMap lifecycle");
+        let called = Cell::new(false);
+        // SAFETY: the matching pair is proven above, but the held long
+        // lifecycle makes this short attempt return before its closure can
+        // access a PageMap entry or claim any candidate range.
+        let busy = unsafe {
+            pair.try_with_mapped_abandoned_claim(|_| {
+                called.set(true);
+                panic!("a busy short claim must not invoke its closure")
+            })
+        };
+        assert!(matches!(
+            busy,
+            MappedAbandonedClaimOutcome::Busy
+        ));
+        assert!(
+            !called.get(),
+            "a busy nonblocking claim boundary never invokes its closure"
+        );
+        held
+            .finish()
+            .expect("the ordinary fixture lifecycle releases its map guard");
+
+        // SAFETY: this matching pair has no PageMap entry or abandoned bitmap
+        // bit. The closure therefore returns its explicit no-candidate result
+        // without a plain entry access or an exact-range transfer.
+        let completed = unsafe {
+            pair.try_with_mapped_abandoned_claim(|access| {
+                assert_eq!(
+                    access.page_map().memory_config(),
+                    config,
+                    "the one scoped closure observes the paired final map"
+                );
+                access.no_candidate()
+            })
+        };
+        assert!(matches!(
+            completed,
+            MappedAbandonedClaimOutcome::Completed(
+                MappedAbandonedClaimCompletion::NoCandidate(_)
+            )
+        ));
+
+        pair.begin_page_lifecycle()
+            .expect("a completed short no-candidate claim leaves the root reusable")
+            .finish()
+            .expect("the final empty lifecycle releases normally");
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_pair_mismatch_skips_the_closure_and_keeps_both_roots_reusable() {
+        let config = memory_config();
+        let first = paired_claim_fixture(config);
+        let second = paired_claim_fixture(config);
+        let called = Cell::new(false);
+
+        // SAFETY: this direct primitive is intentionally exercised only to
+        // prove its mandatory pairing recheck. The distinct roots reject
+        // before the closure can inspect a PageMap or claim a source bit.
+        let outcome = unsafe {
+            first
+                .page_map
+                .try_with_validated_mapped_abandoned_claim(second, |_| {
+                    called.set(true);
+                    panic!("a mismatched pair must not invoke its claim closure")
+                })
+        };
+        assert!(matches!(
+            outcome,
+            MappedAbandonedClaimOutcome::PairMismatch
+        ));
+        assert!(
+            !called.get(),
+            "pair mismatch is nonmutating and cannot enter the scoped map access"
+        );
+
+        first
+            .begin_page_lifecycle()
+            .expect("the first mismatched root remains reusable")
+            .finish()
+            .expect("the first fixture lifecycle releases normally");
+        second
+            .begin_page_lifecycle()
+            .expect("the second mismatched root remains reusable")
+            .finish()
+            .expect("the second fixture lifecycle releases normally");
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_dropped_claimed_range_poisoned_the_root() {
+        let pair = paired_claim_fixture(memory_config());
+        let expected_page = NonNull::<Page>::dangling();
+
+        // SAFETY: the cfg(test) completion constructor models only a completed
+        // exact-range transfer with an opaque page identity; it dereferences
+        // neither the identity nor a PageMap entry.
+        let outcome = unsafe {
+            pair.try_with_mapped_abandoned_claim(|access| {
+                access.test_claim_after_full_span_validation(expected_page)
+            })
+        };
+        let claimed = match outcome {
+            MappedAbandonedClaimOutcome::Completed(MappedAbandonedClaimCompletion::Claimed(
+                claimed,
+            )) => claimed,
+            _ => panic!("the clean short scope returns its claimed transfer token"),
+        };
+
+        drop(claimed);
+        assert!(matches!(
+            pair.begin_page_lifecycle(),
+            Err(ProcessPageArenaLeaseError::PageMap(
+                ProcessPageMapError::Poisoned
+            ))
+        ));
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_explicit_claimed_range_handoff_leaves_the_root_reusable() {
+        let pair = paired_claim_fixture(memory_config());
+        let expected_page = NonNull::<Page>::dangling();
+
+        // SAFETY: as above, the test-only constructor models a completed
+        // source transfer without dereferencing the opaque fixture identity.
+        let outcome = unsafe {
+            pair.try_with_mapped_abandoned_claim(|access| {
+                access.test_claim_after_full_span_validation(expected_page)
+            })
+        };
+        let claimed = match outcome {
+            MappedAbandonedClaimOutcome::Completed(MappedAbandonedClaimCompletion::Claimed(
+                claimed,
+            )) => claimed,
+            _ => panic!("the clean short scope returns its claimed transfer token"),
+        };
+
+        // SAFETY: this opaque fixture identity models the target terminal
+        // owner consuming the validated transfer; it is never dereferenced.
+        let handed_off = unsafe { claimed.into_page() };
+        assert_eq!(handed_off, expected_page);
+        pair.begin_page_lifecycle()
+            .expect("the explicit claimed-range handoff disarms its Drop poison")
+            .finish()
+            .expect("the final empty lifecycle releases normally");
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_retained_completion_terminalizes_the_root() {
+        let pair = paired_claim_fixture(memory_config());
+        let expected_page = NonNull::<Page>::dangling();
+
+        // SAFETY: the test-only constructor models only the terminal result
+        // after a low-owner claim and failed span validation; the fixture
+        // page is opaque and is never dereferenced.
+        let outcome = unsafe {
+            pair.try_with_mapped_abandoned_claim(|access| {
+                access.test_retain_after_span_validation_failure(expected_page)
+            })
+        };
+        let retained = match outcome {
+            MappedAbandonedClaimOutcome::Completed(MappedAbandonedClaimCompletion::Retained(
+                retained,
+            )) => retained,
+            _ => panic!("a terminal retained completion remains explicit after unlock"),
+        };
+        assert_eq!(
+            retained.reason(),
+            MappedAbandonedClaimRetainedReason::SpanValidation
+        );
+        // SAFETY: the root is terminal and this opaque identity is observed
+        // only to prove that the returned terminal token retains the page.
+        assert_eq!(unsafe { retained.page() }, expected_page);
+        assert!(matches!(
+            pair.begin_page_lifecycle(),
+            Err(ProcessPageArenaLeaseError::PageMap(
+                ProcessPageMapError::Poisoned
+            ))
+        ));
+        drop(retained);
+    }
+
+    #[test]
+    fn mapped_abandoned_claim_panic_terminalizes_before_releasing_the_scope() {
+        let pair = paired_claim_fixture(memory_config());
+
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // SAFETY: this deliberately exercises the documented unwind
+            // path before any source claim; the scope must poison before its
+            // private lock guard is released.
+            let _ = unsafe {
+                pair.try_with_mapped_abandoned_claim(
+                    |_access| -> MappedAbandonedClaimCompletion {
+                        panic!("exercise mapped-abandoned claim unwind")
+                    },
+                )
+            };
+        }));
+        assert!(unwind.is_err());
+
+        // A released but terminal root reaches the readiness check. A stuck
+        // short lock would have returned Busy instead, so this also proves
+        // the unwind guard released its private lock after poisoning.
+        let terminal = unsafe {
+            pair.try_with_mapped_abandoned_claim(|_| {
+                panic!("a terminal root must not invoke a later claim closure")
+            })
+        };
+        assert!(matches!(
+            terminal,
+            MappedAbandonedClaimOutcome::RootTerminal
+        ));
+        assert!(matches!(
+            pair.begin_page_lifecycle(),
+            Err(ProcessPageArenaLeaseError::PageMap(
+                ProcessPageMapError::Poisoned
+            ))
+        ));
+    }
+
+    #[test]
     fn reserved_owned_arena_commit_failure_returns_the_unpublished_mapping_for_retry() {
         let config = memory_config();
         let subprocess = MainSubprocess::test_static_owner();
@@ -1938,7 +2462,7 @@ mod tests {
             Err(_) => panic!("a later complete arena can install against the same map"),
         };
         assert_eq!(lease.root().unwrap(), root);
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
     }
 
     #[test]
@@ -1968,7 +2492,7 @@ mod tests {
         assert_eq!(error, ProcessSharedArenaError::PairMismatch);
         assert_eq!(storage.test_state(), READY);
         assert_eq!(selected.root().unwrap(), root);
-        assert_eq!(selected.registry_count().unwrap(), 1);
+        assert_eq!(selected.test_registry_count().unwrap(), 1);
         assert_eq!(selected.arena().unwrap().slice_start(0), Some(arena_start));
         returned.unmap().expect("caller releases foreign unpublished backing");
     }

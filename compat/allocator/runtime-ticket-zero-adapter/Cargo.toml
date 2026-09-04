@@ -11,4 +11,4 @@ publish = false
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
-crabc-mimalloc = { path = "../../../crabc-mimalloc", default-features = false }
+crabc-mimalloc = { path = "../../../crabc-mimalloc", default-features = false, features = ["native-runtime-test-audit"] }

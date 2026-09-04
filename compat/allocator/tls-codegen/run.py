@@ -15,7 +15,29 @@ from typing import Sequence
 
 
 ROOT = Path(__file__).resolve().parents[3]
-REPORT = ROOT / "compat/reports/allocator/tls-codegen.json"
+
+
+def default_work_root() -> Path:
+    """Return the checkout-local boundary for generated TLS evidence."""
+
+    configured = os.environ.get("CRABC_WORK_DIR")
+    if not configured:
+        return ROOT / ".work"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+WORK_ROOT = default_work_root()
+TEMP_ROOT = WORK_ROOT / "tmp/allocator"
+REPORT = WORK_ROOT / "reports/allocator/tls-codegen.json"
+
+
+def temporary_directory(prefix: str) -> tempfile.TemporaryDirectory:
+    """Create disposable TLS-probe state below the configured work root."""
+
+    TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix=prefix, dir=TEMP_ROOT)
+
 
 ROOT_NAMES = (
     "DYNAMIC_BACKING_ROOT",
@@ -165,6 +187,24 @@ def reject_forbidden_tls_forms(text: str) -> None:
         raise VerificationError(f"forbidden dynamic TLS access forms are present: {present}")
 
 
+def cargo_probe_command(cargo: str) -> list[str]:
+    """Build both AArch64 TLS controls from the checked-in lockfile."""
+
+    return [
+        cargo,
+        "rustc",
+        "--locked",
+        "--offline",
+        "-p",
+        "crabc-mimalloc",
+        "--lib",
+        "--features",
+        "tls-codegen-probe",
+        "--message-format=json-render-diagnostics",
+        "--",
+    ]
+
+
 def main() -> int:
     cargo = require_tool("cargo")
     rustc = require_tool("rustc")
@@ -179,23 +219,12 @@ def main() -> int:
             "TLS codegen evidence must run in the pinned native aarch64-unknown-linux-musl image"
         )
 
-    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-tls-") as temporary:
+    with temporary_directory(prefix="crabc-mimalloc-tls-") as temporary:
         temporary_root = Path(temporary)
         target_dir = temporary_root / "target"
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target_dir)
-        cargo_base_command = [
-            cargo,
-            "rustc",
-            "--offline",
-            "-p",
-            "crabc-mimalloc",
-            "--lib",
-            "--features",
-            "tls-codegen-probe",
-            "--message-format=json-render-diagnostics",
-            "--",
-        ]
+        cargo_base_command = cargo_probe_command(cargo)
         common_codegen_flags = [
             "-Copt-level=3",
             "-Cdebug-assertions=no",
@@ -356,7 +385,7 @@ def main() -> int:
         "allocator compiler TLS: PASS "
         f"({len(ROOT_NAMES)} private roots, {len(WITNESSES)} codegen witnesses)"
     )
-    print(f"report: {REPORT.relative_to(ROOT)}")
+    print(f"report: {REPORT}")
     return 0
 
 

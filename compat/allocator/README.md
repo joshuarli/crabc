@@ -1,10 +1,9 @@
 # Allocator-port evidence contract
 
-> **Status: paused.** This document preserves fixed-mimalloc source,
-> contracts, and native evidence as a handoff. Its commands reproduce existing
-> private evidence; they are not an active allocator backlog. Resume
-> implementation, ledger expansion, differential work, performance work, or
-> backend integration only after an explicit reprioritization.
+> **Status: active native-mimalloc work.** `native-mimalloc.md` is the live
+> AArch64 allocator ledger. M2 is its current closure gate: its commands
+> produce evidence only, and do not promote the backend, later milestones, or
+> non-AArch64 support.
 
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the Linux/AArch64 production-oriented semantic port of
@@ -36,7 +35,7 @@ full-page aggregate routes (arena singleton, homogeneous OS singleton, medium,
 large, bounded mixed medium/large, and bounded mixed singleton/regular
 `BIN_FULL` members, plus non-direct-small and direct-small ordinary-bin
 members), and one aggregate regular
-small/medium/large post-exit registry, ordinary
+small/medium/large plus live-arena-singleton post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
 the private futex-lock boundary, bounded nonallocating support
 kernels, the allocation-free recursive once protocol, pure page geometry, and
@@ -45,21 +44,42 @@ original-ChaCha primitive. The random slice includes direct `getrandom`,
 error/short-read weak continuation, source counter/nonce/output clearing, and
 in-place address-identity splitting; its dependency-owned replacement for the
 source-local weak shuffle is recorded in `known-differences.md`. Five private
-compiler-TLS roots now preserve the pinned initial images and teardown values,
+compiler-TLS roots now preserve the pinned initial images and selected teardown values,
 while the selected Linux/AArch64 thread identity reads `TPIDR_EL0` directly. A
-process-static private metadata owner now ports the successful detached-Malloc
-paths in `src/subproc.c:19-88`: it directly maps its page map and external
-arena before publishing one detached theap, never touches compiler-TLS roots,
-and uses a must-use owner-bound capability for source-ordered replacement and
-serialized cross-thread release. Its detached heap/TLD/theap and its
-pre-publication-bound registry/published arena name the same deliberately
-bounded process-main identity as the current-thread TLD checkpoint; it does
-not claim general subprocess destruction or public allocation routing.
+process-static private metadata owner now ports selected detached-Malloc paths
+in `src/subproc.c:19-88`: process startup binds its static detached
+Heap/TLD/Theap image, then one-way Release-CAS publishes that exact fully
+formed Theap identity through a comparison-only `MainSubprocess` admission
+slot before global PageMap publication, without mapping private backing or
+touching compiler-TLS roots. For only its bounded same-subprocess,
+empty-head, non-threadpool input, that detached Theap preserves
+`mi_process_theap_meta`'s kind-only `_mi_memid_create(MI_MEM_STATIC)`
+provenance, the frozen normal enabled `page_reclaim_on_free` image, an
+initialized possibly-weak random context, and an odd cookie before Release
+heap publication. A nonempty head, mismatched subprocess, or thread-pool
+input is rejected before mutation rather than claiming C's locked list/split
+or option-adjustment route. This is not a complete `_mi_theap_init` or
+mutable-options claim. A COLD direct `zalloc`, aligned `zalloc`, or
+`rezalloc(None)` refuses before the metadata lock, mapping, or capability
+creation; this is a bounded Rust safety strengthening of C's non-null
+precondition. The admission slot is not the actual `mi_subproc_t::theap_meta`
+field/layout, `theap_meta_lock`, a dereference-capable subprocess API, or
+main-Heap linkage. A first valid prepared metadata request then forms the
+bounded private direct-OS PageMap/external-arena backing and issues its one
+detached session. That private first-demand route is not claimed to match
+pinned C's normal `_mi_meta_zalloc` backing route. The owner uses a
+must-use owner-bound capability for source-ordered replacement and serialized
+cross-thread release; its detached image and its later pre-publication-bound
+registry/published arena name the same deliberately bounded process-main
+identity as the current-thread TLD checkpoint. It does not claim general
+subprocess destruction or public allocation routing.
 
 `process_init.rs` owns a bounded source-order transition: static Heap
-foundation, detached metadata readiness, global PageMap publication, then the
-ticket-zero TLD/Theap roots. Its selector prevents generic TLD construction
-from consuming ticket zero while startup is active or retained, and its ready
+foundation, detached metadata-image binding without private backing, one-way
+detached-Theap identity publication, global PageMap publication, then the
+ticket-zero TLD/Theap roots. Its selector
+prevents generic TLD construction from consuming ticket zero while startup is
+active or retained, and its ready
 lease exposes only immutable map/configuration/subprocess witnesses.
 `process_page_map.rs` owns that distinct process-static map
 initialization/publication boundary. It freezes one `MemoryConfig` and selected
@@ -95,12 +115,19 @@ option processing, a public control, or production policy. It then proves the
 exact map/root/configuration/main tuple for private
 `MainStaticProcessPageAllocator`, `MainStaticFirstArenaPageAllocator`, and
 `MainHeapThreadProcessPageAllocator`
-owners. Each holds the process map's exclusive plain-entry lifecycle through
-its complete engine and joined scoped producer, installs only the arena's
-in-place `pages_main` bitmap into the shared static main Heap, and completes
-normal fresh/release ordering through map, bitmap, metadata, and slices. It
-can reconstruct one already-READY immutable map/arena pair for a subsequent
-bounded owner, but does not search the registry, inspect free slices, or map.
+owners. Each holds the process map's exclusive plain-entry lifecycle while its
+engine or joined scoped producer can access source page state, installs only
+the arena's in-place `pages_main` bitmap into the shared static main Heap, and
+completes normal fresh/release ordering through map, bitmap, metadata, and
+slices. A later-main engine may move its complete state plus attachment marker
+into `MainHeapThreadPausedProcessPageAllocator`, which holds only
+`ProcessPageMapSuspendedEngineAccess`: it exposes no PageMap reference or
+client pointer while another complete normal engine operation serializes the
+plain entries. Its only nonterminal transition reclaims the matching long lease
+before reassembling that exact engine; a failed handoff or unfinished drop
+retains state and poisons the root. The owner can reconstruct one already-READY
+immutable map/arena pair for a subsequent bounded owner, but does not search
+the registry, inspect free slices, or map.
 Their normal `realloc` delegates retain source replacement-failure/copy
 semantics; the ticket-zero null case alone may activate the completed
 first-arena policy. It has only that bounded first ticket-zero connection from the completed
@@ -109,14 +136,22 @@ default-reserve policy to a fresh-page miss; it does not model the C
 and has no concurrent/general later-thread page routing, general owner exit
 beyond the recorded all-free later-main scan, its nine sole-page handoffs, and
 the bounded aggregate regular-pages traversal, teardown, or public routing.
-Only the explicit consuming medium and direct-small handoffs (immediate-head,
+The explicit consuming medium and direct-small handoffs (immediate-head,
 exhausted fully committed scalar extension, exact prefix-covered extension, or
 exact on-demand page-area commit) can turn a detached route's short PageMap
 access back into one long later-main lifecycle. A completed aggregate
 traversal may use the existing immediate-medium handoff only when it itself
 leaves exactly one initial nonfull medium survivor with an immediate head,
-before a registry is built; ordinary routes, other no-immediate direct-small
-cases, multi-member registries, and registries later reduced by client frees
+before a registry is built. Separately, sequential client frees may reduce an
+existing aggregate to exactly one mapped regular member with no singleton tail;
+only then can its opaque selected client constrain one source bitmap claim and
+move that member into one fresh later-main engine. The bounded runtime ledger
+keeps that client's normal request and immutable process pair private, and
+uses the same edge only after the publisher pair, every sibling, and each
+singleton tail terminally release; B uses, drains, and finishes its target
+before it completes its own attachment and returns A's admission proof. Other
+no-immediate direct-small cases, aggregates with multiple or
+source-unmapped/singleton members, scans, fallbacks, and concurrent reclamation
 remain sequential client-free access.
 The coordinator deliberately does not reserve this shared arena or supply a
 full process lifecycle. An unpublished
@@ -139,7 +174,32 @@ choosing storage; ticket zero uses the real static main-TLD branch without
 touching metadata, while later tickets use an exact fresh direct-zeroed
 metadata capability. Only the fully initialized TLD converts its ticket into a
 live-count lease, so a metadata failure still consumes the sequence but does
-not leak a live count. The generic TLD checkpoint records direct `TPIDR_EL0`,
+not leak a live count. The selected isolated later-TLD regression proves that
+ticket-zero teardown retains no metadata capability, an injected post-ready
+direct-zeroed metadata failure consumes its later sequence without a capability
+or live lease, and the retry retains one typed Malloc capability through exact-
+owner teardown. It does not equate Rust's private backing with C's normal
+`_mi_meta_zalloc` backing or prove full `mi_tld_init`/`mi_tld_free` list, lock,
+or metadata-free behavior. The separate nonexclusive dynamic-Theap checkpoint
+follows one later TLD through `_mi_theap_alloc`'s nonexclusive
+`_mi_meta_zalloc` branch, together with selected init/threadlocal teardown.
+Its caller-pinned empty Heap proves the selected one-member TLD/Heap list
+shape and four attached metadata capabilities. The implementation tears down
+regular backing, then the Theap, then the TLD; the audit observes those
+attachment-local capabilities gone while the distinct registry bitmap remains
+for test-only quiescent shutdown. It excludes normal metadata-backing parity,
+exclusive-arena allocation, generic metadata-free dispatch, page ownership,
+concurrency, and full process/thread teardown. A separate live-rezalloc
+checkpoint starts only after the existing fresh 16-slot current-thread image.
+For one child thread and selected main-subprocess identity, an injected
+pre-allocation failure preserves its Malloc root, count, old slot, and exact
+capability; one 16-to-32 retry copies slot 15, publishes slot 16, reaches
+live-one/high-water-two metadata ownership, then tears down to zero. It does
+not compare C's initial count-zero `_mi_meta_rezalloc(NULL, ...)` route with
+Rust's separate fresh zalloc image, or claim arbitrary growth, normal C
+metadata backing, generic metadata-free dispatch, complete TLS/TLD/Theap/
+registry lifecycle, concurrency, pthread/process lifecycle, or ABI
+integration. The generic TLD checkpoint records direct `TPIDR_EL0`,
 Linux NUMA, the exact Unix non-threadpool result, the same main-subprocess
 pointer as detached metadata bootstrap state, and a null theap list. Its
 metadata path remains **subprocess-attached, no-theap**. Generic construction
@@ -198,10 +258,15 @@ owner and its main-thread-minted Heap lease before constructors, child attach
 precedes user code and has a parent/child failure handshake, and normal return,
 `pthread_exit`, and cancellation finish after cleanup and TSD destructors. The
 bridge itself has no C ABI, pthread key, allocation routing, or main-thread
-teardown. Its direct public-fork gate preserves only a quiescent ticket-zero
-no-page child and otherwise disables the bridge; general fork repair remains
-absent. The active C mimalloc backend retains its existing private key outside
-the 128-key application capacity. `main_heap_page.rs`
+teardown. Its direct public-fork gate preserves only the original ticket-zero
+child after it has excluded later admissions and observed either no page owner
+or an all-free `AwaitingFreshPage`/`DormantExistingArena` permanent owner;
+otherwise it disables the bridge. The selected `pthread_atfork` smoke first
+returns that owner to dormant, then proves child and parent `malloc`/`realloc`/
+`free` after the public callbacks; the callbacks themselves do not allocate.
+This is not inherited-pointer, lock, or general fork repair. The active C
+mimalloc backend retains its existing private key outside the 128-key
+application capacity. `main_heap_page.rs`
 can borrow one current later owner with a matched
 process pair, use the same `pages_main` bitmap, and retain the map lifecycle
 through normal free/release plus one scoped producer before returning to that
@@ -232,9 +297,13 @@ Every other live-page state rejects before detach. Only an empty drain permits t
 root/list/TLD teardown. A force/release failure remains terminally retained.
 This admits overlapping no-page owners but only one sequential page owner;
 concurrent routing, general page abandonment/owner exit, later free/reclaim
-beyond those handoffs, source deferred callbacks/arena collection, page-bearing
-libc/pthread hooks, and public allocation routing remain absent. Any page/root/list mismatch
-is retained rather than treated as complete teardown.
+beyond those handoffs, public source deferred-callback registration/re-entry,
+arena collection, page-bearing libc/pthread hooks, and public allocation
+routing remain absent. The aggregate, direct small-or-medium, and all-free
+runtime owner-exit continuations take the source deferred-free heartbeat phase
+under their live Theap/TLD pairing, with an attachment-local test observer
+proving callback ordering. Any page/root/list mismatch is retained rather than
+treated as complete teardown.
 `dynamic_theap.rs` now takes a nonzero ticket through an atomic
 later-ticket gate, then retains one `!Send` caller-pinned Heap, metadata TLD
 and registration, typed Malloc Theap, regular backing, and regular-key lease.
@@ -772,10 +841,12 @@ tail, preserving the PageMap and ordinary arena membership for a consuming
 same-candidate retry. This is not a production page-on-demand option or a
 fresh allocation fallback. A bitmap miss, malformed state, scalar extension
 error, or other post-transfer failure is retained terminally. Non-direct-small,
-malformed or out-of-profile no-immediate direct-small metadata, full, and
-aggregate registry members remain client-free-only. The completed aggregate
-traversal's separate sole initial-medium/immediate-head outcome becomes the
-existing one-page route before that registry exists. The independent native
+malformed or out-of-profile no-immediate direct-small metadata, and full
+members remain client-free-only for this sole-route handoff. The completed
+aggregate traversal's separate sole initial-medium/immediate-head outcome
+becomes the existing one-page route before that registry exists; its separately
+recorded final mapped regular-member edge remains the only post-free aggregate
+exception. The independent native
 x86-64 `allocator-on-demand` lane instead exercises one ordinary fresh
 reserved medium page: its first allocation exhausts the fixed four-OS-page
 prefix, then its second allocation commits the selected page area before
@@ -809,16 +880,28 @@ range; queue removal clears that range before page-count detach, and its
 partial collector keeps the just-published head through the source accounting
 lag. The nonfull route's direct-small member
 validates and clears the exact rounded source direct-cache range before that
-teardown; its `used < reserved` guard excludes full small pages. The
-separate regular-pages source-order aggregate traversal validates the complete
-source direct-cache image, refreshes its queue head before page-count detach,
-and returns an ordinary drain when retirement/force collection empties every
-page. When it instead leaves exactly one initial nonfull medium with an
-immediate head, it returns that exact existing one-page handoff rather than an
-aggregate registry; multi-member and post-free-reduced registries never gain
-that edge. It still does not claim a general thread lifecycle, abandonment
-traversal, or page-bearing `pthread` integration. The private no-page bridge
-is separately bounded to the direct process/pthread entry and finish order.
+teardown; its `used < reserved` guard excludes full small pages. The separate
+regular-pages source-order aggregate traversal validates the complete source
+direct-cache image, refreshes its queue head before page-count detach, and
+returns an ordinary drain when retirement/force collection empties every page.
+It retains nonfull regular pages as mapped abandonment. It also retains full
+`BIN_FULL` medium/large and full ordinary-bin direct/non-direct small pages: a
+joined remote free normalizes that page to mapped abandonment, while an
+unchanged full page remains source-unmapped until a later client free crosses
+the source mostly-used predicate. A live arena singleton remains PageMap-only
+for its raw terminal release; a live OS singleton first links into the static
+main Heap's private list and retains its clipped-mapping terminal tail. It keeps no
+raw client/page list; the linear post-exit route re-resolves the PageMap entry
+and retains only terminal release authority. When the traversal instead leaves exactly one initial nonfull
+medium with an immediate head, it returns that exact existing one-page handoff
+rather than an aggregate registry. A post-free-reduced registry may instead
+make one separate final-mapped-member handoff only after every other member
+terminally releases; it keeps no raw member list, scans no alternative page,
+and retains the target owner on a bitmap miss or post-claim failure. It still
+does not claim a general thread
+lifecycle, abandonment traversal, or page-bearing `pthread` integration. The
+private no-page bridge is separately bounded to the direct process/pthread
+entry and finish order.
 The compiler-TLS codegen probe proves hidden initial-exec AArch64 root access
 and direct thread-pointer identity without a TLS resolver. The actual bridge
 sets that model target-wide in normal and sealed-sysroot builds; the sysroot
@@ -838,7 +921,9 @@ Run the harness through the pinned Linux/AArch64 development image:
 
 ```sh
 ./scripts/dev.sh allocator --quick
+./scripts/dev.sh allocator-m1
 ./scripts/dev.sh allocator --full
+./scripts/dev.sh allocator --churn
 ./scripts/dev.sh allocator-tls
 ./scripts/dev.sh sysroot
 ./scripts/dev.sh static-pthread-tls
@@ -849,13 +934,23 @@ Run the harness through the pinned Linux/AArch64 development image:
 ./scripts/dev.sh test -p crabc-mimalloc --lib --features loom remote_free::loom_tests -- --test-threads=1
 ```
 
+Runner-owned mutable state stays below `CRABC_WORK_DIR`, or the checkout's
+`.work/` directory when that variable is unset. The pinned archive and tag
+attestation use `.work/allocator-cache/`; compiled C-oracle, adapter, fixture,
+and isolated Cargo outputs use `.work/target/compat/allocator/`; reports use
+`.work/reports/allocator/`; and disposable extracted sources and probe files
+use `.work/tmp/allocator/`. The selected native-shadow runtime remains the
+logical `target/debug` location: the canonical dispatcher maps that repository
+path to the repository-local target volume rather than changing the runtime
+selection contract.
+
 `allocator --quick` is the former ordinary development gate, retained to
 reproduce evidence. It verifies the
 annotated tag and archive identities, regenerates the checked-in contracts in
 memory, checks them and the source-map ratchet, and builds all five exact C
 oracle profiles. Its ignored report is
-`compat/reports/allocator/latest.json`; profile artifacts and layout probes
-are under `compat/reports/allocator/oracle/`. The gate runs the complete
+`.work/reports/allocator/latest.json`; profile artifacts and layout probes
+are under `.work/target/compat/allocator/oracle/`. The gate runs the complete
 `crabc-mimalloc` library unit suite with a marked Rust machine record and
 rejects any mismatch in the currently ported configuration constants,
 page/memory-ID layout, queue block-size table, or bin-selection boundary
@@ -900,25 +995,231 @@ resolver-based or dynamic TLS relocation forms. Its negative-control build
 explicitly clears the production target rustflags and must show that the
 pinned compiler default emits TLSDESC, keeping the production model requirement
 explicit. `allocator-tls` runs this judge alone and writes
-`compat/reports/allocator/tls-codegen.json`.
+`.work/reports/allocator/tls-codegen.json`.
+
+`allocator-m1` writes the current-commit
+`.work/reports/allocator/m1-foundations-latest.json` record from the checked-in
+[`m1-foundations-v3.5.0.json`](m1-foundations-v3.5.0.json) contract. It reruns
+the source/ratchet/C-release-layout producers and only the named focused Rust
+checks, binds the result to an unchanged clean Git commit, and classifies each
+component plus its explicit exclusions. It exits 0 only when the checked
+contract is complete; exit 3 remains the intentional result for a partial M1
+contract. A passing focused check or shared M0/M3/M4 producer does not close a
+whole source unit or promote any allocator backend.
+The complete atomics/locks/once/bootstrap component compares a 148-key, address-independent
+release C/Rust vector for every represented field of the pinned immutable
+`mi_page_empty`, direct-page table, all 75 queues, pre-process-init
+`mi_tld_detached` source image, and `_mi_theap_empty` prefix through `memid`.
+The C reader alone defines `MI_PRIM_HAS_PROCESS_ATTACH=1`, so `prim.c` cannot
+run its automatic constructor and mutate that TLD before the comparison; the
+normal C oracle artifact retains automatic attach. Pointer fields are null/sentinel
+relationships, and the detached lock is try-locked then released rather than
+being treated as a pthread byte-layout match. The contract also records an
+explicit disposition for every 12 pinned direct `mi_atomic_do_once` call
+sites. This remains evidence for those source-initializer images only: it excludes
+stats, guarded/page-tail variants, mutable process storage, publication and
+teardown. Its source-shaped Rust once witnesses also prove the bounded
+identity-capable `ProcessMainInitializationStorage` route: an active foreign
+racer waits through release, same-owner recursion refuses without blocking,
+READY cannot bypass a retained once lock, retained failure wakes its waiter,
+and a pre-body Rust-only cancellation is retryable. This is unit evidence for
+the named bounded envelope, not a C/Rust dynamic differential or a claim to
+complete `mi_process_init_once`, `mi_process_done`, automatic lifecycle, or
+process destruction; those remain M5 work.
+The complete raw-primitive component adds one native, pinned-C/Rust 47-field
+record: the C probe directly includes pinned `src/os.c`, then compares the
+immutable configuration, good-size and large-page predicates, one
+no-hint/non-large map transition sequence, NUMA/current-node relation,
+monotonic-yield observation, successful zero/16-byte entropy calls, and the
+constant-false threadpool observation. It deliberately excludes addresses,
+random bytes, timestamps, error/fallback branches, hints, and huge/THP policy.
+The compiler-TLS component retains one 32-field direct pinned-C/Rust record:
+a constructor-suppressed initial five-root image and TPIDR identity, the
+count-zero image plus positive regular-slot reset, and the local cached-Theap
+`1 -> 2 -> 1` reference pair. A distinct 40-field normal-artifact C/Rust
+record direct-includes pinned `src/init.c` and invokes file-static
+`mi_thread_theaps_done` on one page-free same-TLD static-default `D` plus
+Malloc cached `A` fixture. It records C's A→D collector calls and Rust's A→D
+generic queue-half empty branch with ordered empty-prepass witnesses, then
+default/cached reset, heap detach, TLD final-loop order, and logical final
+release. C bounds
+main-Heap membership as metadata+D then metadata-only while the selected Rust
+image is D then empty, so only common D membership/absence relations compare.
+Together these records close the bounded M1 compiler-TLS component. They do
+not claim outer `_mi_thread_done`, regular-backing/fast teardown, statistics,
+TLD free, process hooks, page-bearing collection, production deferred/retired
+prepasses, public Heap lifecycle, or M5 process/thread integration.
+The complete finite configuration-and-arithmetic component compares
+every frozen `config.*` C/Rust record and a compact representable scalar
+vector, including `_mi_is_power_of_two(0)`, generic non-power-of-two
+`_mi_align_up`/`_mi_align_down`, division, word rounding, and slice conversion.
+Its geometry entries read `MI_ARENA_SLICE_SHIFT` and `MI_BCHUNK_BITS_SHIFT`
+themselves, so a source selector change cannot hide behind duplicated probe
+formulas. It makes no claim about C unsigned-overflow behavior, whole
+`types.h`/`bits.h`/`internal.h` completion, or unselected CMake modes.
 
 `allocator --full` extends that gate by building and auditing the standalone
 static and shared test adapter, including its exact 16-symbol export boundary,
 native link tail, and dynamic dependencies. It applies the reviewed patch to
 the hash-pinned upstream `test/test-api.c` without checking in a source fork,
 then runs both the existing crabc allocator fixture and 33 selected upstream
-API checks. After that passing Milestone 4 adapter lane it deliberately returns
-exit status 3 with an `UNMET MILESTONE` explanation until Milestone 5 supplies
-general integrated remote-free routing, abandonment/adoption, thread/TLS lifecycle, the
-remaining applicable Loom protocols, and pthread stress. The bounded page
-protocols, caller-owned TLS registry, and private no-page bridge do not satisfy
-that lifecycle gate.
-Loom 0.7.2 is an exact, defaults-disabled dev-dependency: its allocation-backed
-`std` scheduler, `generator` build script, and tracing support stack exist only
-in tests. The generator's external assembly path is not selected on AArch64,
-and Cargo's production-graph judge excludes the entire Loom graph. Both
-performance modes likewise remain explicitly unavailable; these status-3
-results are not skips and must not become successful placeholders.
+API checks. In that full-only lane it also applies the separately reviewed
+creating-thread `test/test-stress.c` patch, compiles it with `NTHREADS=1`, and invokes
+the exact source program as `1 1 2`. That preserves the source allocation
+distribution, zero/cookie checks, reallocating data table, retained objects,
+atomic transfer buffer, and final cleanup across two iterations. The patched
+scheduler instead runs its sole worker on the creating thread, so it creates
+no pthread; heaps, subprocesses, large-object mode, and the libc allocator
+path hard-fail at compile time. It is therefore recorded as preliminary
+source-derived stress evidence, not a cross-thread, remote-free, or
+thread-recreation acceptance claim. `allocator --churn` and `--soak` do not
+silently run that distinct full-lane witness. `allocator --full` also executes
+the reviewed
+[`native-owner-exit-lifecycle-v3.5.0.json`](native-owner-exit-lifecycle-v3.5.0.json)
+suite: fifteen focused direct `crabc-mimalloc` checks spanning the mixed runtime
+route, pointer-first publication before and after exit, source-selected live
+medium abandonment, same-page PageMap-claim lifetime, aggregate final-member
+reclamation, failed OS terminal release, terminal finish ordering, and source
+traversal filters. It records
+Gate 5C as passed only when that complete checked
+record is present; the suite is direct-engine lifecycle evidence, not a
+shadow-ABI or general concurrent-routing claim. It then runs the same 128-cycle,
+30-second, seed
+`0xd1b54a32d192ed03` ticket-zero lifecycle schedule as `allocator --churn`
+and writes a versioned [`m5-gate-v3.5.0.json`](m5-gate-v3.5.0.json) result to
+`.work/reports/allocator/latest.json`. The report records the bounded base,
+persistent-worker, live-owner remote-free, and owner-exit evidence as passed
+only when their executed checks pass. It records Gate 5D (soak, stability, and
+upstream stress) and Gate 5E (selected native-shadow acceptance) as explicit
+blockers until their documented acceptance criteria are met. Consequently
+`allocator --full` still exits 3 today, but its failure is
+the named reviewed gate state rather than a synthetic post-run placeholder.
+
+Before rendering that M5 record, `allocator --full` reads only the fixed
+`.work/reports/allocator/upstream-stress/latest.json` canonical report; it does
+not invoke `upstream-stress/run.py` itself. The consumer accepts a report only
+when its format, pin, ordered 12-case source matrix, failure-closed
+capability, selected native-shadow backend/build record, live named artifacts,
+and current-head companion all still bind to the current clean Git source. The
+sole execution-scoped artifact is the producer-container's staged
+`/lib/ld-crabc-aarch64.so.1` record: its fixed path and bytes bind to the live
+selected loader, but the later consumer does not require that transient file.
+Its Git reads set `GIT_OPTIONAL_LOCKS=0`. The durable
+`canonical_upstream_stress` field is `verified`, `unavailable`, or `rejected`.
+Only a `verified` record is surfaced as observed Gate 5D evidence. Its first
+eight rows retain the 1/2/4/8-worker low-scale schedules; four appended
+1/2/4/8-worker `SCALE=101`, `ITER=1` rows exercise the unmodified source's
+strict `SCALE > 100` CLI branch and exact ` (allow large objects)` stdout
+suffix. The record remains a nondefault `shadow_subset` with
+`large_object_mode: source-cli-enabled`: it attests source-mode activation and
+completed bounded workload execution, not that every probabilistic large
+allocation succeeded. It does not promote Gate 5D or Gate 5E. The separate
+opt-in 1024-cycle soak and metadata high-water acceptance remain required.
+
+`allocator --churn` uses that same prefixed evidence adapter but succeeds only
+when one fresh process completes 128 bounded C cycles within its 30-second
+watchdog. Each cycle runs exactly the two pointer-private workers,
+mixed-local and live-owner remote-free, once in a deterministic
+Fisher-Yates order from recorded unsigned-64-bit seed
+`0xd1b54a32d192ed03`. The fixture accepts no arguments for its three-cycle
+default, or at most one each of `--worker-cycles N` for decimal `N` in
+1..1024 and `--stress-seed SEED` for a base-0 unsigned-64-bit seed, in either
+order; it exports no additional symbol. The separately focused mixed post-exit
+owner-exit and alternating mapped-regular reclamation regressions are not
+additional C fixture schedule routes. They first suspend A's exact page engine
+into the private runtime TLS slot and invoke ordinary post-destructor finish.
+That dispatcher resumes the matching engine, runs the existing aggregate source
+traversal for the mixed and sole-medium cases or the direct-cache-validating
+small-or-medium drain for direct small, and retains A's admission until the
+resulting typed B-side route terminally releases; A cannot fall through the
+no-page finalizer after its Theap/TLD has detached. The mixed opaque owner-exit
+route carries two full medium pages (one mapped by a joined pre-exit remote
+free and one source-unmapped), a distinct one-client large page whose joined
+remote free releases it during source collection, one live arena singleton,
+and one live OS-aligned singleton; B receives no client address and must
+terminally release the arena singleton's PageMap-only tail and the OS
+singleton's private-list/clipped-mapping tail before A becomes fork-quiescent.
+On B's first direct free of either an existing direct-small client or one of
+three remaining clients on the pre-exit-normalized mapped, non-full medium
+page, joined C and D each receive the matching nominal scoped same-page
+producer after B claims the source low owner bit; C and D atomically append
+distinct private clients in separate joined turns and B's ordinary collector
+consumes the resulting two-node remote chain before the route continues. The
+direct runtime regressions pause after this opaque route transfers and prove
+ticket zero remains unavailable until B returns the final PageMap-release
+proof; a missing or mismatched publisher retains the route instead of invoking
+B's ordinary no-page finalizer. The alternating sole-medium
+and direct-small reclamation sides give B no client identity or PageMap handle;
+B attaches, adopts/uses the exact page, drains it, and finishes its attachment
+before returning the only proof that releases A's admission. The direct-small
+side first validates and clears its rounded direct-cache image and immediate
+head; it does not make direct small an aggregate traversal result. This is Gate 5D
+preliminary stability evidence alongside deterministic eight-cycle Rust state
+audits, which also check static-main abandoned counts and the private
+OS-abandoned-list baseline. The runtime integration additionally shuffles
+eight core pointer-private routes, including the all-free parked TLS session
+finish, ordinary parked TLS session owner exit, and the parked session's
+scoped B/C/D post-exit publication group, for eight epochs from seed
+`0x9e3779b97f4a7c15` and proves ticket-zero reactivation after every route.
+It does not close general abandonment/reclamation or promote a libc backend.
+`allocator --soak` runs the same two-worker C fixture schedule for 1,024
+cycles from seed `0x94d049bb133111eb` under a separate 180-second watchdog:
+two routes per cycle, for exactly 2,048 route invocations. On success it
+atomically replaces only
+`.work/reports/allocator/runtime-ticket-zero-soak-1024.json`; it never writes
+the shared `.work/reports/allocator/latest.json` slot. The durable report is
+`crabc-mimalloc-runtime-ticket-zero-soak-report` format 1 and binds the live
+ticket-zero contract digest, pinned archive, adapter archive/shared library,
+fixture binary, C-oracle identity, target, commands, schedule, and all
+13 scalar audit fields. Each artifact is re-attested at its fixed raw
+producer path before recording, rejecting final-component and parent-directory
+symlinks; the fixture's executable and `-o` output must name that fixture,
+and its build record must name the checked-in C fixture and attested adapter
+archive. The pinned annotated-tag attestation must also be live and exactly
+match the loaded pin. Its Git source attestation reads with
+`GIT_OPTIONAL_LOCKS=0` and requires byte-identical clean source states before
+its pin, contract, and header reads and immediately before publication, so a
+failed, dirty, changed, or artifact-drifting run preserves a prior good stable
+record. After its first
+complete two-worker cycle, the original fixture thread records the scalar-only
+quiescent baseline: process and ticket-zero readiness, PageMap
+registration/submap counts, arena registry, live TLDs, metadata
+live/high-water capabilities, shared Theaps, regular abandoned pages, and
+whether the private OS-abandoned list is empty. Every later cycle and the
+final ticket-zero allocation/free must match it; the report records the
+baseline and audit-snapshot count. This direct adapter does not install a
+post-exit registry; its C worker paths start from their supplied pointer or
+their own live engine. It remains opt-in bounded stability evidence:
+`allocator --full` only validates and renders its one fixed report through the
+top-level non-executing `runtime_ticket_zero_soak` consumer. Its result is
+`verified`, `unavailable`, or `rejected`, but it satisfies, advances, and
+unblocks no M5 gate; it does not establish a selected/default libc backend,
+general cross-thread/post-exit acceptance, upstream pthread acceptance, or
+large-object coverage.
+`allocator --churn` remains the 128-cycle, 30-second development gate.
+
+The prefixed mixed-local and live-owner remote-free workers now enter through
+the typed runtime A-side operation and prove their ordinary
+`PAGE_OWNER_READY -> BUSY -> READY` finish without widening the C ABI. A
+separate lower persistent-engine regression represents a counted `PARKED(n)`
+set of independently suspended normal engines. Each normal suspend increments
+that count, each exact token finish decrements it, and ticket zero remains
+unavailable until the count reaches zero; one active mutation still owns the
+serial `BUSY` transition and PageMap lease. A non-parkable interleaving
+operation preserves the observed count. Neither token exposes a client address,
+PageMap handle, or post-exit finalizer; abandoning either retains the process
+owner. This is not a public worker API, a general concurrent allocator, or
+libc allocation routing.
+
+Loom 0.7.2 is an exact, defaults-disabled optional test-model dependency. The
+`loom = ["dep:loom"]` feature selects its allocation-backed `std` scheduler,
+`generator` build script, and tracing support stack only for the
+`cfg(all(test, feature = "loom"))` library model; ordinary selected native
+integration tests do not resolve that graph. The generator's external assembly
+path is not selected on AArch64, and Cargo's production-graph judge excludes
+the entire Loom graph. Both performance modes likewise remain explicitly
+unavailable; these status-3 results are not skips and must not become
+successful placeholders.
 
 The native x86-64 quick lane is separate from the AArch64 allocator gate.
 Run it only through the architecture-aware native dispatcher:
@@ -929,7 +1230,7 @@ Run it only through the architecture-aware native dispatcher:
 
 The runner rejects emulation by requiring both the native x86-64 guest and
 the dispatcher's native-host provenance. Its report is
-`compat/reports/allocator/x86_64/latest.json` and its profile is
+`.work/reports/allocator/x86_64/latest.json` and its profile is
 `x86_64-native-c-oracle`: the lane checks the target-local declaration
 inventory and source-only API/mode/test/symbol coverage ledger; the exact
 unfeatured x86 normal dependency graph (including
@@ -1773,6 +2074,16 @@ remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption,
 concurrent collection, public `mi_*` behavior or runtime, libc integration,
 backend promotion, public x86 support, or AArch64 evidence.
 
+`owner-exit-publication-v3.5.0.json` is a pinned-source order gate, not
+runtime parity evidence. `validate_owner_exit_publication_contract` in
+`compat/allocator/run.py` checks the source sequence from queue detach through
+the abandoned identity, then either mapped bitmap/count or non-arena private
+OS-list publication, before common unown. It separately records the empty
+terminal-release branches and prohibits reconstructing a stale W07 owner-exit
+claim from a raw page, block, remote-head, or departed-Theap hint; only the
+typed drain, a current PageMap resolution, and the matching publication
+capability can authorize a later route.
+
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
 
@@ -1785,7 +2096,7 @@ python3 -m unittest compat/allocator/tests/test_runner.py
 ```
 
 The verified archive and tag attestation live in the ignored
-`compat/allocator/.cache/`. Once they are present, `--offline` performs no
+`.work/allocator-cache/`. Once they are present, `--offline` performs no
 network access. Contract or source-map changes require an explicit ratchet
 snapshot after review; the normal gate never updates its own baseline.
 
@@ -1793,16 +2104,25 @@ snapshot after review; the normal gate never updates its own baseline.
 
 | Path | Contract |
 | --- | --- |
-| `api-v3.5.0.json` | Deterministic, source-audited AArch64 public-header inventory. It separates external C declarations, static inlines, types, enum options, macros, override macros, and C++ conveniences; every item records its Linux/AArch64 classification, reason, profile, C-oracle release-symbol disposition, and crabc-libc export policy. Native x86-64 parity requires a separate architecture-qualified inventory. |
+| `api-v3.5.0.json` | Deterministic, source-audited AArch64 public-header and root-CMake mode inventory. It separates external C declarations, static inlines, types, enum options, macros, override macros, C++ conveniences, and all 52 initial `MI_*` compile-time declarations. Every item and mode records target applicability, source-backed exclusions or platform-limited observable behavior, implementation/evidence status, and an explicit blocker where parity is required but incomplete. Exported EINVAL operations, accepted option values with platform-specific effects, and unconditionally declared modes remain applicable parity obligations; only public declarations absent from the normal Linux release definition are currently inapplicable. Malloc-engine readiness remains owned by the architecture/M5 gates and cannot be inferred from the separate full Linux/AArch64 v3.5.0 parity track. Native x86-64 parity requires a separate architecture-qualified inventory. |
 | `x86_64-api-v3.5.0.json` | Target-local, source-only inventory of the pinned base `mimalloc.h` `mi_decl_export` declarations. It does not claim object exports, adapter coverage, implementation, or public integration. |
 | `x86_64-api-coverage-v3.5.0.json` and `x86_64_api_coverage.py` | Target-local source-only ledger for the pinned installed headers, source-form modes, test inputs, and symbol dispositions. Its separate native assessment records selected-release object/dynamic presence without changing the unassessed behavior, Rust, or public-runtime boundary. |
 | `x86_64-source-map-v3.5.0.json` and `x86_64_source_map.py` | Target-local pinned-source mapping and ratchet foundation for 34 x86-relevant source units. Its statuses remain explicitly incomplete and never reuse the AArch64 port-map/ratchet. |
-| `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. |
-| `adapted-tests-v3.5.0.json` | Reviewed M4 selection, omissions, source hashes, patch identity, prefixed symbol inventory, and AArch64 native link contract for pinned upstream `test-api.c`. |
+| `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. Its v3 status records the reviewed M4 `test-api.c`/`testhelper.h` inputs, one constrained M5 `test-stress.c` source-derived route, and the remaining M5+-blocked sources separately. |
+| `upstream-stress-v3.5.0.json` and `upstream-stress/run.py` | Canonical source-unmodified `test/test-stress.c` native-shadow contract and runner. The dispatch captures the exact matching Cargo compiler-artifact from its selected `crabc-libc` dev build, and the runner binds its package, target, profile, features, ordered `libc.so`/`libc.a` filenames, and file hashes without assuming fingerprint-cache uniqueness. They inventory the sole Linux/AArch64 little-endian target and selected nondefault backend, attest the fixture's ELF identity, exact selected-loader `PT_INTERP`, `DT_NEEDED`, and hashes, run fresh-process 1/2/4/8-pthread cases at `1 1 1` and `2 2 2`, then append 1/2/4/8-worker `101 1` source-CLI cases. The latter bind pinned `if (SCALE > 100)` activation and the exact ` (allow large objects)` stdout suffix without a compile-time large-mode define; they are bounded source-mode/workload evidence, not proof that every probabilistic large allocation succeeds. The lane records the upstream seed/watchdog/artifact schemas, normalizes the deleted extraction root out of durable evidence, and fails closed unless every case passes natively. `allocator --full` consumes only the fixed report through a separate strict, lock-free-Git reader; it verifies live artifact and current-head-companion binding but treats the result only as blocked Gate 5D observed evidence. Contract-only validation remains `not-run`, not runtime evidence. |
+| `adapted-tests-v3.5.0.json` | Reviewed selected-API omissions, source hashes, patch identity, prefixed symbol inventory, and native link contract for pinned upstream `test-api.c`. |
 | `adapted-tests-x86_64-v3.5.0.json` | Target-local private x86-64 adapter contract. It hashes only the extracted target-neutral patch/selection facts from the M4 record and separately records the staticlib-only `-lunwind -lc` C-link tail, its derived rustc target self-contained search path, executable ELF, PT_INTERP, and empty `DT_NEEDED` expectations. |
-| `adapted/test-api-m4.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
+| `adapted/test-api-selected.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
+| `adapted-stress-test-v3.5.0.json` | Reviewed creating-thread stress source/provenance map, exact patch/hash, fixed `NTHREADS=1`/`1 1 2` invocation, unsupported-mode rejections, and native link contract for the constrained upstream `test/test-stress.c` route. |
+| `adapted/test-stress-creating-thread.patch` | Minimal source adaptation of the exact upstream stress fixture; it keeps the source workload but intentionally excludes every unsupported scheduler or allocator mode rather than copying a C fork. |
+| `native-shadow-stress-v3.5.0.json` | Reviewed selected-libc source-stress provenance map, behavior-named patch/hash, fixed four-pthread `4 1 2` execution, fresh-process count, source-transfer cleanup boundary, and unsupported-mode rejections. |
+| `adapted/test-stress-native-shadow-pthreads.patch` | Minimal selected-shadow adaptation of the exact upstream stress fixture; standard C allocation names bind to the native shadow `libc.so`, while unsupported upstream modes fail at compile time. |
+| `shadow-abi-matrix-v1.json` and `shadow-abi-matrix/` | Closed paired-artifact local C ABI contract and runner. It snapshots and attests the ordinary C-backed `libc.so` before native feature selection, then independently attests and compares one normalized `malloc`/`free`/`realloc` trace through both artifacts. It records the two current zero-size `realloc` ordinary/native alignment known reds exactly and keeps lifecycle, cross-owner, DSO/static-linkage, and allocator-layout cases explicitly blocked rather than smuggling them into a local comparison. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
-| `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, six-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including one scoped worker round trip. |
+| `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, nine-symbol inventory, one-shot caller contract, native link contract, and durable 1,024-cycle soak-report contract for the process-lifetime ticket-zero C witness, including scalar-only lifecycle stability auditing plus the retained narrow, persistent mixed-local, and live-owner remote-free worker round trips. |
+| `native-owner-exit-lifecycle-v3.5.0.json` | Reviewed direct-engine Gate 5C suite: exact Cargo feature set, fifteen focused runtime/source traversal checks, and the required owner-exit scenario coverage. |
+| `owner-exit-publication-v3.5.0.json` | Pinned-source order gate for collection, queue detach, abandoned identity, mapped bitmap/count or non-arena OS-list publication, and common unown. It keeps empty terminal release distinct and prohibits treating a raw page/block snapshot or Loom-only W07 model as a reconstructed owner-exit claim. |
+| `m5-gate-v3.5.0.json` | Versioned full-lane contract for the 128-cycle lifecycle schedule and its current Gate 5A--5E acceptance/blocker classification. |
 | `runtime-ticket-zero-adapter/` | Separate `no_std` staticlib/cdylib and direct C fixture for the hidden ticket-zero runtime owner; it has no libc allocator or `mi_*` export. |
 | `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |
 | `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. An x86-64 ratchet must remain architecture-qualified. |
@@ -1882,6 +2202,194 @@ distinct.
 
 The C backend may be selected by a build or test configuration as a shadow
 backend until promotion. Production must not choose its allocator at runtime.
+
+`./scripts/dev.sh allocator-shadow` is the explicit early Rust-shadow lane.
+It first builds the default owned sysroot and then rebuilds only
+`crabc-libc` with `native-mimalloc-shadow`, so the C ABI fixtures execute the
+selected `libc.so` rather than a default artifact left by sysroot assembly.
+Immediately before that feature rebuild, its paired shadow-ABI matrix snapshots
+and attests the ordinary C-backed `libc.so`; immediately afterward, it links
+and runs one normalized local public C allocation trace once against each
+explicit artifact. The matrix is the sole deliberate ordinary-artifact run in
+this command, uses an isolated `LD_LIBRARY_PATH` for each process, and records
+its two zero-size `realloc` alignment known-red backend differences plus
+intentionally blocked cross-owner/lifecycle/DSO/layout rows rather than
+treating either as a default-backend fallback. The remaining C ABI fixtures
+stay selected-native only.
+It covers the allocator fixture's local malloc/calloc/realloc/free/alignment/
+usable-size contract, the pthread TSD-destructor fixture's worker-local
+allocation/free plus all-free finish, bounded one- and two-owner owner-exit
+fixtures, and one bounded live-owner remote-free fixture. The selected
+`native_mimalloc_initial_remote_free` fixture additionally proves that an
+attached worker can return exact still-live initial-thread normal and aligned
+clients through the source atomic remote head. The client itself pins its page;
+the worker takes no page engine, scheduler claim, or stored pointer capability,
+and ticket zero collects the head during its next ordinary operation. In the
+separate `native_mimalloc_initial_live_local_worker` fixture, the initial
+thread keeps its ordinary client in its persistent compiler-TLS owner while
+the child attaches an independent local owner. No initial engine, session, or
+address crosses `clone`, and the parent does not suspend or park its live
+owner. After the child returns all-free, the initial thread continues to query,
+reallocate, validate, free, and reuse its client. This is a serialized
+initial-live/local-worker witness, not a concurrent allocator or general
+pointer handoff. Its companion
+`native_mimalloc_initial_live_parallel_workers` fixture synchronizes two
+distinct later local workers, releases and joins them one at a time, and then
+verifies the initial live client through its direct owner. It likewise admits
+no concurrent PageMap mutation or pointer handoff. The
+`native_mimalloc_initial_live_owner_exit` companion keeps that same initial
+client with its direct owner while a later A leaves the existing mixed
+owner-exit aggregate; fresh B terminally frees its exact C inputs and finishes
+normally before the initial thread queries, reallocates, validates, and frees
+its own client. It does not hand A or B the initial client or admit concurrent
+PageMap mutation. In the
+owner-exit fixture A leaves a
+direct-small block, a non-direct-small block, a medium block, a regular-large
+block, an unaligned arena singleton, and an OS-aligned singleton live; a fresh
+no-page B first reads their PageMap-derived usable extents, then frees their
+exact C addresses through generic pointer-first free. A detached client never
+enters B's `realloc` engine or a route replacement transition; its source
+bytes remain live until that generic free consumes it. This exposes neither
+A's page nor allocator.
+The
+same aggregate exercises A's normal return, `pthread_exit`, and deferred
+cancellation. Its cancellation path runs one cleanup handler and then one
+A-side TSD destructor, each allocating and freeing locally, before A's source
+teardown collect-abandons the surviving pages. The
+`native_mimalloc_many_owner_exit_allocations` fixture drives the same ordinary
+session past its inline ledger with 80 1 KiB direct-small clients, then adds
+non-direct-small, medium, large, and arena-singleton clients. It therefore
+requires the one aggregate traversal to account for a full direct-small page,
+a later nonfull page in that same source bin, and the other regular source
+classes across eight owner-exit epochs. It remains an exact-address,
+pointer-private PageMap witness rather than a general cross-thread allocator.
+The `native_mimalloc_concurrent_post_exit_release` fixture adds the OS-aligned
+singleton tail and releases that same mixed aggregate from four fresh B workers
+that begin together. Each worker receives only a disjoint exact subset of A's
+C inputs; each free starts from its PageMap source and W03 performs only the
+page or abandoned-state serialization required by that source operation. There
+is no `ACTIVE -> BUSY` route entry, completion token, or old-owner admission
+carried into B's normal finish. A's source exit releases A's admission; each B
+finish releases only B's own admission. The terminal free releases the source
+page and OS mapping in source order, and ticket zero may continue whenever that
+source state permits. The same pointer-first rule applies to usable-size and
+nonlocal `realloc`: B allocates and copies its replacement, then consumes the
+old source through generic free before returning the replacement. Exact live
+remote publication is also pointer-first: A's persistent PageMap/page state
+names each exact live client, and B/C can query its immutable usable extent or
+push its canonical block to the source remote head without claiming A's TLS,
+a parked session, or a client ledger. A's next ordinary operation or finish
+collects that source head.
+
+`native_mimalloc_source_published_exit` covers the no-local-client finish:
+after B publishes A's sole exact client, A performs no further allocator
+operation and its ordinary pthread destructor collects the source head before
+ticket zero reactivates. `native_source_published_live_owner_exit` and its
+selected-C companion cover the mixed boundary, where one joined source
+publication is collected by A while a distinct client follows the existing
+post-exit PageMap route.
+
+The direct and selected-C `native_two_live_remote_owners` fixtures keep two
+independent live source pointers while B1/B2 each query or free only the
+pointer handed to them. The historical
+`native_live_remote_owner_registry_reuse` target is now an ungated repeated
+persistent-PageMap epoch witness; it no longer observes or compiles a registry
+audit. These fixtures do not establish general worker-pointer dispatch,
+concurrent PageMap mutation, or a worker allocator.
+The separate two-owner and three-owner fixtures make A workers detach before
+any fresh B starts. Their surviving clients are represented only by PageMap and
+abandoned-page state. A releases its admission when its source owner exits;
+each B derives an exact client from the pointer and completes only its own
+attachment lifecycle. The Rust witnesses interleave B frees and finishes in a
+different order, while the selected C fixture releases the same sources in
+non-FIFO order. This establishes concurrent callers with source-local PageMap
+serialization, not a registry traversal, route completion, or B-held A
+admission. A terminal source failure retains that source state rather than
+publishing a fallback, but it does not make an unrelated B teardown terminal.
+After W07 has claimed one exact final source page, only W03's regular or
+singleton terminal callback may wait on the existing private PageMap lock for
+that short release; ordinary lifecycle admission remains nonblocking and
+reports contention instead.
+The separately feature-gated `native_post_exit_failed_os_release` witness
+constructs the same mixed aggregate but gives B only the OS-aligned address.
+It injects failure into the next source `munmap`, verifies that B's exact free
+returns `Retained`, then lets B finish its own no-page attachment. The failed
+PageMap source is not retried by either a second free or B's teardown; B's
+admission still releases normally. Clearing the direct-test injection does not
+create a retry or fallback, and the hook exposes neither a generic fault plan
+nor an allocator capability.
+`native_post_exit_with_local_session` separately proves that B may already
+hold a local session while it reads A's PageMap extent, establishes a
+replacement, copies A's bounded prefix, and consumes A's source through the
+generic pointer-first free continuation. B then reallocates only its own local
+client; the W03 source operation remains wholly PageMap-owned and B's later
+teardown remains its own lifecycle.
+The feature-gated `native_multiple_post_exit_completions` regression then
+has one B consume two independent abandoned A sources, resume B-local
+allocation and `realloc`, and then discharge B's local client before B's own
+teardown. Its scalar audit requires the two A exits to release their admissions
+before B attaches and B's own finish to release the remaining admission. It
+proves pointer-first source consumption, not a cross-thread client registry or
+a normal no-page finalizer for an abandoned owner.
+`native_terminal_completion_live_remote_free` is now the adjacent
+post-exit/PageMap witness: B frees A's post-exit clients, then source-publishes
+one exact C-owned live client through persistent PageMap/page state. B and C
+finish through their own ordinary boundaries; the test does not use a live
+owner handoff or a worker-pointer dispatcher.
+`tests/native_mimalloc_parallel_local_workers.rs` pauses A with a persistent
+live allocation and B with a distinct local allocation; B can query and free
+only B's own client, complete its all-free thread finish, and leave A's source
+state valid for A's later local free. The
+fixture then proves ticket-zero reactivation after A finishes across 128 fresh
+process epochs. An already parked session retries a lost scheduler CAS only
+while the scheduler still records `BUSY` or a nonzero parked count; `READY`
+and terminal states mean its own token is no longer represented. A first
+session has no token yet, so it may retry from `READY` when a peer completed
+between its sampled CAS and retry. This does not create a pointer handoff or
+concurrent PageMap mutation.
+`tests/native_mimalloc_live_remote_owner_exit.rs` composes that exact live
+publication with A-side source collection and a later deferred A exit: a
+separate fresh worker frees the remaining small/medium aggregate only through
+generic pointer-first PageMap/W03 dispatch. This serial witness does not
+broaden that path into general concurrent pointer dispatch.
+`crabc-mimalloc/tests/native_post_exit_lifecycle.rs`,
+`crabc-mimalloc/tests/native_aggregate_post_exit_reclaim.rs`, and
+`crabc-mimalloc/tests/native_sole_post_exit_lifecycle.rs` are historical
+source-scoped witnesses; production post-exit behavior is instead specified by
+the pointer-first PageMap/W03 regressions and has no B-held scheduler token.
+The selected boundary has no C fallback: wrong-owner native pointers fail-stop.
+`tests/native_mimalloc_owner_exit_realloc.rs` proves the selected C boundary:
+an overflowing foreign `realloc` returns `ENOMEM` while preserving A's exact
+client and source bytes. A valid post-exit foreign `realloc` establishes B's
+persistent replacement owner, allocates and copies the requested prefix, then
+consumes A's source once through generic pointer-first free before returning
+the replacement. B separately preserves its prefix across local shrink and
+growth, receives its zero-size local replacement, and retains that client in a
+TSD value. The destructor makes a further local `realloc` and frees it before
+B's own native finish. B exits through `pthread_exit`: its cleanup handler
+makes and frees a local allocation, then the TSD destructor continues the
+existing local client before freeing it. The same fixture also proves normal
+return's TSD-only phase and repeats the cleanup/TSD ordering through deferred
+cancellation at a real cancellation point. It does not yet cover general
+concurrent owner-exit traversal or arbitrary worker allocation beyond the
+bounded live-entry witnesses, and is not a Gate 5E or promotion pass.
+`tests/native_mimalloc_shadow_abi.rs` runs
+`tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c`, which keeps A
+live under an explicit pthread handshake while the initial thread presents A's
+client to `realloc`. The native-shadow-only witness requires `NULL`/`ENOMEM`
+and a preserved prefix for its overflowing request; its valid request returns
+B's copied replacement after generic pointer-first free consumes the old
+source. Pinned musl permits this live cross-thread reallocation, so the
+witness remains a differential rather than a native-contract divergence.
+The same command ends with the separately reviewed
+`native-shadow-stress-v3.5.0.json` witness. It applies a behavior-named patch
+to pinned upstream `test/test-stress.c`, routes standard C allocation calls
+through the selected shadow `libc.so`, and runs exactly four source pthread
+workers with fixed `4 1 2` inputs for 128 fresh process epochs. Each selected
+source transfer cleanup runs in one fresh pthread after its producing workers
+join. The contract rejects unsupported heap, walk, subprocess, leak, and
+large-object modes; this is bounded source-derived lifecycle evidence, not a
+general pointer-routing, concurrent-PageMap, or promotion claim.
 
 ## Separate completion tracks
 

@@ -10,6 +10,7 @@
 // publication, range registration/rollback, lookup, and destruction).
 
 use core::cell::UnsafeCell;
+use core::fmt;
 use core::mem::size_of;
 use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
@@ -197,6 +198,68 @@ impl PageMapRoot {
     }
 }
 
+/// A PageMap bootstrap failure before the map can become a published owner.
+///
+/// The source's `_mi_os_free` does not return a release error. Rust's
+/// [`Mapping::unmap`] does, and a failed release leaves the mapping live.
+/// The retained branch therefore carries that exact mapping to the
+/// process-lifetime caller instead of letting a non-RAII owner leave scope.
+/// Callers must either move it into a final retained-owner slot or prove their
+/// selected initialization shape cannot produce this branch.
+#[must_use = "a retained PageMap initialization mapping must remain with an explicit owner"]
+pub(crate) enum PageMapInitializationError {
+    /// No mapping remains after the failed initialization attempt.
+    Failed { error: Errno },
+    /// The initialization failed and its private mapping could not be
+    /// released. `mapping` remains the sole exact owner and must not be
+    /// discarded.
+    Retained {
+        initialization: Errno,
+        cleanup: Errno,
+        mapping: Mapping,
+    },
+}
+
+impl PageMapInitializationError {
+    #[inline]
+    fn failed(error: Errno) -> Self { Self::Failed { error } }
+
+    /// Releases a private bootstrap mapping after a later initialization
+    /// transition failed. A failed release transfers the still-live mapping
+    /// into the error rather than silently forgetting it.
+    #[inline]
+    fn after_private_mapping_failure(mut mapping: Mapping, initialization: Errno) -> Self {
+        match mapping.unmap() {
+            Ok(()) => Self::Failed { error: initialization },
+            Err(cleanup) => Self::Retained {
+                initialization,
+                cleanup,
+                mapping,
+            },
+        }
+    }
+}
+
+impl fmt::Debug for PageMapInitializationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Failed { error } => formatter
+                .debug_struct("PageMapInitializationError::Failed")
+                .field("error", error)
+                .finish(),
+            Self::Retained {
+                initialization,
+                cleanup,
+                ..
+            } => formatter
+                .debug_struct("PageMapInitializationError::Retained")
+                .field("initialization", initialization)
+                .field("cleanup", cleanup)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
 /// An explicitly owned, non-RAII two-level page map.
 ///
 /// The top-level mapping includes the source's trailing, eagerly available
@@ -209,8 +272,12 @@ pub(crate) struct PageMap {
     header: NonNull<PageMapHeader>,
     reserved_count: usize,
     active: bool,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     submap_allocations: AtomicUsize,
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    published_submap_count: AtomicUsize,
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    registered_entry_count: AtomicUsize,
     #[cfg(test)]
     fail_next_top_release: bool,
 }
@@ -239,52 +306,86 @@ impl PageMap {
         config: MemoryConfig,
         configured_virtual_bits: usize,
         force_commit: bool,
-    ) -> Result<Self> {
+    ) -> core::result::Result<Self, PageMapInitializationError> {
         let virtual_bits = effective_virtual_address_bits(
             configured_virtual_bits,
             config.virtual_address_bits(),
         );
-        let virtual_reserve_count = reserve_count(virtual_bits).ok_or(Errno::INVAL)?;
-        let header_bytes = mapped_size_for_count(virtual_reserve_count).ok_or(Errno::NOMEM)?;
+        let virtual_reserve_count = reserve_count(virtual_bits)
+            .ok_or(Errno::INVAL)
+            .map_err(PageMapInitializationError::failed)?;
+        let header_bytes = mapped_size_for_count(virtual_reserve_count)
+            .ok_or(Errno::NOMEM)
+            .map_err(PageMapInitializationError::failed)?;
         let reserved_size = invariants::align_up(header_bytes, config.page_size().bytes())
-            .ok_or(Errno::NOMEM)?;
+            .ok_or(Errno::NOMEM)
+            .map_err(PageMapInitializationError::failed)?;
         let reserved_count = page_map_count_of_size(reserved_size);
         let extra_reserve_size = reserved_size
             .checked_add(PAGE_MAP_SUB_SIZE)
-            .ok_or(Errno::NOMEM)?;
+            .ok_or(Errno::NOMEM)
+            .map_err(PageMapInitializationError::failed)?;
         let commit_all = virtual_bits == crate::config::MIN_VABITS
             || reserved_size <= 64 * 1024
             || force_commit
             || config.has_overcommit();
-        let access = if commit_all { MapAccess::Committed } else { MapAccess::Reserved };
-        let mut mapping = Mapping::map_aligned_for_allocator(
-            config,
-            extra_reserve_size,
-            config.page_size().bytes(),
-            access,
-        )?;
-        let base = mapping.base()?;
-        let header = NonNull::new(base.cast::<PageMapHeader>()).ok_or(Errno::NOMEM)?;
-
-        let committed_count = if commit_all {
-            page_map_count_of_size(reserved_size)
+        let initial_commit_bytes = if commit_all {
+            None
         } else {
-            let minimum_count = reserve_count(crate::config::MIN_VABITS).ok_or(Errno::INVAL)?;
-            let minimum_bytes = mapped_size_for_count(minimum_count)
-                .and_then(|bytes| invariants::align_up(bytes, config.page_size().bytes()))
-                .ok_or(Errno::NOMEM)?;
-            if let Err(error) = mapping.commit(0, minimum_bytes) {
-                let _ = mapping.unmap();
-                return Err(error);
+            let minimum_count = reserve_count(crate::config::MIN_VABITS)
+                .ok_or(Errno::INVAL)
+                .map_err(PageMapInitializationError::failed)?;
+            Some(
+                mapped_size_for_count(minimum_count)
+                    .and_then(|bytes| invariants::align_up(bytes, config.page_size().bytes()))
+                    .ok_or(Errno::NOMEM)
+                    .map_err(PageMapInitializationError::failed)?,
+            )
+        };
+        let access = if commit_all { MapAccess::Committed } else { MapAccess::Reserved };
+        // Linux anonymous `mmap` returns a base-page-aligned address. The
+        // source passes this same base-page alignment to its aligned helper,
+        // whose direct-map branch therefore already satisfies the request.
+        // Keep the exact direct primitive here: no overmap cleanup owner can
+        // arise from a statically page-aligned PageMap extent.
+        let mapping = Mapping::map_for_allocator(config, extra_reserve_size, access)
+            .map_err(PageMapInitializationError::failed)?;
+        let base = match mapping.base() {
+            Ok(base) => base,
+            Err(error) => {
+                return Err(PageMapInitializationError::after_private_mapping_failure(
+                    mapping, error,
+                ));
             }
-            page_map_count_of_size(minimum_bytes)
+        };
+        let header = match NonNull::new(base.cast::<PageMapHeader>()) {
+            Some(header) => header,
+            None => {
+                return Err(PageMapInitializationError::after_private_mapping_failure(
+                    mapping,
+                    Errno::NOMEM,
+                ));
+            }
+        };
+
+        let committed_count = match initial_commit_bytes {
+            None => page_map_count_of_size(reserved_size),
+            Some(minimum_bytes) => {
+                if let Err(error) = mapping.commit(0, minimum_bytes) {
+                    return Err(PageMapInitializationError::after_private_mapping_failure(
+                        mapping, error,
+                    ));
+                }
+                page_map_count_of_size(minimum_bytes)
+            }
         };
 
         let sub0 = base.wrapping_add(reserved_size).cast::<PageEntry>();
         if !commit_all {
             if let Err(error) = mapping.commit(reserved_size, PAGE_MAP_SUB_SIZE) {
-                let _ = mapping.unmap();
-                return Err(error);
+                return Err(PageMapInitializationError::after_private_mapping_failure(
+                    mapping, error,
+                ));
             }
         }
         // SAFETY: the trailing submap is committed, exclusively owned, and is
@@ -323,8 +424,12 @@ impl PageMap {
             header,
             reserved_count,
             active: true,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             submap_allocations: AtomicUsize::new(0),
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
+            published_submap_count: AtomicUsize::new(1),
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
+            registered_entry_count: AtomicUsize::new(0),
             #[cfg(test)]
             fail_next_top_release: false,
         })
@@ -335,6 +440,30 @@ impl PageMap {
     }
 
     pub(crate) const fn reserved_count(&self) -> usize { self.reserved_count }
+
+    /// Returns a read-only ownership audit after callers have established the
+    /// PageMap's normal external no-mutation boundary. This test-only view
+    /// counts source-plain live registrations rather than treating retained
+    /// process-lifetime submaps as worker-owned leaks.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    pub(crate) fn test_registered_entry_count(&self) -> Result<usize> {
+        self.header()?;
+        Ok(self.registered_entry_count.load(Ordering::Acquire))
+    }
+
+    /// Counts published submaps and the lazy publications that created them.
+    /// Both are process-map ownership observations, not allocator policy.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    pub(crate) fn test_published_submap_count(&self) -> Result<usize> {
+        self.header()?;
+        Ok(self.published_submap_count.load(Ordering::Acquire))
+    }
+
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    #[inline]
+    pub(crate) fn test_lazy_submap_allocation_count(&self) -> usize {
+        self.submap_allocations.load(Ordering::Relaxed)
+    }
 
     #[inline]
     fn header(&self) -> Result<&PageMapHeader> {
@@ -400,12 +529,13 @@ impl PageMap {
         let result = if let Some(submap) = self.submap_at(index)? {
             Ok(submap)
         } else {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             self.submap_allocations.fetch_add(1, Ordering::Relaxed);
-            let mut candidate = Mapping::map_aligned_for_allocator(
+            // See `PageMap::initialize`: the requested alignment is exactly
+            // the Linux base-page guarantee of this direct anonymous mapping.
+            let mut candidate = Mapping::map_for_allocator(
                 self.config,
                 PAGE_MAP_SUB_SIZE,
-                self.config.page_size().bytes(),
                 MapAccess::Committed,
             )?;
             let candidate_base = candidate.base()?.cast::<PageEntry>();
@@ -414,6 +544,14 @@ impl PageMap {
             // SAFETY: ensure_committed proved this raw pointer word committed
             // before the source page-map lock was acquired.
             let slot = unsafe { atomic_submap_slot(self.header()?, index) };
+            // The pinned source retains this defensive CAS even under its
+            // page-map lock. In this Rust port, `PageMapHeader::submaps` and
+            // `atomic_submap_slot` are private to this module, and every
+            // current writer takes this same lock and reloads the slot above.
+            // A loser is therefore unreachable in the present ownership
+            // graph; it remains source-shaped rather than a fault-injection
+            // release path. Any future competing writer must take this lock
+            // or first give a losing candidate an explicit retained owner.
             match slot.compare_exchange(
                 null_mut(),
                 candidate_base,
@@ -422,6 +560,8 @@ impl PageMap {
             ) {
                 Ok(_) => {
                     candidate.into_published()?;
+                    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+                    self.published_submap_count.fetch_add(1, Ordering::Release);
                     NonNull::new(candidate_base).ok_or(Errno::NOMEM)
                 }
                 Err(winner) => {
@@ -505,7 +645,27 @@ impl PageMap {
                 // SAFETY: the submap has PAGE_MAP_SUB_COUNT initialized slots;
                 // the iterator bounds the index and the caller owns the plain
                 // entry synchronization contract.
-                unsafe { *(*submap.as_ptr().add(sub_index)).0.get() = page };
+                let entry = unsafe { (*submap.as_ptr().add(sub_index)).0.get() };
+                // SAFETY: the iterator bounds the entry, and the caller owns
+                // the source-plain registration synchronization contract.
+                #[cfg(any(test, feature = "native-runtime-test-audit"))]
+                // SAFETY: the same synchronized source-plain ownership that
+                // permits the write also permits this audit-only old-value
+                // observation.
+                let previous = unsafe { entry.read() };
+                // SAFETY: this is the one synchronized source-plain entry
+                // write for the current register or unregister transition.
+                unsafe { entry.write(page) };
+                #[cfg(any(test, feature = "native-runtime-test-audit"))]
+                match (previous.is_null(), page.is_null()) {
+                    (true, false) => {
+                        self.registered_entry_count.fetch_add(1, Ordering::Release);
+                    }
+                    (false, true) => {
+                        self.registered_entry_count.fetch_sub(1, Ordering::Release);
+                    }
+                    (true, true) | (false, false) => {}
+                }
             }
         }
         Ok(())
@@ -604,7 +764,7 @@ mod tests {
     use crate::config::{
         ARENA_SLICE_SIZE, MAX_VABITS, MIN_VABITS, PAGE_MAP_SUB_COUNT,
     };
-    use crate::os::PageSize;
+    use crate::os::{PageSize, fault};
     use crate::types::EMPTY_PAGE;
 
     fn memory_config(overcommit: bool) -> MemoryConfig {
@@ -764,6 +924,9 @@ mod tests {
             page_map
                 .register_range(start, 2 * ARENA_SLICE_SIZE, page)
                 .expect("commit a top-level extension and publish one submap");
+            assert_eq!(page_map.test_registered_entry_count(), Ok(2));
+            assert_eq!(page_map.test_published_submap_count(), Ok(2));
+            assert_eq!(page_map.test_lazy_submap_allocation_count(), 1);
             assert_eq!(page_map.checked_lookup(start), page.as_ptr());
             assert_eq!(
                 page_map.checked_lookup(start.wrapping_add(ARENA_SLICE_SIZE)),
@@ -773,6 +936,7 @@ mod tests {
                 .unregister_range(start, 2 * ARENA_SLICE_SIZE)
                 .expect("clear the exact registered range");
             assert!(page_map.checked_lookup(start).is_null());
+            assert_eq!(page_map.test_registered_entry_count(), Ok(0));
         }
         let expected_extension_size = invariants::align_up(
             size_of::<PageMapHeader>() + map_index * size_of::<*mut PageEntry>(),
@@ -797,6 +961,365 @@ mod tests {
         assert_eq!(unsafe { page_map.destroy() }, Err(Errno::INVAL));
     }
 
+    /// Emits the address-free M2 PageMap success differential record. Both
+    /// halves use a controlled 4-KiB, non-overcommit configuration and reach
+    /// the same selected source transitions: initial partial commitment, a
+    /// two-submap extension, range clear, boundary rollback, and an absent
+    /// root after destruction. The C global root is reset by destruction;
+    /// Rust's separately owned [`PageMapRoot`] must be cleared before
+    /// [`PageMap::destroy`], and the trace makes that ownership difference
+    /// explicit. It does not cover C's cold-init static-empty-root failure
+    /// behavior or allocation routing.
+    #[test]
+    fn emit_m2_page_map_init_c_rust_trace() {
+        let mut page_map = std::boxed::Box::new(
+            PageMap::initialize(memory_config(false), MAX_VABITS, false)
+                .expect("initialize the selected partial two-level page map"),
+        );
+        let root = PageMapRoot::empty();
+        let control_page_size = page_map.memory_config().page_size().bytes();
+        let control_has_overcommit_false = !page_map.memory_config().has_overcommit();
+        let control_max_vabits = MAX_VABITS;
+        let layout_header_bytes = size_of::<PageMapHeader>();
+        let layout_lock_bytes = size_of::<PrivateLock>();
+        let init_root_empty_before = root.load().is_none();
+        let init_reserve_count = reserve_count(MAX_VABITS)
+            .expect("the frozen maximum virtual-address width has a reserve count");
+        let init_reserved_count = page_map.reserved_count();
+        let init_committed_count = page_map
+            .committed_count()
+            .expect("the initialized PageMap exposes its committed prefix");
+        let init_root_published = {
+            // SAFETY: the boxed map stays live until this test clears the
+            // root after all observations and registrations finish.
+            unsafe { root.publish(&page_map) };
+            root.load().is_some()
+        };
+        let init_submap_zero_present = page_map
+            .submap_at(0)
+            .expect("submap-zero observation is in the committed prefix")
+            .is_some();
+        let init_committed_lt_reserved = init_committed_count < init_reserved_count;
+
+        let extend_map_index = init_committed_count
+            .checked_add(1)
+            .expect("the selected committed prefix leaves a representable extension index");
+        let extend_start_sub_index = PAGE_MAP_SUB_COUNT - 1;
+        assert!(extend_map_index + 1 < init_reserved_count);
+        let extend_start_slice = extend_map_index
+            .checked_mul(PAGE_MAP_SUB_COUNT)
+            .and_then(|index| index.checked_add(extend_start_sub_index))
+            .expect("the selected two-submap registration start is representable");
+        let extend_start_address = extend_start_slice
+            .checked_mul(ARENA_SLICE_SIZE)
+            .expect("the selected two-submap registration address is representable");
+        let extend_start = core::ptr::without_provenance::<u8>(extend_start_address);
+        let page = NonNull::from(EMPTY_PAGE.as_ref());
+
+        // SAFETY: this test is the only map client and writes a valid stable
+        // marker over the last slice of one submap and the first slice of the
+        // next, so the source plain-entry contract is satisfied.
+        unsafe {
+            page_map
+                .register_range(extend_start, 2 * ARENA_SLICE_SIZE, page)
+                .expect("selected registration extends and publishes two submaps");
+        }
+        let extend_committed_after = page_map
+            .committed_count()
+            .expect("registration leaves the map live");
+        let extend_committed_increased = extend_committed_after > init_committed_count;
+        let extend_first_submap = page_map
+            .submap_at(extend_map_index)
+            .expect("first selected extension submap slot remains committed");
+        let extend_second_submap = page_map
+            .submap_at(extend_map_index + 1)
+            .expect("second selected extension submap slot remains committed");
+        let extend_first_submap_present = extend_first_submap.is_some();
+        let extend_second_submap_present = extend_second_submap.is_some();
+        let extend_submaps_distinct = match (extend_first_submap, extend_second_submap) {
+            (Some(first), Some(second)) => first != second,
+            (None, _) | (_, None) => false,
+        };
+        let extend_second = extend_start.wrapping_add(ARENA_SLICE_SIZE);
+        let register_first_lookup_matches =
+            unsafe { page_map.checked_lookup(extend_start) == page.as_ptr() };
+        let register_second_lookup_matches =
+            unsafe { page_map.checked_lookup(extend_second) == page.as_ptr() };
+
+        // SAFETY: this remains the test's sole synchronized map transition.
+        unsafe {
+            page_map
+                .unregister_range(extend_start, 2 * ARENA_SLICE_SIZE)
+                .expect("exact registration range unregisters");
+        }
+        let unregister_first_lookup_absent = unsafe { page_map.checked_lookup(extend_start).is_null() };
+        let unregister_second_lookup_absent = unsafe { page_map.checked_lookup(extend_second).is_null() };
+
+        let rollback_map_index = init_reserved_count - 1;
+        let rollback_start_slice = rollback_map_index
+            .checked_mul(PAGE_MAP_SUB_COUNT)
+            .and_then(|index| index.checked_add(PAGE_MAP_SUB_COUNT - 1))
+            .expect("the source boundary rollback start is representable");
+        let rollback_start_address = rollback_start_slice
+            .checked_mul(ARENA_SLICE_SIZE)
+            .expect("the source boundary rollback address is representable");
+        let rollback_start = core::ptr::without_provenance::<u8>(rollback_start_address);
+        let rollback_register_failed = unsafe {
+            page_map.register_range(rollback_start, 2 * ARENA_SLICE_SIZE, page)
+        } == Err(Errno::NOMEM);
+        let rollback_submap_present = page_map
+            .submap_at(rollback_map_index)
+            .expect("the first boundary write may publish its source submap")
+            .is_some();
+        let rollback_entry_cleared = unsafe { page_map.checked_lookup(rollback_start).is_null() };
+        let rollback_out_of_bounds_absent = unsafe {
+            page_map
+                .checked_lookup(rollback_start.wrapping_add(ARENA_SLICE_SIZE))
+                .is_null()
+        };
+
+        assert_eq!(control_page_size, 4 * 1024);
+        assert!(control_has_overcommit_false);
+        assert_eq!(control_max_vabits, 48);
+        assert_ne!(layout_header_bytes, 0);
+        assert_ne!(layout_lock_bytes, 0);
+        assert!(init_root_empty_before);
+        assert!(init_root_published);
+        assert_ne!(init_reserve_count, 0);
+        assert!(init_committed_lt_reserved);
+        assert!(init_submap_zero_present);
+        assert!(extend_committed_increased);
+        assert!(extend_first_submap_present);
+        assert!(extend_second_submap_present);
+        assert!(extend_submaps_distinct);
+        assert!(register_first_lookup_matches);
+        assert!(register_second_lookup_matches);
+        assert!(unregister_first_lookup_absent);
+        assert!(unregister_second_lookup_absent);
+        assert!(rollback_register_failed);
+        assert!(rollback_submap_present);
+        assert!(rollback_entry_cleared);
+        assert!(rollback_out_of_bounds_absent);
+
+        let destroy_root_unpublished_before = root.clear().is_some();
+        assert!(destroy_root_unpublished_before);
+        // SAFETY: the root is cleared and the test owns the only page-map
+        // client, so the selected destruction precondition holds.
+        unsafe { page_map.destroy() }.expect("the test map destroys after root clear");
+        let destroy_root_absent_after = root.load().is_none();
+        assert!(destroy_root_absent_after);
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+        std::println!("CRABC_MI_M2_PAGE_MAP_TRACE_BEGIN");
+        emit!("m2.page_map.control.page_size", control_page_size);
+        emit!(
+            "m2.page_map.control.has_overcommit_false",
+            control_has_overcommit_false
+        );
+        emit!("m2.page_map.control.max_vabits", control_max_vabits);
+        emit!("m2.page_map.layout.header_bytes", layout_header_bytes);
+        emit!("m2.page_map.layout.lock_bytes", layout_lock_bytes);
+        emit!("m2.page_map.init.root_empty_before", init_root_empty_before);
+        emit!("m2.page_map.init.root_published", init_root_published);
+        emit!("m2.page_map.init.reserve_count", init_reserve_count);
+        emit!("m2.page_map.init.reserved_count", init_reserved_count);
+        emit!("m2.page_map.init.committed_count", init_committed_count);
+        emit!(
+            "m2.page_map.init.committed_lt_reserved",
+            init_committed_lt_reserved
+        );
+        emit!(
+            "m2.page_map.init.submap_zero_present",
+            init_submap_zero_present
+        );
+        emit!("m2.page_map.extend.map_index", extend_map_index);
+        emit!(
+            "m2.page_map.extend.start_sub_index",
+            extend_start_sub_index
+        );
+        emit!("m2.page_map.extend.slice_count", 2usize);
+        emit!(
+            "m2.page_map.extend.committed_before",
+            init_committed_count
+        );
+        emit!("m2.page_map.extend.committed_after", extend_committed_after);
+        emit!(
+            "m2.page_map.extend.committed_increased",
+            extend_committed_increased
+        );
+        emit!(
+            "m2.page_map.extend.first_submap_present",
+            extend_first_submap_present
+        );
+        emit!(
+            "m2.page_map.extend.second_submap_present",
+            extend_second_submap_present
+        );
+        emit!("m2.page_map.extend.submaps_distinct", extend_submaps_distinct);
+        emit!(
+            "m2.page_map.register.first_lookup_matches",
+            register_first_lookup_matches
+        );
+        emit!(
+            "m2.page_map.register.second_lookup_matches",
+            register_second_lookup_matches
+        );
+        emit!(
+            "m2.page_map.unregister.first_lookup_absent",
+            unregister_first_lookup_absent
+        );
+        emit!(
+            "m2.page_map.unregister.second_lookup_absent",
+            unregister_second_lookup_absent
+        );
+        emit!("m2.page_map.rollback.register_failed", rollback_register_failed);
+        emit!("m2.page_map.rollback.submap_present", rollback_submap_present);
+        emit!("m2.page_map.rollback.entry_cleared", rollback_entry_cleared);
+        emit!(
+            "m2.page_map.rollback.out_of_bounds_absent",
+            rollback_out_of_bounds_absent
+        );
+        emit!(
+            "m2.page_map.destroy.root_unpublished_before",
+            destroy_root_unpublished_before
+        );
+        emit!(
+            "m2.page_map.destroy.root_absent_after",
+            destroy_root_absent_after
+        );
+        std::println!("CRABC_MI_M2_PAGE_MAP_TRACE_END");
+    }
+
+    /// Emits the selected M2 PageMap lazy-commit failure differential record.
+    ///
+    /// The pinned `mi_page_map_commit_entries` body fails before its Release
+    /// `committed_count` publication and before `mi_page_map_ensure_submap_at`
+    /// can allocate a submap. This Rust witness injects at the matching
+    /// `Mapping::commit` boundary, proves that the existing top-level mapping
+    /// remains the exact retry owner, then retries the one pending extension.
+    /// It deliberately excludes cold initialization, range rollback, submap
+    /// map failure, release failure, and concurrent publication.
+    #[test]
+    fn emit_m2_page_map_lazy_commit_failure_c_rust_trace() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial two-level page map");
+        let control_page_size = page_map.memory_config().page_size().bytes();
+        let control_has_overcommit_false = !page_map.memory_config().has_overcommit();
+        let control_max_vabits = MAX_VABITS;
+        let committed_before = page_map
+            .committed_count()
+            .expect("the initialized PageMap exposes its committed prefix");
+        let target = committed_before
+            .checked_add(1)
+            .expect("the selected lazy extension index is representable");
+        assert!(target < page_map.reserved_count());
+        let top_mapping = page_map
+            .mapping
+            .base()
+            .expect("the initialized PageMap retains its top-level mapping");
+
+        let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let failure_returned = page_map.ensure_submap_at(target) == Err(Errno::NOMEM);
+        let failure_commit_attempts = fault.observed();
+        let failure_committed_unchanged = page_map.committed_count() == Ok(committed_before);
+        // `submap_at` first checks the committed prefix, so this observes the
+        // source's pre-publication boundary without reading an uncommitted
+        // raw slot.
+        let failure_no_submap_result = page_map.submap_at(target) == Ok(None);
+        let failure_submap_allocation_attempts = page_map.test_lazy_submap_allocation_count();
+        let failure_top_owner_retained = page_map.mapping.base() == Ok(top_mapping);
+
+        fault.set(fault::Plan::disabled());
+        let retry_submap = page_map
+            .ensure_submap_at(target)
+            .expect("the unchanged top-level owner retries the lazy extension");
+        let retry_succeeded = page_map.submap_at(target) == Ok(Some(retry_submap));
+        let retry_committed_advanced = page_map
+            .committed_count()
+            .expect("the successful retry leaves the PageMap active")
+            > committed_before;
+        let retry_submap_allocation_attempts = page_map.test_lazy_submap_allocation_count();
+
+        // SAFETY: this test owns the only PageMap client and leaves no root or
+        // registration to quiesce before releasing the successful retry.
+        let cleanup_top_owner_released = unsafe { page_map.destroy() }.is_ok()
+            && page_map.mapping.base() == Err(Errno::INVAL);
+
+        assert_eq!(control_page_size, 4 * 1024);
+        assert!(control_has_overcommit_false);
+        assert_eq!(control_max_vabits, 48);
+        assert!(failure_returned);
+        assert_eq!(failure_commit_attempts, 1);
+        assert!(failure_committed_unchanged);
+        assert!(failure_no_submap_result);
+        assert_eq!(failure_submap_allocation_attempts, 0);
+        assert!(failure_top_owner_retained);
+        assert!(retry_succeeded);
+        assert!(retry_committed_advanced);
+        assert_eq!(retry_submap_allocation_attempts, 1);
+        assert!(cleanup_top_owner_released);
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value as usize);
+            };
+        }
+        std::println!("CRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_BEGIN");
+        emit!("m2.page_map.lazy_commit.control.page_size", control_page_size);
+        emit!(
+            "m2.page_map.lazy_commit.control.has_overcommit_false",
+            control_has_overcommit_false
+        );
+        emit!("m2.page_map.lazy_commit.control.max_vabits", control_max_vabits);
+        emit!(
+            "m2.page_map.lazy_commit.failure.target_above_committed",
+            target > committed_before
+        );
+        emit!(
+            "m2.page_map.lazy_commit.failure.commit_attempts",
+            failure_commit_attempts
+        );
+        emit!("m2.page_map.lazy_commit.failure.returned", failure_returned);
+        emit!(
+            "m2.page_map.lazy_commit.failure.committed_unchanged",
+            failure_committed_unchanged
+        );
+        emit!(
+            "m2.page_map.lazy_commit.failure.no_submap_result",
+            failure_no_submap_result
+        );
+        emit!(
+            "m2.page_map.lazy_commit.failure.submap_allocation_attempts",
+            failure_submap_allocation_attempts
+        );
+        emit!(
+            "m2.page_map.lazy_commit.failure.top_owner_retained",
+            failure_top_owner_retained
+        );
+        emit!("m2.page_map.lazy_commit.retry.succeeded", retry_succeeded);
+        emit!(
+            "m2.page_map.lazy_commit.retry.committed_advanced",
+            retry_committed_advanced
+        );
+        emit!(
+            "m2.page_map.lazy_commit.retry.submap_present",
+            retry_succeeded
+        );
+        emit!(
+            "m2.page_map.lazy_commit.retry.submap_allocation_attempts",
+            retry_submap_allocation_attempts
+        );
+        emit!(
+            "m2.page_map.lazy_commit.cleanup.top_owner_released",
+            cleanup_top_owner_released
+        );
+        std::println!("CRABC_MI_M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_END");
+    }
+
     #[test]
     fn failed_cross_boundary_registration_rolls_back_every_written_entry() {
         let mut page_map = PageMap::initialize(memory_config(false), MIN_VABITS, false)
@@ -813,6 +1336,153 @@ mod tests {
         );
         assert!(unsafe { page_map.checked_lookup(start) }.is_null());
         unsafe { page_map.destroy() }.expect("rollback leaves all mapping ownership intact");
+    }
+
+    #[test]
+    fn lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial map");
+        let committed_before = page_map
+            .committed_count()
+            .expect("the initialized map exposes its committed prefix");
+        let target = committed_before
+            .checked_add(1)
+            .expect("the selected map has a representable lazy-extension index");
+        let top_mapping = page_map
+            .mapping
+            .base()
+            .expect("the top-level mapping remains owned before the extension");
+        let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+
+        assert_eq!(page_map.ensure_submap_at(target), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(page_map.committed_count(), Ok(committed_before));
+        assert_eq!(page_map.submap_at(target), Ok(None));
+        assert_eq!(page_map.test_lazy_submap_allocation_count(), 0);
+        assert_eq!(page_map.mapping.base(), Ok(top_mapping));
+
+        fault.set(fault::Plan::disabled());
+        let submap = page_map
+            .ensure_submap_at(target)
+            .expect("the same top-level mapping retries the lazy extension");
+        assert_eq!(page_map.submap_at(target), Ok(Some(submap)));
+        assert_eq!(page_map.test_lazy_submap_allocation_count(), 1);
+        // SAFETY: this test owns the only PageMap client and has no root or
+        // registered range to quiesce before the retryable release.
+        unsafe { page_map.destroy() }.expect("the retried map release succeeds");
+    }
+
+    #[test]
+    fn lazy_submap_mapping_failure_preserves_the_page_map_for_retry() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial map");
+        let committed_before = page_map
+            .committed_count()
+            .expect("the initialized map exposes its committed prefix");
+        let target = committed_before
+            .checked_add(1)
+            .expect("the selected map has a representable lazy-extension index");
+        let top_mapping = page_map
+            .mapping
+            .base()
+            .expect("the top-level mapping remains owned before the extension");
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+
+        assert_eq!(page_map.ensure_submap_at(target), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1);
+        assert!(
+            page_map.committed_count().expect("a failed lazy map keeps the PageMap live")
+                > committed_before
+        );
+        assert_eq!(page_map.submap_at(target), Ok(None));
+        assert_eq!(page_map.test_lazy_submap_allocation_count(), 1);
+        assert_eq!(page_map.mapping.base(), Ok(top_mapping));
+
+        fault.set(fault::Plan::disabled());
+        let submap = page_map
+            .ensure_submap_at(target)
+            .expect("the same PageMap retries the lazy submap mapping");
+        assert_eq!(page_map.submap_at(target), Ok(Some(submap)));
+        assert_eq!(page_map.test_lazy_submap_allocation_count(), 2);
+        // SAFETY: this test owns the only PageMap client and has no root or
+        // registered range to quiesce before the retryable release.
+        unsafe { page_map.destroy() }.expect("the retried map release succeeds");
+    }
+
+    #[test]
+    fn destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial map");
+        let first_index = page_map
+            .committed_count()
+            .expect("the initialized map exposes its committed prefix")
+            .checked_add(1)
+            .expect("the selected map has a representable first lazy index");
+        let second_index = first_index
+            .checked_add(1)
+            .expect("the selected map has a representable second lazy index");
+        let first = page_map
+            .ensure_submap_at(first_index)
+            .expect("the first lazy submap is published");
+        let second = page_map
+            .ensure_submap_at(second_index)
+            .expect("the second lazy submap is published");
+        assert_ne!(first, second);
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+
+        // SAFETY: this test owns the only PageMap client and has no root or
+        // registered range. The injected failure must retain the first raw
+        // published-submap owner in its exact slot.
+        assert_eq!(unsafe { page_map.destroy() }, Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(page_map.submap_at(first_index), Ok(Some(first)));
+        assert_eq!(page_map.submap_at(second_index), Ok(Some(second)));
+        assert!(page_map.committed_count().is_ok());
+
+        fault.set(fault::Plan::disabled());
+        // SAFETY: the failed release did not clear either ownership slot, and
+        // this test still supplies the destruction quiescence precondition.
+        unsafe { page_map.destroy() }.expect("the retained submap slots retry to release");
+    }
+
+    #[test]
+    fn destroy_top_mapping_release_failure_retains_the_exact_mapping_for_retry() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+            .expect("initialize the selected partial map");
+        let first_index = page_map
+            .committed_count()
+            .expect("the initialized map exposes its committed prefix")
+            .checked_add(1)
+            .expect("the selected map has a representable first lazy index");
+        let second_index = first_index
+            .checked_add(1)
+            .expect("the selected map has a representable second lazy index");
+        page_map
+            .ensure_submap_at(first_index)
+            .expect("the first lazy submap is published");
+        page_map
+            .ensure_submap_at(second_index)
+            .expect("the second lazy submap is published");
+        let top_mapping = page_map
+            .mapping
+            .base()
+            .expect("the top-level mapping remains owned before destruction");
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 3, Errno::NOMEM));
+
+        // SAFETY: this test owns the only PageMap client and has no root or
+        // registered range. Two successful lazy-submap releases precede the
+        // injected top-level release failure.
+        assert_eq!(unsafe { page_map.destroy() }, Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 3);
+        assert_eq!(page_map.submap_at(first_index), Ok(None));
+        assert_eq!(page_map.submap_at(second_index), Ok(None));
+        assert_eq!(page_map.mapping.base(), Ok(top_mapping));
+        assert!(page_map.committed_count().is_ok());
+
+        fault.set(fault::Plan::disabled());
+        // SAFETY: only the original top-level Mapping remains, and this test
+        // still supplies the destruction quiescence precondition.
+        unsafe { page_map.destroy() }.expect("the retained top mapping retries to release");
     }
 
     #[test]

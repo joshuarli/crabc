@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "full_lane": {
+    "routes_per_cycle": 2,
+    "stress_seed": "0xd1b54a32d192ed03",
+    "watchdog_seconds": 30,
+    "worker_cycles": 128
+  },
+  "gates": [
+    {
+      "acceptance": "The pinned C oracle, source contracts and ratchet, selected M4 adapter, compiler-TLS codegen judge, and production remote-free Loom model all pass.",
+      "evidence": [
+        "quick-contract-oracle",
+        "m4-adapter",
+        "compiler-tls-codegen",
+        "remote-free-loom"
+      ],
+      "id": "m5.base",
+      "required": true
+    },
+    {
+      "acceptance": "The bounded persistent page-bearing worker route completes under the recorded full-lane schedule without a lifecycle failure.",
+      "evidence": [
+        "runtime-ticket-zero:persistent-local"
+      ],
+      "id": "m5.5a",
+      "required": true
+    },
+    {
+      "acceptance": "The bounded live-owner remote-free route completes under the recorded full-lane schedule and the production remote-free Loom model passes.",
+      "evidence": [
+        "runtime-ticket-zero:live-owner-remote-free",
+        "remote-free-loom"
+      ],
+      "id": "m5.5b",
+      "required": true
+    },
+    {
+      "acceptance": "The reviewed native owner-exit lifecycle contract executes its direct runtime and focused source-traversal checks for every required owner-exit scenario.",
+      "evidence": [
+        "native-owner-exit-lifecycle:direct-runtime",
+        "native-owner-exit-lifecycle:source-traversal"
+      ],
+      "id": "m5.5c",
+      "required": true
+    },
+    {
+      "acceptance": "Bounded churn, opt-in soak, metadata high-water stability, and the source-attested canonical current-head upstream stress matrix are accepted for the claimed M5 lifecycle surface.",
+      "blocked_by": [
+        "The bounded C lanes and focused Rust regression remain bounded witnesses, not accepted opt-in soak or metadata high-water completion. A verified current-head canonical upstream matrix is a source/artifact-bound nondefault 12-row shadow subset with large_object_mode: source-cli-enabled; its four source-CLI rows record bounded activation and workload attempts, not proof that every probabilistic large allocation succeeded. It cannot accept comprehensive large-object coverage or the broader claimed M5 lifecycle surface. The constrained source-derived test-stress.c route still runs on its creating thread only and cannot accept upstream cross-thread transfer, remote-free, heap, subprocess, or thread-recreation."
+      ],
+      "evidence": [
+        "runtime-ticket-zero:128-cycle-churn",
+        "native-post-exit-registry:high-water",
+        "source-derived:test-stress-single-creating-thread",
+        "canonical-upstream-stress:current-head-full-matrix"
+      ],
+      "id": "m5.5d",
+      "required": true
+    },
+    {
+      "acceptance": "The canonical selected native-mimalloc shadow ABI and pthread suite is accepted for the claimed M5 surface.",
+      "blocked_by": [
+        "The selected native-mimalloc shadow lane remains nondefault and bounded; its complete M5 ABI, pthread, differential, and stress acceptance has not been established."
+      ],
+      "evidence": [
+        "canonical:allocator-shadow"
+      ],
+      "id": "m5.5e",
+      "required": true
+    }
+  ],
+  "schema": "crabc-mimalloc-m5-gate",
+  "upstream": {
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:181-224,305-360`,
-// `src/page-map.c:228-365`, `src/alloc.c:29-159,379-451`, and `src/arena.c:341-406,
+// `src/page-map.c:228-365`, `src/alloc.c:29-159,379-451`, `src/free.c:221-255`, and `src/arena.c:341-406,
 // 525-569,674-723,781-821,951-1114,1129-1213,1240-1282`.
 
 //! Page-bearing binding of the static main Theap to one process-owned arena.
@@ -35,10 +35,14 @@ use crate::process_arena::{
     ProcessSharedArenaStorage,
 };
 use crate::process_page_map::{ProcessPageMapError, ProcessPageMapMutationLease};
+#[cfg(test)]
+use crate::process_page_map::ProcessPageMapSuspendedEngineAccess;
 use crate::size_class;
 use crate::single_thread::{
     FreeError, PageAllocatorEngine, RemoteFreePreparationError, RemoteFreeProducer,
 };
+#[cfg(test)]
+use crate::single_thread::PageAllocatorEngineState;
 use crate::types::PageKind;
 #[cfg(test)]
 use crate::types::Page;
@@ -550,12 +554,61 @@ impl<'main> MainStaticFirstArenaPageAllocator<'main> {
 /// intentionally has no process finish transition: source process exit and
 /// complete page-bearing fork ownership are not implemented, so dropping or
 /// closing the runtime owner would turn live process state into a false
-/// reusable attachment. An all-free active engine may return only its private
-/// PageMap mutation lease; the same permanent session and published first
-/// arena remain retained and may reactivate sequentially on ticket zero.
+/// reusable attachment. An all-free active engine retains the same permanent
+/// session and published first arena, which may reactivate sequentially on
+/// ticket zero. The retired unit-test scheduler separately returns its legacy
+/// PageMap mutation lease before that dormant state.
 #[must_use = "the permanent ticket-zero runtime page owner must remain retained for process life"]
 pub(crate) struct MainStaticRuntimeFirstArenaPageAllocator {
     state: MainStaticRuntimeFirstArenaPageAllocatorState,
+}
+
+/// The active ticket-zero engine and its exact owned PageMap ranges.
+///
+/// Production retains no process-wide PageMap mutation lease beside a live
+/// initial client: its engine owns and serializes only the ranges it registers,
+/// reads, mutates, and unregisters. The retired unit-test scheduler below
+/// still carries its historical long lease so its parked-engine fixtures keep
+/// their original capability boundary.
+struct MainStaticRuntimeActiveEngine {
+    engine: PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession>,
+    #[cfg(test)]
+    page_map_lifecycle: ProcessPageMapMutationLease,
+    page_map: crate::process_page_map::ProcessPageMapLease,
+    arena_storage: &'static ProcessSharedArenaStorage,
+}
+
+// The old runtime scheduler could suspend a live ticket-zero engine while it
+// lent its PageMap exclusion to a later worker. Native-shadow initial-thread
+// operations now retain their promoted compiler-TLS owner directly, and
+// later-worker preparation accepts only the existing dormant pair. Keep this
+// shape only for the older runtime unit fixtures until `runtime_lifecycle.rs`
+// removes their scheduler coverage; it is absent from normal allocator builds.
+#[cfg(test)]
+/// A live initial-thread engine after it has lent only its plain PageMap
+/// exclusion to the runtime scheduler.
+///
+/// The static session, source engine state, and suspended-map access remain
+/// private to ticket zero.  A later worker may borrow the already-published
+/// process pair for one independently serialized operation, but it receives
+/// neither this engine state nor a way to resume or free its client.
+#[must_use = "a parked ticket-zero engine must resume on ticket zero or remain terminally retained"]
+struct MainStaticRuntimeParkedEngine {
+    session: MainStaticProcessPageSession,
+    engine_state: PageAllocatorEngineState<'static, 'static>,
+    page_map_access: ProcessPageMapSuspendedEngineAccess,
+    page_map: crate::process_page_map::ProcessPageMapLease,
+    arena_storage: &'static ProcessSharedArenaStorage,
+}
+
+#[cfg(test)]
+enum MainStaticRuntimeParkedEngineResumeFailure {
+    Busy(MainStaticRuntimeParkedEngine),
+    Retained {
+        session: MainStaticProcessPageSession,
+        engine_state: PageAllocatorEngineState<'static, 'static>,
+        page_map_access: ProcessPageMapSuspendedEngineAccess,
+    },
 }
 
 enum MainStaticRuntimeFirstArenaPageAllocatorState {
@@ -564,16 +617,15 @@ enum MainStaticRuntimeFirstArenaPageAllocatorState {
         page_map: crate::process_page_map::ProcessPageMapLease,
         arena_storage: &'static ProcessSharedArenaStorage,
     },
-    Active {
-        engine: PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession>,
-        page_map_lifecycle: ProcessPageMapMutationLease,
-        page_map: crate::process_page_map::ProcessPageMapLease,
-        arena_storage: &'static ProcessSharedArenaStorage,
-    },
-    /// The source page image is empty after a runtime free. The permanent
-    /// session and first arena remain process-owned, but the Rust-only long
-    /// PageMap exclusion is available to one other explicit sequential page
-    /// lifecycle before ticket zero reactivates.
+    Active(MainStaticRuntimeActiveEngine),
+    /// Test-only compatibility state for the retired ticket-zero scheduler.
+    #[cfg(test)]
+    ParkedActive(MainStaticRuntimeParkedEngine),
+    /// The source page image was force-collected at an explicit handoff after
+    /// an all-free local cycle. The permanent session and first arena remain
+    /// process-owned. Production can reactivate its own disjoint ranges
+    /// directly; the test-only retired scheduler has returned its historical
+    /// long PageMap exclusion before reaching here.
     DormantExistingArena {
         session: MainStaticProcessPageSession,
         page_map: crate::process_page_map::ProcessPageMapLease,
@@ -594,7 +646,131 @@ pub(crate) enum MainStaticRuntimeFirstArenaPageAllocatorBeginError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainStaticRuntimeFirstArenaPageAllocatorFreeError {
     NotActive,
+    /// A separately serialized PageMap operation still owns the suspended
+    /// initial engine's guard. The ticket-zero client remains live and may
+    /// retry after that operation republishes its scheduler state.
+    Busy,
     Free(FreeError),
+}
+
+#[cfg(test)]
+impl MainStaticRuntimeActiveEngine {
+    /// Releases only this engine's long PageMap guard while retaining every
+    /// ticket-zero source fact required to resume it on the original thread.
+    ///
+    /// The caller has already excluded ticket-zero reentry through the
+    /// runtime scheduler.  A failed wake after guard release is terminal: the
+    /// returned separated state must remain retained rather than pretending
+    /// that the initial engine is still active or all-free.
+    fn suspend(self) -> Result<MainStaticRuntimeParkedEngine, (MainStaticProcessPageSession, PageAllocatorEngineState<'static, 'static>)> {
+        let Self {
+            engine,
+            page_map_lifecycle,
+            page_map,
+            arena_storage,
+        } = self;
+        let (session, engine_state) = engine.suspend_runtime_ticket_zero();
+        // SAFETY: `session` and `engine_state` remain together in the only
+        // returned parked token. No raw PageMap access survives this consuming
+        // transition, and only ticket zero may later reassemble the engine.
+        match unsafe { page_map_lifecycle.into_suspended_engine_access() } {
+            Ok(page_map_access) => Ok(MainStaticRuntimeParkedEngine {
+                session,
+                engine_state,
+                page_map_access,
+                page_map,
+                arena_storage,
+            }),
+            Err(_) => Err((session, engine_state)),
+        }
+    }
+}
+
+#[cfg(test)]
+impl MainStaticRuntimeParkedEngine {
+    /// Reclaims the one long PageMap lease for this exact ticket-zero engine.
+    ///
+    /// A competing complete operation leaves the parked capability unchanged;
+    /// every other failure retains the static session and engine state because
+    /// the page-map handoff can no longer be replayed safely.
+    fn resume(self) -> Result<MainStaticRuntimeActiveEngine, MainStaticRuntimeParkedEngineResumeFailure> {
+        let Self {
+            session,
+            engine_state,
+            page_map_access,
+            page_map,
+            arena_storage,
+        } = self;
+        // SAFETY: this is the exact suspended access paired with `session`
+        // and `engine_state`; the caller immediately reassembles the only
+        // ticket-zero engine on success.
+        let page_map_lifecycle = match unsafe { page_map_access.into_mutation_lease() } {
+            Ok(page_map_lifecycle) => page_map_lifecycle,
+            Err((page_map_access, ProcessPageMapError::LifecycleBusy)) => {
+                return Err(MainStaticRuntimeParkedEngineResumeFailure::Busy(Self {
+                    session,
+                    engine_state,
+                    page_map_access,
+                    page_map,
+                    arena_storage,
+                }));
+            }
+            Err((page_map_access, _)) => {
+                return Err(MainStaticRuntimeParkedEngineResumeFailure::Retained {
+                    session,
+                    engine_state,
+                    page_map_access,
+                });
+            }
+        };
+        Ok(MainStaticRuntimeActiveEngine {
+            engine: PageAllocatorEngine::resume_runtime_ticket_zero(session, engine_state),
+            page_map_lifecycle,
+            page_map,
+            arena_storage,
+        })
+    }
+
+    /// Preserves exact live source ownership after a terminal handoff error.
+    ///
+    /// The PageMap access intentionally drops last: its Drop latches the
+    /// process root, while the session and engine state remain permanently
+    /// retained instead of running a partial shutdown.
+    fn retain_terminal(self) {
+        let Self {
+            session,
+            engine_state,
+            page_map_access,
+            page_map: _,
+            arena_storage: _,
+        } = self;
+        session.retain_terminal();
+        core::mem::forget(session);
+        core::mem::forget(engine_state);
+        drop(page_map_access);
+    }
+}
+
+#[cfg(test)]
+fn retain_runtime_park_failure(
+    session: MainStaticProcessPageSession,
+    engine_state: PageAllocatorEngineState<'static, 'static>,
+) {
+    session.retain_terminal();
+    core::mem::forget(session);
+    core::mem::forget(engine_state);
+}
+
+#[cfg(test)]
+fn retain_runtime_resume_failure(
+    session: MainStaticProcessPageSession,
+    engine_state: PageAllocatorEngineState<'static, 'static>,
+    page_map_access: ProcessPageMapSuspendedEngineAccess,
+) {
+    session.retain_terminal();
+    core::mem::forget(session);
+    core::mem::forget(engine_state);
+    drop(page_map_access);
 }
 
 impl MainStaticRuntimeFirstArenaPageAllocator {
@@ -625,16 +801,16 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         })
     }
 
-    /// Temporarily lends the already-published process pair while this
-    /// permanent ticket-zero owner is fully dormant.
+    /// Temporarily lends the already-published dormant process pair to one
+    /// later worker.
     ///
-    /// This does not lend the ticket-zero session or turn the owner into a
-    /// general page-map scheduler. Its only caller is the private runtime
-    /// bridge, which creates one scoped later-main engine and must return it
-    /// empty before this method restores the dormant state. Any pair or
-    /// callback failure is terminal: after a later engine may have touched
-    /// source page ownership, this permanent session cannot claim a retry.
-    pub(crate) fn with_dormant_page_pair<R>(
+    /// A live initial engine remains current-thread local and is never
+    /// suspended to make this pair available. Its only caller is the private
+    /// runtime bridge, which creates one independently serialized later-main
+    /// engine. Any pair or callback failure is terminal: after a later engine
+    /// may have touched source page ownership, this permanent session cannot
+    /// claim a retry.
+    pub(crate) fn with_later_thread_page_pair<R>(
         &mut self,
         operation: impl FnOnce(ProcessPageArenaLease) -> Result<R, ()>,
     ) -> Result<R, ()> {
@@ -642,65 +818,269 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             &mut self.state,
             MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
         );
-        let MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
-            session,
-            page_map,
-            arena_storage,
-        } = state
-        else {
-            self.state = state;
-            return Err(());
-        };
-
-        let pair = arena_storage
-            .ready_lease()
-            .map_err(|_| ())
-            .and_then(|arena| ProcessPageArenaLease::join(page_map, arena).map_err(|_| ()));
-        let Ok(pair) = pair else {
-            session.retain_terminal();
-            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
-            return Err(());
-        };
-        match operation(pair) {
-            Ok(result) => {
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
-                    session,
-                    page_map,
-                    arena_storage,
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
+                session,
+                page_map,
+                arena_storage,
+            } => {
+                let pair = arena_storage
+                    .ready_lease()
+                    .map_err(|_| ())
+                    .and_then(|arena| ProcessPageArenaLease::join(page_map, arena).map_err(|_| ()));
+                let Ok(pair) = pair else {
+                    session.retain_terminal();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return Err(());
                 };
-                Ok(result)
+                match operation(pair) {
+                    Ok(result) => {
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
+                            session,
+                            page_map,
+                            arena_storage,
+                        };
+                        Ok(result)
+                    }
+                    Err(()) => {
+                        session.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        Err(())
+                    }
+                }
             }
-            Err(()) => {
-                session.retain_terminal();
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => {
+                let pair = parked
+                    .arena_storage
+                    .ready_lease()
+                    .map_err(|_| ())
+                    .and_then(|arena| {
+                        ProcessPageArenaLease::join(parked.page_map, arena).map_err(|_| ())
+                    });
+                let Ok(pair) = pair else {
+                    parked.retain_terminal();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return Err(());
+                };
+                match operation(pair) {
+                    Ok(result) => {
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                        Ok(result)
+                    }
+                    Err(()) => {
+                        parked.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        Err(())
+                    }
+                }
+            }
+            other => {
+                self.state = other;
                 Err(())
             }
         }
     }
 
-    /// Allocates one ordinary ticket-zero block, lazily reserving the frozen
-    /// first default arena only after this session needs a fresh page.
-    #[inline]
-    pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
+    /// Parks the live ticket-zero normal engine before a creating initial
+    /// thread publishes a later pthread.
+    ///
+    /// This is a scheduler preparation, not a page-owner transfer. The
+    /// engine and its caller-visible clients remain ticket-zero private; the
+    /// returned suspended access merely allows a later complete operation to
+    /// acquire the process PageMap lease. Dormant or never-mapped owners need
+    /// no token and remain immediately lendable through the established path.
+    #[cfg(test)]
+    pub(crate) fn prepare_live_engine_for_later_thread(&mut self) -> bool {
         let state = core::mem::replace(
             &mut self.state,
             MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
         );
         match state {
-            MainStaticRuntimeFirstArenaPageAllocatorState::Active {
-                mut engine,
-                page_map_lifecycle,
-                page_map,
-                arena_storage,
-            } => {
-                let block = engine.allocate(request, zero);
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active {
-                    engine,
-                    page_map_lifecycle,
-                    page_map,
-                    arena_storage,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                match active.suspend() {
+                    Ok(parked) => {
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                        true
+                    }
+                    Err((session, engine_state)) => {
+                        retain_runtime_park_failure(session, engine_state);
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        false
+                    }
+                }
+            }
+            other @ (MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(_)) => {
+                self.state = other;
+                true
+            }
+            MainStaticRuntimeFirstArenaPageAllocatorState::Retained
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Transition => {
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                false
+            }
+        }
+    }
+
+    /// Reports the retired scheduler's test-only parked state.
+    ///
+    /// Production has no parked ticket-zero engine: normal native-shadow
+    /// initial-thread operations own their direct compiler-TLS engine, while
+    /// a later worker can borrow only the dormant pair. The false production
+    /// branch preserves the existing runtime-lifecycle scalar query until its
+    /// owning compatibility scheduler is deleted.
+    #[inline]
+    pub(crate) fn has_parked_live_engine(&self) -> bool {
+        #[cfg(test)]
+        {
+            matches!(
+                self.state,
+                MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(_)
+            )
+        }
+        #[cfg(not(test))]
+        {
+            false
+        }
+    }
+
+    /// Establishes the one first arena needed before the existing later-main
+    /// page-engine handoff can borrow a dormant process pair.
+    ///
+    /// A never-used ticket-zero owner has no arena identity to lend, while an
+    /// active owner may already contain caller-visible allocations.  This
+    /// helper therefore permits only the empty pre-first-page state: it makes
+    /// and releases one private word-sized allocation, which drives the
+    /// normal source engine through its all-free finish into
+    /// `DormantExistingArena`.  It never touches an active owner, never
+    /// allocates a second arena, and never treats a failed release as a
+    /// retryable handoff.
+    pub(crate) fn prepare_dormant_page_pair(&mut self) -> bool {
+        match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. } => true,
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. } => {
+                let Some(block) = self.allocate(WORD_SIZE, false) else {
+                    return false;
                 };
+                // SAFETY: `block` is the exact private allocation made above
+                // while this owner remains exclusively borrowed. Nothing can
+                // publish or alias it before this matching source free.
+                if unsafe { self.free(block) }.is_err() {
+                    return false;
+                }
+                matches!(
+                    &self.state,
+                    MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                )
+            }
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Retained
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Transition => false,
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(_) => false,
+        }
+    }
+
+    /// Prepares the permanent ticket-zero owner for one held direct-fork
+    /// boundary and reports whether the copied image is quiescent.
+    ///
+    /// The runtime calls this only after its fork-admission gate has excluded
+    /// every later owner and after its own `READY` state has excluded a
+    /// current ticket-zero operation. `AwaitingFreshPage` has never mapped
+    /// the first arena; `DormantExistingArena` already reached the source
+    /// all-free finish and retains only the process-lifetime session and arena
+    /// identity. Both copied images are safe to continue independently in a
+    /// quiescent child.
+    ///
+    /// Normal local `mi_free` deliberately retains an all-free `Active`
+    /// engine for the next initial-thread allocation. This held fork boundary
+    /// is the one additional collection point: it may use the existing
+    /// all-free finish to return that exact engine to `DormantExistingArena`.
+    /// A live client, remote publication, retained poison, or pending release
+    /// makes that finish fail and preserves the exact active/retained state;
+    /// no live engine is treated as a safe fork image.
+    #[inline]
+    pub(crate) fn prepare_quiescent_for_held_fork_gate(&mut self) -> bool {
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                self.finish_active_engine_for_dormant_pair(active)
+            }
+            other => {
+                let quiescent = matches!(
+                    &other,
+                    MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+                        | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                );
+                self.state = other;
+                quiescent
+            }
+        }
+    }
+
+    /// Runs one allocation operation while preserving the permanent
+    /// ticket-zero owner's source arena/page-map transition.
+    ///
+    /// Ordinary and aligned allocation share this lifecycle: a first request
+    /// may reserve exactly one source default arena, and a dormant owner may
+    /// only reactivate that same arena. Production releases its short setup
+    /// lease before an active engine can publish a client, then relies on the
+    /// engine's exact-owned-range PageMap contract. The operation itself
+    /// selects only the source allocation primitive; it cannot change the
+    /// owner state machine.
+    fn allocate_with(
+        &mut self,
+        request: usize,
+        allocate: impl FnOnce(
+            &mut PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession>,
+        ) -> Option<NonNull<u8>>,
+    ) -> Option<NonNull<u8>> {
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
+                let block = allocate(&mut active.engine);
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
                 block
+            }
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => {
+                match parked.resume() {
+                    Ok(mut active) => {
+                        let block = allocate(&mut active.engine);
+                        match active.suspend() {
+                            Ok(parked) => {
+                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                                block
+                            }
+                            Err((session, engine_state)) => {
+                                retain_runtime_park_failure(session, engine_state);
+                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                                None
+                            }
+                        }
+                    }
+                    Err(MainStaticRuntimeParkedEngineResumeFailure::Busy(parked)) => {
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                        None
+                    }
+                    Err(MainStaticRuntimeParkedEngineResumeFailure::Retained {
+                        session,
+                        engine_state,
+                        page_map_access,
+                    }) => {
+                        retain_runtime_resume_failure(session, engine_state, page_map_access);
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        None
+                    }
+                }
             }
             MainStaticRuntimeFirstArenaPageAllocatorState::Retained => {
                 self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
@@ -767,6 +1147,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                #[cfg(test)]
                 let page_map_ref = match page_map_lifecycle.page_map() {
                     Ok(page_map_ref) => page_map_ref,
                     Err(_) => {
@@ -776,10 +1157,31 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                #[cfg(not(test))]
+                let page_map_ref = match unsafe { pair.page_map_for_owned_ranges() } {
+                    Ok(page_map_ref) => page_map_ref,
+                    Err(_) => {
+                        let _ = page_map_lifecycle.finish();
+                        session.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        return None;
+                    }
+                };
+                #[cfg(not(test))]
+                if page_map_lifecycle.finish().is_err() {
+                    // No page registration or caller-visible client exists
+                    // yet. The failed Release has already poisoned the root,
+                    // so retain the permanent session instead of exposing a
+                    // fresh engine without its completed setup boundary.
+                    session.retain_terminal();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return None;
+                }
                 // SAFETY: the permanent session just revalidated ticket-zero
-                // roots and an empty static Theap; `pair` names the same
-                // already-published first arena, while the new mutation lease
-                // again excludes every plain PageMap operation.
+                // roots and an empty static Theap. Production owns every map
+                // range this engine can touch; the test-only scheduler keeps
+                // its legacy complete-lifecycle lease.
+                #[cfg(test)]
                 let mut engine = unsafe {
                     PageAllocatorEngine::activate_main_static(
                         session,
@@ -788,13 +1190,28 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         page_map_ref,
                     )
                 };
-                let block = engine.allocate(request, zero);
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active {
-                    engine,
-                    page_map_lifecycle,
-                    page_map,
-                    arena_storage,
+                // SAFETY: the paired process facts establish one process
+                // image. This engine alone owns each range it registers and
+                // keeps its metadata live until it unregisters that range.
+                #[cfg(not(test))]
+                let mut engine = unsafe {
+                    PageAllocatorEngine::activate_main_static_for_owned_ranges(
+                        session,
+                        arena,
+                        ArenaId::none(),
+                        page_map_ref,
+                    )
                 };
+                let block = allocate(&mut engine);
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(
+                    MainStaticRuntimeActiveEngine {
+                        engine,
+                        #[cfg(test)]
+                        page_map_lifecycle,
+                        page_map,
+                        arena_storage,
+                    },
+                );
                 block
             }
             MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
@@ -881,6 +1298,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                #[cfg(test)]
                 let page_map_ref = match page_map_lifecycle.page_map() {
                     Ok(page_map_ref) => page_map_ref,
                     Err(_) => {
@@ -890,10 +1308,31 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                #[cfg(not(test))]
+                let page_map_ref = match unsafe { pair.page_map_for_owned_ranges() } {
+                    Ok(page_map_ref) => page_map_ref,
+                    Err(_) => {
+                        let _ = page_map_lifecycle.finish();
+                        session.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        return None;
+                    }
+                };
+                #[cfg(not(test))]
+                if page_map_lifecycle.finish().is_err() {
+                    // The default arena is published, but no page has been
+                    // registered or client returned. A failed setup release
+                    // poisons the root, so keep the permanent session
+                    // terminal rather than exposing that arena again.
+                    session.retain_terminal();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return None;
+                }
                 // SAFETY: the permanent session revalidated the exact
-                // ticket-zero roots/images immediately before mapping, and
-                // this owner keeps the map lifecycle beside the engine while
-                // the runtime engine is active.
+                // ticket-zero roots/images immediately before mapping. The
+                // test-only scheduler retains its legacy complete-lifecycle
+                // lease beside the engine.
+                #[cfg(test)]
                 let mut engine = unsafe {
                     PageAllocatorEngine::activate_main_static(
                         session,
@@ -902,19 +1341,111 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         page_map_ref,
                     )
                 };
-                let block = engine.allocate(request, zero);
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active {
-                    engine,
-                    page_map_lifecycle,
-                    page_map,
-                    arena_storage,
+                // SAFETY: the paired process facts establish one process
+                // image. This engine alone owns each range it registers and
+                // keeps its metadata live until it unregisters that range.
+                #[cfg(not(test))]
+                let mut engine = unsafe {
+                    PageAllocatorEngine::activate_main_static_for_owned_ranges(
+                        session,
+                        arena,
+                        ArenaId::none(),
+                        page_map_ref,
+                    )
                 };
+                let block = allocate(&mut engine);
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(
+                    MainStaticRuntimeActiveEngine {
+                        engine,
+                        #[cfg(test)]
+                        page_map_lifecycle,
+                        page_map,
+                        arena_storage,
+                    },
+                );
                 block
             }
             MainStaticRuntimeFirstArenaPageAllocatorState::Transition => {
                 unreachable!("a mutable runtime first-arena owner cannot reenter its state transition")
             }
         }
+    }
+
+    /// Allocates one ordinary ticket-zero block, lazily reserving the frozen
+    /// first default arena only after this session needs a fresh page.
+    #[inline]
+    pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
+        self.allocate_with(request, |engine| engine.allocate(request, zero))
+    }
+
+    /// Allocates one aligned ticket-zero block through the same permanent
+    /// source owner as [`Self::allocate`].
+    ///
+    /// The page engine retains the pinned in-arena versus OS-aligned
+    /// singleton decision. This wrapper validates alignment before it can
+    /// reserve the first arena, so an invalid C-ABI alignment remains a
+    /// non-mutating allocation refusal.
+    #[inline]
+    pub(crate) fn allocate_aligned(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        if !size_class::alignment_is_valid(alignment) {
+            return None;
+        }
+        self.allocate_with(request, |engine| {
+            if zero {
+                engine.allocate_aligned_zeroed(request, alignment)
+            } else {
+                engine.allocate_aligned(request, alignment)
+            }
+        })
+    }
+
+    /// Allocates through the continuously owned initial-thread engine.
+    ///
+    /// This admits only the direct active, dormant, or pre-first-page source
+    /// states. A suspended engine is deliberately not a valid input: the
+    /// persistent initial owner never parks or resumes around an ordinary
+    /// local allocation.
+    #[inline]
+    pub(crate) fn allocate_current_initial_thread_local(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        if !matches!(
+            &self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+                | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                | MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)
+        ) {
+            return None;
+        }
+        self.allocate(request, zero)
+    }
+
+    /// Allocates an aligned block through the continuously owned initial
+    /// engine, rejecting a suspended compatibility owner before it can enter
+    /// the generic parked path.
+    #[inline]
+    pub(crate) fn allocate_aligned_current_initial_thread_local(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        if !matches!(
+            &self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+                | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                | MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)
+        ) {
+            return None;
+        }
+        self.allocate_aligned(request, alignment, zero)
     }
 
     /// Reallocates one live ticket-zero runtime allocation.
@@ -932,14 +1463,389 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         let Some(block) = block else {
             return self.allocate(new_size, false);
         };
-        match &mut self.state {
-            MainStaticRuntimeFirstArenaPageAllocatorState::Active { engine, .. } => {
-                unsafe { engine.reallocate(Some(block), new_size) }
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
+                // SAFETY: forwarded unchanged from this method's exact-current
+                // allocation contract while the runtime owns the live engine.
+                let replacement = unsafe { active.engine.reallocate(Some(block), new_size) };
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+                replacement
             }
-            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => {
+                match parked.resume() {
+                    Ok(mut active) => {
+                        // SAFETY: this exact parked engine was reassembled on
+                        // ticket zero before its current client is touched.
+                        let replacement = unsafe { active.engine.reallocate(Some(block), new_size) };
+                        match active.suspend() {
+                            Ok(parked) => {
+                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                                replacement
+                            }
+                            Err((session, engine_state)) => {
+                                retain_runtime_park_failure(session, engine_state);
+                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                                None
+                            }
+                        }
+                    }
+                    Err(MainStaticRuntimeParkedEngineResumeFailure::Busy(parked)) => {
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                        None
+                    }
+                    Err(MainStaticRuntimeParkedEngineResumeFailure::Retained {
+                        session,
+                        engine_state,
+                        page_map_access,
+                    }) => {
+                        retain_runtime_resume_failure(session, engine_state, page_map_access);
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        None
+                    }
+                }
+            }
+            other @ (MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
             | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
             | MainStaticRuntimeFirstArenaPageAllocatorState::Retained
-            | MainStaticRuntimeFirstArenaPageAllocatorState::Transition => None,
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Transition) => {
+                self.state = other;
+                None
+            }
+        }
+    }
+
+    /// Reallocates a current client through the directly owned initial engine.
+    ///
+    /// A caller that cannot prove the direct active state receives `None`.
+    ///
+    /// # Safety
+    ///
+    /// `block`, when present, must be current in this exact active owner with
+    /// no aliased access, remote producer, or prior free.
+    #[inline]
+    pub(crate) unsafe fn reallocate_current_initial_thread_local(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        let Some(block) = block else {
+            return self.allocate_current_initial_thread_local(new_size, false);
+        };
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
+                // SAFETY: the persistent initial owner keeps this exact
+                // engine current and exclusively borrowed for the call.
+                let replacement = unsafe { active.engine.reallocate(Some(block), new_size) };
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+                replacement
+            }
+            other => {
+                self.state = other;
+                None
+            }
+        }
+    }
+
+    /// Reallocates one current native C-ABI client through the initial
+    /// persistent engine. The core retains ordinary realloc's source
+    /// decision/copy/free order while selecting a naturally aligned
+    /// replacement for the public Linux/AArch64 C boundary.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be current in this exact active owner with no aliased
+    /// access, remote producer, or prior free.
+    #[inline]
+    pub(crate) unsafe fn reallocate_current_initial_thread_local_c_abi(
+        &mut self,
+        block: NonNull<u8>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(mut active) => {
+                // SAFETY: the persistent initial owner keeps this exact
+                // engine current and exclusively borrowed for the call.
+                let replacement = unsafe { active.engine.reallocate_c_abi(Some(block), new_size) };
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+                replacement
+            }
+            other => {
+                self.state = other;
+                None
+            }
+        }
+    }
+
+    /// Returns the usable size of one current ticket-zero allocation.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain a current allocation of this exact owner and no
+    /// other page operation may concurrently mutate its PageMap entry. The
+    /// runtime invokes this only while its ticket-zero operation guard holds
+    /// the permanent owner exclusively.
+    #[inline]
+    pub(crate) unsafe fn usable_size(&mut self, block: NonNull<u8>) -> Option<usize> {
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                // SAFETY: forwarded unchanged from this method's current
+                // allocation and exclusive-runtime-owner contract.
+                let usable_size = unsafe { active.engine.usable_size(block) };
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+                usable_size
+            }
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => {
+                match parked.resume() {
+                    Ok(active) => {
+                        // SAFETY: the suspended ticket-zero engine is again
+                        // the one active owner of this exact client.
+                        let usable_size = unsafe { active.engine.usable_size(block) };
+                        match active.suspend() {
+                            Ok(parked) => {
+                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                                usable_size
+                            }
+                            Err((session, engine_state)) => {
+                                retain_runtime_park_failure(session, engine_state);
+                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                                None
+                            }
+                        }
+                    }
+                    Err(MainStaticRuntimeParkedEngineResumeFailure::Busy(parked)) => {
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                        None
+                    }
+                    Err(MainStaticRuntimeParkedEngineResumeFailure::Retained {
+                        session,
+                        engine_state,
+                        page_map_access,
+                    }) => {
+                        retain_runtime_resume_failure(session, engine_state, page_map_access);
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        None
+                    }
+                }
+            }
+            other @ (MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Retained
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Transition) => {
+                self.state = other;
+                None
+            }
+        }
+    }
+
+    /// Returns the usable size of a current client in the directly owned
+    /// initial engine.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain current in this active owner and no remote
+    /// publication or concurrent mutation may overlap this local query.
+    #[inline]
+    pub(crate) unsafe fn usable_size_current_initial_thread_local(
+        &mut self,
+        block: NonNull<u8>,
+    ) -> Option<usize> {
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                // SAFETY: the persistent initial owner holds the only direct
+                // mutable projection of this exact current engine.
+                let usable_size = unsafe { active.engine.usable_size(block) };
+                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+                usable_size
+            }
+            other => {
+                self.state = other;
+                None
+            }
+        }
+    }
+
+    /// Force-collects an active initial engine only when an explicit boundary
+    /// needs its source-dormant process pair.
+    ///
+    /// Pinned `mi_free` performs its local page free without a Theap teardown;
+    /// this is the separate source collection boundary. A live client leaves
+    /// the exact active engine intact and rejects the handoff. A completed
+    /// all-free engine transitions once to its dormant process pair.
+    fn finish_active_engine_for_dormant_pair(
+        &mut self,
+        active: MainStaticRuntimeActiveEngine,
+    ) -> bool {
+        // The exact-owned-range contract stays with an active engine until
+        // this explicit boundary proves that every page, queue, direct slot,
+        // retired record, and pending OS release is gone. Only the retired
+        // test scheduler additionally returns its old long PageMap lease.
+        #[cfg(test)]
+        let MainStaticRuntimeActiveEngine {
+            engine,
+            page_map_lifecycle,
+            page_map,
+            arena_storage,
+        } = active;
+        #[cfg(not(test))]
+        let MainStaticRuntimeActiveEngine {
+            engine,
+            page_map,
+            arena_storage,
+        } = active;
+        match engine.finish_runtime_ticket_zero() {
+            Err(engine) => {
+                #[cfg(test)]
+                {
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(
+                        MainStaticRuntimeActiveEngine {
+                            engine,
+                            page_map_lifecycle,
+                            page_map,
+                            arena_storage,
+                        },
+                    );
+                }
+                #[cfg(not(test))]
+                {
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(
+                        MainStaticRuntimeActiveEngine {
+                            engine,
+                            page_map,
+                            arena_storage,
+                        },
+                    );
+                }
+                false
+            }
+            Ok(session) => {
+                #[cfg(test)]
+                {
+                    match page_map_lifecycle.finish() {
+                        Ok(()) => {
+                            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
+                                session,
+                                page_map,
+                                arena_storage,
+                            };
+                            true
+                        }
+                        Err(_) => {
+                            // The source free already completed. A failed private
+                            // wake after releasing the guard poisons the root, so
+                            // retain the permanent session rather than reconstructing
+                            // a false active lifecycle.
+                            session.retain_terminal();
+                            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                            false
+                        }
+                    }
+                }
+                #[cfg(not(test))]
+                {
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
+                        session,
+                        page_map,
+                        arena_storage,
+                    };
+                    true
+                }
+            }
+        }
+    }
+
+    /// Completes an exact free through the historical generic runtime path.
+    ///
+    /// The direct persistent initial-thread path below deliberately bypasses
+    /// this helper: pinned `mi_free` leaves its all-free page owned by the
+    /// current Theap until an explicit collection or handoff boundary.
+    unsafe fn free_active_engine(
+        &mut self,
+        mut active: MainStaticRuntimeActiveEngine,
+        block: NonNull<u8>,
+    ) -> Result<(), MainStaticRuntimeFirstArenaPageAllocatorFreeError> {
+        // SAFETY: forwarded unchanged from this method's exact-current
+        // allocation contract while this state owns the sole engine.
+        if let Err(error) = unsafe { active.engine.free(block) } {
+            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+            return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(error));
+        }
+        let _ = self.finish_active_engine_for_dormant_pair(active);
+        Ok(())
+    }
+
+    /// Frees a current client through the continuously owned initial-thread
+    /// engine.
+    ///
+    /// This path operates only on the direct active owner and leaves that
+    /// engine resident when the page becomes all-free. Pinned `mi_free` keeps
+    /// that local Theap/page state for a later local allocation; only an
+    /// explicit later-worker handoff force-collects it.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be current in this exact active owner with no aliased
+    /// access, remote producer, or prior free.
+    #[inline]
+    pub(crate) unsafe fn free_current_initial_thread_local(
+        &mut self,
+        block: NonNull<u8>,
+    ) -> Result<(), MainStaticRuntimeFirstArenaPageAllocatorFreeError> {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                // SAFETY: the persistent initial owner keeps this exact
+                // engine current and exclusively borrowed for the local free.
+                unsafe { active.engine.free(block) }
+                    .map_err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free)
+            }
+            _ => Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::NotActive),
+        }
+    }
+
+    /// Gives the persistent initial owner a dormant process pair before a
+    /// later worker starts. An all-free active engine force-collects exactly
+    /// here; a live initial client never parks or transfers merely to make a
+    /// later worker admissible.
+    #[inline]
+    pub(crate) fn prepare_dormant_page_pair_current_initial_thread_local(&mut self) -> bool {
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                self.finish_active_engine_for_dormant_pair(active)
+            }
+            other => {
+                let may_prepare = matches!(
+                    &other,
+                    MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+                        | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                );
+                self.state = other;
+                may_prepare && self.prepare_dormant_page_pair()
+            }
         }
     }
 
@@ -959,37 +1865,70 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
         );
         match state {
-            MainStaticRuntimeFirstArenaPageAllocatorState::Active {
-                mut engine,
-                page_map_lifecycle,
-                page_map,
-                arena_storage,
-            } => {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
                 // SAFETY: forwarded unchanged from this method's exact-current
                 // allocation contract while this state owns the sole engine.
-                if let Err(error) = unsafe { engine.free(block) } {
-                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active {
-                        engine,
-                        page_map_lifecycle,
-                        page_map,
-                        arena_storage,
-                    };
-                    return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(error));
+                unsafe { self.free_active_engine(active, block) }
+            }
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => {
+                let mut active = match parked.resume() {
+                    Ok(active) => active,
+                    Err(MainStaticRuntimeParkedEngineResumeFailure::Busy(parked)) => {
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                        return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::Busy);
+                    }
+                    Err(MainStaticRuntimeParkedEngineResumeFailure::Retained {
+                        session,
+                        engine_state,
+                        page_map_access,
+                    }) => {
+                        retain_runtime_resume_failure(session, engine_state, page_map_access);
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::NotActive);
+                    }
+                };
+                // SAFETY: ticket zero resumed the exact suspended source
+                // engine before this client free; no worker receives this
+                // engine or its client identity through the pair handoff.
+                if let Err(error) = unsafe { active.engine.free(block) } {
+                    match active.suspend() {
+                        Ok(parked) => {
+                            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                            return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(error));
+                        }
+                        Err((session, engine_state)) => {
+                            retain_runtime_park_failure(session, engine_state);
+                            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                            return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::NotActive);
+                        }
+                    }
                 }
 
-                // The long PageMap lease is a Rust aliasing boundary, not a
-                // source process-lifetime allocation claim. Return it only
-                // after the engine proves that every page, queue, direct slot,
-                // retired record, and pending OS release is gone. A nonempty
-                // engine remains active; no allocation path can overlap it.
+                let MainStaticRuntimeActiveEngine {
+                    engine,
+                    page_map_lifecycle,
+                    page_map,
+                    arena_storage,
+                } = active;
                 match engine.finish_runtime_ticket_zero() {
                     Err(engine) => {
-                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active {
+                        let active = MainStaticRuntimeActiveEngine {
                             engine,
                             page_map_lifecycle,
                             page_map,
                             arena_storage,
                         };
+                        match active.suspend() {
+                            Ok(parked) => {
+                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked);
+                            }
+                            Err((session, engine_state)) => {
+                                retain_runtime_park_failure(session, engine_state);
+                                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                                return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::NotActive);
+                            }
+                        }
                     }
                     Ok(session) => match page_map_lifecycle.finish() {
                         Ok(()) => {
@@ -1003,7 +1942,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                             // The source free already completed. A failed
                             // private wake after releasing the guard poisons
                             // the root, so retain the permanent session rather
-                            // than reconstructing a false active lifecycle.
+                            // than reconstructing a false parked lifecycle.
                             session.retain_terminal();
                             self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
                         }
@@ -1641,6 +2580,97 @@ mod tests {
         })
         .join()
         .expect("the permanent runtime first-arena fixture remains ticket-zero local");
+    }
+
+    #[test]
+    fn current_initial_thread_local_operations_lend_only_the_dormant_pair() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let attachment_storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let page_map = ProcessPageMapStorage::test_static_owner()
+                .initialize(config, subprocess)
+                .expect("the page-map root exists before the runtime owner opens");
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(attachment_storage, subprocess)
+            }
+            .expect("ticket zero attaches before becoming the permanent page owner");
+            let session = owner
+                .begin_process_lifetime_page_session()
+                .expect("the empty ticket-zero image can become permanent");
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin(
+                session,
+                page_map,
+                arena_storage,
+            )
+            .expect("the matching process lifetime roots open lazily");
+
+            let block = allocator
+                .allocate_current_initial_thread_local(79, false)
+                .expect("the initial thread creates one direct live allocation");
+            // SAFETY: `block` is uniquely live in the direct initial engine.
+            unsafe {
+                block.as_ptr().write(0x31);
+                block.as_ptr().add(78).write(0x32);
+            }
+
+            // SAFETY: `block` remains the exact unique direct initial client.
+            assert!(
+                unsafe { allocator.usable_size_current_initial_thread_local(block) }.is_some(),
+                "the direct initial owner reports its current client's usable size"
+            );
+            // SAFETY: `block` remains the exact current direct client. The
+            // replacement remains in the same initial engine and covers the
+            // initialized 79-byte prefix.
+            let block = unsafe {
+                allocator.reallocate_current_initial_thread_local(Some(block), 97)
+            }
+            .expect("the direct initial owner reallocates without a scheduler bridge");
+            assert_eq!(unsafe { block.as_ptr().read() }, 0x31);
+            assert_eq!(unsafe { block.as_ptr().add(78).read() }, 0x32);
+
+            assert!(
+                allocator
+                    .with_later_thread_page_pair(|_| Ok::<(), ()>(()))
+                    .is_err(),
+                "a live direct initial engine never lends its pair by parking"
+            );
+            assert!(
+                !allocator.prepare_dormant_page_pair_current_initial_thread_local(),
+                "dormant-pair preparation refuses a current live initial engine"
+            );
+
+            // SAFETY: `block` remains the exact unique direct initial client.
+            unsafe { allocator.free_current_initial_thread_local(block) }
+                .expect("the direct initial owner frees its current client");
+            assert!(
+                allocator.prepare_dormant_page_pair_current_initial_thread_local(),
+                "the all-free initial owner preserves the existing dormant preparation"
+            );
+            allocator
+                .with_later_thread_page_pair(|pair| {
+                    let lifecycle = pair.begin_page_lifecycle().map_err(|_| ())?;
+                    lifecycle.finish().map_err(|_| ())
+                })
+                .expect("only the dormant pair is available to a later lifecycle");
+
+            let reused = allocator
+                .allocate_current_initial_thread_local(53, false)
+                .expect("the direct initial owner reactivates through its retained first arena");
+            // SAFETY: `reused` is the sole current client after the dormant
+            // pair returned its independent lifecycle.
+            unsafe { allocator.free_current_initial_thread_local(reused) }
+                .expect("the reactivated direct owner frees normally");
+
+            // The process-lifetime ticket-zero session deliberately remains
+            // retained until process exit; this isolated fixture must not
+            // forge a static attachment teardown after using that boundary.
+            core::mem::forget(allocator);
+            core::mem::forget(owner);
+        })
+        .join()
+        .expect("the direct initial-owner fixture remains current-thread local");
     }
 
     #[test]

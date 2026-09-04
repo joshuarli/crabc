@@ -1,0 +1,627 @@
+{
+  "components": [
+    {
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-direct-cleanup-owner",
+          "kind": "rust-unit",
+          "target": "os::tests::aligned_mapping_retains_the_direct_candidate_when_its_cleanup_fails"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-prefix-cleanup-owner",
+          "kind": "rust-unit",
+          "target": "os::tests::aligned_mapping_retains_the_untrimmed_overmap_when_prefix_release_fails"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-suffix-cleanup-owner",
+          "kind": "rust-unit",
+          "target": "os::tests::aligned_mapping_retains_only_the_live_suffix_when_suffix_release_fails"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-complete-trim-sequence",
+          "kind": "rust-unit",
+          "target": "os::tests::forced_aligned_mapping_exercises_all_three_release_edges_before_returning_the_exact_range"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "reset-advice-retry-snapshot",
+          "kind": "rust-unit",
+          "target": "os::tests::reset_retries_the_initial_advice_after_a_concurrent_global_fallback"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-os-page-claim-owner",
+          "kind": "rust-unit",
+          "target": "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-metadata-owner",
+          "kind": "rust-unit",
+          "target": "meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_before_private_backing_publication"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "aligned-map-process-arena-owner",
+          "kind": "rust-unit",
+          "target": "process_arena::tests::explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-os-offset-full-provenance-and-release-retry",
+          "kind": "rust-unit",
+          "target": "os::tests::normal_offset_os_allocation_retains_full_provenance_and_retries_release"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-os-good-size-and-base-provenance",
+          "kind": "rust-unit",
+          "target": "os::tests::normal_os_allocation_uses_good_size_and_base_provenance"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-os-offset-zero-delegation-and-geometry",
+          "kind": "rust-unit",
+          "target": "os::tests::normal_offset_os_allocation_delegates_zero_and_rejects_invalid_geometry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-os-aligned-failure-owner",
+          "kind": "rust-unit",
+          "target": "os::tests::normal_os_allocation_preserves_a_failed_aligned_map_owner"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-os-source-reservation-caller",
+          "kind": "rust-unit",
+          "target": "process_arena::tests::explicit_os_reservation_publishes_one_os_arena_for_reserved_and_committed_requests"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "linux-os-reuse-contained-range-noop",
+          "kind": "rust-unit",
+          "target": "os::tests::reuse_is_a_contained_range_noop_on_linux"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "fixed-no-option-numa-cache-and-current-node-normalization",
+          "kind": "rust-unit",
+          "target": "os::tests::os_numa_wrapper_caches_and_normalizes_the_raw_primitives"
+        }
+      ],
+      "completion_status": "partial",
+      "id": "vm-primitives",
+      "remaining_conditions": [
+        "complete the remaining Linux/AArch64 reserve, commit, decommit, purge, protect, unmap, reuse callers/policy beyond the selected all-committed external-arena caller and one selected normal-aligned base-only regular-OS arena reservation caller, huge-page, hint, and NUMA option/diagnostic/arena-placement policy beyond the selected fixed no-option count-cache/current-node-normalization slice, plus the aligned-overmap substrate with fault-injection evidence beyond the selected direct/prefix/suffix cleanup-owner, fixed normal/offset non-huge allocation owner, contained-range Linux reuse no-op, reset-advice retry-snapshot, and native one-page protection-owner/retry slices"
+      ],
+      "source_units": [
+        "include/mimalloc/prim.h",
+        "src/prim/unix/prim.c",
+        "src/os.c"
+      ]
+    },
+    {
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "meta-page-map-paired-cleanup-owner",
+          "kind": "rust-unit",
+          "target": "meta::tests::paired_page_map_initial_commit_and_cleanup_failure_retains_the_exact_mapping"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "meta-bound-first-backing-identity-and-retry",
+          "kind": "rust-unit",
+          "target": "meta::tests::bound_metadata_rejects_a_foreign_subprocess_before_first_backing"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "meta-cold-demand-requires-prepared-theap-publication",
+          "kind": "rust-unit",
+          "target": "meta::tests::cold_direct_metadata_demand_requires_prepared_theap_publication"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "later-tld-direct-malloc-capability-lifetime",
+          "kind": "rust-unit",
+          "target": "tld::tests::direct_metadata_allocation_failure_consumes_its_ticket_but_never_leaks_live_count"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "nonexclusive-dynamic-theap-direct-malloc-capability-lifetime",
+          "kind": "rust-unit",
+          "target": "dynamic_theap::tests::nonexclusive_dynamic_theap_releases_its_exact_malloc_metadata_lifecycle"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "dynamic-theap-backing-release-preclaim-retry",
+          "kind": "rust-unit",
+          "target": "dynamic_theap::tests::dynamic_theap_backing_release_recursive_entry_retains_outer_lifecycle_for_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "requested-parent-theap-one-slice-arena-reservation",
+          "kind": "rust-unit",
+          "target": "arena::tests::exclusive_arena_theap_reservation_uses_only_its_requested_parent_slice"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "requested-parent-arena-theap-prefix-lifecycle",
+          "kind": "rust-unit",
+          "target": "arena::tests::requested_parent_arena_theap_prefix_lifecycle"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "threadlocal-live-rezalloc-malloc-capability-lifetime",
+          "kind": "rust-unit",
+          "target": "thread_local::tests::current_thread_backing_rezalloc_failure_preserves_the_old_malloc_capability_then_retries"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-release-subprocess-identity-gate",
+          "kind": "rust-unit",
+          "target": "arena::tests::arena_release_rejects_foreign_subprocess_before_purge_or_free_then_releases_selected_claim"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "bound-subprocess-metadata-page-identity-query",
+          "kind": "rust-unit",
+          "target": "meta::tests::bound_subprocess_metadata_page_query_is_exact_without_backing"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "bound-subprocess-theap-meta-lock-direct-allocation-phase",
+          "kind": "rust-unit",
+          "target": "meta::tests::bound_subprocess_theap_meta_lock_serializes_direct_allocation_phase"
+        }
+      ],
+      "completion_status": "partial",
+      "id": "metadata",
+      "remaining_conditions": [
+        "complete pinned C's normal _mi_meta_zalloc and generic _mi_meta_free behavior across remaining direct callers and lifecycles in src/subproc.c, src/init.c, src/theap.c, src/threadlocal.c, and src/heap.c, including the actual mi_subproc_t byte layout/pthread-lock contract (including include/mimalloc/atomic.h:446-472), every remaining theap_meta_lock use and lifecycle (notably src/free.c:744-778, src/init.c:524-530, and src/subproc.c:141-148,249-251), and complete _mi_theap_alloc/_mi_theap_create construction beyond the selected lock-free metadata-page identity query, selected direct zalloc/aligned-zalloc/rezalloc allocation lock phase, selected `MetaRelease::Malloc` exact-owner pre-claim recursion boundary, its direct ThreadLocalBackingOwner recovery, and its selected same-current-thread DynamicTheapAttachment continuation after the regular heap-key slot clears, reservation, and synthetic no-page requested-parent Arena-prefix lifecycle; extend the selected non-metadata one-slice MI_MEM_ARENA release identity gate to actual metadata callers and the full registry/subprocess/lifetime contract, or retire the selected synthetic regular-OS unmap witness; complete no-free, huge/remap, and every remaining source memory-ID ownership branch with retry-preserving failure behavior where source ownership remains live"
+      ],
+      "source_units": [
+        "include/mimalloc/types.h",
+        "include/mimalloc/atomic.h",
+        "src/init.c",
+        "src/heap.c",
+        "src/theap.c",
+        "src/threadlocal.c",
+        "src/subproc.c",
+        "src/arena.c"
+      ]
+    },
+    {
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-bitmap-abandoned-claim-differential",
+          "kind": "c-rust-bitmap-abandoned-claim-differential",
+          "target": "bitmap::tests::emit_m2_bitmap_abandoned_claim_c_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-bitmap-clear-range-differential",
+          "kind": "c-rust-bitmap-clear-range-differential",
+          "target": "bitmap::tests::emit_m2_bitmap_clear_range_c_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-bitmap-rangesn-differential",
+          "kind": "c-rust-bitmap-rangesn-differential",
+          "target": "bitmap::tests::emit_m2_bitmap_rangesn_c_rust_trace"
+        },
+    {
+      "expected_passed_test_count": 1,
+      "id": "c-rust-bitmap-set-differential",
+      "kind": "c-rust-bitmap-set-differential",
+      "target": "bitmap::tests::emit_m2_bitmap_forall_set_c_rust_trace"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "c-rust-binned-bitmap-bsr-inv-differential",
+      "kind": "c-rust-binned-bitmap-bsr-inv-differential",
+      "target": "bitmap::tests::emit_m2_binned_bitmap_bsr_inv_c_rust_trace"
+    },
+    {
+          "expected_passed_test_count": 1,
+          "id": "bitmap-highest-set-relaxed-stale-high-chunkmap",
+          "kind": "rust-unit",
+          "target": "bitmap::tests::bitmap_highest_set_scan_skips_a_stale_high_chunk_and_preserves_the_map"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "bitmap-popcount-relaxed-conservative-chunkmap",
+          "kind": "rust-unit",
+          "target": "bitmap::tests::bitmap_popcount_relaxed_scans_conservative_map_fields_without_repair"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "binned-bitmap-highest-clear-rounded-top-padding",
+          "kind": "rust-unit",
+          "target": "bitmap::tests::binned_highest_clear_scans_the_source_rounded_top_padding"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "binned-bitmap-highest-clear-descending-chunk-field-scan",
+          "kind": "rust-unit",
+          "target": "bitmap::tests::binned_highest_clear_scans_chunks_and_fields_from_high_to_low"
+        }
+      ],
+      "completion_status": "partial",
+      "id": "bitmaps",
+      "remaining_conditions": [
+    "complete source-shaped bitmap ownership, range, remaining visitor families, statistics, and concurrency behavior beyond the selected one-chunk abandoned-page reject/restore, accept, and stale-conservative-map repair differential; generic scalar clear-range visitor's field-bounded completed/stopped traversal; rangesn wrapper's selected aligned-three completed/stopped, <=1 delegation, and above-field cap traces; direct read-only set-bit visitor's selected 65-chunk cross-chunkmap-field completed/stopped walks; ordinary highest-set and ordinary popcount Relaxed observers through conservative chunk-map entries; and binned highest-clear Relaxed behavior beyond the selected source-rounded-top-padding and descending chunk/field C/Rust scan, all without Heap/Page/Arena integration"
+      ],
+      "source_units": [
+        "src/bitmap.c",
+        "include/mimalloc/internal.h"
+      ]
+    },
+    {
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "successful-page-map-lifecycle",
+          "kind": "c-rust-page-map-success-differential",
+          "target": "page_map::tests::emit_m2_page_map_init_c_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "cold-page-map-initialization-failure",
+          "kind": "c-rust-page-map-cold-init-differential",
+          "target": "process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-page-map-paired-initial-cleanup-owner",
+          "kind": "rust-unit",
+          "target": "process_page_map::tests::paired_initial_commit_and_cleanup_unmap_failure_retains_the_exact_mapping"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-page-map-paired-trailing-submap-cleanup-owner",
+          "kind": "rust-unit",
+          "target": "process_page_map::tests::paired_initial_trailing_submap_commit_and_cleanup_unmap_failure_retains_the_exact_mapping"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-lazy-extension-commit-owner",
+          "kind": "rust-unit",
+          "target": "page_map::tests::lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-lazy-submap-map-owner",
+          "kind": "rust-unit",
+          "target": "page_map::tests::lazy_submap_mapping_failure_preserves_the_page_map_for_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-destroy-lazy-submap-release-owner",
+          "kind": "rust-unit",
+          "target": "page_map::tests::destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-destroy-top-release-owner",
+          "kind": "rust-unit",
+          "target": "page_map::tests::destroy_top_mapping_release_failure_retains_the_exact_mapping_for_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "page-map-lazy-publication-private-lock",
+          "kind": "rust-unit",
+          "target": "page_map::tests::concurrent_lazy_submap_publication_allocates_once_under_the_page_map_lock"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-page-map-cold-terminal-owner",
+          "kind": "rust-unit",
+          "target": "process_init::tests::rejected_page_map_after_heap_and_metadata_retains_ticket_zero_without_tls_publication"
+        }
+      ],
+      "completion_status": "complete",
+      "id": "page-map",
+      "remaining_conditions": [],
+      "source_units": [
+        "src/page-map.c",
+        "include/mimalloc/internal.h"
+      ]
+    },
+    {
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-purge-source-bfield-boundary",
+          "kind": "rust-unit",
+          "target": "arena::tests::scheduled_purge_splits_a_run_at_each_source_bitmap_field_boundary"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-purge-partial-allocation-reclaim-free-sibling",
+          "kind": "rust-unit",
+          "target": "arena::tests::scheduled_purge_retries_the_free_sibling_after_partial_allocation_reclaim"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-purge-decommit-error-consumption",
+          "kind": "rust-unit",
+          "target": "single_thread::tests::forced_unpinned_arena_decommit_failure_consumes_source_purge_work"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-fully-committed-claim-linux-reuse-caller",
+          "kind": "rust-unit",
+          "target": "arena::tests::fully_committed_arena_claim_invokes_linux_reuse_for_its_exact_span"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-purge-custom-callback-needs-recommit",
+          "kind": "rust-unit",
+          "target": "arena::tests::external_purge_callback_recommit_clears_committed_bits_for_a_later_uncommitted_claim"
+        }
+      ],
+      "completion_status": "partial",
+      "id": "arenas",
+      "remaining_conditions": [
+        "complete multi-arena search, claim, release, purge scheduling, and reuse semantics with ownership checks beyond the selected default one-slice delayed-purge 64-bit bitmap-field callback grouping, partial allocation-reclaim free-sibling fallback, frozen-Linux default-decommit-error consumption, custom-callback needs-recommit bitmap transition, and one all-committed external-arena exact-span Linux reuse caller"
+      ],
+      "source_units": [
+        "src/arena.c",
+        "src/os.c",
+        "src/prim/unix/prim.c",
+        "include/mimalloc/internal.h"
+      ]
+    },
+    {
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "detached-metadata-theap-pre-demand-first-head-image",
+          "kind": "rust-unit",
+          "target": "bootstrap::tests::detached_binding_initializes_the_static_image_before_issuing_its_one_session"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "detached-metadata-theap-rejects-invalid-first-head-input-before-mutation",
+          "kind": "rust-unit",
+          "target": "types::tests::detached_exclusive_binding_rejects_an_invalid_fresh_tld_checkpoint_before_mutation"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "process-init-static-metadata-binding-before-global-page-map",
+          "kind": "rust-unit",
+          "target": "process_init::tests::process_main_binds_metadata_before_global_page_map_failure"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "static-main-heap-canonical-identity-publication",
+          "kind": "rust-unit",
+          "target": "main_theap::tests::static_heap_foundation_makes_the_canonical_main_heap_identity_ready_last"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "ticket-zero-static-tld-fixed-numa-wrapper-caller",
+          "kind": "rust-unit",
+          "target": "main_theap::tests::ticket_zero_static_tld_uses_fixed_numa_wrapper_after_static_memid"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "detached-tld-static-preimage-busy-lock-refusal",
+          "kind": "rust-unit",
+          "target": "types::tests::detached_static_preimage_steps_refuse_busy_lock_without_mutation"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-detached-tld-static-preimage-differential",
+          "kind": "c-rust-detached-tld-static-preimage-differential",
+          "target": "types::tests::emit_m2_detached_tld_static_preimage_c_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "normal-tld-direct-preimage-busy-lock-and-sequence-seven",
+          "kind": "rust-unit",
+          "target": "subproc::tests::normal_tld_init_direct_preimage_refuses_busy_lock_then_registers_sequence_seven"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-normal-tld-direct-differential",
+          "kind": "c-rust-normal-tld-direct-differential",
+          "target": "subproc::tests::emit_m2_normal_tld_direct_c_rust_trace"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-static-first-tld-create-differential",
+          "kind": "c-rust-static-first-tld-create-differential",
+          "target": "main_theap::tests::emit_m2_static_first_tld_create_c_rust_trace"
+        }
+      ],
+      "completion_status": "partial",
+      "id": "initialization",
+      "remaining_conditions": [
+        "complete source-order process, OS, options, TLS, arena, publication, and shutdown initialization semantics beyond the selected detached-metadata Theap's bounded first-head image/input-refusal boundary, identity-only admission publication, static detached-metadata image/global-PageMap ordering, canonical main-Heap kind-only memid -> Release identity publication -> post-initialization comparison-ready sequence, one ticket-zero static-TLD fixed-NUMA-wrapper observation after Rust static MemoryId formation with live registration before Release publication, the separate direct detached static-preimage record's exact `mi_tld_init` branch fields, one direct normal `mi_tld_init` helper record from a minimal zero TLD/subprocess post-ticket total=8/seq=7 fixture only (not `mi_tld_create` or a caller lifecycle), and one selected direct `mi_tld_create` first-static-TLD success-arm record only (not a complete caller, process, or metadata lifecycle)"
+      ],
+      "source_units": [
+        "src/init.c",
+        "src/heap.c",
+        "src/theap.c",
+        "src/random.c",
+        "src/options.c",
+        "include/mimalloc/internal.h",
+        "include/mimalloc/types.h",
+        "include/mimalloc/atomic.h",
+        "include/mimalloc/prim.h",
+        "include/mimalloc/prim-tls.h",
+        "src/os.c",
+        "src/prim/prim.c",
+        "src/prim/prim-tls.c",
+        "src/prim/unix/prim.c",
+        "src/subproc.c"
+      ]
+    },
+    {
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "native-protection-failure-owner-and-retry",
+          "kind": "rust-unit",
+          "target": "os::tests::native_protection_failures_preserve_mapping_owner_and_retry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "c-rust-page-map-lazy-commit-failure-differential",
+          "kind": "c-rust-page-map-lazy-commit-failure-differential",
+          "target": "page_map::tests::emit_m2_page_map_lazy_commit_failure_c_rust_trace"
+        }
+      ],
+      "completion_status": "partial",
+      "id": "fault-injection",
+      "remaining_conditions": [
+        "exercise all remaining allocation, map, metadata, bitmap, PageMap, arena, and release failures without leaking or changing ownership beyond the selected native one-page protect/unprotect owner-and-retry and initialized two-level PageMap lazy-commit failure/retry boundaries"
+      ],
+      "source_units": [
+        "src/prim/unix/prim.c",
+        "src/os.c",
+        "src/page-map.c",
+        "src/arena.c",
+        "src/subproc.c"
+      ]
+    },
+    {
+      "checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "metadata-same-thread-reentry-before-backing-or-capability-mutation",
+          "kind": "rust-unit",
+          "target": "meta::tests::recursive_metadata_entry_rejects_real_routes_before_backing_or_capability_mutation"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "metadata-same-thread-free-reentry-before-capability-mutation",
+          "kind": "rust-unit",
+          "target": "meta::tests::typed_malloc_release_retains_a_live_capability_after_recursive_entry_rejection"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "threadlocal-malloc-preclaim-reentry-retains-root-and-capability",
+          "kind": "rust-unit",
+          "target": "thread_local::tests::current_thread_backing_teardown_retains_the_live_malloc_capability_before_root_clear_on_recursive_entry"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "dynamic-thread-exit-backing-release-retry",
+          "kind": "rust-unit",
+          "target": "dynamic_theap::tests::dynamic_thread_exit_drain_resumes_a_retryable_backing_release"
+        }
+      ],
+      "completion_status": "partial",
+      "id": "allocator-recursion",
+      "remaining_conditions": [
+        "prove every remaining M2 metadata and substrate path remains allocation-free or uses the reviewed recursion boundary under same-thread reentry beyond the selected prepared direct zalloc, aligned-zalloc, rezalloc, MetaRelease exact-owner Malloc free pre-claim routes, direct ThreadLocalBackingOwner teardown recovery, and selected suspended DynamicTheap thread-exit backing-release continuation; cover C lock equivalence, reentrant callbacks or signals, cross-thread contention, and the remaining PageMap, arena, OS, release, and copy paths"
+      ],
+      "source_units": [
+        "src/subproc.c",
+        "src/os.c",
+        "src/page-map.c",
+        "src/arena.c"
+      ]
+    }
+  ],
+  "exclusions": [
+    {
+      "disposition": "deferred-to-m3",
+      "id": "page-allocation",
+      "reason": "page headers, free lists, local allocation, and regular-page state are not M2 memory-substrate closure",
+      "source_units": [
+        "src/page.c",
+        "src/free.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m3",
+      "id": "small-allocation",
+      "reason": "small and medium allocation behavior remains a later engine milestone",
+      "source_units": [
+        "src/alloc.c",
+        "src/alloc-aligned.c"
+      ]
+    },
+    {
+      "disposition": "deferred-to-m8",
+      "id": "public-integration",
+      "reason": "public libc backend selection, ABI integration, and production promotion are outside this substrate gate",
+      "source_units": [
+        "crabc-libc",
+        "crabc-rs"
+      ]
+    },
+    {
+      "disposition": "outside-m2",
+      "id": "non-aarch64-targets",
+      "reason": "the project contract supports Linux/AArch64 little-endian only",
+      "source_units": [
+        "x86_64",
+        "riscv64",
+        "32-bit",
+        "big-endian"
+      ]
+    }
+  ],
+  "execution": {
+    "features": [],
+    "package": "crabc-mimalloc",
+    "test_threads": 1,
+    "timeout_seconds": 300
+  },
+  "format": 1,
+  "milestone": {
+    "completion_rule": "M2 is complete only when all eight categories are complete, every named condition is cleared, and current-commit native Linux/AArch64 evidence covers the full selected substrate and failure matrix.",
+    "id": "m2",
+    "nonclaims": [
+      "the selected PageMap success differential compares source-relative transitions only and records header-layout and root-owner differences. A separate initialized two-level `mi_page_map_ensure_submap_at` lazy-commit fault differential proves only one test-injected commit failure before committed-prefix publication or submap allocation, followed by one retry; neither record covers cold initialization, range rollback, lazy submap-map failure, CAS losers, release failure, races, allocator routing, or full PageMap fault parity",
+      "the separate PageMap cold-init differential records the C static-empty-root/later-success behavior and the Rust absent-root/typed-poison result as an intentionally accepted bounded safety divergence; it does not claim a common cold lookup, public C ABI behavior, or full process-initialization parity",
+      "the selected aligned-overmap cleanup-owner tests prove Rust non-RAII ownership after direct or partial release failure; they do not claim C retry semantics, full aligned-allocation policy, or complete VM fault parity",
+      "the selected reset-advice regression proves only the private source snapshot/retry control flow with a deterministic advisory mock; it does not claim a live-kernel EAGAIN frequency or complete purge fault parity",
+      "the selected Linux reuse primitive test proves only `_mi_os_reuse` conservative contained-range normalization followed by Linux `_mi_prim_reuse` success: no complete page returns None, a complete page returns the explicit no-op outcome, and invalid or closed Mapping input returns Rust EINVAL before a VM edge. It performs no syscall, fault-injection edge, or mapping-state mutation. The separately selected all-committed arena record proves one non-owning caller only; neither record establishes other callers, Apple MADV_FREE_REUSE, hints, huge pages, NUMA policy, options, diagnostics, statistics, or C/Rust error parity",
+      "the selected fixed no-option NUMA records map only `src/os.c:860-898`'s cache/current-node normalization and one `src/init.c:236-250,260-272` ticket-zero static-TLD caller: after ticket issue Rust forms that TLD's static MemoryId, synchronously obtains the fixed wrapper result, and writes one complete unpublished TLD image before its live/root publication. The witness observes `8 % 3 == 2` and zero/oversized count normalization without a current-node probe. It deliberately leaves the raw M1 primitive trace unchanged and does not establish field-by-field normal `mi_tld_create`/`mi_tld_init` order beyond the separate direct normal-helper and selected static-first success-arm records, generic/later TLD callers, `mi_option_use_numa_nodes`, verbose diagnostics, first-fill race resolution, topology changes, arena placement, normal-branch caller C/Rust differential parity, or allocator integration",
+      "the separate direct C/Rust detached-TLD record covers only `src/init.c:108-118,184-193,236-250`: one local exact `MI_MEMID_STATIC` detached preimage, the line-192 `_mi_memid_create(MI_MEM_STATIC)` predecessor, and file-static detached `mi_tld_init` writes against a fresh zero-initialized address-only subprocess fixture valid only for that helper rather than `_mi_subproc_main_init()`. It compares only address-independent detached identity/sequence/NUMA, subprocess identity relation, null head, lock acquire/release behavior, recursion/thread-pool flags, zero static memid flags, and unchanged zero total/live counters. It does not establish main-subprocess initialization, general `mi_tld_init` or `mi_tld_create`, the normal branch, generic/later callers, Heap/Theap/list/TLS/root publication, options or NUMA policy, actual `mi_subproc_t` or pthread-lock ABI/layout, shutdown/free, races, or allocator integration",
+      "the separate direct C/Rust normal-TLD record covers only file-static `src/init.c:236-250` on one fresh all-zero `mi_tld_t` and zero `mi_subproc_t` minimal helper preimage with caller-owned post-ticket total=8/tseq=7 context. C dynamically checks lock -> fixture-NUMA=3 -> real thread-ID -> real false threadpool -> live-increment call order; source anchoring and address-free poststate cover the other assignments and input-return identity. Rust independently checks its production-backed eight modeled field/counter effects after an outer prevalidated LiveThreadId boundary, with a Rust-only busy-lock refusal before mutation that returns the unconsumed ticket. Both compare only address-independent relations including unchanged full MI_MEM_NONE provenance, unchanged total count, and live 0-to-1; this does not compare or establish C caller ticket issuance, `mi_tld_create` allocation, `_mi_subproc_main_init`, literal Rust/C primitive invocation timing, static-main or metadata lifecycle, Theap/list/TLS/root publication, options/general NUMA policy, pthread ABI/layout, teardown/free, races, or allocator integration",
+      "the separate direct C/Rust static-first-TLD-create record covers only the selected `src/init.c:253-272` first-main success arm. C directly calls file-static `mi_tld_create(_mi_subproc_main())` once with source static main-subprocess/TLD identities, zero total/live counts, and only an inert nonnull `theap_meta` placeholder; it independently validates total-ticket -> main-predicate -> concrete-static-memid -> normal lock/fixture-NUMA=3/real-ID/false-threadpool -> live -> return-observer order and zero `_mi_meta_zalloc` calls. Rust uses its existing selected ticket-zero static-slot attachment only after its separately modeled selector and Heap-foundation prerequisites, so the shared address-free record begins at ticket-zero -> concrete static memid -> normal body -> live registration and labels C's post-live return observer versus Rust's immediately following `MAIN_TLD_LIVE` Release before owner return. It compares no common predicate, caller, preflight, primitive, or return-boundary order; `MainSubprocess` is only the selected Rust test identity, C no-metadata-call evidence differs from Rust's typed static-path/no-metadata-capability evidence, and Rust acquires current thread identity before ticket while C invokes its primitive after NUMA. It does not establish source-static byte/layout parity, `_mi_subproc_main_init`, actual Theap or metadata initialization, generic/later/failed arms, Heap/Theap/list/TLS/root publication, teardown/free, pthread ABI/layout, races, NUMA discovery/options policy, or allocator integration",
+      "the selected native protection test proves only one committed anonymous page under test-only pre-syscall Protect and Unprotect NOMEM injection: the mapping's base/length remain owned, failed protect leaves the page writable, and each disabled-plan retry succeeds. It does not observe live kernel error behavior or C diagnostics, prove protection state after failed unprotect, cover partial, empty, or aligned ranges, secure or guarded policy, allocator callers, decommit, commit, purge, PageMap, arena, metadata, bitmap, or release paths, signals, races, or C/Rust failure equivalence",
+      "the selected arena regressions prove only default one-slice delayed-purge callback splitting at a source 64-bit bitmap-field boundary, a sequential two-slice allocation-won whole-claim failure whose free sibling is individually decommitted and restored, frozen-Linux default-decommit-error consumption, a custom external callback's `commit = false` true-to-needs-recommit transition that clears the exact committed bits before it restores free availability and makes a later `commit = false` claim initially uncommitted, and the all-committed `commit && already_committed == slice_count` claim branch. Its source-mapped call site invokes Linux reuse for the exact two-slice span before `memid.initially_committed`; the focused witness observes one matching exact-span call. That reuse call is non-owning and has no syscall, fault-injection edge, reuse-state mutation, Mapping transfer, or late failure. These records do not claim general visitor behavior, configurable purge policy, general purge fault parity, a live allocation/purge race, multi-chunk or multi-arena collection, concurrent arena use, registry-wide collection, arena lifecycle parity, reuse search/policy, statistics, or another caller",
+      "the selected detached-metadata checks prove only that Rust binds its static detached metadata image before global PageMap publication and, for the bounded same-subprocess, empty-head, non-threadpool input, preserves kind-only static provenance and frozen normal enabled page-reclaim, initializes a possibly-weak random context, and derives an odd cookie before first session/backing. After that bounded image is fully formed, preparation one-way Release-CAS publishes its exact identity through a Rust MainSubprocess atomic. The selected lock-free query then compares only a caller-readable Page's nonnull Theap field with that subprocess's Acquire-loaded published identity: None models a null C page pointer, null/mismatched fields return false, and two bound subprocesses accept only their own identity without entering either metadata allocator lock, mapping backing, or lending a session. Only after the same identity preflight, selected direct zalloc, aligned zalloc, and the replacement-allocation phase of rezalloc take a separate MainSubprocess private-futex lock nested inside Rust's backing lock and same-thread marker. The contention witness holds that source-shaped lock before first demand, observes BOUND/no private backing/no capability until release, covers aligned zalloc and rezalloc copy preservation, and shows exact-owner Malloc free stays outside that source lock; the source guard drops before rezalloc copy/free. COLD direct zalloc, aligned zalloc, and rezalloc(None) refuse before either lock, mapping, or capability creation. A nonempty head, mismatched subprocess, or thread-pool input is rejected before mutation rather than claiming C's locked list/split or option-adjustment path. This does not model the actual mi_subproc_t byte layout, pthread-lock semantics from include/mimalloc/atomic.h:446-472, unmodeled theap_meta_lock uses and lifecycle (including src/free.c:744-778, src/init.c:524-530, and src/subproc.c:141-148,249-251), a dereference-capable subprocess API, general or dereference-capable main-Heap linkage beyond the selected opaque comparison identity, or normal C metadata backing, nor establish complete _mi_theap_init, metadata, initialization, mutable-options, fault-injection, or general concurrency parity",
+      "the selected canonical main-Heap check proves only src/init.c:196-198's kind-only static memid, Release heap_main identity publication, and remaining _mi_heap_init order for one final process-static Heap slot: after its private static-foundation claim, Rust reserves a pointer-free MainSubprocess state before mutating the candidate Heap image, exposes a Publishing identity after the memid write, and admits an opaque ready identity only after the selected remaining Heap initialization. A failed reservation releases the private claim back to COLD with MemoryKind::None, and an unfinished publication remains non-ready. MainSubprocess::ready_main_heap_identity is comparison-only and does not emulate C's dereference-capable _mi_subproc_heap_main, general heap linkage, process initialization, or concurrent accessor behavior",
+      "the selected same-thread metadata recursion regressions prove only Rust marker rejection for prepared direct zalloc, aligned-zalloc, and rezalloc before first backing or old-capability claim, plus post-drop recovery. Separately, MetaRelease's selected exact-owner Malloc branch enters Rust's backing boundary before LIVE-to-RELEASING, so a same-thread rejection preserves its pointer, MemoryId, and capability audit for post-drop exact-owner retry; MetaRelease returns that eligible pre-claim capability as retryable, while an error after claim remains terminal diagnostic state. One selected DynamicTheapAttachment continuation classifies that pre-claim result only after it has cleared the regular heap-key entry keyed by its Heap's `theap_slot`, retains the exact compiler-TLS backing root/allocation, key lease, TLD, Theap, Heap binding, cached reference, and the retained sealed engine image when one exists (the direct witness has none and the engine witness has one retired page), then resumes only backing release after the entry guard drops. The general MetaAllocator::free route remains terminal-on-error for admitted lifecycle callers. This is not a C nonrecursive-lock or deadlock equivalence claim and does not cover C failure behavior, reentrant callbacks or signals, general cross-thread contention/races beyond the separately selected BOUND-subprocess direct-lock case, PageMap, arena, OS, other release/copy, or general metadata lifecycle paths",
+      "the selected later-TLD direct-Malloc check proves only an isolated ticket-zero static teardown without a metadata capability, one injected post-ready direct-zeroed metadata failure that consumes its later sequence without a live capability or lease, and one retry's typed subprocess-attached/no-theap Malloc capability through exact-owner teardown. It does not establish pinned C normal _mi_meta_zalloc backing, full mi_tld_init/mi_tld_free lock/list behavior, arbitrary thread/ticket behavior, or generic _mi_meta_free branch parity",
+      "the selected nonexclusive dynamic-Theap direct-Malloc check proves only one child-thread, caller-pinned empty-Heap lifecycle after ticket zero: a sequence-one Malloc TLD and a nonexclusive Malloc Theap have the selected one-member TLD/Heap list shape. Its no-page implementation releases regular backing, then the exact Theap, then the TLD. A separate selected same-current-thread continuation covers only a `MetaRelease::Malloc` pre-claim rejection after Rust clears the regular heap-key entry keyed by its Heap's `theap_slot`: it retains the exact compiler-TLS backing root/allocation, key lease, TLD, Theap, Heap binding, cached reference, and the retained sealed engine image when one exists (the direct witness has none and the engine witness has one retired page), suspends ordinary page-engine operations, never restores or republishes that key entry or repeats attached preflight, and resumes only backing release after the entry guard drops. Malloc terminal, non-Malloc/impossible owner mismatch, and later page/list failures remain terminal or unmodeled; a wrong-current-thread call is rejected without a new continuation, while the separately selected final pre-mutation regular-key lock failure instead retains `AwaitingKeyRelease`. Callback, signal, pthread/process, and ABI cases remain unmodeled. The audit observes four attached metadata capabilities (TLD, Theap, regular backing, and the distinct registry bitmap), one registry bitmap after attachment teardown, and test-only quiescent registry shutdown returning that audit to zero. Separate requested-parent records cover the exclusive-arena reservation and one synthetic no-page Arena-prefix lifecycle; this nonexclusive check does not establish normal C _mi_meta_zalloc backing, a complete exclusive-arena Theap lifecycle, generic _mi_meta_free dispatch, arbitrary Theap/list/refcount policy, generic page-bearing shutdown, concurrent lifecycle, or process/thread shutdown parity",
+      "the selected requested-parent Theap reservation check proves only the first source requested-parent pass for one already-published selected parent arena, its bounded MainSubprocess identity, one caller-supplied ThreadSequence value, one committed MI_ARENA_MIN_OBJ_SIZE slice, its resulting Arena MemoryId, foreign pre-claim refusal, selected-parent exhaustion without another-arena or OS fallback, selected release/reuse, and the exact dirty-bit reuse observation. The C layout probe asserts only that complete pinned mi_theap_t fits that source minimum object; this reservation check itself does not construct or project a Rust Theap prefix, claim Rust/C Theap size equality, write theap->memid, run _mi_theap_init or _mi_theap_create, bind a Heap/TLD/thread identity, publish lists/TLS, or manage refcounts. The separate Arena-prefix lifecycle record is the only later bounded owner. This reservation check does not establish option gates, the nonnegative-NUMA second requested-parent pass, pinned-acceptance evidence or general non-requested registry selection, the separately recorded all-committed `_mi_os_reuse` caller boundary, debug/tool memory-tracking instrumentation including MI_DEBUG > 1 zero validation, diagnostics, statistics, generic MetaAllocation/MetaRelease::Arena/_mi_meta_free behavior, general registry/subprocess lifetime, races, or allocator integration",
+      "the selected requested-parent Arena-Theap-prefix lifecycle proves only a synthetic page-free composition for one already-live static default TLD D and one fresh caller-pinned Heap whose selected direct parent yields one exact committed Arena slice for auxiliary A. It retains Arena MemoryId provenance, writes and initializes only the Rust Theap prefix through memid, links A before D on the TLD and as the sole caller-Heap member, splits D's random image, uses the source Release heap publication, rejects an unbound caller Heap before prefix materialization while returning its exact reservation, and proves selected-slice release/reuse including a dirty second lifecycle. Its teardown composes the selected heap-delete topology: remove A from the A-to-D TLD list, then remove A from its sole Heap list, then Rust Release-clears A.heap before the 1-to-0 prefix transition, Rust prefix drop, and selected arena release. It deliberately omits heap.c thread initialization, regular TLS get/null decision and slot store, cached-root behavior, source retry/yield contention, C subproc theap statistics increment/decrement/merge, complete C Theap layout/statistics tail, generic _mi_meta_free/MetaRelease::Arena dispatch, pages, process/thread shutdown, option/NUMA second pass, normal metadata backing, registry/subprocess lifetime, faults, races, and allocator integration",
+      "the selected thread-local live-rezalloc check proves only one isolated child-thread direct-Malloc regular-backing replacement after a first 16-slot image: an injected pre-allocation failure restores the old root, count, slots, and capability, then one 16-to-32 retry copies slot 15 and publishes slot 16. It observes one live capability with high-water two before teardown and zero live afterward. It does not establish normal C _mi_meta_zalloc backing, arbitrary growth, generic _mi_meta_free dispatch, full TLS/TLD/Theap/registry lifecycle, concurrency, pthread/process lifecycle, or ABI integration",
+      "the selected arena-release subprocess-identity witness proves only one typed, unpinned, one-slice ArenaSliceClaim release through the bounded MainSubprocess identity: a foreign caller receives the unchanged claim before purge or free-bitmap mutation, while the matching caller returns a successful terminal free-bit transition and can reclaim it. Rust makes C's internal arena->subproc assertion a fail-closed safe refusal. This is source-level safety evidence, not a C differential, a MetaRelease::Arena branch, generic _mi_meta_free dispatch, normal C metadata backing, general purge behavior, full arena-registry/subprocess lifetime, no-free/OS/huge/remap behavior, retry parity after a false source free-bit result, races, statistics, or allocator integration",
+      "the selected bitmap differentials compare only five direct source-snapshot paths: an abandoned-page claim at sequence five, where a keep-set rejection restores bit 17 and its conservative map, a later accepted claim clears the bit while retaining that map, and a drained probe repairs it without a callback; the generic scalar clear-range visitor, where a completed walk emits source-64-bit-field-bounded runs while retaining its conservative map and a stopped callback restores only its unvisited same-field residual; direct rangesn wrapper calls; direct read-only _mi_bitmap_forall_set calls on fresh valid 65-chunk images, where callbacks cross the first chunk-map field boundary and a second-callback stop retains all selected data and conservative-map fields; and direct `mi_bbitmap_bsr_inv` calls on valid two-chunk images, where a logical 513-bit image returns padded bit 1023 with an empty conservative map and a seeded image returns 963, 585, 511, then no result while each bit is restored. The rangesn trace uses fresh rngslices-three images for aligned completed windows, partial-window/top-suffix retention, and a stopped callback that restores an earlier skipped window plus later snapshot bits; it separately executes the <=1 generic delegation and caps 65 at 64. One Rust-only ordinary `mi_bitmap_bsr` regression additionally scans a three-chunk image from its highest conservative chunk-map bit downward, skips an in-layout stale high chunk, returns the lower live bit, and leaves the map unchanged. One Rust-only ordinary `mi_bitmap_popcount` regression walks conservative map fields low to high, counts selected data with Relaxed observations, retains an in-layout stale map bit after it contributes zero, and retains an out-of-layout stale map bit while the checked view skips its data access. Two Rust-only `mi_bbitmap_bsr_inv` regressions remain supplemental coverage of the selected rounded-padding and descending-scan relations. These do not differentially execute C bsr or popcount; establish the C keep_set=false rejection route, callback mutation, Heap/Page/Arena pointers or _mi_heap_visit_blocks, general multi-chunk or sequence distribution, actual minimal-purge/transparent-huge-page policy, actual arena/subprocess ownership, races, clear-once-set, other visitor families, statistics, binned search/claim behavior, flexible-array allocation ownership, or allocator integration",
+      "the selected fixed normal/offset OS-allocation owner proves only non-huge, non-hinted allow_large=false Linux/AArch64 mappings: it retains the complete map base/extent in MemoryId::os, exposes a separate offset client pointer, delegates zero offset to ordinary aligned normalization, best-effort decommits a committed prefix, preserves a reserved prefix, and retains a failed cleanup/unmap owner for retry. One selected mi_reserve_os_memory_ex2 regular-OS caller consumes only the aligned zero-offset/base-equals-client form and transfers its exact Mapping and MemoryId through arena setup and unpublished-release handling. It does not establish hints, huge pages, NUMA, options, statistics, arbitrary memory-kind dispatch, any other source runtime caller, or C NULL/void failure parity",
+  "the selected direct ThreadLocalBackingOwner teardown recovery proves only the pre-claim MetaRelease::Malloc MallocRetryable case: it restores the exact capability and retains its compiler-TLS backing root, count, slots, and Active state before one post-drop retry preserves free-before-root-clear order. One selected same-current-thread DynamicTheapAttachment continuation may then retain that exact compiler-TLS backing root/allocation, regular-key lease, TLD, Theap, Heap binding, cached reference, and the sealed engine image when present (the direct witness has no page and the engine witness has one retired PageMap-published page) after it clears the distinct regular heap-key entry keyed by its Heap's `theap_slot`. It enters AwaitingBackingRelease only before the Malloc claim, suspends ordinary allocation/free/collection/remote-producer entry, never restores or republishes the key entry or repeats attached preflight, and resumes only backing release. Malloc terminal, non-Malloc/impossible owner mismatch, and later page/list errors remain terminal; a wrong-current-thread call is rejected without a new continuation, while the separately selected final pre-mutation regular-key lock failure retains AwaitingKeyRelease. This is Rust ownership safety because C's thread-local teardown is void; it does not establish C failure, mutex, lifecycle, race, signal, callback, generic page-bearing/general shutdown, pthread/process, ABI, generic metadata-free, or C failure-parity behavior",
+  "this gate does not claim a production allocator backend or any later allocator milestone",
+      "this gate does not claim non-AArch64 support"
+    ],
+    "status": "partial"
+  },
+  "schema": "crabc-mimalloc-m2-memory-substrate",
+  "target": {
+    "architecture": "aarch64",
+    "endianness": "little",
+    "kernel_baseline": "5.10",
+    "os": "linux",
+    "rust_target": "aarch64-unknown-linux-musl"
+  },
+  "upstream": {
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

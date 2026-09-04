@@ -5,9 +5,9 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-282,305-360,377-421,
-// 448-481`, `src/theap.c:228-306,414-449`, `src/threadlocal.c:205-214`, and
-// `src/prim/unix/prim.c:943-974`; the direct libc fork placement follows
-// pinned musl 1.2.6 `src/process/fork.c`.
+// 448-481`, `src/theap.c:228-306,414-449`, `src/threadlocal.c:205-214`,
+// `src/free.c:152-233,372-418,479-515`, and `src/prim/unix/prim.c:943-974`; the
+// direct libc fork placement follows pinned musl 1.2.6 `src/process/fork.c`.
 
 //! Private crabc-runtime lifecycle bridge.
 //!
@@ -16,15 +16,19 @@
 //! source-shaped ticket-zero `ProcessMainThread` and the main-thread-minted
 //! `MainStaticHeapLease` for the process lifetime, then places one no-page
 //! `MainHeapThreadAttachment` in compiler TLS for each pthread worker that
-//! successfully enters through the runtime. A dormant ticket-zero native page
-//! owner may lend its already-published pair to one such worker for a fully
-//! scoped empty page-engine round trip; the worker finishes only after libc
-//! has run user cleanup handlers and pthread TSD destructors.
+//! successfully enters through the runtime. An ordinary later-thread native
+//! allocation promotes that attachment once into an inline compiler-TLS owner
+//! containing the attachment and continuously stored owner-local page engine;
+//! later local calls use short in-place borrows and never park or resume it.
+//! The worker consumes that owner only after libc has run user cleanup handlers
+//! and pthread TSD destructors. Historical typed post-exit fixtures are
+//! `#[cfg(test)]` oracles; selected native free, reallocation, and usable-size
+//! paths use pointer-first PageMap/W03 and abandoned-state behavior.
 //!
-//! It deliberately does not route any `malloc`/`free` call, expose a C symbol,
-//! select a backend, create a public pthread key, or claim general fork
-//! recovery. A failed process setup leaves this shadow lifecycle unavailable
-//! and preserves the C backend. A failed worker attachment prevents that
+//! It exposes no C symbol, does not select a backend, creates no public pthread
+//! key, and claims no general fork recovery. A failed process setup leaves
+//! this shadow lifecycle unavailable and preserves the C backend. A failed
+//! worker attachment prevents that
 //! worker's start routine from running; libc performs the parent/child startup
 //! handshake. On libc's prepared `fork` path, only the original ticket-zero
 //! TLS image with no live or retained later bridge owner preserves the copied
@@ -32,19 +36,80 @@
 //! without traversing inherited locks, roots, or page state.
 
 use core::cell::UnsafeCell;
+use core::convert::Infallible;
+#[cfg(test)]
+use core::marker::PhantomData;
 use core::mem::MaybeUninit;
+use core::pin::Pin;
+#[cfg(test)]
+use core::sync::atomic::AtomicPtr;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use crate::compiler_tls::current_thread_identity;
+use crate::config::{
+    LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, MEDIUM_PAGE_SIZE, SMALL_MAX_OBJ_SIZE,
+    SMALL_PAGE_SIZE, SMALL_SIZE_MAX,
+};
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
+    MainHeapThreadAttachmentError, MainHeapThreadPageSessionError,
 };
-use crate::main_heap_page::MainHeapThreadProcessPageAllocator;
+use crate::main_heap_page::{
+    MainHeapThreadOwnerLocalAllocator, MainHeapThreadOwnerLocalPageEngine,
+    MainHeapThreadOwnerLocalPageEngineBeginError,
+    MainHeapThreadPausedProcessPageAllocator,
+    MainHeapThreadPausedProcessPageAllocatorResumeFailure,
+    MainHeapThreadPersistentPageEngineTerminal,
+    MainHeapThreadProcessPageAllocator,
+    MainHeapThreadProcessPageAllocatorBeginError,
+    MainHeapThreadProcessPageExitDrainFailure,
+    MainHeapThreadProcessPageAllocatorFinishError,
+    MainHeapThreadProcessPageAllocatorSuspendFailure,
+};
+#[cfg(test)]
+use crate::main_heap_page::{
+    MainHeapThreadProcessPageExitMappedRegularAdoptFailure,
+    MainHeapThreadProcessPageExitMappedRegularRoute,
+    MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure,
+    MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure,
+    MainHeapThreadProcessPageExitMappedRegularPagesFreeResult,
+    MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin,
+    MainHeapThreadProcessPageExitMappedRegularPagesRoute,
+};
+#[cfg(test)]
+use crate::main_heap_page::{
+    MainHeapThreadProcessPageExitMappedRegularFreeFailure,
+    MainHeapThreadProcessPageExitMappedRegularFreeResult,
+};
 use crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocator;
 use crate::main_theap::MainStaticHeapLease;
+#[cfg(test)]
+use crate::meta::MetaAllocation;
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
+use crate::meta::MetaAllocator;
 use crate::os::{MemoryConfig, PageSize, StartupInput};
 use crate::process_init::{ProcessMainInitializationStorage, ProcessMainThread};
-use crate::process_arena::{ProcessPageArenaLease, ProcessSharedArenaStorage};
+use crate::process_arena::{
+    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaStorage,
+};
+use crate::process_page_map::{
+    LiveAllocationPageState, LiveAllocationPointer, ProcessPageMapError, ProcessPageMapLease,
+};
+use crate::remote_free;
+use crate::single_thread::{
+    ProcessPostOwnerExitPointerFreeDisposition, ProcessPostOwnerExitPointerFreeRejection,
+    RemoteFreeProducer, RemoteFreeProducerPair,
+};
+#[cfg(test)]
+use crate::single_thread::{
+    ThreadExitMappedRegularPagesPostExitRemoteFreeProducer,
+    ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair,
+};
+use crate::thread_local::{
+    PersistentCompilerTlsOwnerCell, PersistentCompilerTlsOwnerError,
+    PersistentCompilerTlsOwnerInitializeError, PersistentCompilerTlsOwnerTeardownError,
+};
+use crate::types::{LiveThreadId, Page};
 
 const PROCESS_COLD: u8 = 0;
 const PROCESS_INITIALIZING: u8 = 1;
@@ -53,13 +118,223 @@ const PROCESS_RETAINED: u8 = 3;
 
 // A separate process-long owner state keeps the original no-page lifecycle
 // intact until an internal ticket-zero request needs the first native page.
-// `BUSY` closes same-thread recursive entry while one engine operation can
-// touch source page metadata; it is never a general allocator lock.
-const PAGE_OWNER_COLD: u8 = 0;
-const PAGE_OWNER_STARTING: u8 = 1;
-const PAGE_OWNER_READY: u8 = 2;
-const PAGE_OWNER_BUSY: u8 = 3;
-const PAGE_OWNER_RETAINED: u8 = 4;
+// `BUSY` closes one complete source PageMap mutation operation; it is not a
+// general allocator lock. Every parked count represents that many distinct
+// current-thread-only suspended engines, each of which released its long
+// PageMap guard. The scheduler permits another complete operation only by
+// claiming the one `BUSY` state, so multiple parked owners never imply
+// concurrent mutation of plain PageMap entries.
+const PAGE_OWNER_COLD: usize = 0;
+const PAGE_OWNER_STARTING: usize = 1;
+const PAGE_OWNER_READY: usize = 2;
+const PAGE_OWNER_BUSY: usize = 3;
+/// The process-static ticket-zero slot was moved into the initial thread's
+/// compiler-TLS owner cell.  This is an ownership publication used only at
+/// the one-time promotion boundary; ordinary initial local operations never
+/// inspect or transition this word.
+const PAGE_OWNER_INITIAL_PERSISTENT: usize = 4;
+const PAGE_OWNER_PARKED_BASE: usize = 5;
+/// Compatibility spelling for the first parked owner. Callers that need the
+/// number of independently suspended engines use
+/// [`page_owner_parked_count`] instead of treating this as one global route.
+const PAGE_OWNER_PARKED: usize = PAGE_OWNER_PARKED_BASE;
+const PAGE_OWNER_RETAINED: usize = usize::MAX;
+
+/// Encodes a nonzero number of independently suspended normal engines.
+///
+/// Zero parked engines use the distinct `READY` state so ticket zero can
+/// claim its permanent owner without a count conversion. `RETAINED` stays
+/// outside the representable parked range, ensuring no arithmetic overflow
+/// can make a terminal process look quiescent.
+#[inline]
+const fn page_owner_parked_state(count: usize) -> Option<usize> {
+    if count == 0 {
+        return Some(PAGE_OWNER_READY);
+    }
+    match PAGE_OWNER_PARKED_BASE.checked_add(count - 1) {
+        Some(state) if state != PAGE_OWNER_RETAINED => Some(state),
+        Some(_) | None => None,
+    }
+}
+
+/// Decodes the quiescent or parked portion of the runtime scheduler.
+///
+/// `COLD`, `STARTING`, `BUSY`, `INITIAL_PERSISTENT`, and `RETAINED`
+/// deliberately have no count: none represents a retryable collection of
+/// suspended owner tokens.  In particular, the initial persistent owner is
+/// not a parked compatibility engine that another thread may borrow.
+#[inline]
+const fn page_owner_parked_count(state: usize) -> Option<usize> {
+    if state == PAGE_OWNER_READY {
+        Some(0)
+    } else if state >= PAGE_OWNER_PARKED_BASE && state != PAGE_OWNER_RETAINED {
+        Some(state - PAGE_OWNER_PARKED_BASE + 1)
+    } else {
+        None
+    }
+}
+
+/// A parked engine may lose the scheduler CAS because a peer just completed
+/// or re-parked.  Both `BUSY` and any nonzero parked count still represent a
+/// live, typed runtime transition; callers that retain their own parked token
+/// may retry rather than treating that ordinary count change as terminal.
+#[inline]
+const fn page_owner_transition_is_retryable(state: usize) -> bool {
+    state == PAGE_OWNER_BUSY
+        || matches!(page_owner_parked_count(state), Some(parked_count) if parked_count > 0)
+}
+
+/// A worker creating its first session has not yet contributed a parked token.
+/// If it misses the scheduler CAS while a peer completes, the next stable
+/// observation may therefore be `READY`: that is an admission state for a
+/// new engine, not evidence that this worker's ownership was lost. Existing
+/// parked-session callers must continue to use
+/// [`page_owner_transition_is_retryable`], which deliberately excludes
+/// `READY` because their own token must remain represented by a nonzero count.
+#[inline]
+const fn page_owner_session_begin_is_retryable(state: usize) -> bool {
+    state == PAGE_OWNER_BUSY || page_owner_parked_count(state).is_some()
+}
+
+// The retired exact-client registry remains only in unit-test compilation so
+// legacy route witnesses stay isolated from the production PageMap/W03 path.
+#[cfg(test)]
+const NATIVE_POST_EXIT_ROUTE_EMPTY: u8 = 0;
+#[cfg(test)]
+const NATIVE_POST_EXIT_ROUTE_ACTIVE: u8 = 1;
+#[cfg(test)]
+const NATIVE_POST_EXIT_ROUTE_BUSY: u8 = 2;
+#[cfg(test)]
+const NATIVE_POST_EXIT_ROUTE_RETAINED: u8 = 3;
+#[cfg(test)]
+const NATIVE_POST_EXIT_ROUTE_COMPLETED: u8 = 4;
+
+#[cfg(test)]
+const NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE: u8 = 0;
+#[cfg(test)]
+const NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING: u8 = 1;
+#[cfg(test)]
+const NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED: u8 = 2;
+
+// Linux/AArch64's public C allocation ABI guarantees 16-byte natural malloc
+// alignment. A request at or below this boundary remains an ordinary native
+// allocation in the private ledger; only a wider request takes the aligned
+// path, whose interior/base geometry cannot safely name a later normal queue.
+const NATIVE_C_MALLOC_ALIGNMENT: usize = 16;
+
+// The source full-medium witness uses the established 64 KiB regular-medium
+// request from the source-shaped full-page fixtures. Its rounded block stays
+// below `MEDIUM_MAX_OBJ_SIZE` and its fixed page has only a small bounded
+// number of clients. `good_size` may round the request upward, never
+// downward, so this is a conservative stack-only bound rather than a second
+// page-shape policy.
+// Keep both source small-page classes in the one mixed Theap: 37 lands in
+// the direct cache range, while `SMALL_SIZE_MAX + 1` remains a small page but
+// has no direct-cache slot. Neither class gets its own owner-exit entry.
+// The existing direct-small member supplies the one direct post-exit source
+// free plus two same-page atomic publishers. Keeping all three clients in the
+// already-covered direct-cache source page exercises the upstream multi-push
+// remote-head transition without introducing a new page geometry.
+const OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS: usize = 3;
+const OWNER_EXIT_NON_DIRECT_SMALL_CLIENT_SLOTS: usize = 1;
+const OWNER_EXIT_NON_DIRECT_SMALL_REQUEST: usize = SMALL_SIZE_MAX + 1;
+const OWNER_EXIT_FULL_MEDIUM_REQUEST: usize = 64 * 1024;
+const OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS: usize =
+    MEDIUM_PAGE_SIZE / OWNER_EXIT_FULL_MEDIUM_REQUEST;
+// Keep the force-empty large page in a distinct source bin from the live
+// large member below. Its one remote client lets the existing aggregate
+// traversal prove the required page-empty-during-exit branch without turning
+// this runtime witness into a separate geometry-specific route.
+const OWNER_EXIT_FORCE_EMPTY_LARGE_REQUEST: usize = MEDIUM_MAX_OBJ_SIZE + 1;
+const OWNER_EXIT_PRE_EXIT_REMOTE_CLIENT_SLOTS: usize = 2;
+const OWNER_EXIT_LIVE_LARGE_REQUEST: usize = MEDIUM_MAX_OBJ_SIZE + 64 * 1024;
+const OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS: usize = 2;
+// Keep one live arena singleton in the same aggregate coordinator. This is
+// deliberately a normal unaligned request just above the regular-large range:
+// source owner exit must retain its PageMap-only terminal tail until B frees
+// its one opaque client, unlike the force-empty large member above.
+const OWNER_EXIT_ARENA_SINGLETON_REQUEST: usize = LARGE_MAX_OBJ_SIZE + 1;
+// This stays inside the source's OS-aligned singleton profile while crossing
+// the `MI_SMALL_MAX_OBJ_SIZE` boundary that moves a full singleton from
+// `BIN_HUGE` to `BIN_FULL`. Its 128 KiB alignment exceeds the in-arena path
+// and remains below the 256 MiB metadata-alignment ceiling.
+const OWNER_EXIT_OS_SINGLETON_REQUEST: usize = SMALL_MAX_OBJ_SIZE + 1;
+const OWNER_EXIT_OS_SINGLETON_ALIGNMENT: usize = 128 * 1024;
+// This has the same source-rounded medium geometry as the mixed owner-exit
+// witness, but it returns one local free after two live clients. The source
+// owner-exit collector transfers that deferred block into the immediate head
+// required by the existing sole-medium adoption route.
+const OWNER_EXIT_RECLAIM_MEDIUM_REQUEST: usize = OWNER_EXIT_FULL_MEDIUM_REQUEST;
+// This request stays inside the source direct-cache range. The direct-small
+// predecessor below validates its complete rounded cache image through the
+// existing specialized source drain; it is deliberately not reclassified as
+// a `SoleImmediateMedium` aggregate result.
+const OWNER_EXIT_RECLAIM_DIRECT_SMALL_REQUEST: usize = 37;
+const OWNER_EXIT_RECLAIM_CLIENT_SLOTS: usize = 2;
+const OWNER_EXIT_NON_DIRECT_SMALL_START: usize = OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS;
+const OWNER_EXIT_LIVE_LARGE_START: usize =
+    OWNER_EXIT_NON_DIRECT_SMALL_START + OWNER_EXIT_NON_DIRECT_SMALL_CLIENT_SLOTS;
+const OWNER_EXIT_MAPPED_MEDIUM_START: usize =
+    OWNER_EXIT_LIVE_LARGE_START + OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS;
+const OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START: usize =
+    OWNER_EXIT_MAPPED_MEDIUM_START + (OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS - 1);
+// The third medium begins full, then A locally frees one exact client before
+// owner exit. Its remaining clients therefore reach the general aggregate as
+// an initially mapped, non-full regular member, distinct from both the
+// pre-exit-normalized and source-unmapped full-medium members above.
+const OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START: usize =
+    OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START + OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS;
+const OWNER_EXIT_ARENA_SINGLETON_INDEX: usize =
+    OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START + (OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS - 1);
+const OWNER_EXIT_OS_SINGLETON_INDEX: usize = OWNER_EXIT_ARENA_SINGLETON_INDEX + 1;
+// This is the inline portion of the private client registry for the internal
+// generic page-bearing TLS owner. It covers the largest source aggregate used
+// by the focused owner-exit fixtures. Ordinary native sessions may grow a
+// private metadata-backed overflow beyond it; client identity remains inside
+// the session and never becomes a public registry or a routing capability.
+const RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS: usize = OWNER_EXIT_OS_SINGLETON_INDEX + 1;
+// Preparation sees the two pre-exit source clients before their joined remote
+// publications. They are deliberately absent from the post-exit route after
+// source collection, but the inline ledger must still account for them while
+// A owns the live engine. Keep that source-fixture capacity separate from the
+// B-side opaque-client array so neither identity can be forgotten nor
+// accidentally handed to B twice.
+const RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS: usize =
+    RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS + OWNER_EXIT_PRE_EXIT_REMOTE_CLIENT_SLOTS;
+
+// The production route has no branch-reporting surface: its only observable
+// result is a terminal proof or retained owner. This test-only counter lets
+// the mixed lifecycle regression prove it reached the aggregate final-member
+// adoption transition rather than merely freeing its final page sequentially.
+#[cfg(test)]
+static AGGREGATE_LAST_MAPPED_REGULAR_ADOPTION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// This default-off counter is an execution witness for the Phase-B native
+// owner-local seam.  It counts only successful operations that ran through
+// the retained current-thread owner, after its initial attachment/setup
+// transition; it is not a client ledger, scheduler, or routing capability.
+#[cfg(feature = "native-runtime-test-audit")]
+static NATIVE_OWNER_LOCAL_OPERATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// This separate counter makes the Phase-B regression reject an implementation
+// that merely renames the old parked-session bridge. It contains no pointer or
+// owner identity and is sampled only after the participating worker joins.
+#[cfg(feature = "native-runtime-test-audit")]
+static NATIVE_PARKED_COMPATIBILITY_OPERATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// This default-off monotonic audit records every successful entry into the
+// legacy process page-owner scheduler (`COLD -> STARTING` or `* -> BUSY`). It
+// exposes no state, token, or owner identity. A direct persistent worker owns
+// its independently copied PageMap/arena pair and therefore must leave this
+// count unchanged after ticket-zero preparation has established the baseline.
+#[cfg(feature = "native-runtime-test-audit")]
+static NATIVE_SCHEDULER_TRANSITION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "native-runtime-test-audit")]
+#[inline]
+fn note_native_scheduler_transition() {
+    NATIVE_SCHEDULER_TRANSITION_COUNT.fetch_add(1, Ordering::AcqRel);
+}
 
 /// Result of one private ticket-zero native allocation operation.
 ///
@@ -83,6 +358,37 @@ pub enum TicketZeroPageFreeResult {
     Retained,
 }
 
+/// Result of one private native allocator operation selected by the
+/// nondefault crabc-libc shadow backend.
+///
+/// The result deliberately names neither the ticket-zero implementation nor
+/// a worker session. A returned block remains in the one current native owner
+/// and must later re-enter this same friend boundary; it is never eligible for
+/// C-mimalloc fallback. The current worker branch is intentionally bounded to
+/// the existing parked TLS owner and its explicit client ledger while the
+/// general M5 allocation/remote-free/owner-exit router is completed.
+#[doc(hidden)]
+pub enum NativePageAllocationResult {
+    Allocated(core::ptr::NonNull<u8>),
+    Unavailable,
+    AllocationFailed,
+    Retained,
+}
+
+/// Result of returning one private native-shadow allocation.
+///
+/// An invalid or foreign pointer stays distinct from an unavailable native
+/// owner so the libc boundary can fail-stop rather than accidentally pass a
+/// Rust-engine pointer to C mimalloc.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativePageFreeResult {
+    Freed,
+    Unavailable,
+    InvalidPointer,
+    Retained,
+}
+
 /// Result of one private scoped later-worker page-engine round trip.
 ///
 /// The operation is intentionally narrower than allocation routing: it
@@ -98,13 +404,1875 @@ pub enum TicketZeroLaterThreadPageResult {
     Retained,
 }
 
+/// One private, linear remote-free publication capability for a live later
+/// worker page. It is only a friend-boundary wrapper around the source-shaped
+/// engine token: it accepts no client pointer and exposes no allocator state.
+///
+/// The adapter may move it to exactly one joined pthread and call
+/// [`Self::publish`]. If that operation cannot publish, it must return this
+/// value to the runtime callback so the owner can cancel the transfer while it
+/// still holds the exclusive engine lifecycle.
+#[doc(hidden)]
+#[must_use = "the remote-free publication must be published or returned to its runtime callback"]
+pub struct TicketZeroRemoteFreeProducer<'owner> {
+    producer: RemoteFreeProducer<'owner>,
+}
+
+impl<'owner> TicketZeroRemoteFreeProducer<'owner> {
+    /// Publishes this one logical handoff to the live owner page's source
+    /// remote-free head. It never exposes the transferred client pointer.
+    #[inline]
+    pub fn publish(self) -> Result<(), Self> {
+        match self.producer.publish() {
+            Ok(()) => Ok(()),
+            Err((producer, _)) => Err(Self { producer }),
+        }
+    }
+
+    #[inline]
+    fn cancel(self) -> core::ptr::NonNull<u8> {
+        self.producer.cancel()
+    }
+
+}
+
+/// One opaque post-exit publication capability issued only after B has
+/// claimed the source abandoned-page owner bit for its direct client free.
+///
+/// The runtime keeps every client identity private. A joined publisher receives
+/// only this single-use producer, which may publish into B's already-owned
+/// remote head; it cannot collect, reclaim, adopt, release, or retain the page
+/// route.
+#[doc(hidden)]
+#[must_use = "the post-exit remote publication must publish or return its opaque producer"]
+#[cfg(test)]
+pub struct TicketZeroOwnerExitRemoteFreeProducer<'route> {
+    producer: ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
+}
+
+// SAFETY: the wrapped source producer is Send and carries only the one
+// already-proved private client plus the callback-local lifetime boundary.
+// Moving it transfers no PageMap, route, or terminal-release authority.
+#[cfg(test)]
+unsafe impl Send for TicketZeroOwnerExitRemoteFreeProducer<'_> {}
+
+#[cfg(test)]
+impl<'route> TicketZeroOwnerExitRemoteFreeProducer<'route> {
+    /// Atomically publishes one private client to B's held source remote
+    /// head. A failure returns the same opaque capability, allowing the
+    /// direct route to become terminal rather than pretending it published.
+    #[inline]
+    pub fn publish(self) -> Result<(), Self> {
+        match self.producer.publish() {
+            Ok(()) => Ok(()),
+            Err(producer) => Err(Self { producer }),
+        }
+    }
+}
+
+/// Two opaque C/D-side publication capabilities issued only after B has
+/// claimed the source abandoned-page owner bit for its direct client free.
+///
+/// Splitting this value transfers exactly two atomic-only appends. It cannot
+/// reveal a client address, construct a collector, or outlive B's
+/// higher-ranked synchronous callback.
+#[doc(hidden)]
+#[must_use = "both post-exit remote publications must publish or the opaque pair must return to the runtime callback"]
+#[cfg(test)]
+pub struct TicketZeroOwnerExitRemoteFreeProducerPair<'route> {
+    producers: ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>,
+}
+
+// SAFETY: each component is Send and carries only one exact private client
+// plus the callback-local lifetime boundary. The pair gives no route,
+// PageMap, collector, or terminal-release authority to its receiver.
+#[cfg(test)]
+unsafe impl Send for TicketZeroOwnerExitRemoteFreeProducerPair<'_> {}
+
+#[cfg(test)]
+impl<'route> TicketZeroOwnerExitRemoteFreeProducerPair<'route> {
+    /// Separates C and D's opaque atomic-only source publications. Both
+    /// tokens remain bounded by B's direct source transition.
+    #[inline]
+    pub fn split(
+        self,
+    ) -> (
+        TicketZeroOwnerExitRemoteFreeProducer<'route>,
+        TicketZeroOwnerExitRemoteFreeProducer<'route>,
+    ) {
+        let (first, second) = self.producers.split();
+        (
+            TicketZeroOwnerExitRemoteFreeProducer { producer: first },
+            TicketZeroOwnerExitRemoteFreeProducer { producer: second },
+        )
+    }
+
+    #[inline]
+    fn into_source_pair(self) -> ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route> {
+        self.producers
+    }
+}
+
+/// The one callback shape admitted between B's direct source low-bit claim
+/// and its existing collector. Its higher-ranked pair cannot outlive the
+/// synchronous callback that the aggregate route joins before it resumes.
+#[doc(hidden)]
+#[cfg(test)]
+pub type TicketZeroOwnerExitRemoteFreePublisher = for<'route> fn(
+    TicketZeroOwnerExitRemoteFreeProducerPair<'route>,
+) -> Result<(), TicketZeroOwnerExitRemoteFreeProducerPair<'route>>;
+
+/// One opaque post-exit publication capability for a source-mapped, non-full
+/// medium page. B mints it only after claiming that page's source low owner
+/// bit for its direct client free.
+///
+/// This is intentionally a nominally distinct capability from
+/// [`TicketZeroOwnerExitRemoteFreeProducer`]. The callback cannot reinterpret
+/// a direct-small witness as a mapped-medium route, and still receives no
+/// address, PageMap, collector, reclaim, or terminal-release authority.
+#[doc(hidden)]
+#[must_use = "the mapped-medium post-exit publication must publish or return its opaque producer"]
+#[cfg(test)]
+pub struct TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route> {
+    producer: ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
+}
+
+// SAFETY: the wrapped source producer is Send and carries only one exact
+// private client plus its callback-local lifetime boundary. Moving it exposes
+// no route, map, collector, or terminal-release capability.
+#[cfg(test)]
+unsafe impl Send for TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'_> {}
+
+#[cfg(test)]
+impl<'route> TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route> {
+    /// Atomically publishes one private mapped-medium client to B's held
+    /// source remote head. Failure returns the same opaque capability so the
+    /// route remains terminal instead of claiming a publication happened.
+    #[inline]
+    pub fn publish(self) -> Result<(), Self> {
+        match self.producer.publish() {
+            Ok(()) => Ok(()),
+            Err(producer) => Err(Self { producer }),
+        }
+    }
+}
+
+/// Two opaque C/D-side mapped-medium publication capabilities issued only
+/// after B has claimed the source low owner bit for its direct medium free.
+#[doc(hidden)]
+#[must_use = "both mapped-medium post-exit publications must publish or the opaque pair must return to the runtime callback"]
+#[cfg(test)]
+pub struct TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route> {
+    producers: ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>,
+}
+
+// SAFETY: each component is Send and carries only one exact private client
+// plus the callback-local lifetime boundary. The pair transfers no route,
+// PageMap, collector, or terminal-release authority.
+#[cfg(test)]
+unsafe impl Send for TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'_> {}
+
+#[cfg(test)]
+impl<'route> TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route> {
+    /// Separates C and D's opaque mapped-medium atomic-only publications.
+    /// Both remain bounded by B's one direct source transition.
+    #[inline]
+    pub fn split(
+        self,
+    ) -> (
+        TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route>,
+        TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route>,
+    ) {
+        let (first, second) = self.producers.split();
+        (
+            TicketZeroOwnerExitMappedMediumRemoteFreeProducer { producer: first },
+            TicketZeroOwnerExitMappedMediumRemoteFreeProducer { producer: second },
+        )
+    }
+
+    #[inline]
+    fn into_source_pair(self) -> ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route> {
+        self.producers
+    }
+}
+
+/// The one callback shape admitted between B's mapped-medium direct source
+/// low-bit claim and its existing collector. Its higher-ranked pair cannot
+/// outlive the synchronous callback that B joins before it resumes.
+#[doc(hidden)]
+#[cfg(test)]
+pub type TicketZeroOwnerExitMappedMediumRemoteFreePublisher = for<'route> fn(
+    TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route>,
+) -> Result<(), TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route>>;
+
+/// One opaque client identity after A has detached its Theap/TLD.
+///
+/// The key is not a pointer-domain capability: it only lets the detached
+/// owner name one already-accounted client while it still keeps the address
+/// private. In particular, direct-small's source drain may identify its
+/// exact first client without turning the route into a block-list API.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DetachedOwnerExitClientKey {
+    slot: usize,
+    generation: usize,
+}
+
+/// The one source page shape selected for a bounded post-exit B/C/D
+/// publication. This stays wholly inside the runtime ledger: it is not a
+/// selector exposed to the consumer callback.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
+enum DetachedOwnerExitRemotePublicationKind {
+    DirectSmall,
+    MappedMedium,
+}
+
+/// Three opaque ledger identities together with the source shape that proved
+/// their shared-page relation while A still owned the live engine.
+#[derive(Clone, Copy)]
+#[cfg(test)]
+struct DetachedOwnerExitRemotePublicationSelection {
+    kind: DetachedOwnerExitRemotePublicationKind,
+    clients: [DetachedOwnerExitClientKey; 3],
+}
+
+/// The private callback identity carried to B's one bounded source
+/// interleaving. It is checked against the opaque ledger selection before B
+/// removes any client from that selection, so a callback for one source shape
+/// cannot consume the other shape's route.
+#[cfg(test)]
+enum TicketZeroOwnerExitPostExitPublisher {
+    DirectSmall(TicketZeroOwnerExitRemoteFreePublisher),
+    MappedMedium(TicketZeroOwnerExitMappedMediumRemoteFreePublisher),
+}
+
+#[cfg(test)]
+impl TicketZeroOwnerExitPostExitPublisher {
+    #[inline]
+    fn accepts(&self, kind: DetachedOwnerExitRemotePublicationKind) -> bool {
+        matches!(
+            (self, kind),
+            (
+                Self::DirectSmall(_),
+                DetachedOwnerExitRemotePublicationKind::DirectSmall
+            ) | (
+                Self::MappedMedium(_),
+                DetachedOwnerExitRemotePublicationKind::MappedMedium
+            )
+        )
+    }
+}
+
+/// One private entry in the detached owner's client ledger.
+///
+/// The ledger is deliberately a coarse ownership fact, not the mixed witness'
+/// historical layout. The source-shaped traversal owns page classification;
+/// this object only proves that every live client has exactly one eventual
+/// post-exit consumer.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DetachedOwnerExitClient {
+    key: DetachedOwnerExitClientKey,
+    block: core::ptr::NonNull<u8>,
+    /// The exact source usable extent recorded while A still owned the live
+    /// page engine. The bounded native post-exit route may answer an exact
+    /// C `malloc_usable_size` query from this immutable fact; it must not
+    /// reopen the detached page map merely to inspect a client.
+    usable_size: usize,
+    /// `Some` records the ordinary request that selected this regular-page
+    /// client. `None` is an aligned allocation, which cannot name the normal
+    /// small/medium/large queue required by aggregate last-member adoption.
+    /// This remains private route accounting, never a pointer or page
+    /// identity capability.
+    normal_request: Option<usize>,
+    /// A observed that source owner-exit force collection will leave this
+    /// exact still-live ordinary page with an immediate local head before it
+    /// suspended. This is the conservative authority needed to attempt the
+    /// aggregate's consuming final-member reclaim later: a page without that
+    /// source fact must use ordinary sequential free, because a failed reclaim
+    /// after its long PageMap claim cannot reconstruct the short route. The
+    /// field keeps the fact private to the opaque route and never exposes an
+    /// address or page identity to B's callback.
+    has_pre_exit_owner_exit_collectable_local_free: bool,
+}
+
+#[cfg(test)]
+impl DetachedOwnerExitClient {
+    #[inline]
+    fn can_attempt_final_member_adoption(self) -> bool {
+        self.normal_request.is_some() && self.has_pre_exit_owner_exit_collectable_local_free
+    }
+}
+
+/// The private client ledger carried across A's detached owner exit.
+///
+/// Fixed preparation witnesses remain inline because their caller-owned
+/// selection arrays are deliberately small. A real parked session, however,
+/// moves its own metadata-backed registry wholesale after it has transformed
+/// every live entry into a detached-only client fact. That preserves the
+/// allocation capability all the way through B's terminal exact-free route:
+/// C still cannot enumerate an entry or obtain a client address from it.
+#[cfg(test)]
+enum DetachedOwnerExitClientLedger {
+    Inline {
+        entries: [
+            Option<DetachedOwnerExitClient>;
+            RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS
+        ],
+    },
+    Session(PreparedOwnerExitClients),
+}
+
+#[cfg(test)]
+impl DetachedOwnerExitClientLedger {
+    fn empty() -> Self {
+        Self::Inline {
+            entries: core::array::from_fn(|_| None),
+        }
+    }
+
+    #[inline]
+    fn from_inline_entries(
+        entries: [
+            Option<DetachedOwnerExitClient>;
+            RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS
+        ],
+    ) -> Self {
+        Self::Inline { entries }
+    }
+
+    #[inline]
+    fn from_session(clients: PreparedOwnerExitClients) -> Self {
+        Self::Session(clients)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Inline { entries } => entries.iter().all(Option::is_none),
+            Self::Session(clients) => !clients.has_detached_client(),
+        }
+    }
+
+    #[inline]
+    fn block_for(&self, key: DetachedOwnerExitClientKey) -> Option<core::ptr::NonNull<u8>> {
+        match self {
+            Self::Inline { entries } => entries.iter().find_map(|entry| match entry {
+                Some(client) if client.key == key => Some(client.block),
+                _ => None,
+            }),
+            Self::Session(clients) => clients.detached_block_for(key),
+        }
+    }
+
+    #[inline]
+    fn next(&self) -> Option<DetachedOwnerExitClient> {
+        match self {
+            Self::Inline { entries } => entries.iter().flatten().copied().next(),
+            Self::Session(clients) => clients.next_detached_client(),
+        }
+    }
+
+    #[inline]
+    fn take_next(&mut self) -> Option<DetachedOwnerExitClient> {
+        match self {
+            Self::Inline { entries } => entries.iter_mut().find_map(Option::take),
+            Self::Session(clients) => clients.take_next_detached_client(),
+        }
+    }
+
+    /// Removes one exact client only while the opaque post-exit route holds
+    /// the aggregate owner. This is intentionally a private lookup by the C
+    /// boundary's input address, not an iterable pointer registry: the route
+    /// never returns a stored address or lets a caller select a page.
+    #[inline]
+    fn take_for_native_free(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Option<DetachedOwnerExitClient> {
+        match self {
+            Self::Inline { entries } => entries.iter_mut().find_map(|entry| match entry {
+                Some(client) if client.block == block => entry.take(),
+                Some(_) | None => None,
+            }),
+            Self::Session(clients) => clients.take_detached_client_for_native_free(block),
+        }
+    }
+
+    /// Returns an exact native C client only when it is the ledger's last
+    /// remaining entry.  The opaque route may consume the existing aggregate
+    /// final-member adoption only at that point: the C boundary must first
+    /// terminally release every sibling, and it never receives a page or a
+    /// client-selection capability.
+    #[inline]
+    fn only_client_for_native_free(
+        &self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Option<DetachedOwnerExitClient> {
+        match self {
+            Self::Inline { entries } => {
+                let mut only = None;
+                for client in entries.iter().flatten().copied() {
+                    if only.replace(client).is_some() {
+                        return None;
+                    }
+                }
+                only.filter(|client| client.block == block)
+            }
+            Self::Session(clients) => clients.only_detached_client_for_native_free(block),
+        }
+    }
+
+    /// Returns the source-recorded usable extent for one exact native C
+    /// client without transferring or exposing the client entry. The route
+    /// still owns the address and every page-lifecycle capability; this is a
+    /// read-only C ABI query rather than a pointer registry operation.
+    #[inline]
+    fn usable_size_for_native_block(&self, block: core::ptr::NonNull<u8>) -> Option<usize> {
+        match self {
+            Self::Inline { entries } => entries.iter().find_map(|entry| match entry {
+                Some(client) if client.block == block => Some(client.usable_size),
+                Some(_) | None => None,
+            }),
+            Self::Session(clients) => clients.detached_usable_size_for_native_block(block),
+        }
+    }
+
+    fn take_remote_publication_group(
+        &mut self,
+        selection: DetachedOwnerExitRemotePublicationSelection,
+    ) -> Option<DetachedOwnerExitRemotePublicationGroup> {
+        let [direct, first_published, second_published] = selection.clients;
+        if direct == first_published
+            || direct == second_published
+            || first_published == second_published
+        {
+            return None;
+        }
+        match self {
+            Self::Inline { entries } => {
+                let direct_index = entries.iter().position(|entry| {
+                    matches!(entry, Some(client) if client.key == direct)
+                })?;
+                let first_published_index = entries.iter().position(|entry| {
+                    matches!(entry, Some(client) if client.key == first_published)
+                })?;
+                let second_published_index = entries.iter().position(|entry| {
+                    matches!(entry, Some(client) if client.key == second_published)
+                })?;
+                let direct = entries[direct_index]
+                    .take()
+                    .expect("the located detached client remains present");
+                let first_published = entries[first_published_index]
+                    .take()
+                    .expect("the distinct located detached client remains present");
+                let second_published = entries[second_published_index]
+                    .take()
+                    .expect("the distinct located detached client remains present");
+                Some(DetachedOwnerExitRemotePublicationGroup {
+                    kind: selection.kind,
+                    direct: Some(direct.block),
+                    first_published: Some(first_published.block),
+                    second_published: Some(second_published.block),
+                })
+            }
+            Self::Session(clients) => clients.take_detached_remote_publication_group(selection),
+        }
+    }
+
+    /// Releases the session's metadata extension only after every detached
+    /// client has terminally left the route. Inline preparation ledgers have
+    /// no separate storage capability to return.
+    fn release_overflow_when_empty(
+        &mut self,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        match self {
+            Self::Inline { .. } => Ok(()),
+            Self::Session(clients) => clients.release_overflow_without_detached_clients(),
+        }
+    }
+
+    fn free_locals(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    ) -> Result<(), ()> {
+        while let Some(client) = self.take_next() {
+            // SAFETY: this ledger is only freed before A suspends, or after
+            // B has adopted the exact page engine. Its entry names one
+            // current client owned exclusively by that engine.
+            unsafe { allocator.free(client.block) }.map_err(|_| ())?;
+        }
+        self.release_overflow_when_empty().map_err(|_| ())
+    }
+}
+
+/// The one source-faithful B/C/D interleaving retained only by the bounded
+/// runtime witness. The group is selected by opaque ledger keys during A's
+/// preparation; the generic sequential route never indexes a fixture layout.
+/// Its explicit kind keeps the direct-small and mapped-medium source proofs
+/// nominally separate. B directly claims the source low bit, then C and D
+/// each atomically append one same-page client before B's collector resumes.
+#[cfg(test)]
+struct DetachedOwnerExitRemotePublicationGroup {
+    kind: DetachedOwnerExitRemotePublicationKind,
+    direct: Option<core::ptr::NonNull<u8>>,
+    first_published: Option<core::ptr::NonNull<u8>>,
+    second_published: Option<core::ptr::NonNull<u8>>,
+}
+
+#[cfg(test)]
+impl DetachedOwnerExitRemotePublicationGroup {
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.direct.is_none()
+            && self.first_published.is_none()
+            && self.second_published.is_none()
+    }
+
+    #[inline]
+    fn take_next(&mut self) -> Option<core::ptr::NonNull<u8>> {
+        self.direct
+            .take()
+            .or_else(|| self.first_published.take())
+            .or_else(|| self.second_published.take())
+    }
+
+    #[inline]
+    fn take_for_publishers(
+        &mut self,
+    ) -> Option<(
+        core::ptr::NonNull<u8>,
+        core::ptr::NonNull<u8>,
+        core::ptr::NonNull<u8>,
+    )> {
+        if self.direct.is_none()
+            || self.first_published.is_none()
+            || self.second_published.is_none()
+        {
+            return None;
+        }
+        Some((
+            self.direct
+                .take()
+                .expect("the checked direct private client remains present"),
+            self.first_published
+                .take()
+                .expect("the checked first published private client remains present"),
+            self.second_published
+                .take()
+                .expect("the checked second published private client remains present"),
+        ))
+    }
+
+    fn free_locals(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    ) -> Result<(), ()> {
+        while let Some(block) = self.take_next() {
+            // SAFETY: this group remains A-local until preparation either
+            // suspends its exact source engine or aborts it normally.
+            unsafe { allocator.free(block) }.map_err(|_| ())?;
+        }
+        Ok(())
+    }
+}
+
+/// One private, linear source post-exit route whose client addresses remain
+/// inside the runtime witness. It is the only capability that may complete
+/// one detached source owner after A has torn down its Theap/TLD.
+///
+/// The adapter may move it to exactly one joined pthread B and call
+/// [`Self::free_remaining_in_fresh_runtime_worker`]. It neither exposes a
+/// client address nor creates an allocation, reclaim, or page-shape-specific
+/// owner-exit API. Internally, the same route may take the already-proven
+/// aggregate-last-member handoff only after its private sequential ledger has
+/// terminally released every sibling; B still receives no client or page
+/// selection capability.
+#[doc(hidden)]
+#[must_use = "the post-exit route must release every private client or remain terminally retained"]
+#[cfg(test)]
+pub struct TicketZeroOwnerExitFreeRoute<'main> {
+    // Every production route originates from `ThreadLifecycleSlot`, whose
+    // attachment and process-main roots are compiler-TLS/process-static.
+    // Keep that concrete ownership here so B can borrow its own static
+    // attachment for a source-valid final-member adoption. The phantom
+    // lifetime preserves the higher-ranked consumer boundary: a callback
+    // cannot safely retain this opaque route beyond its synchronous handoff.
+    route: MainHeapThreadProcessPageExitMappedRegularPagesRoute<'static>,
+    clients: DetachedOwnerExitClientLedger,
+    post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationGroup>,
+    /// The immutable process map/arena identity remains private to this route
+    /// so a final mapped regular member can enter B only through the existing
+    /// source-shaped short-to-long adoption transition. It is not an exposed
+    /// scheduler or allocation capability.
+    pair: ProcessPageArenaLease,
+    admission: LaterThreadAdmissionClaim,
+    _consumer: PhantomData<&'main mut ()>,
+}
+
+// SAFETY: this private capability contains neither an old TLD nor a Theap.
+// Its only `NonNull` values are exact one-shot client identities that remain
+// inaccessible to its receiver. The underlying aggregate route is Send but
+// deliberately !Sync, so moving this value transfers its unique linear
+// source release authority to one joined consumer.
+#[cfg(test)]
+unsafe impl Send for TicketZeroOwnerExitFreeRoute<'_> {}
+
+/// A proof that a private owner-exit route reached `ReleasedAll` and finished
+/// its PageMap lifecycle. The private drain inside
+/// [`TicketZeroOwnerExitFreeRoute::free_remaining_in_fresh_runtime_worker`]
+/// mints it only after B has entered its own fresh runtime lifecycle; the
+/// runtime consumes it before releasing A's admission claim.
+#[doc(hidden)]
+#[must_use = "this proof must immediately complete the detached worker lifecycle"]
+#[cfg(test)]
+pub struct TicketZeroOwnerExitRouteFinished {
+    admission: LaterThreadAdmissionClaim,
+}
+
+#[cfg(test)]
+impl TicketZeroOwnerExitRouteFinished {
+    #[inline]
+    fn into_admission(self) -> LaterThreadAdmissionClaim {
+        self.admission
+    }
+
+    /// Consumes the only post-exit terminal proof to release its matching
+    /// worker admission. A failed count transition returns the same proof so
+    /// the runtime can retain its exact claim rather than decrementing some
+    /// unrelated worker or reopening fork preservation.
+    #[inline]
+    fn release_worker_admission(
+        self,
+        admissions: &RuntimeForkAdmission,
+    ) -> Result<(), Self> {
+        match admissions.release_later_thread(self.admission) {
+            Ok(()) => Ok(()),
+            Err(admission) => Err(Self { admission }),
+        }
+    }
+}
+
+/// A terminal post-exit result whose final PageMap wake poisoned after every
+/// page had released. It cannot authorize normal worker completion, but it
+/// retains the exact admission claim so the fork boundary remains explicit.
+#[doc(hidden)]
+#[must_use = "a poisoned owner-exit result must retain its exact worker admission claim"]
+#[cfg(test)]
+pub struct TicketZeroOwnerExitRoutePoisoned {
+    admission: LaterThreadAdmissionClaim,
+}
+
+#[cfg(test)]
+impl TicketZeroOwnerExitRoutePoisoned {
+    #[inline]
+    fn into_admission(self) -> LaterThreadAdmissionClaim {
+        self.admission
+    }
+}
+
+/// One private, linear post-exit route that may reclaim exactly one
+/// source-approved mapped regular page into one fresh later worker.
+///
+/// The former owner A's client identities, process pair, allocation request,
+/// and admission claim remain private to this capability. Its receiver can
+/// only run the already-proven source adoption, use and drain the reclaimed
+/// page, and return a typed proof to A. It cannot obtain an allocation-time
+/// scan, a raw client pointer, or a general PageMap scheduler capability.
+#[doc(hidden)]
+#[must_use = "the post-exit reclaim route must finish its exact later owner or remain terminally retained"]
+#[cfg(test)]
+pub struct TicketZeroOwnerExitReclaimRoute {
+    route: MainHeapThreadProcessPageExitMappedRegularRoute<'static>,
+    clients: DetachedOwnerExitClientLedger,
+    request: usize,
+    pair: ProcessPageArenaLease,
+    admission: LaterThreadAdmissionClaim,
+}
+
+// SAFETY: this contains no former TLD/Theap borrow. The sole mapped route is
+// Send and serializes its short-to-long PageMap transition, while the opaque
+// client identities remain inaccessible to the receiving worker. Moving it
+// transfers one linear source reclamation decision; it grants neither
+// concurrent reclamation nor generic allocation authority.
+#[cfg(test)]
+unsafe impl Send for TicketZeroOwnerExitReclaimRoute {}
+
+/// Outcome of one joined B-side source reclamation operation.
+#[doc(hidden)]
+#[must_use = "a failed post-exit reclamation retains the exact admission and page owner"]
+#[cfg(test)]
+pub enum TicketZeroOwnerExitReclaimOutcome {
+    /// B reclaimed the exact page, returned its engine empty, and completed
+    /// its own attachment before returning A's terminal admission proof.
+    Finished(TicketZeroOwnerExitRouteFinished),
+    /// Reclamation rejected before transferring the short route, so A still
+    /// owns the exact route and admission claim.
+    Retained(TicketZeroOwnerExitReclaimRoute),
+    /// The route transferred or B began a lifecycle whose source ownership is
+    /// no longer retryable. The exact A admission remains terminally visible.
+    Poisoned(TicketZeroOwnerExitRoutePoisoned),
+}
+
+/// A terminal outcome from the opaque B-side owner-exit consumer.
+#[doc(hidden)]
+#[must_use = "a retained route or poisoned outcome must retain the runtime boundary"]
+#[cfg(test)]
+pub enum TicketZeroOwnerExitFreeOutcome<'main> {
+    /// B released every exact client and the last PageMap lifecycle completed.
+    Finished(TicketZeroOwnerExitRouteFinished),
+    /// A source release error left the still-owning route retained exactly as
+    /// returned by the aggregate path. The runtime must become retained.
+    Retained(TicketZeroOwnerExitFreeRoute<'main>),
+    /// The last page release completed but PageMap quiescence poisoned its
+    /// wake boundary, leaving no route to retry. The runtime retains its
+    /// exact admission claim instead of making the worker fork-quiescent.
+    Poisoned(TicketZeroOwnerExitRoutePoisoned),
+}
+
+/// One result from consuming a private client through the aggregate source
+/// route. Keeping this classification separate lets both the ordinary ledger
+/// drain and the test-only B/C pair use the exact same terminal accounting.
+#[cfg(test)]
+enum DetachedOwnerExitFreeStep<'main> {
+    Continue(MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main>),
+    ReleasedAll,
+    Retained(MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main>),
+    Poisoned,
+}
+
+/// One private result from looking up a raw C free in a detached native
+/// owner-exit route. The route remains opaque to the caller throughout: the
+/// only observable success is that this exact free completed; page state,
+/// client identities, and A's admission claim stay internal.
+#[cfg(test)]
+enum NativePostExitFreeStep {
+    NotOwned(NativePostExitFreeRoute),
+    Freed(NativePostExitFreeRoute),
+    Finished(TicketZeroOwnerExitRouteFinished),
+    Retained(NativePostExitFreeRoute),
+    Poisoned(TicketZeroOwnerExitRoutePoisoned),
+}
+
+/// The aggregate route's private result before the C-facing native dispatcher
+/// erases its source branch.  The aggregate remains reusable by the existing
+/// typed runtime consumers with their original non-`'static` lifetimes;
+/// only the process-static native slot converts it into
+/// [`NativePostExitFreeRoute`].
+#[cfg(test)]
+enum AggregateNativePostExitFreeStep<'main> {
+    NotOwned(TicketZeroOwnerExitFreeRoute<'main>),
+    Freed(TicketZeroOwnerExitFreeRoute<'main>),
+    Finished(TicketZeroOwnerExitRouteFinished),
+    Retained(TicketZeroOwnerExitFreeRoute<'main>),
+    Poisoned(TicketZeroOwnerExitRoutePoisoned),
+}
+
+/// The C-facing post-exit router owns one already-detached source route.  The
+/// variants are source control-flow results, not a C-visible page geometry:
+/// the aggregate traversal has its process registry, while the older
+/// source-proved sole mapped regular result already has one exact
+/// failed-reclaim free primitive.  Both retain the same private ledger and
+/// admission until a final native `free` produces a typed proof.
+#[must_use = "a native post-exit route must release every private client or remain terminally retained"]
+#[cfg(test)]
+enum NativePostExitFreeRoute {
+    Aggregate(TicketZeroOwnerExitFreeRoute<'static>),
+    SoleMappedRegular(NativeSoleMappedRegularPostExitRoute),
+}
+
+/// One source-proved sole mapped regular page after A's Theap/TLD teardown.
+///
+/// This is deliberately a client-free route, not an adoption route.  A fresh
+/// C worker B offers one exact address already recorded by A's private
+/// ledger; the lower route performs the existing source failed-reclaim free
+/// and terminal release.  B receives no page, client, or reclaim capability,
+/// and cannot turn a C free into allocation-time adoption.
+#[must_use = "a sole mapped regular native route must release its exact client or remain terminally retained"]
+#[cfg(test)]
+struct NativeSoleMappedRegularPostExitRoute {
+    route: MainHeapThreadProcessPageExitMappedRegularRoute<'static>,
+    clients: DetachedOwnerExitClientLedger,
+    /// The immutable process pair selected before A suspended.  The sole
+    /// client-free path does not consume this copyable identity witness, but
+    /// it stays coupled to the route just as the aggregate native route does
+    /// so a future source transition cannot substitute another process pair.
+    _pair: ProcessPageArenaLease,
+    admission: LaterThreadAdmissionClaim,
+}
+
+#[cfg(test)]
+impl NativePostExitFreeRoute {
+    fn free_exact_native_block(
+        self,
+        attachment: &mut MainHeapThreadAttachment<'static>,
+        block: core::ptr::NonNull<u8>,
+    ) -> NativePostExitFreeStep {
+        match self {
+            Self::Aggregate(route) => match route.free_exact_native_block(attachment, block) {
+                AggregateNativePostExitFreeStep::NotOwned(route) => {
+                    NativePostExitFreeStep::NotOwned(Self::Aggregate(route))
+                }
+                AggregateNativePostExitFreeStep::Freed(route) => {
+                    NativePostExitFreeStep::Freed(Self::Aggregate(route))
+                }
+                AggregateNativePostExitFreeStep::Finished(proof) => {
+                    NativePostExitFreeStep::Finished(proof)
+                }
+                AggregateNativePostExitFreeStep::Retained(route) => {
+                    NativePostExitFreeStep::Retained(Self::Aggregate(route))
+                }
+                AggregateNativePostExitFreeStep::Poisoned(proof) => {
+                    NativePostExitFreeStep::Poisoned(proof)
+                }
+            },
+            Self::SoleMappedRegular(route) => route.free_exact_native_block(block),
+        }
+    }
+
+    #[inline]
+    fn native_usable_size(&self, block: core::ptr::NonNull<u8>) -> Option<usize> {
+        match self {
+            Self::Aggregate(route) => route.native_usable_size(block),
+            Self::SoleMappedRegular(route) => route.native_usable_size(block),
+        }
+    }
+
+    #[inline]
+    fn admission_ptr(&self) -> *const LaterThreadAdmissionClaim {
+        match self {
+            Self::Aggregate(route) => core::ptr::addr_of!(route.admission),
+            Self::SoleMappedRegular(route) => core::ptr::addr_of!(route.admission),
+        }
+    }
+}
+
+#[cfg(test)]
+impl NativeSoleMappedRegularPostExitRoute {
+    /// Consumes one exact native C client through the already source-proved
+    /// mapped regular post-exit free path.  The private ledger is the raw-C
+    /// validation boundary; it is not a general PageMap lookup or pointer
+    /// registry.
+    #[cfg(test)]
+    fn free_exact_native_block(
+        mut self,
+        block: core::ptr::NonNull<u8>,
+    ) -> NativePostExitFreeStep {
+        let Some(client) = self.clients.take_for_native_free(block) else {
+            return NativePostExitFreeStep::NotOwned(
+                NativePostExitFreeRoute::SoleMappedRegular(self),
+            );
+        };
+
+        // SAFETY: the opaque route owns this exact once-live client and the
+        // sole source page selected by A's completed `MI_ABANDON` traversal.
+        // No former Theap/TLD or second post-exit route can access it.
+        match unsafe { self.route.remote_free_after_thread_exit(client.block) } {
+            Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
+                self.route = route;
+                NativePostExitFreeStep::Freed(NativePostExitFreeRoute::SoleMappedRegular(self))
+            }
+            Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {
+                if self.clients.is_empty() {
+                    match self.clients.release_overflow_when_empty() {
+                        Ok(()) => NativePostExitFreeStep::Finished(
+                            TicketZeroOwnerExitRouteFinished {
+                                admission: self.admission,
+                            },
+                        ),
+                        Err(_) => NativePostExitFreeStep::Poisoned(
+                            TicketZeroOwnerExitRoutePoisoned {
+                                admission: self.admission,
+                            },
+                        ),
+                    }
+                } else {
+                    // The lower route has terminally released. Any remaining
+                    // client identity would be an impossible alias with no
+                    // source owner left to receive it.
+                    NativePostExitFreeStep::Poisoned(TicketZeroOwnerExitRoutePoisoned {
+                        admission: self.admission,
+                    })
+                }
+            }
+            Err(MainHeapThreadProcessPageExitMappedRegularFreeFailure::Rejected {
+                route,
+                ..
+            })
+            | Err(MainHeapThreadProcessPageExitMappedRegularFreeFailure::Terminal {
+                route,
+                ..
+            }) => {
+                self.route = route;
+                NativePostExitFreeStep::Retained(NativePostExitFreeRoute::SoleMappedRegular(
+                    self,
+                ))
+            }
+            Err(
+                MainHeapThreadProcessPageExitMappedRegularFreeFailure::ReleasedPageMapPoisoned {
+                    ..
+                },
+            ) => NativePostExitFreeStep::Poisoned(TicketZeroOwnerExitRoutePoisoned {
+                admission: self.admission,
+            }),
+        }
+    }
+
+    #[inline]
+    fn native_usable_size(&self, block: core::ptr::NonNull<u8>) -> Option<usize> {
+        self.clients.usable_size_for_native_block(block)
+    }
+}
+
+#[cfg(test)]
+fn classify_detached_owner_exit_free<'main>(
+    free: Result<
+        MainHeapThreadProcessPageExitMappedRegularPagesFreeResult<'main>,
+        MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure<'main>,
+    >,
+) -> DetachedOwnerExitFreeStep<'main> {
+    match free {
+        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route))
+        | Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
+            DetachedOwnerExitFreeStep::Continue(route)
+        }
+        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {
+            DetachedOwnerExitFreeStep::ReleasedAll
+        }
+        Err(MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure::Rejected {
+            route,
+            ..
+        })
+        | Err(MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure::Terminal {
+            route,
+            ..
+        }) => DetachedOwnerExitFreeStep::Retained(route),
+        Err(
+            MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure::ReleasedAllPageMapPoisoned {
+                ..
+            },
+        ) => DetachedOwnerExitFreeStep::Poisoned,
+    }
+}
+
+#[cfg(test)]
+fn detached_owner_exit_released_all<'main>(
+    clients: &mut DetachedOwnerExitClientLedger,
+    has_remaining_clients: bool,
+    admission: LaterThreadAdmissionClaim,
+) -> TicketZeroOwnerExitFreeOutcome<'main> {
+    if has_remaining_clients {
+        // A completed route cannot have an unconsumed private alias. The
+        // lower source route no longer exists to retain, so keep the exact
+        // admission terminal rather than minting a false completion proof.
+        TicketZeroOwnerExitFreeOutcome::Poisoned(TicketZeroOwnerExitRoutePoisoned {
+            admission,
+        })
+    } else if clients.release_overflow_when_empty().is_ok() {
+        TicketZeroOwnerExitFreeOutcome::Finished(TicketZeroOwnerExitRouteFinished { admission })
+    } else {
+        TicketZeroOwnerExitFreeOutcome::Poisoned(TicketZeroOwnerExitRoutePoisoned { admission })
+    }
+}
+
+#[cfg(test)]
+impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
+    /// Releases the detached owner's private remaining clients through the
+    /// single general aggregate route. The ledger is populated by ordinary
+    /// A-side activity, not by a source-page-shape layout; its deterministic
+    /// insertion order merely makes this private witness reproducible. At a
+    /// normal final client it may ask the lower aggregate whether the source
+    /// state permits its existing consuming mapped-regular handoff; a
+    /// rejection leaves this same route on the ordinary sequential free path.
+    // Keep the raw source-route drain inside this runtime module.  Once A has
+    // detached, an external consumer must use
+    // `free_remaining_in_fresh_runtime_worker`: exposing this lower-level
+    // step would let a callback manufacture A's terminal proof without first
+    // completing B's separately admitted no-page lifecycle.
+    fn free_remaining(
+        self,
+        attachment: &mut MainHeapThreadAttachment<'static>,
+    ) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        if self.post_exit_remote_publication_group.is_some() {
+            // A bounded B/C/D source interleaving is not a generic
+            // sequential-free fallback. The caller must select the matching
+            // typed publisher route so B can lend the atomic-only producers
+            // only after its source low-bit claim; otherwise its normal
+            // no-page finish could falsely stand in for that terminal route.
+            return TicketZeroOwnerExitFreeOutcome::Retained(self);
+        }
+        self.free_remaining_clients(attachment)
+    }
+
+    /// Consumes one exact C-facing client from the generic aggregate route.
+    ///
+    /// The native shadow calls this only after the original owner A has
+    /// detached and a fresh attached worker B has presented the address to
+    /// the private router. Unlike the test-only `free_remaining` helper, it
+    /// does not expose the remaining ledger or select an allocation order.
+    /// Every nonterminal outcome returns the same linear route for the
+    /// router to retain; a terminal proof remains unavailable until the last
+    /// source page and PageMap state have released.
+    #[cfg(test)]
+    fn free_exact_native_block(
+        self,
+        attachment: &mut MainHeapThreadAttachment<'static>,
+        block: core::ptr::NonNull<u8>,
+    ) -> AggregateNativePostExitFreeStep<'main> {
+        // The scoped B/C/D publishers are a distinct source-test
+        // interleaving. A C free may not accidentally reinterpret that
+        // bounded group as a general pointer-routing route.
+        if self.post_exit_remote_publication_group.is_some() {
+            return AggregateNativePostExitFreeStep::Retained(self);
+        }
+
+        // B has supplied only this raw C address.  It may consume the
+        // established aggregate last-member adoption transition only after
+        // prior exact frees left this one private ledger entry, and only when
+        // A recorded the source force-collectable local-head fact before
+        // suspension.
+        // The route still validates membership and makes the pinned bitmap
+        // claim below; this is not a client- or page-selection API.
+        if let Some(candidate) = self
+            .clients
+            .only_client_for_native_free(block)
+            .filter(|client| client.can_attempt_final_member_adoption())
+        {
+            return self.adopt_last_native_mapped_regular_member(attachment, candidate, block);
+        }
+
+        self.free_exact_native_block_sequential(block)
+    }
+
+    /// Keeps the established exact-free tail for every native route that has
+    /// not reached the one final mapped regular member.  A failed adoption
+    /// preflight returns here with the same route, so a short-access refusal
+    /// never turns an otherwise valid C free into a retained process owner.
+    #[cfg(test)]
+    fn free_exact_native_block_sequential(
+        mut self,
+        block: core::ptr::NonNull<u8>,
+    ) -> AggregateNativePostExitFreeStep<'main> {
+        let Some(client) = self.clients.take_for_native_free(block) else {
+            return AggregateNativePostExitFreeStep::NotOwned(self);
+        };
+
+        // SAFETY: the opaque route owns the selected exact client and the
+        // aggregate source transition. No live source TLD can still access
+        // this block after A's detached owner exit.
+        let free = unsafe { self.route.remote_free_after_thread_exit(client.block) };
+        match classify_detached_owner_exit_free(free) {
+            DetachedOwnerExitFreeStep::Continue(route) => {
+                self.route = route;
+                AggregateNativePostExitFreeStep::Freed(self)
+            }
+            DetachedOwnerExitFreeStep::ReleasedAll => {
+                if self.clients.is_empty() {
+                    match self.clients.release_overflow_when_empty() {
+                        Ok(()) => AggregateNativePostExitFreeStep::Finished(
+                            TicketZeroOwnerExitRouteFinished {
+                                admission: self.admission,
+                            },
+                        ),
+                        Err(_) => AggregateNativePostExitFreeStep::Poisoned(
+                            TicketZeroOwnerExitRoutePoisoned {
+                                admission: self.admission,
+                            },
+                        ),
+                    }
+                } else {
+                    // The source route no longer exists, so unconsumed
+                    // client identities cannot be returned to an ordinary
+                    // allocator. Retain A's exact admission rather than
+                    // minting a false terminal proof.
+                    AggregateNativePostExitFreeStep::Poisoned(TicketZeroOwnerExitRoutePoisoned {
+                        admission: self.admission,
+                    })
+                }
+            }
+            DetachedOwnerExitFreeStep::Retained(route) => {
+                self.route = route;
+                AggregateNativePostExitFreeStep::Retained(self)
+            }
+            DetachedOwnerExitFreeStep::Poisoned => {
+                AggregateNativePostExitFreeStep::Poisoned(TicketZeroOwnerExitRoutePoisoned {
+                    admission: self.admission,
+                })
+            }
+        }
+    }
+
+    /// Consumes the already-proven aggregate final-member adoption transition
+    /// through the native opaque route.
+    ///
+    /// B has already released every sibling through exact C frees.  Its last
+    /// address remains private in this route, while the lower transition
+    /// claims the source bitmap, creates B's real page engine, reuses the
+    /// source page, drains both the inherited client and B's temporary
+    /// allocation, and finishes that engine before minting A's terminal
+    /// proof.  A source rejection restores the ordinary exact-free route;
+    /// every post-claim failure is terminally retained rather than falling
+    /// back to a fresh allocation or a normal no-page finalizer.
+    #[cfg(test)]
+    fn adopt_last_native_mapped_regular_member(
+        self,
+        attachment: &mut MainHeapThreadAttachment<'static>,
+        candidate: DetachedOwnerExitClient,
+        block: core::ptr::NonNull<u8>,
+    ) -> AggregateNativePostExitFreeStep<'main> {
+        debug_assert_eq!(candidate.block, block);
+        debug_assert!(candidate.can_attempt_final_member_adoption());
+        let request = candidate
+            .normal_request
+            .expect("the final native adoption candidate keeps its normal request");
+        let Self {
+            route,
+            mut clients,
+            post_exit_remote_publication_group,
+            pair,
+            admission,
+            _consumer: _,
+        } = self;
+        debug_assert!(post_exit_remote_publication_group.is_none());
+
+        // SAFETY: the native route owns its last exact once-live client and
+        // its aggregate short PageMap capability. `candidate` was observed
+        // force-collectable before A suspended, so source owner exit leaves
+        // an immediately reusable local head; the lower bridge rechecks the
+        // source page identity and all lifecycle roots before it consumes
+        // short access into B's long mutation lease.
+        match unsafe {
+            route.adopt_remaining_mapped_regular_into_later_main(
+                attachment,
+                pair,
+                candidate.block,
+                request,
+            )
+        } {
+            Ok(mut allocator) => {
+                #[cfg(test)]
+                AGGREGATE_LAST_MAPPED_REGULAR_ADOPTION_COUNT.fetch_add(1, Ordering::Relaxed);
+
+                // The source page must do useful B-side work before it can
+                // return A's terminal proof.  The allocator has only the
+                // adopted source member, so this normal request proves reuse
+                // rather than authorizing a fresh page search.
+                let Some(reclaimed_allocation) = allocator.allocate(request, false) else {
+                    core::mem::forget(allocator);
+                    return AggregateNativePostExitFreeStep::Poisoned(
+                        TicketZeroOwnerExitRoutePoisoned { admission },
+                    );
+                };
+                let mut reclaimed_allocation = Some(reclaimed_allocation);
+                if clients.free_locals(&mut allocator).is_err()
+                    || free_owner_exit_locals(
+                        &mut allocator,
+                        core::slice::from_mut(&mut reclaimed_allocation),
+                    )
+                    .is_err()
+                {
+                    core::mem::forget(allocator);
+                    return AggregateNativePostExitFreeStep::Poisoned(
+                        TicketZeroOwnerExitRoutePoisoned { admission },
+                    );
+                }
+                if let Err(failure) = allocator.finish() {
+                    core::mem::forget(failure);
+                    return AggregateNativePostExitFreeStep::Poisoned(
+                        TicketZeroOwnerExitRoutePoisoned { admission },
+                    );
+                }
+                if clients.is_empty() && clients.release_overflow_when_empty().is_ok() {
+                    AggregateNativePostExitFreeStep::Finished(TicketZeroOwnerExitRouteFinished {
+                        admission,
+                    })
+                } else {
+                    // The lower route has completed, so a residual private
+                    // client would have no source owner left to consume it.
+                    AggregateNativePostExitFreeStep::Poisoned(
+                        TicketZeroOwnerExitRoutePoisoned { admission },
+                    )
+                }
+            }
+            Err(
+                MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure::Rejected {
+                    route,
+                    ..
+                },
+            ) => {
+                Self {
+                    route,
+                    clients,
+                    post_exit_remote_publication_group,
+                    pair,
+                    admission,
+                    _consumer: PhantomData,
+                }
+                .free_exact_native_block_sequential(block)
+            }
+            Err(
+                MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure::Retained {
+                    adoption,
+                    ..
+                },
+            ) => {
+                // The source route became B's long lifecycle.  It cannot
+                // safely return to the raw-C dispatcher or imitate a normal
+                // no-page finisher after this point.
+                core::mem::forget(adoption);
+                AggregateNativePostExitFreeStep::Poisoned(TicketZeroOwnerExitRoutePoisoned {
+                    admission,
+                })
+            }
+        }
+    }
+
+    /// Looks up one exact native C client without changing the detached
+    /// route. The source engine recorded this extent before it tore down A's
+    /// Theap/TLD, so B need not reopen the PageMap or receive a client handle
+    /// merely to answer `malloc_usable_size` before a later exact `free`.
+    #[inline]
+    #[cfg(test)]
+    fn native_usable_size(&self, block: core::ptr::NonNull<u8>) -> Option<usize> {
+        // The scoped B/C/D producer group is a test-only source interleaving and
+        // intentionally has no raw-C lookup surface.
+        if self.post_exit_remote_publication_group.is_some() {
+            return None;
+        }
+        self.clients.usable_size_for_native_block(block)
+    }
+
+    /// Runs one test-only B/C/D interleaving for the opaque group selected by
+    /// the mixed regression builder, then resumes the generic ledger drain.
+    ///
+    /// The callback is present only in the Gate 5C adapter witness. Its three
+    /// slots were allocated from either the covered direct-small page or the
+    /// separately selected mapped, non-full medium page while A owned the
+    /// live engine. B directly frees one; C and D receive only the two opaque
+    /// producers constructed after B has claimed the source low owner bit.
+    fn free_remaining_with_post_exit_publisher(
+        mut self,
+        attachment: &mut MainHeapThreadAttachment<'static>,
+        publisher: TicketZeroOwnerExitPostExitPublisher,
+    ) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        let Some(mut group) = self.post_exit_remote_publication_group.take() else {
+            // The bounded B/C/D witness has no valid three-client same-page
+            // shape. It must not silently fall back to a linear drain, which
+            // would claim a concurrent source protocol had been exercised.
+            return TicketZeroOwnerExitFreeOutcome::Retained(self);
+        };
+        if !publisher.accepts(group.kind) {
+            // A nominally different opaque producer must not be treated as a
+            // fallback for this source page. Keep the private selection and
+            // route intact so neither ordinary nor mismatched finalization
+            // can claim the bounded interleaving completed.
+            self.post_exit_remote_publication_group = Some(group);
+            return TicketZeroOwnerExitFreeOutcome::Retained(self);
+        }
+        let Some((block, first_published_block, second_published_block)) =
+            group.take_for_publishers()
+        else {
+            self.post_exit_remote_publication_group = Some(group);
+            return TicketZeroOwnerExitFreeOutcome::Retained(self);
+        };
+        // SAFETY: the regression builder selected three distinct current
+        // clients from one source page by their private ledger keys. The
+        // lower route validates that same-page image again under its short
+        // PageMap access before B lends C and D the atomic-only producers.
+        let has_remaining_clients = self.has_remaining_clients();
+        let free = match publisher {
+            TicketZeroOwnerExitPostExitPublisher::DirectSmall(publisher) => unsafe {
+                self.route
+                    .remote_free_after_thread_exit_with_direct_small_publishers(
+                        block,
+                        first_published_block,
+                        second_published_block,
+                        |producers| {
+                            match publisher(TicketZeroOwnerExitRemoteFreeProducerPair {
+                                producers,
+                            }) {
+                                Ok(()) => Ok(()),
+                                Err(producers) => Err(producers.into_source_pair()),
+                            }
+                        },
+                    )
+            },
+            TicketZeroOwnerExitPostExitPublisher::MappedMedium(publisher) => unsafe {
+                self.route
+                    .remote_free_after_thread_exit_with_mapped_medium_publishers(
+                        block,
+                        first_published_block,
+                        second_published_block,
+                        |producers| {
+                            match publisher(
+                                TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair { producers },
+                            ) {
+                                Ok(()) => Ok(()),
+                                Err(producers) => Err(producers.into_source_pair()),
+                            }
+                        },
+                    )
+            },
+        };
+        match classify_detached_owner_exit_free(free) {
+            DetachedOwnerExitFreeStep::Continue(route) => {
+                self.route = route;
+                self.free_remaining_clients(attachment)
+            }
+            DetachedOwnerExitFreeStep::ReleasedAll => detached_owner_exit_released_all(
+                &mut self.clients,
+                has_remaining_clients,
+                self.admission,
+            ),
+            DetachedOwnerExitFreeStep::Retained(route) => {
+                self.route = route;
+                TicketZeroOwnerExitFreeOutcome::Retained(self)
+            }
+            DetachedOwnerExitFreeStep::Poisoned => {
+                TicketZeroOwnerExitFreeOutcome::Poisoned(TicketZeroOwnerExitRoutePoisoned {
+                    admission: self.admission,
+                })
+            }
+        }
+    }
+
+    #[inline]
+    fn has_remaining_clients(&self) -> bool {
+        !self.clients.is_empty()
+            || self
+                .post_exit_remote_publication_group
+                .as_ref()
+                .is_some_and(|group| !group.is_empty())
+    }
+
+    fn free_remaining_clients(
+        self,
+        attachment: &mut MainHeapThreadAttachment<'static>,
+    ) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        let Self {
+            mut route,
+            mut clients,
+            mut post_exit_remote_publication_group,
+            pair,
+            admission,
+            ..
+        } = self;
+
+        loop {
+            // Do not skip the bounded B/C/D publisher group: both
+            // source-shaped publications must run before any later-main
+            // adoption attempt. Once that group is gone, only an A-side prevalidated immediate
+            // local head may attempt the consuming final-member reclaim. A
+            // normal ledger entry without that fact is still fully routable,
+            // but must remain on sequential free: the lower long-lifecycle
+            // claim is intentionally irreversible after it observes a missing
+            // head. This scheduler never derives or stores a page identity.
+            if post_exit_remote_publication_group.is_none() {
+                if let Some(candidate) = clients
+                    .next()
+                    .filter(|client| client.can_attempt_final_member_adoption())
+                {
+                    let request = candidate
+                        .normal_request
+                        .expect("the filtered normal route client keeps its request");
+                    // SAFETY: the private ledger owns this exact once-live
+                    // client, and its normal request came from the ordinary
+                    // A-side allocation that minted it. The lower transition
+                    // retains every target state after it consumes short map
+                    // access; a pre-transfer refusal returns the same route.
+                    match unsafe {
+                        route.adopt_remaining_mapped_regular_into_later_main(
+                            attachment,
+                            pair,
+                            candidate.block,
+                            request,
+                        )
+                    } {
+                        Ok(mut allocator) => {
+                            #[cfg(test)]
+                            AGGREGATE_LAST_MAPPED_REGULAR_ADOPTION_COUNT
+                                .fetch_add(1, Ordering::Relaxed);
+                            // Reuse one source-free block before draining the
+                            // inherited private clients. This keeps the
+                            // aggregate edge aligned with the established
+                            // sole-page route: B must actually use and finish
+                            // the adopted engine, rather than merely claiming
+                            // it before A's admission is released.
+                            let Some(reclaimed_allocation) = allocator.allocate(request, false)
+                            else {
+                                core::mem::forget(allocator);
+                                retain_current_thread_detached_owner_exit();
+                                return TicketZeroOwnerExitFreeOutcome::Poisoned(
+                                    TicketZeroOwnerExitRoutePoisoned { admission },
+                                );
+                            };
+                            let mut reclaimed_allocation = Some(reclaimed_allocation);
+                            if clients.free_locals(&mut allocator).is_err()
+                                || free_owner_exit_locals(
+                                    &mut allocator,
+                                    core::slice::from_mut(&mut reclaimed_allocation),
+                                )
+                                .is_err()
+                            {
+                                core::mem::forget(allocator);
+                                retain_current_thread_detached_owner_exit();
+                                return TicketZeroOwnerExitFreeOutcome::Poisoned(
+                                    TicketZeroOwnerExitRoutePoisoned { admission },
+                                );
+                            }
+                            if let Err(failure) = allocator.finish() {
+                                core::mem::forget(failure);
+                                retain_current_thread_detached_owner_exit();
+                                return TicketZeroOwnerExitFreeOutcome::Poisoned(
+                                    TicketZeroOwnerExitRoutePoisoned { admission },
+                                );
+                            }
+                            let has_remaining_clients = !clients.is_empty();
+                            return detached_owner_exit_released_all(
+                                &mut clients,
+                                has_remaining_clients,
+                                admission,
+                            );
+                        }
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure::Rejected {
+                                route: returned,
+                                ..
+                            },
+                        ) => route = returned,
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure::Retained {
+                                adoption,
+                                ..
+                            },
+                        ) => {
+                            // The short route became B's long map lifecycle.
+                            // It cannot resume ordinary aggregate freeing or
+                            // B's no-page finalizer, so retain both workers.
+                            core::mem::forget(adoption);
+                            retain_current_thread_detached_owner_exit();
+                            return TicketZeroOwnerExitFreeOutcome::Poisoned(
+                                TicketZeroOwnerExitRoutePoisoned { admission },
+                            );
+                        }
+                    }
+                }
+            }
+
+            let block = if let Some(mut remote_group) = post_exit_remote_publication_group.take() {
+                let block = remote_group.take_next();
+                if !remote_group.is_empty() {
+                    post_exit_remote_publication_group = Some(remote_group);
+                }
+                block
+            } else {
+                clients.take_next().map(|client| client.block)
+            };
+            let Some(block) = block else {
+                // A complete route must report `ReleasedAll` while consuming
+                // one ledger entry. Retain an impossible residual source
+                // route rather than turning an empty client set into a forged
+                // completion proof.
+                return TicketZeroOwnerExitFreeOutcome::Retained(Self {
+                    route,
+                    clients,
+                    post_exit_remote_publication_group,
+                    pair,
+                    admission,
+                    _consumer: PhantomData,
+                });
+            };
+            // SAFETY: this opaque route owns the exact current private client
+            // and the only aggregate post-exit route that can consume it.
+            let has_remaining_clients = !clients.is_empty()
+                || post_exit_remote_publication_group
+                    .as_ref()
+                    .is_some_and(|remote_group| !remote_group.is_empty());
+            let free = unsafe { route.remote_free_after_thread_exit(block) };
+            match classify_detached_owner_exit_free(free) {
+                DetachedOwnerExitFreeStep::Continue(returned) => route = returned,
+                DetachedOwnerExitFreeStep::ReleasedAll => {
+                    return detached_owner_exit_released_all(
+                        &mut clients,
+                        has_remaining_clients,
+                        admission,
+                    );
+                }
+                DetachedOwnerExitFreeStep::Retained(returned) => {
+                    return TicketZeroOwnerExitFreeOutcome::Retained(Self {
+                        route: returned,
+                        clients,
+                        post_exit_remote_publication_group,
+                        pair,
+                        admission,
+                        _consumer: PhantomData,
+                    });
+                }
+                DetachedOwnerExitFreeStep::Poisoned => {
+                    return TicketZeroOwnerExitFreeOutcome::Poisoned(
+                        TicketZeroOwnerExitRoutePoisoned {
+                            admission,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// Consumes this opaque A-side route from one fresh joined B worker and
+    /// completes B's independent no-page runtime lifecycle before returning
+    /// A's terminal result.
+    ///
+    /// B receives neither an A client address nor A's detached attachment. It
+    /// may use [`finish_current_thread_after_user_destructors`] only for the
+    /// new B attachment that this method creates. A's admission remains in
+    /// this route until its private drain has terminally released every page,
+    /// either through aggregate `ReleasedAll` or a consumed final-member
+    /// target engine. Only the caller that receives the returned typed proof
+    /// may then finish A's already-detached lifecycle. If B cannot complete
+    /// its own lifecycle after A's route released, the A proof is converted
+    /// into a terminal poisoned outcome so neither admission is made
+    /// fork-quiescent by an unrelated normal finalizer.
+    ///
+    /// The receiver must run on one fresh joined worker. An existing attached
+    /// worker has its own caller-owned lifecycle and is rejected without
+    /// consuming the route.
+    pub fn free_remaining_in_fresh_runtime_worker(
+        self,
+    ) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        self.free_remaining_in_fresh_runtime_worker_with_publisher(None)
+    }
+
+    /// Consumes this opaque A-side route from fresh joined B while scoped C/D
+    /// workers publish two direct-small private clients after B's direct
+    /// source claim.
+    ///
+    /// This bounded adapter seam is intentionally narrower than a general
+    /// concurrent free entry point. C receives no client address, route,
+    /// PageMap, or collector capability; the callback must publish and join
+    /// before B resumes its existing source collector. B still completes its
+    /// own no-page lifecycle before the returned terminal proof can release
+    /// A's admission claim.
+    pub fn free_remaining_in_fresh_runtime_worker_with_post_exit_publisher(
+        self,
+        publisher: TicketZeroOwnerExitRemoteFreePublisher,
+    ) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        self.free_remaining_in_fresh_runtime_worker_with_publisher(Some(
+            TicketZeroOwnerExitPostExitPublisher::DirectSmall(publisher),
+        ))
+    }
+
+    /// Consumes this opaque A-side route from fresh joined B while scoped C/D
+    /// workers publish two private clients from the one source-mapped,
+    /// non-full medium page selected during A's owner exit.
+    ///
+    /// The mapped-medium callback is nominally distinct from the direct-small
+    /// callback. A mismatch retains this exact route without exposing a
+    /// client address or falling through to ordinary no-page finalization.
+    /// The callback remains synchronous: it can append only to B's held
+    /// source remote head, and B remains the only collector and terminal
+    /// release owner.
+    pub fn free_remaining_in_fresh_runtime_worker_with_post_exit_mapped_medium_publisher(
+        self,
+        publisher: TicketZeroOwnerExitMappedMediumRemoteFreePublisher,
+    ) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        self.free_remaining_in_fresh_runtime_worker_with_publisher(Some(
+            TicketZeroOwnerExitPostExitPublisher::MappedMedium(publisher),
+        ))
+    }
+
+    fn free_remaining_in_fresh_runtime_worker_with_publisher(
+        self,
+        publisher: Option<TicketZeroOwnerExitPostExitPublisher>,
+    ) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        match attach_current_thread() {
+            ThreadAttachResult::Attached => {}
+            ThreadAttachResult::Inactive
+            | ThreadAttachResult::AlreadyAttached
+            | ThreadAttachResult::Finished
+            | ThreadAttachResult::Retained => {
+                return TicketZeroOwnerExitFreeOutcome::Retained(self);
+            }
+        }
+
+        let outcome = {
+            let slot = current_thread_slot();
+            let Some(attachment) = slot.attachment.as_mut() else {
+                return TicketZeroOwnerExitFreeOutcome::Retained(self);
+            };
+            match publisher {
+                Some(publisher) => {
+                    self.free_remaining_with_post_exit_publisher(attachment, publisher)
+                }
+                None => self.free_remaining(attachment),
+            }
+        };
+        match finish_current_thread_after_user_destructors() {
+            ThreadFinishResult::Finished => outcome,
+            ThreadFinishResult::NotAttached
+            | ThreadFinishResult::AlreadyFinished
+            | ThreadFinishResult::Retained => match outcome {
+                TicketZeroOwnerExitFreeOutcome::Finished(proof) => {
+                    // The route is physically released, but B's new runtime
+                    // attachment did not finish. Keep A's exact admission
+                    // terminally represented alongside B's retained TLS
+                    // admission instead of treating either worker as a
+                    // completed owner.
+                    TicketZeroOwnerExitFreeOutcome::Poisoned(
+                        TicketZeroOwnerExitRoutePoisoned {
+                            admission: proof.into_admission(),
+                        },
+                    )
+                }
+                TicketZeroOwnerExitFreeOutcome::Retained(route) => {
+                    TicketZeroOwnerExitFreeOutcome::Retained(route)
+                }
+                TicketZeroOwnerExitFreeOutcome::Poisoned(poisoned) => {
+                    TicketZeroOwnerExitFreeOutcome::Poisoned(poisoned)
+                }
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+impl TicketZeroOwnerExitReclaimRoute {
+    /// Reclaims the one source-approved mapped regular page into this fresh B
+    /// worker, proves a normal allocation of the same private request can use
+    /// the reclaimed page, and drains that worker before returning A's
+    /// terminal admission proof.
+    ///
+    /// A normal no-page finalizer is reached only for B, and only after B's
+    /// reclaimed page engine has returned its PageMap lifecycle empty. A's
+    /// admission is held in this route throughout; it can leave only in the
+    /// returned [`TicketZeroOwnerExitRouteFinished`].
+    pub fn reclaim_and_finish(self) -> TicketZeroOwnerExitReclaimOutcome {
+        let Self {
+            route,
+            mut clients,
+            request,
+            pair,
+            admission,
+        } = self;
+        match attach_current_thread() {
+            ThreadAttachResult::Attached => {}
+            ThreadAttachResult::Inactive
+            | ThreadAttachResult::AlreadyAttached
+            | ThreadAttachResult::Finished
+            | ThreadAttachResult::Retained => {
+                return TicketZeroOwnerExitReclaimOutcome::Retained(Self {
+                    route,
+                    clients,
+                    request,
+                    pair,
+                    admission,
+                });
+            }
+        }
+
+        let slot = current_thread_slot();
+        let Some(attachment) = slot.attachment.as_mut() else {
+            // A successful admission without its corresponding attachment is
+            // an impossible runtime image. B may not silently finish, and A
+            // may not release its independent post-exit claim.
+            retain_current_thread_detached_owner_exit();
+            return TicketZeroOwnerExitReclaimOutcome::Poisoned(
+                TicketZeroOwnerExitRoutePoisoned {
+                    admission,
+                },
+            );
+        };
+
+        let mut allocator = match route.adopt_into_later_main(attachment, pair) {
+            Ok(allocator) => allocator,
+            Err(MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                route,
+                ..
+            }) => {
+                // The source route was unchanged, but B's attached lifecycle
+                // is now an opaque terminal witness. Do not run the generic
+                // finish while a capability-bound reclaim operation has been
+                // refused; retention keeps both admissions visible.
+                retain_current_thread_detached_owner_exit();
+                return TicketZeroOwnerExitReclaimOutcome::Retained(Self {
+                    route,
+                    clients,
+                    request,
+                    pair,
+                    admission,
+                });
+            }
+            Err(MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                adoption,
+                ..
+            }) => {
+                // The short route already transferred to B's long mutation
+                // lifecycle. It has no safe reverse conversion, so preserve
+                // both the source page owner and B's admission terminally.
+                core::mem::forget(adoption);
+                retain_current_thread_detached_owner_exit();
+                return TicketZeroOwnerExitReclaimOutcome::Poisoned(
+                    TicketZeroOwnerExitRoutePoisoned {
+                        admission,
+                    },
+                );
+            }
+            Err(MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                adoption,
+                ..
+            }) => {
+                // A direct page-area commit failure has already reabandoned
+                // the exact source page under B's long same-candidate owner.
+                // This bounded runtime witness does not expose retry through
+                // its opaque C callback boundary.
+                core::mem::forget(adoption);
+                retain_current_thread_detached_owner_exit();
+                return TicketZeroOwnerExitReclaimOutcome::Poisoned(
+                    TicketZeroOwnerExitRoutePoisoned {
+                        admission,
+                    },
+                );
+            }
+        };
+
+        // The source adoption returned a page with an immediate local head.
+        // One allocation proves that B actually uses this reclaimed engine
+        // before it consumes every inherited private client.
+        let Some(reclaimed_allocation) = allocator.allocate(request, false)
+        else {
+            core::mem::forget(allocator);
+            retain_current_thread_detached_owner_exit();
+            return TicketZeroOwnerExitReclaimOutcome::Poisoned(
+                TicketZeroOwnerExitRoutePoisoned {
+                    admission,
+                },
+            );
+        };
+        let mut reclaimed_allocation = Some(reclaimed_allocation);
+        if clients.free_locals(&mut allocator).is_err()
+            || free_owner_exit_locals(
+                &mut allocator,
+                core::slice::from_mut(&mut reclaimed_allocation),
+            )
+            .is_err()
+        {
+            core::mem::forget(allocator);
+            retain_current_thread_detached_owner_exit();
+            return TicketZeroOwnerExitReclaimOutcome::Poisoned(
+                TicketZeroOwnerExitRoutePoisoned {
+                    admission,
+                },
+            );
+        }
+        if let Err(failure) = allocator.finish() {
+            // A retained allocator still owns B's PageMap lifecycle. Neither
+            // B's normal finalizer nor A's typed admission completion is
+            // legal after this ambiguity.
+            core::mem::forget(failure);
+            retain_current_thread_detached_owner_exit();
+            return TicketZeroOwnerExitReclaimOutcome::Poisoned(
+                TicketZeroOwnerExitRoutePoisoned {
+                    admission,
+                },
+            );
+        }
+
+        match finish_current_thread_after_user_destructors() {
+            ThreadFinishResult::Finished => {
+                TicketZeroOwnerExitReclaimOutcome::Finished(TicketZeroOwnerExitRouteFinished {
+                    admission,
+                })
+            }
+            ThreadFinishResult::NotAttached
+            | ThreadFinishResult::AlreadyFinished
+            | ThreadFinishResult::Retained => {
+                TicketZeroOwnerExitReclaimOutcome::Poisoned(
+                    TicketZeroOwnerExitRoutePoisoned {
+                        admission,
+                    },
+                )
+            }
+        }
+    }
+}
+
+/// The adapter-supplied, joined B-side consumer for the private Gate 5C
+/// witness. Outside this module, the route exposes only
+/// [`TicketZeroOwnerExitFreeRoute::free_remaining_in_fresh_runtime_worker`],
+/// which creates and finishes only B's new no-page attachment. The
+/// higher-ranked function pointer prevents retaining the route beyond the
+/// source owner's completed lifecycle boundary.
+#[doc(hidden)]
+#[cfg(test)]
+pub type TicketZeroOwnerExitFreeConsumer = for<'owner> fn(
+    TicketZeroOwnerExitFreeRoute<'owner>,
+) -> TicketZeroOwnerExitFreeOutcome<'owner>;
+
+/// The adapter-supplied, joined B-side consumer for the source-valid
+/// owner-exit reclamation witness. It receives no client address, PageMap
+/// lease, or admission token beyond the opaque linear route itself.
+#[doc(hidden)]
+#[cfg(test)]
+pub type TicketZeroOwnerExitReclaimConsumer = fn(
+    TicketZeroOwnerExitReclaimRoute,
+) -> TicketZeroOwnerExitReclaimOutcome;
+
+/// Two opaque source remote-free capabilities for the same stopped worker A.
+/// The adapter may split and move them to two joined publisher pthreads B/C;
+/// neither receiver obtains a client pointer or an owner capability.
+#[doc(hidden)]
+#[must_use = "both remote-free publications must be published or returned to the runtime callback"]
+pub struct TicketZeroRemoteFreeProducerPair<'owner> {
+    producers: RemoteFreeProducerPair<'owner>,
+}
+
+impl<'owner> TicketZeroRemoteFreeProducerPair<'owner> {
+    #[inline]
+    pub fn split(
+        self,
+    ) -> (
+        TicketZeroRemoteFreeProducer<'owner>,
+        TicketZeroRemoteFreeProducer<'owner>,
+    ) {
+        let (first, second) = self.producers.split();
+        (
+            TicketZeroRemoteFreeProducer { producer: first },
+            TicketZeroRemoteFreeProducer { producer: second },
+        )
+    }
+
+    #[inline]
+    fn cancel(self) -> (core::ptr::NonNull<u8>, core::ptr::NonNull<u8>) {
+        self.producers.cancel()
+    }
+}
+
+/// The adapter-supplied, joined two-publisher operation for the private Gate
+/// 5B witness. A higher-ranked function pointer proves the adapter cannot
+/// retain either capability beyond the owner's scoped engine lifetime.
+#[doc(hidden)]
+pub type TicketZeroRemoteFreePublisher = for<'owner> fn(
+    TicketZeroRemoteFreeProducerPair<'owner>,
+) -> Result<(), TicketZeroRemoteFreeProducerPair<'owner>>;
+
+/// The adapter-supplied, joined one-publisher operation for one source client
+/// in an active parked TLS session. The producer remains pointer-private and
+/// its higher-ranked lifetime prevents the publisher from retaining it after
+/// the owner has resumed.
+#[doc(hidden)]
+pub type TicketZeroSingleRemoteFreePublisher = for<'owner> fn(
+    TicketZeroRemoteFreeProducer<'owner>,
+) -> Result<(), TicketZeroRemoteFreeProducer<'owner>>;
+
 // The high two bits are an allocation-free fork admission gate. The low bits
 // count every current later-thread attachment, including one still between its
 // pre-user-code attach and post-destructor finish transitions. A fork may
-// preserve the copied no-page process owner only if it first publishes the
-// gate and observes this count at zero. The second high bit records that
-// exactly that precondition held for the raw-fork child; it is never exposed
-// while the parent is allowed to admit a later owner.
+// preserve the copied quiescent ticket-zero process owner only if it first
+// publishes the gate, observes this count at zero, and the private predicate
+// finds no active page engine or live client. The second high bit records that
+// complete precondition for the raw-fork child; it is never exposed while the
+// parent is allowed to admit a later owner.
 const FORK_GATE_HELD: usize = 1usize << (usize::BITS - 1);
 const FORK_GATE_PRESERVE: usize = 1usize << (usize::BITS - 2);
 const FORK_GATE_COUNT_MASK: usize = FORK_GATE_PRESERVE - 1;
@@ -150,9 +2318,13 @@ pub enum ThreadFinishResult {
 /// Both values are written once before `PROCESS_ACTIVE` is Release-published
 /// and are never moved, mutated, or dropped by this slice. The heap witness
 /// must be minted by the ticket-zero thread before workers exist; worker TPIDR
-/// identities may use only the already-published copy. Main-thread teardown
-/// needs a complete process-exit/fork contract and remains deliberately out
-/// of scope while later workers can still carry source list members.
+/// identities may use only the already-published copy. The separate page-owner
+/// staging slot moves exactly once, under a zero-admission gate, into the
+/// initial thread's pinned compiler-TLS owner; it is unavailable afterward
+/// and every legacy access is guarded by `page_owner_state`. Main-thread
+/// teardown needs a complete process-exit/fork contract and remains
+/// deliberately out of scope while later workers can still carry source list
+/// members.
 struct RuntimeProcessStorage {
     state: AtomicU8,
     /// The ticket-zero Linux/AArch64 TPIDR_EL0 identity. A copied process
@@ -162,20 +2334,723 @@ struct RuntimeProcessStorage {
     initial_thread_identity: AtomicUsize,
     owner: UnsafeCell<MaybeUninit<ProcessMainThread>>,
     main_heap: UnsafeCell<MaybeUninit<MainStaticHeapLease<'static>>>,
-    /// The permanent ticket-zero page owner is absent until the private
-    /// native seam asks it for a valid allocation. It stays in this final
-    /// slot afterward: source-shaped process exit is still out of scope.
-    page_owner_state: AtomicU8,
+    /// The ticket-zero staging owner is absent until the private native seam
+    /// asks it for a valid allocation. It stays here only until the one-time
+    /// zero-admission promotion into pinned initial TLS; afterward
+    /// `PAGE_OWNER_INITIAL_PERSISTENT` keeps legacy static-slot access closed.
+    page_owner_state: AtomicUsize,
+    /// Counts only detached routes whose source aggregate still owns live
+    /// page clients. This is deliberately narrower than `page_owner_state`'s
+    /// parked-token count: a terminal route has moved its token into B's
+    /// no-page completion, and ticket zero must remain unavailable until that
+    /// B lifecycle consumes the token. A source-active route, by contrast,
+    /// lets ticket zero run a private operation beside its separate token.
+    active_post_exit_route_count: AtomicUsize,
+    /// Counts terminal source routes that have moved their parked scheduler
+    /// token into a matched B worker's no-page completion. This is separate
+    /// from source-active routes: even another live route must not reopen
+    /// ticket zero while any B still owes the terminal lifecycle that releases
+    /// its exact A-side worker-admission claim.
+    pending_post_exit_completion_count: AtomicUsize,
+    /// Counts routes whose source transition has become terminally retained.
+    /// Such a route keeps its scheduler token and A-side admission forever,
+    /// but has no matched B completion that could consume it. It must stop
+    /// ticket zero even if a separate route remains source-active; otherwise
+    /// that live sibling would accidentally turn a retained terminal owner
+    /// back into a private-operation admission.
+    retained_post_exit_route_count: AtomicUsize,
     page_owner: UnsafeCell<MaybeUninit<MainStaticRuntimeFirstArenaPageAllocator>>,
+}
+
+/// One runtime-owned claim that ticket zero has lent its dormant process pair
+/// to exactly one *active* normal page-engine operation.
+///
+/// The pair itself remains private to the transition into
+/// [`MainHeapThreadProcessPageAllocator`]. A completed operation restores the
+/// exact prior parked-owner count, while a normal suspension publishes that
+/// count plus itself. Multiple suspended engines therefore remain distinct
+/// current-thread tokens even though the runtime admits only one active PageMap
+/// mutation at once. Dropping an unfinished claim retains the process instead
+/// of reopening ticket zero over a possibly live map entry.
+#[must_use = "a runtime dormant-pair operation must finish, park, or retain its page owner"]
+struct RuntimeDormantPageOperation {
+    runtime: &'static RuntimeProcessStorage,
+    pair: Option<ProcessPageArenaLease>,
+    /// Scheduler state to restore when this engine completely finishes. A
+    /// fresh engine preserves every pre-existing parked owner, while a
+    /// resumed parked engine removes only itself.
+    finish_state: usize,
+    /// Scheduler state to restore when this engine releases just its long
+    /// PageMap guard into a current-thread suspended token. This includes the
+    /// engine itself and every independently parked peer.
+    park_state: usize,
+    may_park: bool,
+    active: bool,
+}
+
+/// One detached post-exit owner represented in the runtime scheduler's
+/// parked-owner count.
+///
+/// The source route itself owns the `ProcessPageMapPostExitAccess` that
+/// serializes each exact free. This token represents only its outstanding
+/// ticket-zero exclusion: it remains parked while the route has live clients
+/// and through the fresh B worker's ordinary no-page finish. It may decrement
+/// exactly one parked owner only after that B lifecycle has detached.
+#[must_use = "a parked detached post-exit token must finish with B or remain terminally retained"]
+struct RuntimeParkedPostExitRoute {
+    runtime: &'static RuntimeProcessStorage,
+    /// The source route still owns at least one exact client. Once its final
+    /// exact free produces B's typed completion, this becomes false before
+    /// the scheduler token can wait for B's ordinary no-page finish.
+    source_route_active: bool,
+    /// The source route has terminally released and this still-parked token
+    /// now belongs to a matched B no-page completion. Ticket zero remains
+    /// unavailable until that B finishes and consumes this exact token.
+    terminal_completion_pending: bool,
+    /// The source route has reached an unrecoverable terminal state instead
+    /// of minting a B completion. Its scheduler token remains permanently
+    /// represented, so ticket zero cannot borrow beside a live sibling route.
+    terminal_retained: bool,
+    active: bool,
+}
+
+/// One live normal later-main engine while the runtime has its `BUSY` page
+/// owner claim.
+///
+/// It exposes only the existing ordinary allocation/free operations and the
+/// typed persistent split. It deliberately has no detached-owner finalizer,
+/// raw process-pair accessor, or remote-producer escape hatch. A normal
+/// operation may park as its own current-thread token; a scoped interleaving
+/// operation remains non-parkable and must finish empty before any parked
+/// owner resumes.
+#[must_use = "a runtime persistent page engine must finish, park, or retain its page owner"]
+struct RuntimePersistentPageEngine<'attachment, 'main> {
+    allocator: Option<MainHeapThreadProcessPageAllocator<'attachment, 'main>>,
+    operation: Option<RuntimeDormantPageOperation>,
+    // `ProcessPageArenaLease` is an immutable, identity-checked view. Keep
+    // the exact pair alongside the live engine so a source post-exit route
+    // that permits later-main adoption can carry that same checked identity
+    // to its fresh consumer after the old allocator drains.
+    pair: ProcessPageArenaLease,
+}
+
+/// One current-thread-only persistent engine state after its normal PageMap
+/// guard has been released between complete operations.
+///
+/// This is not an abandoned/post-exit route. Its only successful transition
+/// reacquires `BUSY` for this same owner and resumes against that attachment's
+/// explicit suspended-session marker. Other parked owners remain represented
+/// only by their own typed tokens while the current token holds the serialized
+/// mutation operation. A drop makes both the map and the runtime page owner
+/// terminal.
+#[must_use = "a runtime parked engine must resume or retain its exact live state"]
+struct RuntimeParkedPersistentPageEngine {
+    runtime: &'static RuntimeProcessStorage,
+    paused: Option<MainHeapThreadPausedProcessPageAllocator>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RuntimePersistentPageEngineBeginError {
+    Unavailable,
+    /// A separately typed bounded operation currently owns the lower
+    /// PageMap mutation lease. The runtime scheduler claim was restored to
+    /// its exact prior parked state, so a session start may retry after that
+    /// operation completes.
+    PageMapBusy,
+    Attachment(MainHeapThreadProcessPageAllocatorBeginError),
+}
+
+#[must_use = "a failed runtime persistent-engine suspension retains its exact owner"]
+enum RuntimePersistentPageEngineSuspendFailure<'attachment, 'main> {
+    /// The live engine was unchanged; only its original A-side runtime claim
+    /// may retry the split.
+    Rejected {
+        engine: RuntimePersistentPageEngine<'attachment, 'main>,
+        error: MainHeapThreadAttachmentError,
+    },
+    /// A scoped interleaving operation runs while one or more normal engines
+    /// are parked. It must complete rather than becoming another suspended
+    /// current-thread owner.
+    InterleavingOperation {
+        engine: RuntimePersistentPageEngine<'attachment, 'main>,
+    },
+    /// The PageMap wake boundary failed after releasing the long guard. The
+    /// separated state and runtime page owner are terminal.
+    Retained {
+        terminal: MainHeapThreadPersistentPageEngineTerminal,
+        error: ProcessPageMapError,
+    },
+    /// The runtime state no longer named this exact active operation.
+    PageOwnerRetained,
+}
+
+#[must_use = "a failed runtime persistent-engine resume retains its exact state token"]
+enum RuntimePersistentPageEngineResumeFailure {
+    /// Another complete operation currently owns the runtime's `BUSY` claim.
+    /// The A-side token remains intact and may retry after that operation.
+    Unavailable {
+        parked: RuntimeParkedPersistentPageEngine,
+    },
+    /// The matching attachment rejected before its suspended marker changed.
+    Rejected {
+        parked: RuntimeParkedPersistentPageEngine,
+        error: MainHeapThreadPageSessionError,
+    },
+    /// A non-runtime page lifecycle temporarily owns the plain PageMap guard.
+    /// The A-side token remains intact and may retry once it finishes.
+    PageMapBusy {
+        parked: RuntimeParkedPersistentPageEngine,
+        error: ProcessPageMapError,
+    },
+    /// The lower PageMap handoff became terminal and retained the separated
+    /// normal engine state.
+    Retained {
+        terminal: MainHeapThreadPersistentPageEngineTerminal,
+        error: ProcessPageMapError,
+    },
+    PageOwnerRetained,
+}
+
+#[must_use = "a failed runtime persistent-engine finish retains its exact source owner"]
+enum RuntimePersistentPageEngineFinishFailure<'attachment, 'main> {
+    Allocator(MainHeapThreadProcessPageAllocatorFinishError<'attachment, 'main>),
+    PageOwnerRetained,
 }
 
 // SAFETY: the COLD -> INITIALIZING CAS gives one writer exclusive access to
 // `owner`; the final owner is written before PROCESS_ACTIVE's Release store
-// and is thereafter read immutably. The independent page-owner state admits
-// exactly ticket zero, first for one final-slot write and later for one
-// READY -> BUSY engine operation. Terminal retention never mutates either
-// owner.
+// and is thereafter read immutably. The independent page-owner scheduler
+// admits ticket zero only from READY and one complete later-main mutation at
+// a time; parked engines hold only current-thread typed tokens. Terminal
+// retention never mutates either owner.
 unsafe impl Sync for RuntimeProcessStorage {}
+
+impl RuntimeDormantPageOperation {
+    /// Restores this scheduler operation after a lower PageMap `try_lock`
+    /// refusal that happened before it borrowed a session or mutated an
+    /// engine. The process pair is immutable and Copy, but placing it back in
+    /// the linear operation documents that this exact active claim—not a
+    /// reconstructed substitute—returns to its prior scheduler state.
+    fn restore_after_page_map_busy(
+        mut self,
+        pair: ProcessPageArenaLease,
+    ) -> Result<(), Self> {
+        debug_assert!(self.pair.is_none());
+        self.pair = Some(pair);
+        let finish_state = self.finish_state;
+        self.settle(finish_state)
+    }
+
+    fn begin_engine<'attachment, 'main>(
+        mut self,
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    ) -> Result<
+        RuntimePersistentPageEngine<'attachment, 'main>,
+        RuntimePersistentPageEngineBeginError,
+    > {
+        let pair = self
+            .pair
+            .take()
+            .expect("a runtime dormant-pair operation retains its one private pair");
+        match MainHeapThreadProcessPageAllocator::begin(attachment, pair) {
+            Ok(allocator) => Ok(RuntimePersistentPageEngine {
+                allocator: Some(allocator),
+                operation: Some(self),
+                pair,
+            }),
+            // `MainHeapThreadProcessPageAllocator::begin` reaches this exact
+            // error only when `begin_page_lifecycle`'s nonblocking lock
+            // refuses before it can construct a mutable page engine. Its
+            // temporary page-session borrow has already ended, the immutable
+            // pair is still valid, and another bounded operation (commonly a
+            // post-exit exact free) merely owns the lower map boundary. Put
+            // the runtime claim back before retrying; dropping it would turn
+            // ordinary concurrency into terminal retention.
+            Err(
+                error @ MainHeapThreadProcessPageAllocatorBeginError::Pair(
+                    ProcessPageArenaLeaseError::PageMap(ProcessPageMapError::LifecycleBusy),
+                ),
+            ) => match self.restore_after_page_map_busy(pair) {
+                Ok(()) => Err(RuntimePersistentPageEngineBeginError::PageMapBusy),
+                Err(operation) => {
+                    // The lower refusal itself was replayable, but the
+                    // scheduler no longer recognizes this exact BUSY claim.
+                    // `Drop` keeps that ambiguous state terminal instead of
+                    // reopening the pair under a reconstructed state.
+                    drop(operation);
+                    Err(RuntimePersistentPageEngineBeginError::Attachment(error))
+                }
+            },
+            // The PageMap/attachment constructor does not return a safely
+            // replayable post-mutation capability. Let this operation's Drop
+            // retain the runtime rather than attempting to infer which lower
+            // preflight, lease, or source-session state may be retried.
+            Err(error) => Err(RuntimePersistentPageEngineBeginError::Attachment(error)),
+        }
+    }
+
+    #[inline]
+    fn finish_state(&self) -> usize {
+        self.finish_state
+    }
+
+    /// Converts this active normal-engine scheduler claim into one parked
+    /// detached-route token after source owner exit released the long
+    /// PageMap lease into `ProcessPageMapPostExitAccess`.
+    ///
+    /// The route remains unable to reopen ticket zero because its token adds
+    /// one parked owner. Unlike a suspended normal engine, it has no
+    /// attachment-bound allocator state to resume: its already-detached
+    /// source route acquires the PageMap boundary independently for each
+    /// exact free.
+    fn park_detached_post_exit(self) -> Result<RuntimeParkedPostExitRoute, Self> {
+        if !self.may_park {
+            self.runtime.retain_page_owner();
+            return Err(self);
+        }
+        let runtime = self.runtime;
+        let park_state = self.park_state;
+        if !runtime.register_active_post_exit_route() {
+            return Err(self);
+        }
+        match self.settle(park_state) {
+            Ok(()) => Ok(RuntimeParkedPostExitRoute {
+                runtime,
+                source_route_active: true,
+                terminal_completion_pending: false,
+                terminal_retained: false,
+                active: true,
+            }),
+            Err(operation) => {
+                // `settle` has already made the scheduler terminal. Restore
+                // the narrower source-route count nevertheless so no
+                // diagnostic/audit path can mistake a failed publication for
+                // a live source route.
+                let _ = runtime.unregister_active_post_exit_route();
+                Err(operation)
+            }
+        }
+    }
+
+    fn settle(mut self, next_state: usize) -> Result<(), Self> {
+        if self.active
+            && self
+                .runtime
+                .page_owner_state
+                .compare_exchange(
+                    PAGE_OWNER_BUSY,
+                    next_state,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+        {
+            self.active = false;
+            return Ok(());
+        }
+        self.runtime.retain_page_owner();
+        Err(self)
+    }
+}
+
+impl Drop for RuntimeDormantPageOperation {
+    fn drop(&mut self) {
+        if self.active {
+            // An active engine may still own PageMap entries or a paired
+            // source attachment. Never convert an abandoned runtime claim
+            // into `READY` or a parked-owner count merely because its Rust
+            // wrapper fell out of scope.
+            self.runtime.retain_page_owner();
+        }
+    }
+}
+
+impl RuntimeParkedPostExitRoute {
+    /// Converts this token from a source-active detached route into B's
+    /// terminal no-page completion. The token itself stays parked until B
+    /// detaches, but ticket zero may no longer borrow beside it because no
+    /// source route remains to justify that narrower exception.
+    fn finish_source_route(mut self) -> Result<Self, Self> {
+        if !self.source_route_active
+            || self.terminal_retained
+            || !self.runtime.register_pending_post_exit_completion()
+            || !self.runtime.unregister_active_post_exit_route()
+        {
+            self.runtime.retain_page_owner();
+            return Err(self);
+        }
+        self.source_route_active = false;
+        self.terminal_completion_pending = true;
+        Ok(self)
+    }
+
+    /// Converts a source-active route into a permanent terminal blocker when
+    /// its exact source transition cannot be retried or completed. This is
+    /// distinct from [`Self::finish_source_route`]: there is no B completion
+    /// capable of consuming this token, but a still-live sibling route must
+    /// not make ticket zero treat it as an ordinary source-active token.
+    fn retain_source_route(mut self) -> Result<Self, Self> {
+        if !self.source_route_active
+            || self.terminal_completion_pending
+            || self.terminal_retained
+            || !self.runtime.register_retained_post_exit_route()
+            || !self.runtime.unregister_active_post_exit_route()
+        {
+            self.runtime.retain_page_owner();
+            return Err(self);
+        }
+        self.source_route_active = false;
+        self.terminal_retained = true;
+        Ok(self)
+    }
+
+    /// Removes this exact detached route from the scheduler only after its
+    /// matched B worker has completed ordinary no-page teardown.
+    ///
+    /// No PageMap mutation occurs here: the terminal exact free completed
+    /// that source lifecycle under its route-owned short access before it
+    /// created the B-side completion. A direct parked-count transition keeps
+    /// other detached routes and independently parked normal engines intact.
+    fn finish_after_b(mut self) -> Result<(), Self> {
+        if self.source_route_active || self.terminal_retained || !self.terminal_completion_pending {
+            // Only a terminal exact free can convert a source route into a
+            // B completion. Removing the scheduler token before that proof
+            // would make ticket zero appear reusable over live A clients.
+            self.runtime.retain_page_owner();
+            return Err(self);
+        }
+        loop {
+            let observed = self.runtime.page_owner_state.load(Ordering::Acquire);
+            if observed == PAGE_OWNER_BUSY {
+                // A distinct normal engine or exact detached-route free is
+                // completing its serialized PageMap operation. This B-side
+                // no-page finish owns no map state, so wait for the scheduler
+                // to republish the parked-owner count instead of treating
+                // ordinary cross-route activity as terminal corruption.
+                core::hint::spin_loop();
+                continue;
+            }
+            let Some(parked_count) = page_owner_parked_count(observed).filter(|count| *count > 0)
+            else {
+                self.runtime.retain_page_owner();
+                return Err(self);
+            };
+            let Some(next_state) = page_owner_parked_state(parked_count - 1) else {
+                self.runtime.retain_page_owner();
+                return Err(self);
+            };
+            if self
+                .runtime
+                .page_owner_state
+                .compare_exchange_weak(observed, next_state, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                if !self.runtime.finish_pending_post_exit_completion() {
+                    // The scheduler token already left its parked count, but
+                    // the matching B completion accounting disagreed. The
+                    // process is terminal; keep this concrete capability
+                    // alive rather than reporting an ordinary finish.
+                    self.runtime.retain_page_owner();
+                    return Err(self);
+                }
+                self.terminal_completion_pending = false;
+                self.active = false;
+                return Ok(());
+            }
+        }
+    }
+}
+
+impl Drop for RuntimeParkedPostExitRoute {
+    fn drop(&mut self) {
+        if self.active {
+            // A detached route still owns source page state or an unconsumed
+            // B-side completion. It must never vanish from the parked count
+            // and make ticket zero look reusable.
+            self.runtime.retain_page_owner();
+        }
+    }
+}
+
+impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
+    #[inline]
+    fn allocate(&mut self, request: usize, zero: bool) -> Option<core::ptr::NonNull<u8>> {
+        self.allocator
+            .as_mut()
+            .expect("a runtime persistent engine retains its normal allocator")
+            .allocate(request, zero)
+    }
+
+    /// # Safety
+    ///
+    /// `block` must remain a current local allocation of this exact live
+    /// engine. It may not have crossed a producer, post-exit route, or any
+    /// foreign pointer domain.
+    #[inline]
+    unsafe fn free(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Result<(), crate::single_thread::FreeError> {
+        // SAFETY: forwarded unchanged from this wrapper's exact local-block
+        // contract.
+        unsafe {
+            self.allocator
+                .as_mut()
+                .expect("a runtime persistent engine retains its normal allocator")
+                .free(block)
+        }
+    }
+
+    /// Runs the one fixed Gate 5A mixed-local workload through this exact
+    /// runtime-owned engine. This is intentionally not an allocator escape
+    /// hatch: the workload keeps every client private and uses only ordinary
+    /// local allocation/free before the operation's typed finish.
+    #[inline]
+    fn run_persistent_local_workload(&mut self) -> Result<(), PersistentLocalWorkerError> {
+        run_persistent_local_worker_workload(
+            self.allocator
+                .as_mut()
+                .expect("a runtime persistent engine retains its normal allocator"),
+        )
+    }
+
+    /// Runs the one fixed Gate 5B live-owner remote-free workload through
+    /// this exact runtime-owned engine. The publisher receives only the two
+    /// opaque remote-free capabilities; it cannot borrow this engine, its
+    /// PageMap lease, or any client address.
+    #[inline]
+    fn run_persistent_remote_workload(
+        &mut self,
+        publish: TicketZeroRemoteFreePublisher,
+    ) -> Result<(), PersistentRemoteWorkerError> {
+        run_persistent_remote_worker_workload(
+            self.allocator
+                .as_mut()
+                .expect("a runtime persistent engine retains its normal allocator"),
+            publish,
+        )
+    }
+
+    fn suspend(
+        mut self,
+    ) -> Result<
+        RuntimeParkedPersistentPageEngine,
+        RuntimePersistentPageEngineSuspendFailure<'attachment, 'main>,
+    > {
+        let allocator = self
+            .allocator
+            .take()
+            .expect("a runtime persistent engine retains its normal allocator");
+        let operation = self
+            .operation
+            .take()
+            .expect("a runtime persistent engine retains its page-owner claim");
+        if !operation.may_park {
+            self.allocator = Some(allocator);
+            self.operation = Some(operation);
+            return Err(
+                RuntimePersistentPageEngineSuspendFailure::InterleavingOperation { engine: self },
+            );
+        }
+
+        let runtime = operation.runtime;
+        let park_state = operation.park_state;
+        match allocator.suspend_persistent() {
+            Ok(paused) => match operation.settle(park_state) {
+                Ok(()) => Ok(RuntimeParkedPersistentPageEngine {
+                    runtime,
+                    paused: Some(paused),
+                }),
+                Err(operation) => {
+                    // The lower token owns a live engine and its map access;
+                    // both drops deliberately retain/poison rather than
+                    // manufacturing a state repair after an impossible
+                    // runtime-state mismatch.
+                    drop(paused);
+                    drop(operation);
+                    Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained)
+                }
+            },
+            Err(MainHeapThreadProcessPageAllocatorSuspendFailure::Rejected {
+                allocator,
+                error,
+            }) => {
+                self.allocator = Some(allocator);
+                self.operation = Some(operation);
+                Err(RuntimePersistentPageEngineSuspendFailure::Rejected {
+                    engine: self,
+                    error,
+                })
+            }
+            Err(MainHeapThreadProcessPageAllocatorSuspendFailure::Retained { terminal, error }) => {
+                drop(operation);
+                Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, error })
+            }
+        }
+    }
+
+    fn finish(
+        mut self,
+    ) -> Result<(), RuntimePersistentPageEngineFinishFailure<'attachment, 'main>> {
+        let allocator = self
+            .allocator
+            .take()
+            .expect("a runtime persistent engine retains its normal allocator");
+        let operation = self
+            .operation
+            .take()
+            .expect("a runtime persistent engine retains its page-owner claim");
+        let finish_state = operation.finish_state;
+        match allocator.finish() {
+            Ok(()) => match operation.settle(finish_state) {
+                Ok(()) => Ok(()),
+                Err(operation) => {
+                    drop(operation);
+                    Err(RuntimePersistentPageEngineFinishFailure::PageOwnerRetained)
+                }
+            },
+            Err(error) => {
+                drop(operation);
+                Err(RuntimePersistentPageEngineFinishFailure::Allocator(error))
+            }
+        }
+    }
+
+    /// Consumes this live runtime engine into the source post-fast-slot
+    /// owner-exit drain while retaining the exact dormant-pair scheduler
+    /// claim.  The claim cannot return ticket zero to `READY` yet: a
+    /// successful drain may move live client pages into a typed post-exit
+    /// route, whose terminal proof is the only later authority to settle it.
+    ///
+    /// A lower drain refusal still owns a live allocator and the runtime
+    /// operation, so it returns this exact wrapper for terminal retention
+    /// rather than letting the caller fall through to no-page teardown.
+    fn begin_thread_exit_drain(
+        mut self,
+    ) -> Result<
+        (
+            crate::main_heap_page::MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
+            RuntimeDormantPageOperation,
+            ProcessPageArenaLease,
+        ),
+        Self,
+    > {
+        let allocator = self
+            .allocator
+            .take()
+            .expect("a runtime persistent engine retains its normal allocator");
+        let operation = self
+            .operation
+            .take()
+            .expect("a runtime persistent engine retains its page-owner claim");
+        match allocator.begin_thread_exit_drain() {
+            Ok(drain) => Ok((drain, operation, self.pair)),
+            Err(MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, .. }) => {
+                self.allocator = Some(allocator);
+                self.operation = Some(operation);
+                Err(self)
+            }
+        }
+    }
+}
+
+impl RuntimeParkedPersistentPageEngine {
+    fn resume<'attachment, 'main>(
+        mut self,
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    ) -> Result<
+        RuntimePersistentPageEngine<'attachment, 'main>,
+        RuntimePersistentPageEngineResumeFailure,
+    > {
+        let paused = self
+            .paused
+            .take()
+            .expect("a runtime parked engine retains its normal-engine token");
+        let observed_state = self.runtime.page_owner_state.load(Ordering::Acquire);
+        let Some(parked_count) = page_owner_parked_count(observed_state).filter(|count| *count > 0)
+        else {
+            self.paused = Some(paused);
+            return Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked: self });
+        };
+        let Some(finish_state) = page_owner_parked_state(parked_count - 1) else {
+            self.paused = Some(paused);
+            self.runtime.retain_page_owner();
+            return Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained);
+        };
+        let Some(operation) = self.runtime.begin_dormant_page_operation(
+            observed_state,
+            finish_state,
+            observed_state,
+            true,
+        ) else {
+            self.paused = Some(paused);
+            return Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked: self });
+        };
+        let pair = operation
+            .pair
+            .expect("a resumed runtime operation retains its checked process pair");
+
+        match paused.resume(attachment) {
+            Ok(allocator) => Ok(RuntimePersistentPageEngine {
+                allocator: Some(allocator),
+                operation: Some(operation),
+                pair,
+            }),
+            Err(MainHeapThreadPausedProcessPageAllocatorResumeFailure::Rejected {
+                paused,
+                error,
+            }) => match operation.settle(observed_state) {
+                Ok(()) => {
+                    self.paused = Some(paused);
+                    Err(RuntimePersistentPageEngineResumeFailure::Rejected {
+                        parked: self,
+                        error,
+                    })
+                }
+                Err(operation) => {
+                    drop(paused);
+                    drop(operation);
+                    Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained)
+                }
+            },
+            Err(MainHeapThreadPausedProcessPageAllocatorResumeFailure::PageMapBusy {
+                paused,
+                error,
+            }) => match operation.settle(observed_state) {
+                Ok(()) => {
+                    self.paused = Some(paused);
+                    Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy {
+                        parked: self,
+                        error,
+                    })
+                }
+                Err(operation) => {
+                    drop(paused);
+                    drop(operation);
+                    Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained)
+                }
+            },
+            Err(MainHeapThreadPausedProcessPageAllocatorResumeFailure::Retained {
+                terminal,
+                error,
+            }) => {
+                drop(operation);
+                Err(RuntimePersistentPageEngineResumeFailure::Retained { terminal, error })
+            }
+        }
+    }
+}
+
+impl Drop for RuntimeParkedPersistentPageEngine {
+    fn drop(&mut self) {
+        if self.paused.is_some() {
+            // The lower token's Drop poisons the map. Pair it with the outer
+            // page-owner state so ticket zero cannot reactivate over an
+            // abandoned current-thread engine state.
+            self.runtime.retain_page_owner();
+        }
+    }
+}
 
 impl RuntimeProcessStorage {
     const fn new() -> Self {
@@ -184,9 +3059,143 @@ impl RuntimeProcessStorage {
             initial_thread_identity: AtomicUsize::new(0),
             owner: UnsafeCell::new(MaybeUninit::uninit()),
             main_heap: UnsafeCell::new(MaybeUninit::uninit()),
-            page_owner_state: AtomicU8::new(PAGE_OWNER_COLD),
+            page_owner_state: AtomicUsize::new(PAGE_OWNER_COLD),
+            active_post_exit_route_count: AtomicUsize::new(0),
+            pending_post_exit_completion_count: AtomicUsize::new(0),
+            retained_post_exit_route_count: AtomicUsize::new(0),
             page_owner: UnsafeCell::new(MaybeUninit::uninit()),
         }
+    }
+
+    /// Registers one typed route while its source aggregate is still live.
+    /// The route increments this narrower count before publishing its parked
+    /// scheduler token, so ticket zero cannot observe a route token without
+    /// the capability that permits its private interleaving.
+    fn register_active_post_exit_route(&self) -> bool {
+        let mut observed = self.active_post_exit_route_count.load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_add(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.active_post_exit_route_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    /// Removes one source-active route after its terminal exact free has
+    /// created B's typed completion. The remaining parked scheduler token is
+    /// intentionally not represented here: it blocks ticket zero until B
+    /// completes ordinary no-page teardown.
+    fn unregister_active_post_exit_route(&self) -> bool {
+        let mut observed = self.active_post_exit_route_count.load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_sub(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.active_post_exit_route_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    #[inline]
+    fn has_active_post_exit_route(&self) -> bool {
+        self.active_post_exit_route_count.load(Ordering::Acquire) != 0
+    }
+
+    /// Registers one source-terminal route before it drops its source-active
+    /// capability. This ordering leaves no interval in which another live
+    /// route could make ticket zero appear available while B still owes a
+    /// normal no-page lifecycle.
+    fn register_pending_post_exit_completion(&self) -> bool {
+        let mut observed = self
+            .pending_post_exit_completion_count
+            .load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_add(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.pending_post_exit_completion_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    /// Removes one B completion only after its exact parked scheduler token
+    /// has left the count during B's ordinary no-page finish.
+    fn finish_pending_post_exit_completion(&self) -> bool {
+        let mut observed = self
+            .pending_post_exit_completion_count
+            .load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_sub(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.pending_post_exit_completion_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    #[inline]
+    fn has_pending_post_exit_completion(&self) -> bool {
+        self.pending_post_exit_completion_count.load(Ordering::Acquire) != 0
+    }
+
+    /// Registers one terminally retained route before it drops its
+    /// source-active capability. There is deliberately no matching decrement:
+    /// the route owns source state that no normal B finalizer may release.
+    fn register_retained_post_exit_route(&self) -> bool {
+        let mut observed = self.retained_post_exit_route_count.load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_add(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.retained_post_exit_route_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    #[inline]
+    fn has_retained_post_exit_route(&self) -> bool {
+        self.retained_post_exit_route_count.load(Ordering::Acquire) != 0
     }
 
     #[inline]
@@ -209,13 +3218,73 @@ impl RuntimeProcessStorage {
     }
 
     #[inline]
-    fn is_active_on_initial_thread(&self) -> bool {
-        self.is_on_initial_thread()
-            // A permanent session—even one still waiting for its first
-            // mapping—has page-root authority that this no-page fork bridge
-            // cannot repair in a child. Preserve the old fork behavior only
-            // before ticket zero begins that irreversible transition.
-            && self.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_COLD
+    fn prepare_quiescent_on_initial_thread_for_held_fork_gate(&self) -> bool {
+        if !self.is_on_initial_thread() {
+            return false;
+        }
+
+        match self.page_owner_state.load(Ordering::Acquire) {
+            // The historical no-page case remains valid.
+            PAGE_OWNER_COLD => true,
+            // The caller invokes this only after `RuntimeForkAdmission` has
+            // installed its held gate while its count is zero. That excludes
+            // every later owner which could otherwise change READY into BUSY
+            // and mutably borrow this final slot. The initial thread itself
+            // is crossing `fork` with signals held, so this is the one safe
+            // source collection/inspection boundary for ticket zero.
+            PAGE_OWNER_READY => {
+                // SAFETY: `start_ticket_zero_page_owner_with_storage` wrote
+                // this final slot before its Release READY publication.  The
+                // gate precondition above excludes a concurrent later-engine
+                // transition, and the current initial thread owns the only
+                // ticket-zero operation. The direct fork boundary may make
+                // one all-free-only source collection; a failed collection
+                // leaves the source non-preserving.
+                let page_owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
+                page_owner.prepare_quiescent_for_held_fork_gate()
+            }
+            // The static staging slot is vacant after W01's one-time
+            // ticket-zero promotion. Do not read it here: the source owner
+            // now lives only in the original thread's pinned compiler-TLS
+            // cell. `before_fork_with` invokes this preparation while the
+            // admission gate is held at count zero, so no later owner can
+            // borrow or transition that direct initial engine during this
+            // temporary source collection/inspection.
+            PAGE_OWNER_INITIAL_PERSISTENT => {
+                current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate()
+            }
+            // Starting, a current operation, any parked page engine, and
+            // retained source state all remain outside the child contract.
+            PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _ => false,
+        }
+    }
+
+    /// Reconstructs the immutable source owner identity used by a remote
+    /// producer targeting the permanent ticket-zero page owner.
+    ///
+    /// The initial thread recorded this value only after `LiveThreadId`
+    /// validation during process startup. Revalidating it here keeps a
+    /// malformed retained process state from being treated as a foreign
+    /// page's owner identity.
+    #[inline]
+    fn initial_live_thread_identity(&self) -> Option<LiveThreadId> {
+        LiveThreadId::new(self.initial_thread_identity.load(Ordering::Acquire))
+    }
+
+    /// Returns the process-static PageMap witness for one exact live native
+    /// allocation lookup.
+    ///
+    /// This intentionally shares only the immutable root witness, never the
+    /// permanent owner, its page lifecycle lock, or an ordinary `&mut`
+    /// engine. A live allocation itself supplies the same-slice lifetime
+    /// proof consumed by `ProcessPageMapLease::lookup_page_for_live_client`.
+    #[inline]
+    fn page_map_for_live_native_allocation(&'static self) -> Option<ProcessPageMapLease> {
+        // SAFETY: the process owner is written before PROCESS_ACTIVE and is
+        // never torn down by this bounded runtime. This takes only its
+        // immutable ready witness; it never borrows the permanent page owner.
+        let owner = unsafe { self.active_owner() }?;
+        owner.ready().ok()?.page_map().ok()
     }
 
     /// Returns the durable ticket-zero owner after its Release publication.
@@ -255,6 +3324,17 @@ impl RuntimeProcessStorage {
         self.state.store(PROCESS_RETAINED, Ordering::Release);
     }
 
+    /// Makes the permanent native page owner terminal together with the
+    /// runtime bridge. This is the only fallback for a runtime scheduler
+    /// claim that can no longer prove whether its live engine, PageMap lease,
+    /// or current-thread attachment still owns source state.
+    #[inline]
+    fn retain_page_owner(&self) {
+        self.retain();
+        self.page_owner_state
+            .store(PAGE_OWNER_RETAINED, Ordering::Release);
+    }
+
     /// Starts the hidden ticket-zero native owner without reserving an arena.
     ///
     /// This uses only the immutable process coordinator: the permanent
@@ -279,8 +3359,12 @@ impl RuntimeProcessStorage {
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
-            Ok(_) => {}
+            Ok(_) => {
+                #[cfg(feature = "native-runtime-test-audit")]
+                note_native_scheduler_transition();
+            }
             Err(PAGE_OWNER_READY) => return true,
+            Err(observed) if page_owner_parked_count(observed).is_some() => return true,
             Err(PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _) => return false,
         }
 
@@ -331,6 +3415,13 @@ impl RuntimeProcessStorage {
 
     /// Runs one non-reentrant operation on the ticket-zero native owner.
     ///
+    /// Ticket zero may temporarily resume its *own* parked engine while one
+    /// or more typed later-owner routes remain parked. Its operation still
+    /// claims the one `BUSY` mutation slot, and on return it restores every
+    /// other parked token exactly. If the operation becomes all-free, only
+    /// ticket zero's own token disappears; a detached route remains parked
+    /// until its matched B-side terminal finish proves it may release.
+    ///
     /// Returning `None` means this private route is inactive or recursively
     /// busy; it never asks the C allocator to interpret a native pointer.
     fn with_ticket_zero_page_owner<R>(
@@ -348,29 +3439,77 @@ impl RuntimeProcessStorage {
         if !self.start_ticket_zero_page_owner_with_storage(arena_storage) {
             return None;
         }
-        if self
-            .page_owner_state
-            .compare_exchange(
-                PAGE_OWNER_READY,
-                PAGE_OWNER_BUSY,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_err()
+        let observed = loop {
+            let observed = self.page_owner_state.load(Ordering::Acquire);
+            if page_owner_parked_count(observed).is_none() {
+                return None;
+            }
+            if self
+                .page_owner_state
+                .compare_exchange_weak(
+                    observed,
+                    PAGE_OWNER_BUSY,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                #[cfg(feature = "native-runtime-test-audit")]
+                note_native_scheduler_transition();
+                break observed;
+            }
+        };
+        // SAFETY: READY/PARKED -> BUSY serializes every mutable engine
+        // operation; `start_ticket_zero_page_owner` wrote this final slot
+        // before its first Release publication, and the current TPIDR check
+        // prevents a pthread worker from borrowing the ticket-zero engine.
+        let owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
+        let parked_count = page_owner_parked_count(observed)
+            .expect("the ticket-zero scheduler admitted only ready or parked states");
+        let ticket_zero_was_parked = owner.has_parked_live_engine();
+        if self.has_pending_post_exit_completion()
+            || self.has_retained_post_exit_route()
+            || (observed != PAGE_OWNER_READY
+                && !ticket_zero_was_parked
+                && !self.has_active_post_exit_route())
         {
+            // A pending B completion always wins, even beside another live
+            // source route. Otherwise a normal parked engine owns the only
+            // token. Neither condition lets ticket zero borrow the dormant
+            // pair, so restore the exact state rather than treating every
+            // parked count alike.
+            self.page_owner_state.store(observed, Ordering::Release);
             return None;
         }
-        // SAFETY: READY -> BUSY serializes every mutable engine operation;
-        // `start_ticket_zero_page_owner` wrote this final slot before its
-        // READY Release publication, and the current TPIDR check prevents a
-        // pthread worker from borrowing the ticket-zero engine.
-        let owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
         let result = operation(owner);
         if owner.is_retained() {
             self.retain();
             self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
         } else {
-            self.page_owner_state.store(PAGE_OWNER_READY, Ordering::Release);
+            let ticket_zero_is_parked = owner.has_parked_live_engine();
+            let next_state = match (ticket_zero_was_parked, ticket_zero_is_parked) {
+                // A dormant ticket zero has explicitly parked a fresh private
+                // source engine while one or more detached routes retain
+                // their own admission claims. That new parked engine adds
+                // exactly one token; it never reuses or releases a route
+                // token.
+                (false, true) => page_owner_parked_state(parked_count + 1)
+                    .expect("adding ticket zero to the representable parked count stays representable"),
+                // A normal ticket-zero operation runs only under this call's
+                // transient BUSY state and leaves no separately parked source
+                // engine. It may allocate and free its own permanent-owner
+                // clients, but every foreign parked route remains unchanged.
+                (false, false) => observed,
+                // Ticket zero resumed and re-parked its already-counted
+                // engine, restoring the exact foreign/peer count it found.
+                (true, true) => observed,
+                // Ticket zero's own parked engine became all-free. Keep every
+                // foreign route/engine represented until its matched typed
+                // terminal finish releases that separate admission token.
+                (true, false) => page_owner_parked_state(parked_count - 1)
+                    .expect("removing ticket zero from a nonzero parked count stays representable"),
+            };
+            self.page_owner_state.store(next_state, Ordering::Release);
         }
         Some(result)
     }
@@ -400,11 +3539,14 @@ impl RuntimeProcessStorage {
         {
             return None;
         }
+        #[cfg(feature = "native-runtime-test-audit")]
+        note_native_scheduler_transition();
+
         // SAFETY: READY -> BUSY serializes this mutable permanent owner with
         // ticket zero. The final slot was written before READY's Release
         // publication and is never moved or replaced.
         let owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
-        match owner.with_dormant_page_pair(operation) {
+        match owner.with_later_thread_page_pair(operation) {
             Ok(result) => {
                 self.page_owner_state.store(PAGE_OWNER_READY, Ordering::Release);
                 Some(result)
@@ -415,6 +3557,122 @@ impl RuntimeProcessStorage {
                 None
             }
         }
+    }
+
+    /// Claims the permanent owner's dormant process pair for one normal page
+    /// engine operation without exposing that pair outside the typed runtime
+    /// transition. The permanent owner remains source-dormant while the
+    /// returned operation owns only the runtime's `BUSY` scheduling state.
+    ///
+    /// `expected_state` names the exact previously published parked-owner
+    /// count. `finish_state` and `park_state` are carried inside the linear
+    /// result so a completing or re-parking engine changes only its own
+    /// membership; no operation can reopen ticket zero while another
+    /// suspended engine remains live.
+    fn begin_dormant_page_operation(
+        &'static self,
+        expected_state: usize,
+        finish_state: usize,
+        park_state: usize,
+        may_park: bool,
+    ) -> Option<RuntimeDormantPageOperation> {
+        if !self.is_active()
+            || self
+                .page_owner_state
+                .compare_exchange(
+                    expected_state,
+                    PAGE_OWNER_BUSY,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+        {
+            return None;
+        }
+
+        #[cfg(feature = "native-runtime-test-audit")]
+        note_native_scheduler_transition();
+
+        // SAFETY: expected -> BUSY serializes every mutable access to the
+        // final permanent owner. `with_later_thread_page_pair` restores the
+        // exact dormant or ticket-zero-parked source state before this method
+        // returns; the operation below owns only whether ticket zero may
+        // enter again.
+        let owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
+        match owner.with_later_thread_page_pair(Ok) {
+            Ok(pair) => Some(RuntimeDormantPageOperation {
+                runtime: self,
+                pair: Some(pair),
+                finish_state,
+                park_state,
+                may_park,
+                active: true,
+            }),
+            Err(()) => {
+                self.retain_page_owner();
+                None
+            }
+        }
+    }
+
+    /// Starts one new persistent later-main engine while zero or more other
+    /// engines are parked. A successful suspension increments the parked
+    /// count; an empty finish restores exactly the count observed before this
+    /// engine began. Each complete engine operation remains serialized by the
+    /// one `BUSY` transition and the lower PageMap mutation lease.
+    fn begin_persistent_later_engine<'attachment, 'main>(
+        &'static self,
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    ) -> Result<
+        RuntimePersistentPageEngine<'attachment, 'main>,
+        RuntimePersistentPageEngineBeginError,
+    > {
+        let observed_state = self.page_owner_state.load(Ordering::Acquire);
+        let Some(parked_count) = page_owner_parked_count(observed_state) else {
+            return Err(RuntimePersistentPageEngineBeginError::Unavailable);
+        };
+        let Some(park_state) = parked_count
+            .checked_add(1)
+            .and_then(page_owner_parked_state)
+        else {
+            return Err(RuntimePersistentPageEngineBeginError::Unavailable);
+        };
+        let Some(operation) = self.begin_dormant_page_operation(
+            observed_state,
+            observed_state,
+            park_state,
+            true,
+        ) else {
+            return Err(RuntimePersistentPageEngineBeginError::Unavailable);
+        };
+        operation.begin_engine(attachment)
+    }
+
+    /// Starts one whole B-side operation while one or more distinct persistent
+    /// engines are parked. It must finish empty and restores that exact
+    /// parked-owner count. It remains deliberately non-parkable: this path is
+    /// for scoped interleavings such as a remote publication, not for creating
+    /// another current-thread session.
+    fn begin_interleaving_persistent_later_engine<'attachment, 'main>(
+        &'static self,
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    ) -> Result<
+        RuntimePersistentPageEngine<'attachment, 'main>,
+        RuntimePersistentPageEngineBeginError,
+    > {
+        let observed_state = self.page_owner_state.load(Ordering::Acquire);
+        if !page_owner_parked_count(observed_state).is_some_and(|count| count > 0) {
+            return Err(RuntimePersistentPageEngineBeginError::Unavailable);
+        }
+        let Some(operation) = self.begin_dormant_page_operation(
+            observed_state,
+            observed_state,
+            observed_state,
+            false,
+        ) else {
+            return Err(RuntimePersistentPageEngineBeginError::Unavailable);
+        };
+        operation.begin_engine(attachment)
     }
 
     #[inline]
@@ -493,7 +3751,7 @@ impl RuntimeProcessStorage {
 
 static RUNTIME_PROCESS: RuntimeProcessStorage = RuntimeProcessStorage::new();
 
-/// Allocation-free admission accounting around the incomplete no-page
+/// Allocation-free admission accounting around the incomplete runtime
 /// lifecycle.
 ///
 /// This is deliberately not a general allocator lock or source fork repair.
@@ -506,6 +3764,18 @@ struct RuntimeForkAdmission {
     state: AtomicUsize,
 }
 
+/// One linear claim in the runtime's later-worker admission count.
+///
+/// A normal worker keeps this in its TLS slot. A worker that has detached its
+/// Theap/TLD transfers it into the opaque post-exit route, which can return it
+/// only in [`TicketZeroOwnerExitRouteFinished`] after terminal PageMap
+/// release. This prevents an ordinary no-page finalizer from decrementing the
+/// admission count while a process route still owns client-visible pages.
+#[must_use = "a later-worker admission claim must finish normally or remain terminally retained"]
+struct LaterThreadAdmissionClaim {
+    _private: (),
+}
+
 impl RuntimeForkAdmission {
     const fn new() -> Self {
         Self {
@@ -516,7 +3786,7 @@ impl RuntimeForkAdmission {
     /// Claims one later-thread lifecycle admission. A concurrent fork waits
     /// only while it crosses the raw kernel boundary; it never observes a
     /// half-published attachment as absent.
-    fn claim_later_thread(&self) -> bool {
+    fn claim_later_thread(&self) -> Option<LaterThreadAdmissionClaim> {
         loop {
             let observed = self.state.load(Ordering::Acquire);
             if observed & FORK_GATE_HELD != 0 {
@@ -525,7 +3795,7 @@ impl RuntimeForkAdmission {
             }
             let count = observed & FORK_GATE_COUNT_MASK;
             if count == FORK_GATE_COUNT_MASK {
-                return false;
+                return None;
             }
             let next = observed + 1;
             if self
@@ -533,7 +3803,7 @@ impl RuntimeForkAdmission {
                 .compare_exchange_weak(observed, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                return true;
+                return Some(LaterThreadAdmissionClaim { _private: () });
             }
         }
     }
@@ -542,12 +3812,15 @@ impl RuntimeForkAdmission {
     /// visible while a fork gate is held, so a finish racing a fork can only
     /// make that fork more conservative; it can never retroactively turn an
     /// unsafe child into a preserving one.
-    fn release_later_thread(&self) -> bool {
+    fn release_later_thread(
+        &self,
+        claim: LaterThreadAdmissionClaim,
+    ) -> Result<(), LaterThreadAdmissionClaim> {
         loop {
             let observed = self.state.load(Ordering::Acquire);
             let count = observed & FORK_GATE_COUNT_MASK;
             if count == 0 {
-                return false;
+                return Err(claim);
             }
             let next = observed - 1;
             if self
@@ -555,15 +3828,70 @@ impl RuntimeForkAdmission {
                 .compare_exchange_weak(observed, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                return true;
+                return Ok(());
+            }
+        }
+    }
+
+    /// Runs one initial-thread-only ownership publication while no later
+    /// attachment can begin.
+    ///
+    /// This reuses the existing short admission gate solely for the one-time
+    /// ticket-zero -> compiler-TLS promotion.  It is not an allocator
+    /// scheduler: normal initial local calls happen after this closure has
+    /// released the gate, and no page or PageMap operation is represented by
+    /// the admission word.  A nonzero existing count refuses the transfer so
+    /// a waiting worker can never revive or alias the moved static owner.
+    fn with_no_later_thread_admissions<R>(&self, operation: impl FnOnce() -> R) -> Option<R> {
+        loop {
+            let observed = self.state.load(Ordering::Acquire);
+            if observed & FORK_GATE_HELD != 0 {
+                core::hint::spin_loop();
+                continue;
+            }
+            // A preserved fork image is valid only while `HELD` is set. Do
+            // not clear or reinterpret any unexpected non-count flag here:
+            // promotion has no fork-preservation authority and may proceed
+            // only from the exact ordinary idle word.
+            if observed != 0 {
+                return None;
+            }
+            let held = FORK_GATE_HELD;
+            if self
+                .state
+                .compare_exchange_weak(observed, held, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let result = operation();
+                // The successful publication began from the exact zero word,
+                // so it owns only this temporary HELD flag. Release that same
+                // flag before ordinary lifecycle code resumes; no fork
+                // preservation bit is created, consumed, or overwritten.
+                self.state.store(0, Ordering::Release);
+                return Some(result);
             }
         }
     }
 
     /// Holds the direct internal fork boundary and records whether the copied
-    /// child may preserve this incomplete no-page image. No allocation, lock
-    /// traversal, page operation, or public pthread-atfork slot is involved.
+    /// child may preserve its quiescent ticket-zero image. No allocation,
+    /// lock traversal, or public pthread-atfork slot is involved.
     fn before_fork(&self, can_preserve_process_owner: bool) {
+        self.before_fork_with(|| can_preserve_process_owner);
+    }
+
+    /// Holds the gate before preparing a potentially permanent page owner.
+    ///
+    /// The callback executes only after the gate has observed zero later
+    /// attachments. That ordering matters: a READY static ticket-zero owner
+    /// or INITIAL_PERSISTENT initial TLS owner may otherwise be mutably
+    /// borrowed by a source operation, so inspecting or all-free-collecting
+    /// its source image before worker admission is closed would be an unsound
+    /// concurrent view. The callback is an allocation-free private
+    /// preparation for the direct libc fork path; it never exposes a page or
+    /// fork capability.
+    fn before_fork_with(&self, can_preserve_process_owner: impl FnOnce() -> bool) {
+        let mut can_preserve_process_owner = Some(can_preserve_process_owner);
         loop {
             let observed = self.state.load(Ordering::Acquire);
             if observed & FORK_GATE_HELD != 0 {
@@ -571,15 +3899,25 @@ impl RuntimeForkAdmission {
                 continue;
             }
             let count = observed & FORK_GATE_COUNT_MASK;
-            let preserve = can_preserve_process_owner && count == 0;
-            let next = observed
-                | FORK_GATE_HELD
-                | if preserve { FORK_GATE_PRESERVE } else { 0 };
+            let next = observed | FORK_GATE_HELD;
             if self
                 .state
                 .compare_exchange_weak(observed, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
+                // A zero count under HELD excludes every later attachment:
+                // `claim_later_thread` spins until the parent clears HELD.
+                // Therefore the preparation may safely inspect or
+                // all-free-collect a static or pinned-initial ticket-zero
+                // owner before this raw fork.
+                if count == 0
+                    && can_preserve_process_owner
+                        .take()
+                        .is_some_and(|predicate| predicate())
+                {
+                    self.state
+                        .store(next | FORK_GATE_PRESERVE, Ordering::Release);
+                }
                 return;
             }
         }
@@ -609,8 +3947,10 @@ impl RuntimeForkAdmission {
     /// Resets the copied admission word without acquiring an inherited lock.
     /// The return value is true only when this exact fork path presented its
     /// prepared token and the gate recorded ticket zero with no bridge-owned
-    /// later attachment. The explicit token prevents an unprepared raw fork
-    /// on another thread from mistaking copied gate bits for its own proof.
+    /// later attachment. The source image may be the static dormant owner or
+    /// the original initial thread's pinned TLS owner. The explicit token
+    /// prevents an unprepared raw fork on another thread from mistaking
+    /// copied gate bits for its own proof.
     fn after_fork_child(&self, fork_was_prepared: bool) -> bool {
         let observed = self.state.swap(0, Ordering::AcqRel);
         fork_was_prepared
@@ -622,11 +3962,1314 @@ impl RuntimeForkAdmission {
 
 static RUNTIME_FORK_ADMISSION: RuntimeForkAdmission = RuntimeForkAdmission::new();
 
+/// Mints a process-unique nonzero identity for one B attachment that may own
+/// terminal post-exit completions. The identity is metadata only: it grants no
+/// access to a TLS slot, route, page, client, allocator, or admission proof.
+/// Exhaustion closes the incomplete native lifecycle rather than allowing a
+/// wrapped identity to match a stale process-lifetime registry entry.
+#[cfg(test)]
+static NEXT_NATIVE_POST_EXIT_COMPLETION_OWNER_GENERATION: AtomicUsize = AtomicUsize::new(1);
+
+#[cfg(test)]
+fn claim_native_post_exit_completion_owner_generation() -> Option<usize> {
+    let mut observed = NEXT_NATIVE_POST_EXIT_COMPLETION_OWNER_GENERATION.load(Ordering::Acquire);
+    loop {
+        if observed == 0 {
+            return None;
+        }
+        let next = observed.checked_add(1).unwrap_or(0);
+        match NEXT_NATIVE_POST_EXIT_COMPLETION_OWNER_GENERATION.compare_exchange_weak(
+            observed,
+            next,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return next.checked_sub(1),
+            Err(actual) => observed = actual,
+        }
+    }
+}
+
+/// A detached native-shadow route paired with its exact parked runtime
+/// scheduler token.
+///
+/// The source route owns A's admission claim. Its own short PageMap access
+/// serializes each exact C free, while `parked` keeps ticket zero out of
+/// `READY` until the route returns a typed terminal proof and B completes its
+/// normal finish. Keeping both fields in one linear entry prevents a raw C
+/// free from reopening ticket zero before all source pages have released.
+#[must_use = "a native post-exit route must reach B's terminal proof or remain retained"]
+#[cfg(test)]
+struct NativePostExitRoute {
+    parked: RuntimeParkedPostExitRoute,
+    route: NativePostExitFreeRoute,
+}
+
+/// The opaque lifecycle identity of a B attachment that has received one or
+/// more terminal native post-exit route completions.
+///
+/// This is a private registry matching key, not a route, allocator, client,
+/// page, or release capability. The compiler-TLS address stays internal and
+/// the nonzero lifecycle generation prevents an old completed entry from
+/// matching a later attachment in the same TLS slot.
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[cfg(test)]
+struct NativePostExitRouteCompletionOwner {
+    slot: core::ptr::NonNull<ThreadLifecycleSlot>,
+    generation: usize,
+}
+
+/// A terminal native post-exit route paired with its still-parked
+/// detached-route scheduler token and matched B lifecycle identity.
+///
+/// A route may return its typed PageMap/admission proof after B's final C
+/// `free`, but B's no-page TLD/Theap is still live until its normal pthread
+/// finish. Keeping the parked token beside that proof prevents ticket zero
+/// from borrowing the dormant pair during this final B-only interval. The
+/// completion may remove only its route's parked token after B has detached
+/// its own attachment, then releases A's admission proof.
+#[must_use = "a terminal native route completion must finish B or remain retained"]
+#[cfg(test)]
+struct NativePostExitRouteCompletion {
+    owner: NativePostExitRouteCompletionOwner,
+    parked: RuntimeParkedPostExitRoute,
+    proof: TicketZeroOwnerExitRouteFinished,
+}
+
+/// A terminal route storage image. Retained entries intentionally keep every
+/// exact ownership capability alive for the process lifetime rather than
+/// dropping an ambiguous route and making the fork-admission count appear
+/// quiescent.
+#[must_use = "a retained native post-exit entry must stay process-terminal"]
+#[cfg(test)]
+enum NativePostExitRouteEntry {
+    Active(NativePostExitRoute),
+    /// A completed source route has released every C client but remains live
+    /// in the registry until its exact B attachment has torn down. It cannot
+    /// answer an address lookup or be reused by a later A owner.
+    Completed(NativePostExitRouteCompletion),
+    RetainedRoute(NativePostExitRoute),
+    RetainedFinished {
+        parked: RuntimeParkedPostExitRoute,
+        proof: TicketZeroOwnerExitRouteFinished,
+    },
+    /// The matching parked token was removed, but releasing A's admission
+    /// proof failed. Preserve that exact proof in the terminal entry rather
+    /// than dropping it after the scheduler became ready.
+    RetainedAdmission {
+        proof: TicketZeroOwnerExitRouteFinished,
+    },
+    RetainedPoisoned {
+        parked: RuntimeParkedPostExitRoute,
+        proof: TicketZeroOwnerExitRoutePoisoned,
+    },
+}
+
+/// Result visible to the native libc friend boundary after it offers one raw
+/// C address to the opaque post-exit route. No variant exposes a client,
+/// PageMap lease, or allocator authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
+enum NativePostExitRouteFreeResult {
+    NotOwned,
+    Freed,
+    Finished,
+    Retained,
+}
+
+/// Private result of probing one detached route for an exact usable-size
+/// query. It keeps a retained registry entry from being mistaken for an
+/// ordinary address miss while the private router considers another entry.
+#[cfg(test)]
+enum NativePostExitRouteUsableSizeResult {
+    NotOwned,
+    Owned(usize),
+    Retained,
+}
+
+/// Private result of asking one stable entry to settle a completion for the
+/// current B attachment after that attachment's own source teardown.
+#[cfg(test)]
+enum NativePostExitRouteCompletionFinishResult {
+    NotOwned,
+    Finished,
+    Retained,
+}
+
+/// Aggregate result of finishing every completed route matched to one B
+/// attachment. The registry never returns an entry, route, client, page, or
+/// admission capability to its caller.
+#[cfg(test)]
+enum NativePostExitRouteCompletionsFinishResult {
+    Finished,
+    Retained,
+}
+
+/// Read-only scalar accounting for one quiescent native runtime process.
+///
+/// This is deliberately a default-off evidence hook. It reports lifecycle
+/// counts and readiness bits only; it does not reveal a client address, PageMap
+/// root, arena address, allocator, or release capability. Callers must sample
+/// only after every participating worker has joined, so no normal engine or
+/// pointer-first source operation is concurrently mutating owned state.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeLifecycleAudit {
+    pub process_active: usize,
+    pub page_owner_ready: usize,
+    pub page_map_registered_entry_count: usize,
+    pub page_map_published_submap_count: usize,
+    pub page_map_lazy_submap_allocation_count: usize,
+    pub arena_registry_count: usize,
+    pub live_thread_count: usize,
+    pub metadata_live_capability_count: usize,
+    pub metadata_high_water_capability_count: usize,
+    pub shared_later_theap_count: usize,
+    pub main_heap_abandoned_page_count: usize,
+    pub main_heap_os_abandoned_pages_empty: usize,
+    pub native_owner_local_operation_count: usize,
+    pub native_parked_compatibility_operation_count: usize,
+    pub native_scheduler_transition_count: usize,
+}
+
+/// Read-only scalar accounting for the runtime's fork-admission gate.
+///
+/// This is deliberately a default-off direct-test hook. It reports only the
+/// current number of attached later-thread claims. It neither claims,
+/// releases, nor preserves an admission, and it exposes no route, client
+/// address, page, allocator, or fork capability. Unlike the quiescent
+/// lifecycle audit, a direct regression may sample this scalar while its exact
+/// B worker is still attached.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeForkAdmissionAudit {
+    pub active_later_thread_count: usize,
+}
+
+/// Direct-test guard for one `MI_ABANDON` persistent-owner remote collection.
+///
+/// This feature-gated witness can observe and release the existing source
+/// head-load/CAS interleaving, but carries no allocator, page, PageMap, route,
+/// client address, or lifecycle capability. The only integration regression
+/// that arms it sends raw C-shaped client pointers through `native_free` and
+/// lets the owner reach its ordinary thread-exit path itself.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub struct NativeRuntimeOwnerExitCollectionRendezvous {
+    inner: crate::remote_free::OwnerExitCollectionRendezvous,
+}
+
+#[cfg(feature = "native-runtime-test-audit")]
+impl NativeRuntimeOwnerExitCollectionRendezvous {
+    /// Reports whether the `MI_ABANDON` collector read a nonempty remote head
+    /// and stopped immediately before its first detach CAS.
+    #[doc(hidden)]
+    #[inline]
+    pub fn is_paused(&self) -> bool { self.inner.is_paused() }
+
+    /// Releases the source collector exactly once after foreign producers
+    /// have published their distinct live native blocks.
+    #[doc(hidden)]
+    #[inline]
+    pub fn release(&self) -> bool { self.inner.release() }
+
+    /// Reports whether the guarded source detach CAS retried after a foreign
+    /// publication made its captured nonempty head stale.
+    #[doc(hidden)]
+    #[inline]
+    pub fn observed_retry(&self) -> bool { self.inner.observed_retry() }
+}
+
+/// One metadata-backed entry in the private native-shadow post-exit registry.
+/// The atomic word protects only moves through the `UnsafeCell`; no lock
+/// guards general allocation. The route's own `ProcessPageMapPostExitAccess`
+/// serializes each exact free, while its parked runtime token keeps ticket
+/// zero unavailable without preventing a distinct normal engine from using
+/// the shared process pair between route operations.
+#[cfg(test)]
+struct NativePostExitRouteStorage {
+    state: AtomicU8,
+    entry: UnsafeCell<MaybeUninit<NativePostExitRouteEntry>>,
+}
+
+// SAFETY: all access to `entry` first claims either `ACTIVE -> BUSY` or
+// `COMPLETED -> BUSY` with AcqRel. The static has one writer while installing
+// and one mutable route/completion consumer at a time; retained entries are
+// never read as active again.
+#[cfg(test)]
+unsafe impl Sync for NativePostExitRouteStorage {}
+
+#[cfg(test)]
+impl NativePostExitRouteStorage {
+    /// Restores one unchanged or still-live route after this entry's private
+    /// operation has completed. The route and its parked scheduler token move
+    /// together so an address miss or a nonterminal exact free cannot make
+    /// ticket zero observe a false quiescent state.
+    #[inline]
+    fn restore_active(&self, parked: RuntimeParkedPostExitRoute, route: NativePostExitFreeRoute) {
+        // SAFETY: this storage operation owns the entry after its successful
+        // `ACTIVE -> BUSY` claim and writes the next complete linear image
+        // before publishing ACTIVE again.
+        unsafe {
+            (*self.entry.get()).write(NativePostExitRouteEntry::Active(
+                NativePostExitRoute { parked, route },
+            ))
+        };
+        self.state
+            .store(NATIVE_POST_EXIT_ROUTE_ACTIVE, Ordering::Release);
+    }
+
+    /// Publishes a terminal entry only after the private registry has closed
+    /// future detached-owner installation. The closure names no route or
+    /// client: it is solely the process-lifetime fact that a retained source
+    /// owner prevents another A from appending beside it.
+    #[inline]
+    fn publish_retained(&self) {
+        NATIVE_POST_EXIT_ROUTE.close_for_retained_entry();
+        self.state
+            .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+    }
+
+    /// Keeps a concrete route and its scheduler token process-terminal after
+    /// an operation can no longer prove a retryable source state.
+    #[inline]
+    fn retain_route(&self, parked: RuntimeParkedPostExitRoute, route: NativePostExitFreeRoute) {
+        let parked = match parked.retain_source_route() {
+            Ok(parked) => parked,
+            Err(parked) => {
+                // The failed conversion has already retained the page-owner
+                // scheduler. Keep the exact source route in the terminal
+                // registry image as well; no later normal finalizer may
+                // reconstruct or release its admission.
+                parked
+            }
+        };
+        // SAFETY: see `restore_active`; retained entries are never moved back
+        // through an active route operation.
+        unsafe {
+            (*self.entry.get()).write(NativePostExitRouteEntry::RetainedRoute(
+                NativePostExitRoute { parked, route },
+            ))
+        };
+        self.publish_retained();
+    }
+
+    /// Commits a consumed exact-source free into this storage entry.
+    ///
+    /// A route may mint its terminal proof only after it has released every
+    /// A-owned client. This helper is shared by C `free` and the detached
+    /// B-side `realloc` transaction, so both paths preserve the same rule:
+    /// B's attachment and any independently parked B session must finish
+    /// before A's parked token and worker-admission claim can be released.
+    fn settle_exact_free(
+        &self,
+        parked: RuntimeParkedPostExitRoute,
+        free: NativePostExitFreeStep,
+    ) -> NativePostExitRouteFreeResult {
+        match free {
+            NativePostExitFreeStep::NotOwned(route) => {
+                self.restore_active(parked, route);
+                NativePostExitRouteFreeResult::NotOwned
+            }
+            NativePostExitFreeStep::Freed(route) => {
+                self.restore_active(parked, route);
+                NativePostExitRouteFreeResult::Freed
+            }
+            NativePostExitFreeStep::Finished(proof) => {
+                // The detached source route has terminally released, but B is still
+                // an attached worker. B may already have its own *parked*
+                // local native session: that engine is independent of A's
+                // route and its eventual source finish is the concrete B
+                // lifecycle boundary we need. Transfer both the terminal
+                // proof and this route's still-parked scheduler token into
+                // the stable opaque registry only when B's own engine is
+                // parked. The registry records B's private lifecycle identity
+                // and TLS retains only its completion count, so one B may
+                // carry several terminal routes without exposing a client or
+                // making any completion reusable before B's required finish.
+                let parked = match parked.finish_source_route() {
+                    Ok(parked) => parked,
+                    Err(parked) => {
+                        // The scheduler token cannot become a B completion
+                        // unless this exact source route first released its
+                        // narrower ticket-zero interleaving capability.
+                        // Preserve both terminally rather than making the
+                        // registry slot look empty with an unbalanced count.
+                        unsafe {
+                            (*self.entry.get()).write(NativePostExitRouteEntry::RetainedFinished {
+                                parked,
+                                proof,
+                            })
+                        };
+                        self.publish_retained();
+                        return NativePostExitRouteFreeResult::Retained;
+                    }
+                };
+                let slot_pointer = current_thread_slot_pointer();
+                // SAFETY: this running B worker owns its compiler-TLS slot.
+                // The entry receives only the opaque identity below, never a
+                // route/client/page authority or a dereference capability.
+                let slot = unsafe { &mut *slot_pointer.as_ptr() };
+                let b_session_is_parked = match slot.page_owner.as_ref() {
+                    None => true,
+                    Some(ThreadLifecyclePageOwner::Session(session)) => session.parked.is_some(),
+                    Some(ThreadLifecyclePageOwner::PreparedExit(_)) => false,
+                };
+                let completion_owner = if b_session_is_parked {
+                    slot.record_post_exit_route_completion(slot_pointer)
+                } else {
+                    None
+                };
+                let Some(owner) = completion_owner else {
+                    // A complete route without its matching B lifecycle has
+                    // no legal scheduler settle or admission release. Keep
+                    // both typed capabilities terminally represented instead
+                    // of converting the static route back into an empty slot.
+                    unsafe {
+                        (*self.entry.get()).write(NativePostExitRouteEntry::RetainedFinished {
+                            parked,
+                            proof,
+                        })
+                    };
+                    RUNTIME_PROCESS.retain_page_owner();
+                    self.publish_retained();
+                    return NativePostExitRouteFreeResult::Retained;
+                };
+                unsafe {
+                    (*self.entry.get()).write(NativePostExitRouteEntry::Completed(
+                        NativePostExitRouteCompletion {
+                            owner,
+                            parked,
+                            proof,
+                        },
+                    ))
+                };
+                self.state
+                    .store(NATIVE_POST_EXIT_ROUTE_COMPLETED, Ordering::Release);
+                NativePostExitRouteFreeResult::Finished
+            }
+            NativePostExitFreeStep::Retained(route) => {
+                self.retain_route(parked, route);
+                NativePostExitRouteFreeResult::Retained
+            }
+            NativePostExitFreeStep::Poisoned(proof) => {
+                // SAFETY: the lower route has no retryable source state, but
+                // its scheduler claim and exact admission must remain owned.
+                // Remove its source-active interleaving capability before
+                // publishing the retained entry, so a live sibling cannot
+                // reopen ticket zero over this terminal owner.
+                let parked = match parked.retain_source_route() {
+                    Ok(parked) => parked,
+                    Err(parked) => parked,
+                };
+                unsafe {
+                    (*self.entry.get()).write(NativePostExitRouteEntry::RetainedPoisoned {
+                        parked,
+                        proof,
+                    })
+                };
+                self.publish_retained();
+                NativePostExitRouteFreeResult::Retained
+            }
+        }
+    }
+
+    /// Applies one exact C free to the current detached route. A route that
+    /// does not own the address is restored unchanged, allowing ordinary
+    /// current-owner lookup to continue without ever observing its clients.
+    fn free_exact(&self, block: core::ptr::NonNull<u8>) -> NativePostExitRouteFreeResult {
+        loop {
+            match self.state.load(Ordering::Acquire) {
+                NATIVE_POST_EXIT_ROUTE_EMPTY | NATIVE_POST_EXIT_ROUTE_COMPLETED => {
+                    // A completed entry has no C client left. Its parked token
+                    // and admission proof remain private in the registry, so
+                    // the router may continue scanning a distinct live route.
+                    return NativePostExitRouteFreeResult::NotOwned;
+                }
+                NATIVE_POST_EXIT_ROUTE_RETAINED => {
+                    return NativePostExitRouteFreeResult::Retained;
+                }
+                NATIVE_POST_EXIT_ROUTE_BUSY => core::hint::spin_loop(),
+                NATIVE_POST_EXIT_ROUTE_ACTIVE => {
+                    if self
+                        .state
+                        .compare_exchange(
+                            NATIVE_POST_EXIT_ROUTE_ACTIVE,
+                            NATIVE_POST_EXIT_ROUTE_BUSY,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        break;
+                    }
+                }
+                _ => {
+                    RUNTIME_PROCESS.retain_page_owner();
+                    self.publish_retained();
+                    return NativePostExitRouteFreeResult::Retained;
+                }
+            }
+        }
+
+        // SAFETY: this thread exclusively owns the Active -> BUSY route
+        // transition. Every nonterminal arm below writes a new initialized
+        // entry before publishing a non-BUSY state.
+        let entry = unsafe { (*self.entry.get()).assume_init_read() };
+        let NativePostExitRouteEntry::Active(NativePostExitRoute { parked, route }) = entry
+        else {
+            // The atomic state and entry discriminant disagreed. Preserve the
+            // actual value and close the runtime rather than inferring which
+            // detached owner owns the source map.
+            core::mem::forget(entry);
+            RUNTIME_PROCESS.retain_page_owner();
+            self.publish_retained();
+            return NativePostExitRouteFreeResult::Retained;
+        };
+
+        let free = {
+            let slot = current_thread_slot();
+            let Some(attachment) = slot.attachment.as_mut() else {
+                // The route is still live, but this caller has no matched B
+                // attachment in which a final member could become a real
+                // later-main engine. Restore the route unchanged and fail
+                // closed rather than letting an exact raw C address advance
+                // source state without B's lifecycle boundary.
+                unsafe {
+                    (*self.entry.get()).write(NativePostExitRouteEntry::Active(
+                        NativePostExitRoute { parked, route },
+                    ))
+                };
+                self.state
+                    .store(NATIVE_POST_EXIT_ROUTE_ACTIVE, Ordering::Release);
+                return NativePostExitRouteFreeResult::Retained;
+            };
+            route.free_exact_native_block(attachment, block)
+        };
+
+        self.settle_exact_free(parked, free)
+    }
+
+    /// Returns the already-recorded usable extent for one exact detached C
+    /// client while preserving the active route unchanged. The short
+    /// `ACTIVE -> BUSY -> ACTIVE` ownership move serializes this read with a
+    /// later terminal `free`, but it deliberately does not touch source page
+    /// state, the parked scheduler token, or A's admission proof.
+    fn usable_size_exact(
+        &self,
+        block: core::ptr::NonNull<u8>,
+    ) -> NativePostExitRouteUsableSizeResult {
+        loop {
+            match self.state.load(Ordering::Acquire) {
+                NATIVE_POST_EXIT_ROUTE_EMPTY | NATIVE_POST_EXIT_ROUTE_COMPLETED => {
+                    // Completed routes retain only lifecycle facts, never a
+                    // C client that could answer a usable-size query.
+                    return NativePostExitRouteUsableSizeResult::NotOwned;
+                }
+                NATIVE_POST_EXIT_ROUTE_RETAINED => {
+                    return NativePostExitRouteUsableSizeResult::Retained;
+                }
+                NATIVE_POST_EXIT_ROUTE_BUSY => core::hint::spin_loop(),
+                NATIVE_POST_EXIT_ROUTE_ACTIVE => {
+                    if self
+                        .state
+                        .compare_exchange(
+                            NATIVE_POST_EXIT_ROUTE_ACTIVE,
+                            NATIVE_POST_EXIT_ROUTE_BUSY,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        break;
+                    }
+                }
+                _ => {
+                    RUNTIME_PROCESS.retain_page_owner();
+                    self.publish_retained();
+                    return NativePostExitRouteUsableSizeResult::Retained;
+                }
+            }
+        }
+
+        // SAFETY: this thread exclusively claimed the initialized active
+        // entry. The read-only result below writes that same exact route back
+        // before it makes the slot observable again.
+        let entry = unsafe { (*self.entry.get()).assume_init_read() };
+        let NativePostExitRouteEntry::Active(NativePostExitRoute { parked, route }) = entry
+        else {
+            // The entry discriminant cannot disagree with ACTIVE without an
+            // ownership violation. Preserve its concrete value and keep the
+            // process terminal instead of guessing a client/page owner.
+            core::mem::forget(entry);
+            RUNTIME_PROCESS.retain_page_owner();
+            self.publish_retained();
+            return NativePostExitRouteUsableSizeResult::Retained;
+        };
+
+        let usable_size = route.native_usable_size(block);
+        // SAFETY: this same writer took the initialized active entry above;
+        // the query retained the exact route and every linear capability.
+        unsafe {
+            (*self.entry.get()).write(NativePostExitRouteEntry::Active(
+                NativePostExitRoute { parked, route },
+            ))
+        };
+        self.state
+            .store(NATIVE_POST_EXIT_ROUTE_ACTIVE, Ordering::Release);
+        match usable_size {
+            Some(usable_size) => NativePostExitRouteUsableSizeResult::Owned(usable_size),
+            None => NativePostExitRouteUsableSizeResult::NotOwned,
+        }
+    }
+
+    /// Settles one terminal A route only when this entry's opaque B identity
+    /// matches the attachment that has already completed its own ordinary
+    /// teardown. A completed entry has no client-facing operation left: this
+    /// is the sole internal transition that may remove its parked scheduler
+    /// token and release its exact A admission.
+    fn finish_completion_for_owner(
+        &self,
+        owner: NativePostExitRouteCompletionOwner,
+    ) -> NativePostExitRouteCompletionFinishResult {
+        loop {
+            match self.state.load(Ordering::Acquire) {
+                NATIVE_POST_EXIT_ROUTE_EMPTY | NATIVE_POST_EXIT_ROUTE_ACTIVE => {
+                    return NativePostExitRouteCompletionFinishResult::NotOwned;
+                }
+                NATIVE_POST_EXIT_ROUTE_RETAINED => {
+                    return NativePostExitRouteCompletionFinishResult::Retained;
+                }
+                NATIVE_POST_EXIT_ROUTE_BUSY => core::hint::spin_loop(),
+                NATIVE_POST_EXIT_ROUTE_COMPLETED => {
+                    if self
+                        .state
+                        .compare_exchange(
+                            NATIVE_POST_EXIT_ROUTE_COMPLETED,
+                            NATIVE_POST_EXIT_ROUTE_BUSY,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        break;
+                    }
+                }
+                _ => {
+                    RUNTIME_PROCESS.retain_page_owner();
+                    self.publish_retained();
+                    return NativePostExitRouteCompletionFinishResult::Retained;
+                }
+            }
+        }
+
+        // SAFETY: this finisher exclusively claimed the initialized
+        // `COMPLETED -> BUSY` entry. Every nonterminal path below restores its
+        // complete image before the entry becomes observable again.
+        let entry = unsafe { (*self.entry.get()).assume_init_read() };
+        let NativePostExitRouteEntry::Completed(completion) = entry else {
+            // A mismatched atomic state and entry discriminant can no longer
+            // identify which exact route owns the scheduler/admission facts.
+            core::mem::forget(entry);
+            RUNTIME_PROCESS.retain_page_owner();
+            self.publish_retained();
+            return NativePostExitRouteCompletionFinishResult::Retained;
+        };
+        if completion.owner != owner {
+            // This is another B's completion. Restore it without exposing a
+            // capability, then let the stable registry scan continue.
+            unsafe {
+                (*self.entry.get()).write(NativePostExitRouteEntry::Completed(completion))
+            };
+            self.state
+                .store(NATIVE_POST_EXIT_ROUTE_COMPLETED, Ordering::Release);
+            return NativePostExitRouteCompletionFinishResult::NotOwned;
+        }
+
+        let NativePostExitRouteCompletion {
+            owner: _,
+            parked,
+            proof,
+        } = completion;
+        match parked.finish_after_b() {
+            Ok(()) => match proof.release_worker_admission(&RUNTIME_FORK_ADMISSION) {
+                Ok(()) => {
+                    self.state
+                        .store(NATIVE_POST_EXIT_ROUTE_EMPTY, Ordering::Release);
+                    NativePostExitRouteCompletionFinishResult::Finished
+                }
+                Err(proof) => {
+                    // The scheduler token has already left its parked count,
+                    // but A's exact fork-admission proof still has to remain
+                    // represented. Preserve it in this terminal entry and
+                    // close the full process boundary.
+                    unsafe {
+                        (*self.entry.get()).write(NativePostExitRouteEntry::RetainedAdmission {
+                            proof,
+                        })
+                    };
+                    RUNTIME_PROCESS.retain();
+                    self.publish_retained();
+                    NativePostExitRouteCompletionFinishResult::Retained
+                }
+            },
+            Err(parked) => {
+                // `finish_after_b` already retained the scheduler on failure.
+                // Keep both exact linear capabilities process-terminal instead
+                // of making the completion appear consumed.
+                unsafe {
+                    (*self.entry.get()).write(NativePostExitRouteEntry::RetainedFinished {
+                        parked,
+                        proof,
+                    })
+                };
+                self.publish_retained();
+                NativePostExitRouteCompletionFinishResult::Retained
+            }
+        }
+    }
+
+}
+
+/// One permanent node in the metadata-backed detached-route registry.
+///
+/// The metadata capability intentionally remains in the same process-lifetime
+/// allocation as this node. It is never released or moved: a concurrent raw
+/// C free may have acquired the node from the registry head, so reclaiming
+/// node storage would require an unrelated hazard-pointer or epoch protocol.
+/// Empty entries are reused only after their matching B lifecycle released
+/// every terminal completion. This bounds retained metadata by the high-water
+/// of simultaneously detached routes and completed B-owned routes rather than
+/// by the number of sequential worker exits.
+#[cfg(test)]
+struct NativePostExitRouteRegistryNode {
+    next: AtomicPtr<NativePostExitRouteRegistryNode>,
+    storage: NativePostExitRouteStorage,
+    /// Keeps the exact metadata backing capability live for this stable node.
+    /// It is deliberately not exposed or freed independently of the node.
+    _backing: MetaAllocation<'static>,
+}
+
+// Metadata's ordinary source allocation is naturally aligned to the native
+// malloc boundary. Keep this node's typed image within that established
+// guarantee before projecting its bytes as a registry entry.
+#[cfg(test)]
+const _: [(); 1] = [();
+    (core::mem::align_of::<NativePostExitRouteRegistryNode>() <= NATIVE_C_MALLOC_ALIGNMENT)
+        as usize
+];
+
+// SAFETY: `next` is initialized before this node is Release-published and is
+// never changed. The only mutable route state is inside `storage`, whose own
+// `ACTIVE -> BUSY` protocol already provides the required exclusion. The
+// metadata capability is process-lived and never accessed through this shared
+// reference after initialization.
+#[cfg(test)]
+unsafe impl Sync for NativePostExitRouteRegistryNode {}
+
+/// The private metadata-backed native post-exit router.
+///
+/// Nodes have a stable process-lifetime address and the list only grows under
+/// the short registry mutation word. That word also closes future
+/// installation once any entry becomes terminally retained. Scanning never
+/// returns a route, raw client, or PageMap fact to the caller. A foreign
+/// address restores the claimed entry before the next node is considered, so
+/// exact C frees remain serialized per route and source PageMap access remains
+/// route-local.
+#[cfg(test)]
+struct NativePostExitRouteRegistry {
+    mutation: AtomicU8,
+    head: AtomicPtr<NativePostExitRouteRegistryNode>,
+}
+
+#[cfg(test)]
+impl NativePostExitRouteRegistry {
+    const fn new() -> Self {
+        Self {
+            mutation: AtomicU8::new(NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE),
+            head: AtomicPtr::new(core::ptr::null_mut()),
+        }
+    }
+
+    /// Tries to close the registry for one already-retained route. A concurrent
+    /// installer owns the short mutation word until it has either published
+    /// its whole route or retained that exact source owner, so closing must
+    /// wait instead of overwriting its state back to idle.
+    #[inline]
+    fn try_close_for_retained_entry(&self) -> bool {
+        loop {
+            match self.mutation.load(Ordering::Acquire) {
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE => {
+                    if self
+                        .mutation
+                        .compare_exchange(
+                            NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE,
+                            NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING => return false,
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED => return true,
+                _ => {
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return true;
+                }
+            }
+        }
+    }
+
+    /// Closes future detached-route installation after a route becomes
+    /// terminally retained. It exposes no entry, client, PageMap, or allocator
+    /// capability; it is only the private registry-wide closure fact.
+    fn close_for_retained_entry(&self) {
+        while !self.try_close_for_retained_entry() {
+            core::hint::spin_loop();
+        }
+    }
+
+    #[inline]
+    fn is_closed_for_retained_entry(&self) -> bool {
+        match self.mutation.load(Ordering::Acquire) {
+            NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE
+            | NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING => false,
+            NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED => true,
+            _ => {
+                RUNTIME_PROCESS.retain_page_owner();
+                true
+            }
+        }
+    }
+
+    /// Offers one raw C address to the private detached routes. A retained
+    /// entry has already made the shared runtime terminal, so no later node
+    /// may safely answer a free after that point.
+    fn free_exact(&self, block: core::ptr::NonNull<u8>) -> NativePostExitRouteFreeResult {
+        if self.is_closed_for_retained_entry() {
+            return NativePostExitRouteFreeResult::Retained;
+        }
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: nodes stay linked and stable for the process lifetime.
+            let node = unsafe { &*current };
+            match node.storage.free_exact(block) {
+                NativePostExitRouteFreeResult::NotOwned => {
+                    current = node.next.load(Ordering::Acquire);
+                }
+                result => return result,
+            }
+        }
+        NativePostExitRouteFreeResult::NotOwned
+    }
+
+    /// Looks up one source-recorded extent without exposing which private
+    /// route owns it. A failed node lookup restores that entry before the next
+    /// stable node is considered.
+    fn usable_size_exact(&self, block: core::ptr::NonNull<u8>) -> Option<usize> {
+        if self.is_closed_for_retained_entry() {
+            return None;
+        }
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: nodes stay linked and stable for the process lifetime.
+            let node = unsafe { &*current };
+            match node.storage.usable_size_exact(block) {
+                NativePostExitRouteUsableSizeResult::Owned(usable_size) => return Some(usable_size),
+                NativePostExitRouteUsableSizeResult::Retained => return None,
+                NativePostExitRouteUsableSizeResult::NotOwned => {
+                    current = node.next.load(Ordering::Acquire);
+                }
+            }
+        }
+        None
+    }
+
+    /// Finishes exactly the completed routes assigned to one B attachment
+    /// after that attachment has already crossed its ordinary source teardown.
+    /// The caller supplies only an opaque compiler-TLS identity and a scalar
+    /// count; this scan exposes no stable node, route, C client, page, or
+    /// admission proof. Every matched entry performs its own
+    /// `COMPLETED -> BUSY` claim before it can remove a parked token.
+    fn finish_completions_for_owner(
+        &self,
+        owner: NativePostExitRouteCompletionOwner,
+        expected_count: usize,
+    ) -> NativePostExitRouteCompletionsFinishResult {
+        if expected_count == 0 {
+            return NativePostExitRouteCompletionsFinishResult::Finished;
+        }
+
+        let mut completed_count = 0usize;
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: nodes are fully initialized before their Release
+            // publication and never leave the append-only registry list.
+            let node = unsafe { &*current };
+            match node.storage.finish_completion_for_owner(owner) {
+                NativePostExitRouteCompletionFinishResult::NotOwned => {}
+                NativePostExitRouteCompletionFinishResult::Finished => {
+                    let Some(next_count) = completed_count.checked_add(1) else {
+                        RUNTIME_PROCESS.retain_page_owner();
+                        self.close_for_retained_entry();
+                        return NativePostExitRouteCompletionsFinishResult::Retained;
+                    };
+                    completed_count = next_count;
+                    if completed_count > expected_count {
+                        // The scalar TLS count and stable entry ownership
+                        // disagree. Do not release another admission based on
+                        // a guessed attachment boundary.
+                        RUNTIME_PROCESS.retain_page_owner();
+                        self.close_for_retained_entry();
+                        return NativePostExitRouteCompletionsFinishResult::Retained;
+                    }
+                }
+                NativePostExitRouteCompletionFinishResult::Retained => {
+                    return NativePostExitRouteCompletionsFinishResult::Retained;
+                }
+            }
+            current = node.next.load(Ordering::Acquire);
+        }
+
+        if completed_count == expected_count {
+            NativePostExitRouteCompletionsFinishResult::Finished
+        } else {
+            // An attachment count that cannot find every exact completed
+            // entry is never retryable: a missing parked token/proof must
+            // keep the process terminal rather than look quiescent.
+            RUNTIME_PROCESS.retain_page_owner();
+            self.close_for_retained_entry();
+            NativePostExitRouteCompletionsFinishResult::Retained
+        }
+    }
+
+}
+
+// SAFETY: the registry publishes only fully initialized immutable node links.
+// Each node's mutable route state is independently protected by its storage
+// protocol, and the mutation word serializes installation with terminal
+// closure.
+#[cfg(test)]
+unsafe impl Sync for NativePostExitRouteRegistry {}
+
+#[cfg(test)]
+static NATIVE_POST_EXIT_ROUTE: NativePostExitRouteRegistry = NativePostExitRouteRegistry::new();
+
+/// Returns scalar-only lifecycle accounting for the process-global runtime.
+///
+/// A `None` result means the source process image is not active and quiescent
+/// enough to produce an auditable snapshot. It intentionally does not turn an
+/// audit request into a scheduler claim or a PageMap operation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAudit> {
+    let process_active = RUNTIME_PROCESS.is_active();
+    if !process_active {
+        return None;
+    }
+    // SAFETY: PROCESS_ACTIVE follows the one process-lifetime owner and main
+    // Heap publication. This diagnostic takes only their immutable witnesses.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let ready = owner.ready().ok()?;
+    let process_page_map = ready.page_map().ok()?;
+    let page_map = process_page_map.page_map().ok()?;
+    let arena = ProcessSharedArenaStorage::global().ready_lease().ok()?;
+    let subprocess = ready.subprocess().ok()?;
+    // SAFETY: see the owner access above. The copied lease permits one short
+    // serialized read-only Heap projection and carries no allocator authority.
+    let main_heap = unsafe { RUNTIME_PROCESS.active_main_heap() }?;
+    let (main_heap_abandoned_page_count, main_heap_os_abandoned_pages_empty) =
+        native_runtime_main_heap_lifecycle_audit(main_heap)?;
+    let metadata = MetaAllocator::global().test_allocation_audit();
+
+    Some(NativeRuntimeLifecycleAudit {
+        process_active: usize::from(process_active),
+        // The audit's scalar "ready" means the initial source owner can
+        // accept its ordinary current-thread operation. Once W01 has moved
+        // the static staging image into compiler TLS, that direct owner has
+        // the same externally observable readiness without being a legacy
+        // scheduler `READY` slot.
+        page_owner_ready: usize::from(matches!(
+            RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+            PAGE_OWNER_READY | PAGE_OWNER_INITIAL_PERSISTENT
+        )),
+        page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,
+        page_map_published_submap_count: page_map.test_published_submap_count().ok()?,
+        page_map_lazy_submap_allocation_count: page_map.test_lazy_submap_allocation_count(),
+        arena_registry_count: arena.test_registry_count().ok()?,
+        live_thread_count: subprocess.live_thread_count(),
+        metadata_live_capability_count: metadata.live_capability_count,
+        metadata_high_water_capability_count: metadata.high_water_capability_count,
+        shared_later_theap_count: main_heap.test_shared_later_theap_count(),
+        main_heap_abandoned_page_count,
+        main_heap_os_abandoned_pages_empty: usize::from(main_heap_os_abandoned_pages_empty),
+        native_owner_local_operation_count: NATIVE_OWNER_LOCAL_OPERATION_COUNT
+            .load(Ordering::Acquire),
+        native_parked_compatibility_operation_count:
+            NATIVE_PARKED_COMPATIBILITY_OPERATION_COUNT.load(Ordering::Acquire),
+        native_scheduler_transition_count: NATIVE_SCHEDULER_TRANSITION_COUNT
+            .load(Ordering::Acquire),
+    })
+}
+
+/// Returns scalar-only accounting for the private fork-admission gate.
+///
+/// This direct-test hook intentionally reads one atomic word and cannot turn
+/// that read into an admission claim, a fork preparation, or any allocator
+/// operation. It lets a terminal post-exit regression prove that A released
+/// its admission at source exit and that B later releases only B's admission.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionAudit {
+    let state = RUNTIME_FORK_ADMISSION.state.load(Ordering::Acquire);
+    NativeRuntimeForkAdmissionAudit {
+        active_later_thread_count: state & FORK_GATE_COUNT_MASK,
+    }
+}
+
+/// Arms one direct-test rendezvous at the existing `MI_ABANDON` owner-side
+/// remote-head detach boundary.
+///
+/// The test must already have arranged a live persistent owner and must keep
+/// the returned guard until it releases or cancels the collector. A second
+/// concurrent arm returns `None`; the hook never creates a scheduler, route,
+/// page owner, or fallback allocator operation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_test_arm_owner_exit_collection_rendezvous(
+) -> Option<NativeRuntimeOwnerExitCollectionRendezvous> {
+    crate::remote_free::arm_owner_exit_collection_rendezvous()
+        .map(|inner| NativeRuntimeOwnerExitCollectionRendezvous { inner })
+}
+
+/// One direct-test-only guard that makes the next allocator `munmap` fail.
+///
+/// This deliberately exposes neither a generic fault plan nor any allocator
+/// route, page, client, scheduler, or PageMap capability. The sole native
+/// post-exit regression uses it after A's source owner exits and immediately
+/// before B offers the exact OS-aligned client to pointer-first PageMap/W03
+/// release. Dropping the guard clears the one test process's injection.
+#[cfg(feature = "native-runtime-test-fault")]
+#[doc(hidden)]
+pub struct NativeRuntimeTestUnmapFailure {
+    guard: crate::os::fault::Guard,
+}
+
+#[cfg(feature = "native-runtime-test-fault")]
+impl NativeRuntimeTestUnmapFailure {
+    /// Returns the number of selected `munmap` attempts observed while this
+    /// serial direct-test guard was installed.
+    #[doc(hidden)]
+    #[inline]
+    pub fn observed(&self) -> usize {
+        self.guard.observed()
+    }
+}
+
+/// Installs the one direct-test `munmap` failure used at the native post-exit
+/// terminal-release boundary.
+///
+/// The default-off feature keeps this hook out of normal allocator and libc
+/// builds. It never exposes the fault subsystem's general plan or any source
+/// release capability to a caller.
+#[cfg(feature = "native-runtime-test-fault")]
+#[doc(hidden)]
+pub fn native_runtime_test_fail_next_unmap() -> NativeRuntimeTestUnmapFailure {
+    NativeRuntimeTestUnmapFailure {
+        guard: crate::os::fault::install(crate::os::fault::Plan::at(
+            crate::os::fault::Point::Unmap,
+            1,
+            crabc_core::Errno::NOMEM,
+        )),
+    }
+}
+
+/// Reads the scalar static-Heap state while holding exactly the established
+/// short projection guard. The explicit unlock is part of this diagnostic's
+/// contract: an audit failure must not leave an evidence-only lock held.
+#[cfg(feature = "native-runtime-test-audit")]
+fn native_runtime_main_heap_lifecycle_audit(
+    main_heap: MainStaticHeapLease<'static>,
+) -> Option<(usize, bool)> {
+    let mut heap = main_heap.lock_heap().ok()?;
+    let result = (|| {
+        let heap = heap.heap_mut();
+        let abandoned_page_count = (0..crate::config::BIN_COUNT)
+            .try_fold(0usize, |total, bin| total.checked_add(heap.abandoned_count(bin)?))?;
+        let os_abandoned_pages_empty = heap.os_abandoned_pages_are_empty().ok()?;
+        Some((abandoned_page_count, os_abandoned_pages_empty))
+    })();
+    match (result, heap.unlock()) {
+        (Some(snapshot), Ok(())) => Some(snapshot),
+        (Some(_) | None, Err(_)) | (None, Ok(())) => None,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThreadLifecycleState {
     Fresh,
     Attached,
     Finished,
+    Retained,
+}
+
+/// The source-shaped owner retained for ordinary later-thread native calls.
+///
+/// The attachment and continuously stored page engine are co-located values,
+/// not a self-reference. Each C operation temporarily splits one mutable
+/// borrow into the lower engine's short attachment/session projection. Source
+/// Page and PageMap state is the allocation record; this owner deliberately
+/// contains no client ledger, scheduler token, or process registry entry.
+#[must_use = "a persistent native thread owner must finish or remain retained in compiler TLS"]
+struct NativePersistentThreadOwner {
+    attachment: MainHeapThreadAttachment<'static>,
+    state: NativePersistentThreadOwnerExitState,
+}
+
+/// The only persistent-owner states accepted at its one-way exit boundary.
+///
+/// The split prevents a terminal post-drain engine from being mistaken for a
+/// retryable pre-drain engine when compiler TLS retains the outer owner after
+/// an error. No variant carries a scheduler token, registry entry, route, or
+/// raw pointer capability.
+enum NativePersistentThreadOwnerExitState {
+    PreDrain(MainHeapThreadOwnerLocalPageEngine<'static>),
+    RetainedTerminalEngine(MainHeapThreadOwnerLocalPageEngine<'static>),
+    AttachmentOnly,
+}
+
+impl NativePersistentThreadOwner {
+    /// Binds one short attachment view to the continuously stored engine.
+    /// The scalar audit advances only after both the compiler-TLS projection
+    /// and this source-engine projection succeeded.
+    fn with_local_allocator<R>(
+        &mut self,
+        operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
+    ) -> Result<R, ()> {
+        let NativePersistentThreadOwnerExitState::PreDrain(engine) = &mut self.state else {
+            return Err(());
+        };
+        let result = engine
+            .with_local_allocator(&mut self.attachment, operation)
+            .map_err(|_| ())?;
+        #[cfg(feature = "native-runtime-test-audit")]
+        NATIVE_OWNER_LOCAL_OPERATION_COUNT.fetch_add(1, Ordering::AcqRel);
+        Ok(result)
+    }
+
+    /// Completes source collect-abandon then the final attachment boundary.
+    ///
+    /// Only `PreDrain` may enter the source queue traversal. A terminal
+    /// retained engine is deliberately returned untouched, while an
+    /// attachment-only continuation retries no allocator work.
+    fn teardown(&mut self) -> Result<(), ()> {
+        let state = core::mem::replace(
+            &mut self.state,
+            NativePersistentThreadOwnerExitState::AttachmentOnly,
+        );
+        match state {
+            NativePersistentThreadOwnerExitState::PreDrain(engine) => {
+                match engine.finish_after_collect_abandon(&mut self.attachment) {
+                    Ok(()) => return Ok(()),
+                    Err(
+                        crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::PreDrain(
+                            engine,
+                        ),
+                    ) => {
+                        self.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
+                        return Err(());
+                    }
+                    Err(
+                        crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(
+                            engine,
+                        ),
+                    ) => {
+                        self.state =
+                            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                        return Err(());
+                    }
+                    Err(
+                        crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly,
+                    ) => {}
+                }
+            }
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine) => {
+                self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                return Err(());
+            }
+            NativePersistentThreadOwnerExitState::AttachmentOnly => {}
+        }
+
+        self.attachment
+            .finish_after_user_destructors()
+            .or_else(|error| match error {
+                // This exact refusal proves the page engine already completed
+                // its source drain. No engine can be reconstructed; only the
+                // remaining root/list/TLD boundary may retry.
+                MainHeapThreadAttachmentError::PageDrainState => {
+                    // SAFETY: `AttachmentOnly` is minted only after the drain
+                    // proved queues/direct cache/page count empty and
+                    // released or abandoned every former page.
+                    unsafe { self.attachment.finish_after_detached_process_page_route() }
+                }
+                error => Err(error),
+            })
+            .map_err(|_| ())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativePersistentThreadOwnerAccessError {
+    NotInstalled,
+    Unavailable,
+    Retained,
+}
+
+/// The initial thread's continuously owned source page engine.
+///
+/// Pinned initialization gives ticket zero static storage, but that storage
+/// does not require an ordinary operation to pass through the historical
+/// process scheduler.  At one explicit promotion boundary the complete
+/// `MainStaticRuntimeFirstArenaPageAllocator` moves from its process-static
+/// staging slot into this compiler-TLS cell.  The cell then owns the exact
+/// session, active engine, and any long PageMap lifecycle for the initial
+/// thread's lifetime.  It contains no route, registry, client ledger, or
+/// scheduler token.
+#[must_use = "the initial persistent owner remains in compiler TLS for the process lifetime"]
+struct NativeInitialPersistentThreadOwner {
+    allocator: MainStaticRuntimeFirstArenaPageAllocator,
+}
+
+impl NativeInitialPersistentThreadOwner {
+    #[inline]
+    fn allocate(&mut self, request: usize, zero: bool) -> Option<core::ptr::NonNull<u8>> {
+        self.allocator
+            .allocate_current_initial_thread_local(request, zero)
+    }
+
+    #[inline]
+    fn allocate_aligned(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> Option<core::ptr::NonNull<u8>> {
+        self.allocator
+            .allocate_aligned_current_initial_thread_local(request, alignment, zero)
+    }
+
+    /// Reallocates one exact current initial-thread client without entering a
+    /// parked compatibility engine.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain a live local allocation of this exact persistent
+    /// owner and must not have been remotely published or freed.
+    #[inline]
+    unsafe fn reallocate(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+        new_size: usize,
+    ) -> Option<core::ptr::NonNull<u8>> {
+        // SAFETY: forwarded unchanged from this owner-local boundary.
+        unsafe {
+            self.allocator
+                .reallocate_current_initial_thread_local(Some(block), new_size)
+        }
+    }
+
+    /// Reallocates one exact current initial-thread C-ABI client. The lower
+    /// engine keeps the ordinary source realloc decision while ensuring any
+    /// replacement observes the public Linux/AArch64 natural alignment.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain a live local allocation of this exact persistent
+    /// owner and must not have been remotely published or freed.
+    #[inline]
+    unsafe fn reallocate_c_abi(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+        new_size: usize,
+    ) -> Option<core::ptr::NonNull<u8>> {
+        // SAFETY: forwarded unchanged from this owner-local boundary.
+        unsafe {
+            self.allocator
+                .reallocate_current_initial_thread_local_c_abi(block, new_size)
+        }
+    }
+
+    /// Frees one exact current initial-thread client without a scheduler
+    /// claim, park, or resume.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain a live local allocation of this exact persistent
+    /// owner and must not have been remotely published or freed.
+    #[inline]
+    unsafe fn free(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Result<(), crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocatorFreeError>
+    {
+        // SAFETY: forwarded unchanged from this owner-local boundary.
+        unsafe {
+            self.allocator
+                .free_current_initial_thread_local(block)
+        }
+    }
+
+    /// Queries a live initial-thread client directly from its current engine.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain current in this exact local owner.
+    #[inline]
+    unsafe fn usable_size(&mut self, block: core::ptr::NonNull<u8>) -> Option<usize> {
+        // SAFETY: forwarded unchanged from this owner-local boundary.
+        unsafe {
+            self.allocator
+                .usable_size_current_initial_thread_local(block)
+        }
+    }
+
+    /// Establishes or confirms the dormant first-arena state before a later
+    /// worker starts. A live initial engine is deliberately rejected instead
+    /// of being parked or lent through the former static owner.
+    #[inline]
+    fn prepare_dormant_page_pair_for_later_thread(&mut self) -> bool {
+        self.allocator
+            .prepare_dormant_page_pair_current_initial_thread_local()
+    }
+
+    #[inline]
+    fn is_retained(&self) -> bool {
+        self.allocator.is_retained()
+    }
+
+    /// Prepares this direct initial source owner for the prepared raw-fork
+    /// child and reports whether its copied image is safe.
+    ///
+    /// The caller must have already held the fork-admission gate with zero
+    /// later admissions. That gate excludes the only other runtime owners;
+    /// the current initial thread then uses its pinned TLS cell rather than
+    /// the vacated process-static staging slot to collect/inspect the source
+    /// state.
+    #[inline]
+    fn prepare_quiescent_for_held_fork_gate(&mut self) -> bool {
+        self.allocator.prepare_quiescent_for_held_fork_gate()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeInitialPersistentThreadOwnerAccessError {
+    NotInstalled,
+    Unavailable,
     Retained,
 }
 
@@ -642,17 +5285,253 @@ struct ThreadLifecycleSlot {
     /// complete post-destructor finish. Retained states intentionally keep
     /// their claim in the parent, making later fork preservation reject
     /// rather than treating ambiguous source ownership as quiescent.
-    admission_held: bool,
+    admission: Option<LaterThreadAdmissionClaim>,
+    #[cfg(test)]
+    /// The opaque per-attachment generation matched by completed registry
+    /// entries. It is never exposed beyond this module and makes an old
+    /// completion unable to match a later attachment that reuses this TLS
+    /// address.
+    post_exit_route_completion_generation: usize,
+    #[cfg(test)]
+    /// Counts terminal native post-exit completions assigned to this B
+    /// attachment. The entries retain their typed parked tokens and proofs in
+    /// the stable private registry until this attachment's ordinary finish;
+    /// TLS carries only scalar lifecycle accounting, never a route or client.
+    pending_post_exit_route_completion_count: usize,
     attachment: Option<MainHeapThreadAttachment<'static>>,
+    /// Ordinary C-shaped later-thread operations promote `attachment` into
+    /// this address-stable cell once, then use only in-place scoped borrows.
+    /// Legacy typed owner-exit fixtures continue to use `attachment` plus
+    /// `page_owner` until their separate migration lands.
+    native_persistent_owner: PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>,
+    /// Distinguishes the cell's installed/retained payload from the other
+    /// lifecycle shapes whose attachment and page-owner fields are empty.
+    /// This is current-thread scalar state, not allocation or route metadata.
+    native_persistent_owner_installed: bool,
+    /// The initial thread has a distinct static-storage source owner.  It
+    /// moves here once and remains in this same compiler-TLS cell for the
+    /// process lifetime, so ordinary initial local operations do not claim
+    /// the legacy ticket-zero scheduler.
+    initial_native_persistent_owner:
+        PersistentCompilerTlsOwnerCell<NativeInitialPersistentThreadOwner>,
+    /// Distinguishes an installed initial persistent source owner from the
+    /// untouched process-static staging slot.  This is current-thread state,
+    /// never a pointer lookup or process routing record.
+    initial_native_persistent_owner_installed: bool,
+    /// Historical direct-test-only page-owner state. Production native owners
+    /// remain continuously stored and use pointer/PageMap operations instead.
+    #[cfg(test)]
+    page_owner: Option<ThreadLifecyclePageOwner>,
+    /// Historical direct-test-only session generation.
+    #[cfg(test)]
+    next_page_owner_session_generation: usize,
 }
 
 impl ThreadLifecycleSlot {
     const fn new() -> Self {
         Self {
             state: ThreadLifecycleState::Fresh,
-            admission_held: false,
+            admission: None,
+            #[cfg(test)]
+            post_exit_route_completion_generation: 0,
+            #[cfg(test)]
+            pending_post_exit_route_completion_count: 0,
             attachment: None,
+            native_persistent_owner: PersistentCompilerTlsOwnerCell::new(),
+            native_persistent_owner_installed: false,
+            initial_native_persistent_owner: PersistentCompilerTlsOwnerCell::new(),
+            initial_native_persistent_owner_installed: false,
+            #[cfg(test)]
+            page_owner: None,
+            #[cfg(test)]
+            next_page_owner_session_generation: 0,
         }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn next_page_owner_session_generation(&mut self) -> usize {
+        self.next_page_owner_session_generation = self
+            .next_page_owner_session_generation
+            .wrapping_add(1);
+        if self.next_page_owner_session_generation == 0 {
+            // Zero remains an impossible session generation so a stale
+            // private handle cannot name a newly installed TLS session after
+            // counter wraparound.
+            self.next_page_owner_session_generation = 1;
+        }
+        self.next_page_owner_session_generation
+    }
+
+    /// Starts the one process-unique opaque completion identity for this
+    /// attachment. No completion can be assigned before this happens.
+    #[inline]
+    #[cfg(test)]
+    fn begin_post_exit_route_completion_lifecycle(&mut self, generation: usize) {
+        debug_assert_ne!(generation, 0);
+        self.post_exit_route_completion_generation = generation;
+        self.pending_post_exit_route_completion_count = 0;
+    }
+
+    /// Records one completed A route against this still-attached B lifecycle.
+    /// The caller owns this compiler-TLS slot and publishes the matching
+    /// registry entry before exposing success to the C free boundary.
+    #[inline]
+    #[cfg(test)]
+    fn record_post_exit_route_completion(
+        &mut self,
+        slot: core::ptr::NonNull<ThreadLifecycleSlot>,
+    ) -> Option<NativePostExitRouteCompletionOwner> {
+        if self.state != ThreadLifecycleState::Attached
+            || self.post_exit_route_completion_generation == 0
+        {
+            return None;
+        }
+        self.pending_post_exit_route_completion_count = self
+            .pending_post_exit_route_completion_count
+            .checked_add(1)?;
+        Some(NativePostExitRouteCompletionOwner {
+            slot,
+            generation: self.post_exit_route_completion_generation,
+        })
+    }
+
+    /// Returns the current attachment's exact completion identity and scalar
+    /// count after its ordinary source teardown. The registry still owns every
+    /// linear parked token/proof; the count merely detects a missing or stale
+    /// entry before any later attachment could be admitted as quiescent.
+    #[inline]
+    #[cfg(test)]
+    fn post_exit_route_completion_owner_after_finish(
+        &self,
+        slot: core::ptr::NonNull<ThreadLifecycleSlot>,
+    ) -> Option<(NativePostExitRouteCompletionOwner, usize)> {
+        if self.state != ThreadLifecycleState::Finished
+            || self.post_exit_route_completion_generation == 0
+        {
+            return None;
+        }
+        Some((
+            NativePostExitRouteCompletionOwner {
+                slot,
+                generation: self.post_exit_route_completion_generation,
+            },
+            self.pending_post_exit_route_completion_count,
+        ))
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn has_pending_post_exit_route_completions(&self) -> bool {
+        self.pending_post_exit_route_completion_count != 0
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn finish_post_exit_route_completions(
+        &mut self,
+        owner: NativePostExitRouteCompletionOwner,
+        expected_count: usize,
+    ) -> bool {
+        if self.state != ThreadLifecycleState::Finished
+            || self.post_exit_route_completion_generation != owner.generation
+            || self.pending_post_exit_route_completion_count != expected_count
+        {
+            return false;
+        }
+        self.pending_post_exit_route_completion_count = 0;
+        true
+    }
+
+    /// Keeps one post-exit admission claim terminally visible in this thread's
+    /// TLS state. An existing claim is an impossible double-owner image; keep
+    /// both claims nonreleasable rather than dropping either count silently.
+    #[inline]
+    fn retain_terminal_admission(&mut self, admission: LaterThreadAdmissionClaim) {
+        if let Some(previous) = self.admission.replace(admission) {
+            core::mem::forget(previous);
+        }
+    }
+}
+
+/// Historical direct-test-only suspended page-owner state.
+#[must_use = "a page-bearing runtime slot must resume into owner exit or remain terminally retained"]
+#[cfg(test)]
+enum ThreadLifecyclePageOwner {
+    /// The current worker may resume this exact parked engine for another
+    /// bounded ordinary operation. It has not yet selected a post-exit route;
+    /// on normal finish it may instead enter the typed all-free drain only
+    /// when its private ledger has no local live client.
+    Session(CurrentThreadPageOwnerSession),
+    /// The active session has consumed every local client into a typed route.
+    /// This state crosses `finish_current_thread_after_user_destructors` only
+    /// through its typed post-exit route.
+    #[cfg(test)]
+    PreparedExit(ThreadLifecyclePreparedPageOwner),
+}
+
+/// A fully prepared page-bearing owner whose old allocator borrow is parked
+/// in compiler TLS until the source-ordered destructor boundary resumes it.
+#[cfg(test)]
+struct ThreadLifecyclePreparedPageOwner {
+    parked: RuntimeParkedPersistentPageEngine,
+    exit: DetachedOwnerExit,
+}
+
+/// The typed post-exit half of a generic page-bearing TLS owner.
+///
+/// A detached owner retains one coarse client ledger plus only the source
+/// disposition that changes lower control flow. It is deliberately not a
+/// sum type over test workloads, page kinds, or exact block counts.
+#[must_use = "a page-bearing owner exit must reach its typed post-exit route or remain terminally retained"]
+#[cfg(test)]
+struct DetachedOwnerExit {
+    clients: DetachedOwnerExitClientLedger,
+    disposition: DetachedOwnerExitDisposition,
+}
+
+/// The only post-exit choices that alter the source control flow after A has
+/// suspended. `SequentialFree` is the general aggregate route. The other
+/// branch names the one source-proved immediate mapped regular handoff; its
+/// direct-small entrance remains distinct solely because upstream validates a
+/// complete rounded direct-cache image before it can produce that same route.
+#[cfg(test)]
+enum DetachedOwnerExitDisposition {
+    SequentialFree {
+        free_after_exit: TicketZeroOwnerExitFreeConsumer,
+        post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationGroup>,
+    },
+    SoleImmediateMappedRegularReclaim {
+        source: DetachedOwnerExitReclaimSource,
+        request: usize,
+        reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
+    },
+}
+
+#[cfg(test)]
+enum DetachedOwnerExitReclaimSource {
+    AggregateTraversal,
+    DirectSmall {
+        first: DetachedOwnerExitClientKey,
+    },
+}
+
+#[cfg(test)]
+impl DetachedOwnerExit {
+    fn free_locals(
+        mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    ) -> Result<(), ()> {
+        if let DetachedOwnerExitDisposition::SequentialFree {
+            post_exit_remote_publication_group,
+            ..
+        } = &mut self.disposition
+        {
+            if let Some(group) = post_exit_remote_publication_group {
+                group.free_locals(allocator)?;
+            }
+        }
+        self.clients.free_locals(allocator)
     }
 }
 
@@ -661,10 +5540,491 @@ static THREAD_LIFECYCLE: UnsafeCell<ThreadLifecycleSlot> =
     UnsafeCell::new(ThreadLifecycleSlot::new());
 
 #[inline]
+fn current_thread_slot_pointer() -> core::ptr::NonNull<ThreadLifecycleSlot> {
+    // SAFETY: compiler TLS gives this running thread the only normal Rust
+    // access to its slot. Native foreign-pointer operations resolve their
+    // target from persistent PageMap state and never transfer this TLS
+    // identity between threads.
+    unsafe { core::ptr::NonNull::new_unchecked(THREAD_LIFECYCLE.get()) }
+}
+
+#[inline]
 fn current_thread_slot() -> &'static mut ThreadLifecycleSlot {
     // SAFETY: this is compiler TLS. Only the running thread can reach its
     // slot, and libc invokes attach/finish serially on that thread.
-    unsafe { &mut *THREAD_LIFECYCLE.get() }
+    unsafe { &mut *current_thread_slot_pointer().as_ptr() }
+}
+
+/// Pins the initial thread's persistent static-owner cell at its compiler-TLS
+/// address.
+///
+/// The initial thread shares the same statically allocated TLS record as the
+/// later-thread lifecycle, but it deliberately uses a separate owner type:
+/// it has source-required static ticket-zero storage rather than an attached
+/// pthread `MainHeapThreadAttachment`.
+#[inline]
+fn current_thread_native_initial_persistent_owner_cell(
+) -> Pin<&'static PersistentCompilerTlsOwnerCell<NativeInitialPersistentThreadOwner>> {
+    let slot = current_thread_slot_pointer();
+    // SAFETY: compiler TLS gives the record its final address before the
+    // process enters the allocator. The cell never moves after installation.
+    unsafe { Pin::new_unchecked(&(*slot.as_ptr()).initial_native_persistent_owner) }
+}
+
+#[inline]
+fn current_thread_has_native_initial_persistent_owner() -> bool {
+    RUNTIME_PROCESS.is_on_initial_thread()
+        && current_thread_slot().initial_native_persistent_owner_installed
+}
+
+/// Returns whether this active process already installed its initial source
+/// owner in this compiler-TLS slot.
+///
+/// This is intentionally a cell-presence check, not an initial-thread
+/// classification. Once cold promotion has published the static source owner,
+/// the cell is the same selected source boundary that pinned
+/// `mi_heap_malloc` receives through its heap/theap argument. The active
+/// check preserves the terminal behavior that previously fell through to the
+/// unavailable later-owner path after process retention.
+#[inline]
+fn current_thread_has_active_native_initial_persistent_owner() -> bool {
+    let slot = current_thread_slot();
+    slot.initial_native_persistent_owner_installed && RUNTIME_PROCESS.is_active()
+}
+
+/// Prepares the promoted initial owner's source state during the held,
+/// zero-admission fork boundary.
+///
+/// `RuntimeForkAdmission::before_fork_with` calls this only after it has
+/// installed `FORK_GATE_HELD` while every later admission count is zero. The
+/// direct owner was moved out of `RuntimeProcessStorage::page_owner` during
+/// promotion, so this deliberately projects only the original thread's
+/// pinned compiler-TLS cell and never reads that vacated static slot. A cell
+/// state mismatch is conservative: it cannot preserve a copied child. The
+/// only mutation is the existing all-free source finish, which either returns
+/// the exact engine to its dormant state or leaves/retains it non-preserving.
+#[inline]
+fn current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate() -> bool {
+    let gate = RUNTIME_FORK_ADMISSION.state.load(Ordering::Acquire);
+    if gate & (FORK_GATE_HELD | FORK_GATE_COUNT_MASK) != FORK_GATE_HELD {
+        return false;
+    }
+    if !current_thread_has_native_initial_persistent_owner() {
+        return false;
+    }
+    debug_assert_eq!(
+        gate & (FORK_GATE_HELD | FORK_GATE_COUNT_MASK),
+        FORK_GATE_HELD,
+        "the pinned initial-owner fork preparation runs only under the held zero-admission gate"
+    );
+    current_thread_native_initial_persistent_owner_cell()
+        .with_owner(|owner| owner.get_mut().prepare_quiescent_for_held_fork_gate())
+        .unwrap_or(false)
+}
+
+/// Uses the direct initial source owner after its one-time promotion.
+///
+/// This performs no `page_owner_state` read, scheduler claim, parked-engine
+/// resume, route/registry lookup, or PageMap lease acquisition. The compiler
+/// TLS cell itself is the reentrancy and exact-current-thread boundary.
+fn with_current_thread_native_initial_persistent_owner<R>(
+    operation: impl FnOnce(&mut NativeInitialPersistentThreadOwner) -> R,
+) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
+    if !RUNTIME_PROCESS.is_on_initial_thread() {
+        return Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable);
+    }
+    with_pointer_associated_initial_persistent_owner(operation)
+}
+
+/// Borrows the initial persistent owner after pointer dispatch has already
+/// proved that the running thread is both the process initial thread and the
+/// source page's current owner.
+///
+/// This is deliberately narrower than
+/// [`with_current_thread_native_initial_persistent_owner`]. A valid local
+/// `native_free` has already taken the source `xthread_id` snapshot and
+/// compared it to this thread before it reaches this helper. Repeating an
+/// ambient initial-thread classification here would turn pointer dispatch into
+/// a caller-first route and could make a valid foreign or abandoned source
+/// appear to belong to the initial TLS owner.
+fn with_pointer_associated_initial_persistent_owner<R>(
+    operation: impl FnOnce(&mut NativeInitialPersistentThreadOwner) -> R,
+) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
+    if !current_thread_slot().initial_native_persistent_owner_installed {
+        return Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled);
+    }
+    match current_thread_native_initial_persistent_owner_cell()
+        .with_owner(|owner| operation(owner.get_mut()))
+    {
+        Ok(result) => Ok(result),
+        Err(PersistentCompilerTlsOwnerError::NotAttached) => {
+            Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled)
+        }
+        Err(
+            PersistentCompilerTlsOwnerError::Initializing
+            | PersistentCompilerTlsOwnerError::Reentrant,
+        ) => {
+            // A recursive initial local operation cannot safely borrow the
+            // static engine a second time. It is a source-owner violation,
+            // never an availability signal for a valid local free.
+            RUNTIME_PROCESS.retain_page_owner();
+            Err(NativeInitialPersistentThreadOwnerAccessError::Retained)
+        }
+        Err(
+            PersistentCompilerTlsOwnerError::InvalidCurrentThread
+            | PersistentCompilerTlsOwnerError::WrongThread
+            | PersistentCompilerTlsOwnerError::AlreadyActive
+            | PersistentCompilerTlsOwnerError::Exiting
+            | PersistentCompilerTlsOwnerError::Retained
+            | PersistentCompilerTlsOwnerError::TornDown,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            Err(NativeInitialPersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
+/// Moves the one initialized static ticket-zero engine into the initial
+/// thread's persistent compiler-TLS owner cell.
+///
+/// The short admission gate is used only here, at startup/promotion, to
+/// exclude a later attachment while the process-static staging slot is moved.
+/// It is released before any ordinary allocation, free, realloc, or usable
+/// size query. Once publication succeeds, later-worker preparation refuses to
+/// borrow the vacated static slot rather than recreating a scheduler path.
+fn begin_current_thread_native_initial_persistent_owner(
+) -> Result<(), NativeInitialPersistentThreadOwnerAccessError> {
+    if !RUNTIME_PROCESS.is_on_initial_thread() {
+        return Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable);
+    }
+    if current_thread_slot().initial_native_persistent_owner_installed {
+        return Ok(());
+    }
+
+    let promoted = RUNTIME_FORK_ADMISSION.with_no_later_thread_admissions(|| {
+        if !RUNTIME_PROCESS.start_ticket_zero_page_owner() {
+            return Err(());
+        }
+        if RUNTIME_PROCESS
+            .page_owner_state
+            .compare_exchange(
+                PAGE_OWNER_READY,
+                PAGE_OWNER_BUSY,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return Err(());
+        }
+        #[cfg(feature = "native-runtime-test-audit")]
+        note_native_scheduler_transition();
+
+        // SAFETY: the temporary admission gate excludes every later
+        // attachment, and READY -> BUSY excludes every legacy ticket-zero
+        // operation. This is the sole move out of the initialized static
+        // staging slot. No ordinary local operation can observe it there
+        // again after the INITIAL_PERSISTENT publication below.
+        let allocator = unsafe { (&*RUNTIME_PROCESS.page_owner.get()).assume_init_read() };
+        let owner = NativeInitialPersistentThreadOwner { allocator };
+        match current_thread_native_initial_persistent_owner_cell().initialize(
+            owner,
+            |_owner| -> Result<(), Infallible> { Ok(()) },
+        ) {
+            Ok(()) => {
+                current_thread_slot().initial_native_persistent_owner_installed = true;
+                RUNTIME_PROCESS
+                    .page_owner_state
+                    .store(PAGE_OWNER_INITIAL_PERSISTENT, Ordering::Release);
+                Ok(())
+            }
+            Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
+                // The cell rejected the offered owner before consuming it;
+                // restore exactly the same static image before terminalizing
+                // the impossible transfer.
+                unsafe { (*RUNTIME_PROCESS.page_owner.get()).write(owner.allocator) };
+                RUNTIME_PROCESS
+                    .page_owner_state
+                    .store(PAGE_OWNER_READY, Ordering::Release);
+                Err(())
+            }
+            Err(PersistentCompilerTlsOwnerInitializeError::Owner(never)) => match never {},
+        }
+    });
+
+    match promoted {
+        Some(Ok(())) => Ok(()),
+        Some(Err(())) | None => {
+            // An existing or racing worker can no longer be allowed to borrow
+            // a static slot that this initial thread attempted to make
+            // persistent. There is no safe scheduler-based recovery here.
+            RUNTIME_PROCESS.retain_page_owner();
+            Err(NativeInitialPersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
+/// Runs one ordinary initial local operation, promoting only before the first
+/// such operation. Later iterations use the exact same pinned TLS owner.
+fn with_current_thread_native_initial_persistent_allocator<R>(
+    create_if_absent: bool,
+    mut operation: impl FnMut(&mut NativeInitialPersistentThreadOwner) -> R,
+) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
+    match with_current_thread_native_initial_persistent_owner(|owner| operation(owner)) {
+        Ok(result) => Ok(result),
+        Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled) if create_if_absent => {
+            begin_current_thread_native_initial_persistent_owner()?;
+            with_current_thread_native_initial_persistent_owner(|owner| operation(owner))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Promotes the initial static owner while native-shadow startup establishes
+/// the source-dormant pair that later workers may use.
+///
+/// This dormant-only preparation may create the persistent initial owner
+/// while the process is still cold. It is deliberately not a steady
+/// allocation or free path: promotion holds the short fork-admission gate
+/// exactly once, after which the owner remains pinned in initial-thread
+/// compiler TLS. A live or terminal initial engine is retained rather than
+/// being lent or reconstructed through the former static slot.
+fn prepare_current_thread_native_initial_persistent_owner_for_later_thread() -> bool {
+    let prepared = with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        (
+            owner.prepare_dormant_page_pair_for_later_thread(),
+            owner.is_retained(),
+        )
+    });
+    match prepared {
+        // The direct initial owner is source-dormant. A later worker may
+        // construct an independent local engine from the immutable process
+        // pair; it never borrows, parks, or revives the moved static staging
+        // owner.
+        Ok((true, false)) => true,
+        // This is specifically an attempted live/terminal transfer. Do not
+        // make all later workers unavailable merely because the initial owner
+        // was promoted; fail closed only when its actual source state cannot
+        // yield the dormant pair.
+        Ok((true, true)) | Ok((false, _)) | Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            false
+        }
+    }
+}
+
+/// Pins the inline native owner cell at its final compiler-TLS address.
+///
+/// The TLS slot is allocated by the runtime loader before this thread enters
+/// the allocator bridge and is never moved during the thread lifetime. Only
+/// the running thread can obtain this projection; the cell itself rejects
+/// nested mutable owner access before dereferencing its payload.
+#[inline]
+fn current_thread_native_persistent_owner_cell(
+) -> Pin<&'static PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>> {
+    let slot = current_thread_slot_pointer();
+    // SAFETY: the compiler-TLS slot has its final address for this native
+    // thread, and no API moves the embedded `!Unpin` cell after publication.
+    unsafe { Pin::new_unchecked(&(*slot.as_ptr()).native_persistent_owner) }
+}
+
+#[inline]
+fn retain_current_thread_native_persistent_owner_for_teardown() {
+    current_thread_slot().state = ThreadLifecycleState::Retained;
+}
+
+#[inline]
+fn fail_stop_with_current_thread_native_owner() -> ! {
+    retain_current_thread_native_persistent_owner_for_teardown();
+    crabc_core::process::exit_immediately(134)
+}
+
+#[inline]
+fn current_thread_has_native_persistent_owner() -> bool {
+    let slot = current_thread_slot();
+    slot.native_persistent_owner_installed
+        && matches!(
+            slot.state,
+            ThreadLifecycleState::Attached | ThreadLifecycleState::Retained
+        )
+}
+
+fn with_current_thread_native_persistent_owner<R>(
+    operation: impl FnOnce(&mut NativePersistentThreadOwner) -> R,
+) -> Result<R, NativePersistentThreadOwnerAccessError> {
+    match current_thread_slot().state {
+        ThreadLifecycleState::Attached => {}
+        ThreadLifecycleState::Retained => {
+            return Err(NativePersistentThreadOwnerAccessError::Retained);
+        }
+        ThreadLifecycleState::Fresh | ThreadLifecycleState::Finished => {
+            return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+        }
+    }
+    match current_thread_native_persistent_owner_cell()
+        .with_owner(|owner| operation(owner.get_mut()))
+    {
+        Ok(result) => Ok(result),
+        Err(PersistentCompilerTlsOwnerError::NotAttached) => {
+            Err(NativePersistentThreadOwnerAccessError::NotInstalled)
+        }
+        Err(
+            PersistentCompilerTlsOwnerError::Initializing
+            | PersistentCompilerTlsOwnerError::Reentrant,
+        ) => Err(NativePersistentThreadOwnerAccessError::Unavailable),
+        Err(
+            PersistentCompilerTlsOwnerError::InvalidCurrentThread
+            | PersistentCompilerTlsOwnerError::WrongThread
+            | PersistentCompilerTlsOwnerError::AlreadyActive
+            | PersistentCompilerTlsOwnerError::Exiting
+            | PersistentCompilerTlsOwnerError::Retained
+            | PersistentCompilerTlsOwnerError::TornDown,
+        ) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
+/// Forms the immutable process pair used once during native-owner promotion.
+/// It does not claim or inspect `RuntimeProcessStorage::page_owner_state`.
+fn current_native_process_page_arena_pair() -> Option<ProcessPageArenaLease> {
+    // SAFETY: an active process permanently publishes this owner before any
+    // later thread is admitted.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let page_map = owner.ready().ok()?.page_map().ok()?;
+    let arena = ProcessSharedArenaStorage::global().ready_lease().ok()?;
+    ProcessPageArenaLease::join(page_map, arena).ok()
+}
+
+/// Promotes the attached worker exactly once into its inline native owner.
+///
+/// The offered attachment is moved from the legacy slot only after the
+/// process pair is ready. A lower initialization failure leaves that exact
+/// attachment/engine payload pinned in the cell's retained state.
+fn begin_current_thread_native_persistent_owner(
+) -> Result<(), NativePersistentThreadOwnerAccessError> {
+    let Some(pair) = current_native_process_page_arena_pair() else {
+        return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+    };
+    let slot = current_thread_slot();
+    if slot.state != ThreadLifecycleState::Attached {
+        return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+    }
+    #[cfg(test)]
+    if slot.page_owner.is_some() {
+        return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+    }
+    let Some(attachment) = slot.attachment.take() else {
+        retain_current_thread_native_persistent_owner_for_teardown();
+        return Err(NativePersistentThreadOwnerAccessError::Retained);
+    };
+    let owner = NativePersistentThreadOwner {
+        attachment,
+        state: NativePersistentThreadOwnerExitState::AttachmentOnly,
+    };
+    let initialized = current_thread_native_persistent_owner_cell().initialize(
+        owner,
+        |mut owner| -> Result<(), MainHeapThreadOwnerLocalPageEngineBeginError> {
+            let owner = owner.as_mut().get_mut();
+            let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut owner.attachment, pair)?;
+            owner.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
+            Ok(())
+        },
+    );
+    match initialized {
+        Ok(()) => {
+            current_thread_slot().native_persistent_owner_installed = true;
+            Ok(())
+        }
+        Err(PersistentCompilerTlsOwnerInitializeError::Owner(_)) => {
+            current_thread_slot().native_persistent_owner_installed = true;
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+        Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
+            // The cell rejected the offered owner before initialization, so
+            // its owner state is still attachment-only and the original
+            // attachment can be restored as the exact terminal diagnostic
+            // owner.
+            let NativePersistentThreadOwner { attachment, state } = owner;
+            debug_assert!(matches!(
+                state,
+                NativePersistentThreadOwnerExitState::AttachmentOnly
+            ));
+            drop(state);
+            let slot = current_thread_slot();
+            debug_assert!(slot.attachment.is_none());
+            slot.attachment = Some(attachment);
+            fail_stop_with_current_thread_native_owner()
+        }
+    }
+}
+
+fn with_current_thread_native_persistent_allocator<R>(
+    create_if_absent: bool,
+    mut operation: impl FnMut(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
+) -> Result<R, NativePersistentThreadOwnerAccessError> {
+    let mut may_create = create_if_absent;
+    loop {
+        match with_current_thread_native_persistent_owner(|owner| {
+            owner.with_local_allocator(|allocator| operation(allocator))
+        }) {
+            Ok(Ok(result)) => return Ok(result),
+            Ok(Err(())) => {
+                retain_current_thread_native_persistent_owner_for_teardown();
+                return Err(NativePersistentThreadOwnerAccessError::Retained);
+            }
+            Err(NativePersistentThreadOwnerAccessError::NotInstalled) if may_create => {
+                begin_current_thread_native_persistent_owner()?;
+                may_create = false;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Applies one pointer-consuming operation only when PageMap source state
+/// associates the exact live allocation with this persistent local owner.
+fn with_current_thread_native_persistent_pointer<R>(
+    block: core::ptr::NonNull<u8>,
+    operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
+) -> Result<Option<R>, NativePersistentThreadOwnerAccessError> {
+    let Some(thread) = current_thread_identity() else {
+        retain_current_thread_native_persistent_owner_for_teardown();
+        return Err(NativePersistentThreadOwnerAccessError::Retained);
+    };
+    let Some(page_map) = (unsafe { RUNTIME_PROCESS.active_owner() })
+        .and_then(|owner| owner.ready().ok())
+        .and_then(|ready| ready.page_map().ok())
+    else {
+        return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+    };
+    match with_current_thread_native_persistent_owner(|owner| {
+        // SAFETY: this private boundary is reached only from the native C
+        // operation's exact-live-allocation contract. The observation stays
+        // in this closure through the consuming local operation.
+        let pointer = unsafe { page_map.lookup_live_allocation(block) }.map_err(|_| ())?;
+        let Some(pointer) = pointer else {
+            return Ok(None);
+        };
+        if !pointer.is_associated_with(thread) {
+            return Ok(None);
+        }
+        let result = owner
+            .with_local_allocator(operation)
+            .map(Some)
+            .map_err(|_| ());
+        drop(pointer);
+        result
+    }) {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(())) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Initializes the retained ticket-zero process owner from libc's validated
@@ -695,7 +6055,47 @@ pub fn ticket_zero_allocate(request: usize, zero: bool) -> TicketZeroPageAllocat
     if !crate::size_class::request_size_is_valid(request) {
         return TicketZeroPageAllocationResult::AllocationFailed;
     }
-    match RUNTIME_PROCESS.with_ticket_zero_page_owner(|owner| owner.allocate(request, zero)) {
+    if current_thread_has_native_initial_persistent_owner() {
+        return ticket_zero_initial_persistent_allocate(request, None, zero);
+    }
+    ticket_zero_allocation_result(
+        RUNTIME_PROCESS.with_ticket_zero_page_owner(|owner| owner.allocate(request, zero)),
+    )
+}
+
+/// Attempts one aligned allocation through the private permanent ticket-zero
+/// page owner.
+///
+/// This preserves the same process-static owner and first-arena lifecycle as
+/// [`ticket_zero_allocate`]. The lower engine selects its pinned natural,
+/// in-arena overallocated, or OS-aligned singleton path; this runtime seam
+/// only rejects invalid request/alignment inputs before they can mutate that
+/// owner. It remains a Rust-only friend boundary until the nondefault libc
+/// shadow backend proves the corresponding C ABI route.
+#[doc(hidden)]
+pub fn ticket_zero_allocate_aligned(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> TicketZeroPageAllocationResult {
+    if !crate::size_class::request_size_is_valid(request)
+        || !crate::size_class::alignment_is_valid(alignment)
+    {
+        return TicketZeroPageAllocationResult::AllocationFailed;
+    }
+    if current_thread_has_native_initial_persistent_owner() {
+        return ticket_zero_initial_persistent_allocate(request, Some(alignment), zero);
+    }
+    ticket_zero_allocation_result(RUNTIME_PROCESS.with_ticket_zero_page_owner(|owner| {
+        owner.allocate_aligned(request, alignment, zero)
+    }))
+}
+
+#[inline]
+fn ticket_zero_allocation_result(
+    result: Option<Option<core::ptr::NonNull<u8>>>,
+) -> TicketZeroPageAllocationResult {
+    match result {
         Some(Some(block)) => TicketZeroPageAllocationResult::Allocated(block),
         Some(None) => {
             if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_RETAINED
@@ -707,6 +6107,128 @@ pub fn ticket_zero_allocate(request: usize, zero: bool) -> TicketZeroPageAllocat
             }
         }
         None => RUNTIME_PROCESS.page_owner_unavailable_result(),
+    }
+}
+
+/// Preserves the old private ticket-zero test seam after native initial-owner
+/// promotion without sending it back through the legacy scheduler.
+///
+/// This compatibility helper is not an alternative allocator owner: it merely
+/// lets existing internal fixtures keep using their historical spelling once
+/// the exact static engine has moved into the initial thread's TLS cell.
+fn ticket_zero_initial_persistent_allocate(
+    request: usize,
+    alignment: Option<usize>,
+    zero: bool,
+) -> TicketZeroPageAllocationResult {
+    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+        let block = match alignment {
+            Some(alignment) => owner.allocate_aligned(request, alignment, zero),
+            None => owner.allocate(request, zero),
+        };
+        (block, owner.is_retained())
+    });
+    match result {
+        Ok((Some(block), false)) => TicketZeroPageAllocationResult::Allocated(block),
+        Ok((None, false)) => TicketZeroPageAllocationResult::AllocationFailed,
+        Ok((Some(_) | None, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            TicketZeroPageAllocationResult::Retained
+        }
+    }
+}
+
+/// Preserves the private ticket-zero reallocation seam after the direct
+/// initial owner has been installed.
+unsafe fn ticket_zero_initial_persistent_reallocate(
+    block: Option<core::ptr::NonNull<u8>>,
+    new_size: usize,
+) -> TicketZeroPageAllocationResult {
+    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+        let replacement = match block {
+            Some(block) => {
+                // SAFETY: forwarded from the private ticket-zero caller
+                // contract while the direct initial owner is current.
+                unsafe { owner.reallocate(block, new_size) }
+            }
+            None => owner.allocate(new_size, false),
+        };
+        (replacement, owner.is_retained())
+    });
+    match result {
+        Ok((Some(block), false)) => TicketZeroPageAllocationResult::Allocated(block),
+        Ok((None, false)) => TicketZeroPageAllocationResult::AllocationFailed,
+        Ok((Some(_) | None, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            TicketZeroPageAllocationResult::Retained
+        }
+    }
+}
+
+/// Preserves the private ticket-zero free spelling after native promotion.
+unsafe fn ticket_zero_initial_persistent_free(
+    block: core::ptr::NonNull<u8>,
+) -> TicketZeroPageFreeResult {
+    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+        // SAFETY: forwarded from the private ticket-zero current-block
+        // contract while the direct initial owner is current.
+        let free = unsafe { owner.free(block) };
+        (free, owner.is_retained())
+    });
+    match result {
+        Ok((Ok(()), false)) => TicketZeroPageFreeResult::Freed,
+        Ok((Err(
+            crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(
+                crate::single_thread::FreeError::Unmapped
+                | crate::single_thread::FreeError::ForeignPage
+                | crate::single_thread::FreeError::InvalidBlock(_),
+            ),
+        ), false)) => TicketZeroPageFreeResult::InvalidPointer,
+        Ok((Ok(()) | Err(_), true))
+        | Ok((Err(_), false))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            TicketZeroPageFreeResult::Retained
+        }
+    }
+}
+
+/// Preserves the private ticket-zero usable-size spelling after native
+/// promotion without reopening the process-static owner staging slot.
+unsafe fn ticket_zero_initial_persistent_usable_size(
+    block: core::ptr::NonNull<u8>,
+) -> Option<usize> {
+    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+        // SAFETY: forwarded from the private ticket-zero current-block
+        // contract while the direct initial owner is current.
+        let usable_size = unsafe { owner.usable_size(block) };
+        (usable_size, owner.is_retained())
+    });
+    match result {
+        Ok((usable_size, false)) => usable_size,
+        Ok((_, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            None
+        }
     }
 }
 
@@ -725,6 +6247,11 @@ pub unsafe fn ticket_zero_reallocate(
 ) -> TicketZeroPageAllocationResult {
     if !crate::size_class::request_size_is_valid(new_size) {
         return TicketZeroPageAllocationResult::AllocationFailed;
+    }
+    if current_thread_has_native_initial_persistent_owner() {
+        // SAFETY: forwarded unchanged from this private current-block
+        // contract to the direct persistent initial owner.
+        return unsafe { ticket_zero_initial_persistent_reallocate(block, new_size) };
     }
     if block.is_some() && !RUNTIME_PROCESS.page_owner_has_started() {
         return RUNTIME_PROCESS.page_owner_unavailable_result();
@@ -753,6 +6280,11 @@ pub unsafe fn ticket_zero_reallocate(
 /// [`ticket_zero_reallocate`]. It must not be a libc/C-backend pointer.
 #[doc(hidden)]
 pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageFreeResult {
+    if current_thread_has_native_initial_persistent_owner() {
+        // SAFETY: forwarded unchanged from this private current-block
+        // contract to the direct persistent initial owner.
+        return unsafe { ticket_zero_initial_persistent_free(block) };
+    }
     if !RUNTIME_PROCESS.page_owner_has_started() {
         return match RUNTIME_PROCESS.page_owner_unavailable_result() {
             TicketZeroPageAllocationResult::Retained => TicketZeroPageFreeResult::Retained,
@@ -766,6 +6298,9 @@ pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageF
         unsafe { owner.free(block) }
     }) {
         Some(Ok(())) => TicketZeroPageFreeResult::Freed,
+        Some(Err(
+            crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocatorFreeError::Busy,
+        )) => TicketZeroPageFreeResult::Unavailable,
         Some(Err(crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(
             crate::single_thread::FreeError::Unmapped
             | crate::single_thread::FreeError::ForeignPage
@@ -784,6 +6319,5503 @@ pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageF
             TicketZeroPageFreeResult::Retained
         }
         None => TicketZeroPageFreeResult::Unavailable,
+    }
+}
+
+/// Returns the usable size of one current private ticket-zero allocation.
+///
+/// # Safety
+///
+/// `block` must have been returned by this exact ticket-zero owner, remain
+/// current, and not be concurrently accessed or transitioned through another
+/// allocator operation. A missing result means the owner is unavailable,
+/// retained, or does not recognize the pointer; it deliberately does not
+/// reinterpret a foreign C-backend allocation.
+#[doc(hidden)]
+pub unsafe fn ticket_zero_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
+    if current_thread_has_native_initial_persistent_owner() {
+        // SAFETY: forwarded unchanged from this private current-block
+        // contract to the direct persistent initial owner.
+        return unsafe { ticket_zero_initial_persistent_usable_size(block) };
+    }
+    if !RUNTIME_PROCESS.page_owner_has_started() {
+        return None;
+    }
+    RUNTIME_PROCESS
+        .with_ticket_zero_page_owner(|owner| {
+            // SAFETY: forwarded unchanged from this function's current
+            // ticket-zero allocation contract while the runtime guard owns
+            // the permanent page owner exclusively.
+            unsafe { owner.usable_size(block) }
+        })
+        .flatten()
+}
+
+/// Maps one initial-owner allocation attempt to the C-facing result.
+fn native_initial_thread_allocation_result(
+    result: Result<
+        (Option<core::ptr::NonNull<u8>>, bool),
+        NativeInitialPersistentThreadOwnerAccessError,
+    >,
+) -> NativePageAllocationResult {
+    match result {
+        Ok((Some(block), false)) => NativePageAllocationResult::Allocated(block),
+        Ok((None, false)) => NativePageAllocationResult::AllocationFailed,
+        Ok((Some(_) | None, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageAllocationResult::Retained
+        }
+    }
+}
+
+/// Allocates through the initial thread's already-installed source owner.
+///
+/// The caller selected this pinned compiler-TLS cell before any ambient
+/// initial-thread admission. A valid active cell needs no cold promotion,
+/// scheduler, or parked-engine bridge; the cell itself remains the exact
+/// current-owner and reentrancy boundary.
+fn native_initial_thread_allocate_aligned_from_installed_owner(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    native_initial_thread_allocation_result(
+        with_pointer_associated_initial_persistent_owner(|owner| {
+            (
+                owner.allocate_aligned(request, alignment, zero),
+                owner.is_retained(),
+            )
+        }),
+    )
+}
+
+/// Allocates through the initial thread's continuously stored source owner.
+/// This is the cold initial-owner path: promotion is a one-time startup
+/// transition, after which the public allocation boundary selects the
+/// installed compiler-TLS cell above without reopening initial admission.
+fn native_initial_thread_allocate_aligned(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    native_initial_thread_allocation_result(
+        with_current_thread_native_initial_persistent_allocator(true, |owner| {
+            (
+                owner.allocate_aligned(request, alignment, zero),
+                owner.is_retained(),
+            )
+        }),
+    )
+}
+
+/// Frees a PageMap-proven current initial-thread client through that owner's
+/// direct engine. Unlike the legacy ticket-zero helper, this has no scheduler
+/// miss to translate into an ordinary unavailable result.
+fn native_initial_thread_free_pointer_first(
+    block: core::ptr::NonNull<u8>,
+) -> NativePageFreeResult {
+    let result = with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        // SAFETY: the caller's one PageMap observation associated this exact
+        // live client with the current initial owner for the complete local
+        // source operation.
+        let free = unsafe { owner.free(block) };
+        (free, owner.is_retained())
+    });
+    match result {
+        Ok((Ok(()), false)) => NativePageFreeResult::Freed,
+        Ok((Ok(()) | Err(_), true))
+        | Ok((Err(_), false))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            // PageMap already proved this is a valid current local block. A
+            // failed source transition must retain rather than falling back to
+            // a ticket-zero scheduler, route, or caller-selected owner.
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageFreeResult::Retained
+        }
+    }
+}
+
+/// Frees a PageMap-proven current initial-thread client without reopening the
+/// generic initial-owner admission boundary.
+///
+/// The caller has already derived this branch from the same source
+/// `xthread_id` snapshot that selected the current local page. A live source
+/// cannot require initial-owner promotion at this point: its page exists only
+/// after that owner has installed its persistent TLS cell. A missing or
+/// terminal cell is therefore a source-state failure, not an opportunity to
+/// route this pointer through a scheduler, former owner, or foreign path.
+fn native_initial_thread_free_pointer_first_associated(
+    block: core::ptr::NonNull<u8>,
+) -> NativePageFreeResult {
+    let result = with_pointer_associated_initial_persistent_owner(|owner| {
+        // SAFETY: the caller's PageMap observation associated this exact
+        // live allocation with the current initial source owner.
+        let free = unsafe { owner.free(block) };
+        (free, owner.is_retained())
+    });
+    match result {
+        Ok((Ok(()), false)) => NativePageFreeResult::Freed,
+        Ok((Ok(()) | Err(_), true))
+        | Ok((Err(_), false))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageFreeResult::Retained
+        }
+    }
+}
+
+/// Reallocates a PageMap-proven current initial-thread client through its
+/// direct owner without reopening initial-owner admission.
+///
+/// The caller already compared the source `xthread_id` snapshot with the
+/// current identity and established that it is the permanent initial owner.
+/// A live source page proves that the owner has installed its persistent TLS
+/// cell, so a missing or terminal cell is a source-state failure rather than
+/// an opportunity to promote, schedule, or select another target owner.
+unsafe fn native_initial_thread_reallocate_pointer_first_associated(
+    block: core::ptr::NonNull<u8>,
+    new_size: usize,
+) -> NativePageAllocationResult {
+    let result = with_pointer_associated_initial_persistent_owner(|owner| {
+        // SAFETY: `native_reallocate` forwarded its exact-current
+        // PageMap-derived initial-source-owner contract.
+        let replacement = unsafe { owner.reallocate_c_abi(block, new_size) };
+        (replacement, owner.is_retained())
+    });
+    match result {
+        Ok((Some(block), false)) => NativePageAllocationResult::Allocated(block),
+        Ok((None, false)) => NativePageAllocationResult::AllocationFailed,
+        Ok((Some(_) | None, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageAllocationResult::Retained
+        }
+    }
+}
+
+/// Returns the usable extent of one current initial-thread client directly
+/// from its persistent source engine.
+unsafe fn native_initial_thread_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
+    let result = with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        // SAFETY: forwarded from the exact-current initial native query.
+        let usable_size = unsafe { owner.usable_size(block) };
+        (usable_size, owner.is_retained())
+    });
+    match result {
+        Ok((usable_size, false)) => usable_size,
+        Ok((_, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            None
+        }
+    }
+}
+
+/// Primes the one source first arena before a native-shadow worker can borrow
+/// the existing dormant pair.
+///
+/// This is intentionally an initial-thread-only integration step. Before it
+/// can expose a later-worker preparation, it promotes even a cold static
+/// ticket-zero staging owner into the initial thread's persistent TLS cell
+/// while the later-admission count is zero. It then creates and releases one
+/// private word-sized block only if that owner has no live page engine,
+/// leaving its established dormant first-arena pair available to the worker.
+/// A live initial allocation or any terminal runtime state rejects rather
+/// than borrowing a page image that already has a caller owner. The ordinary
+/// C backend never calls this boundary.
+#[doc(hidden)]
+pub fn prepare_native_later_thread_arena() -> bool {
+    if !RUNTIME_PROCESS.is_on_initial_thread() {
+        return false;
+    }
+    prepare_current_thread_native_initial_persistent_owner_for_later_thread()
+}
+
+/// Allocates one C-facing native-shadow block on the current thread.
+///
+/// The initial process thread uses its continuously stored static-source
+/// owner. An attached later pthread uses its own continuously stored
+/// compiler-TLS owner.
+/// Natural C alignment remains an ordinary source allocation; only wider
+/// alignment takes the distinct aligned path. The local allocation is
+/// represented solely by source Page used/free state plus the process PageMap;
+/// no client address is copied into the runtime owner.
+#[doc(hidden)]
+pub fn native_allocate_aligned(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    if !crate::size_class::request_size_is_valid(request)
+        || !crate::size_class::alignment_is_valid(alignment)
+    {
+        return NativePageAllocationResult::AllocationFailed;
+    }
+    // Pinned `mi_heap_malloc` receives an already-selected heap/theap before
+    // it enters its allocation control flow. Mirror that selection here: an
+    // installed compiler-TLS cell is the current source owner, so ordinary
+    // local allocation must not re-open ambient process/thread admission.
+    // `is_active` is part of the installed-initial predicate only to retain
+    // the former post-terminal unavailable behavior.
+    if current_thread_has_active_native_initial_persistent_owner() {
+        return native_initial_thread_allocate_aligned_from_installed_owner(
+            request, alignment, zero,
+        );
+    }
+    if current_thread_has_native_persistent_owner() {
+        return native_later_thread_allocate_aligned(request, alignment, zero);
+    }
+    // Caller identity remains the cold-selection boundary: only a thread
+    // without an installed owner may promote the initial static source.
+    if RUNTIME_PROCESS.is_on_initial_thread() {
+        return native_initial_thread_allocate_aligned(request, alignment, zero);
+    }
+    // A final B-side free may already have recorded one or more A terminal
+    // completions for this attachment. Those entries retain only A's parked
+    // token and admission proof; they do not borrow B's independent inline
+    // owner. B may therefore continue persistent local allocation while its
+    // eventual source finish still precedes every completion release.
+    native_later_thread_allocate_aligned(request, alignment, zero)
+}
+
+/// Looks up one exact native client before a pointer-first reallocation.
+///
+/// Pinned `mi_usable_size` and `mi_theap_realloc_zero_ex` derive the page and
+/// allocation geometry from the supplied client before the native boundary
+/// decides whether its already-persistent current owner may operate locally
+/// or a noncurrent source needs a replacement target. This boundary keeps
+/// that source order: PageMap facts first, then the caller compares the
+/// captured source owner with its own identity. The observation gives no
+/// owner, route, registry, scheduler, or lifetime-widening capability.
+///
+/// # Safety
+///
+/// `block` must be an exact live native-shadow allocation and remain live
+/// through the caller's complete source operation. Its lifetime keeps the
+/// selected PageMap slice and page metadata stable for this lookup.
+unsafe fn native_live_allocation_for_pointer_reallocation(
+    block: core::ptr::NonNull<u8>,
+) -> Result<LiveAllocationPointer, NativePageAllocationResult> {
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        // A caller-local engine cannot reconstruct source ownership when the
+        // one immutable PageMap witness is unavailable.
+        RUNTIME_PROCESS.retain_page_owner();
+        return Err(NativePageAllocationResult::Retained);
+    };
+    // SAFETY: forwarded from this helper's exact-live native-client contract.
+    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) => return Err(NativePageAllocationResult::Unavailable),
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return Err(NativePageAllocationResult::Retained);
+        }
+    };
+    Ok(allocation)
+}
+
+/// Establishes a noninitial caller's persistent target owner after
+/// pointer-first dispatch selects a noncurrent source.
+///
+/// Pinned `mi_theap_realloc_zero_ex` takes its target Theap as an already
+/// current local fact, then derives source page/usable-size facts from `p`.
+/// A current native source has that persistent owner by construction and must
+/// never reopen its admission before the local source operation. A noncurrent
+/// source needs a target only for its replacement allocation, so this is the
+/// one place a fresh later caller may install its persistent owner after the
+/// PageMap/current-owner comparison. It neither allocates a client nor
+/// borrows a former owner, session, route, or scheduler.
+fn native_reallocate_prepare_caller_persistent_owner(
+    current: LiveThreadId,
+) -> Result<(), NativePageAllocationResult> {
+    if RUNTIME_PROCESS.initial_live_thread_identity() == Some(current) {
+        return Ok(());
+    }
+
+    match with_current_thread_native_persistent_allocator(true, |_| ()) {
+        Ok(()) => Ok(()),
+        Err(NativePersistentThreadOwnerAccessError::Retained) => {
+            Err(NativePageAllocationResult::Retained)
+        }
+        Err(
+            NativePersistentThreadOwnerAccessError::NotInstalled
+            | NativePersistentThreadOwnerAccessError::Unavailable,
+        ) => Err(NativePageAllocationResult::Unavailable),
+    }
+}
+
+/// Reallocates one PageMap-proven current native client through its existing
+/// direct owner.
+///
+/// The exact PageMap observation stays live through the local engine call so
+/// the source allocation cannot retire its selected page while the engine
+/// performs its pinned in-place/replacement decision. There is no second
+/// lookup or fallback after the current-owner comparison.
+fn native_reallocate_pointer_first_local(
+    allocation: LiveAllocationPointer,
+    new_size: usize,
+    current: LiveThreadId,
+) -> NativePageAllocationResult {
+    let block = allocation.client();
+    if RUNTIME_PROCESS.initial_live_thread_identity() == Some(current) {
+        // SAFETY: the preceding PageMap classification associated this exact
+        // live client with the persistent current initial owner.
+        let result = unsafe {
+            native_initial_thread_reallocate_pointer_first_associated(block, new_size)
+        };
+        drop(allocation);
+        return result;
+    }
+
+    let result = with_current_thread_native_persistent_allocator(false, |allocator| {
+        // SAFETY: the caller's PageMap observation associated this exact live
+        // client with the current worker owner for this source operation.
+        unsafe { allocator.reallocate_c_abi(Some(block), new_size) }
+    });
+    drop(allocation);
+    match result {
+        Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
+        Ok(None) => NativePageAllocationResult::AllocationFailed,
+        Err(
+            NativePersistentThreadOwnerAccessError::NotInstalled
+            | NativePersistentThreadOwnerAccessError::Unavailable
+            | NativePersistentThreadOwnerAccessError::Retained,
+        ) => {
+            // PageMap already proved that a current owner exists. Losing its
+            // direct persistent source state cannot safely select an older
+            // session, route, or caller-local replacement owner.
+            retain_current_thread_native_persistent_owner_for_teardown();
+            NativePageAllocationResult::Retained
+        }
+    }
+}
+
+/// Releases a replacement that this caller just allocated for a nonlocal
+/// reallocation which could not consume its old source.
+///
+/// The source `mi_theap_realloc_zero_ex` path treats successful allocation as
+/// the point after which copy and old-pointer free cannot fail. Rust retains a
+/// typed failure result from the generic nonlocal tail instead. This helper
+/// attempts to release the known current replacement directly through the
+/// caller's persistent owner without looking up its PageMap state again. It
+/// is used only before that replacement has escaped, so its exact
+/// current-owner proof is stronger than the public pointer boundary.
+///
+/// A failed direct release leaves that owner terminally retained with an
+/// unreachable replacement. The caller must consequently fail closed; it
+/// must not describe this fallback as a successful cleanup or return the
+/// replacement while the old source remains live.
+fn native_reallocate_release_unpublished_replacement(replacement: core::ptr::NonNull<u8>) {
+    if RUNTIME_PROCESS.is_on_initial_thread() {
+        let _ = native_initial_thread_free_pointer_first(replacement);
+        return;
+    }
+
+    match with_current_thread_native_persistent_allocator(false, |allocator| {
+        // SAFETY: `replacement` is the exact just-allocated result of this
+        // caller's persistent native owner. It has not escaped, been
+        // published, or been offered to any other pointer operation.
+        unsafe { allocator.free(replacement) }
+    }) {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) | Err(_) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+        }
+    }
+}
+
+/// Reallocates a PageMap-proven noncurrent source through the caller's own
+/// persistent native owner.
+///
+/// Pinned `mi_theap_realloc_zero_ex` can reuse in place only when the source
+/// page belongs to the target Theap. A noncurrent source therefore enters the
+/// replacement transaction: allocate from the caller, copy the bounded prefix,
+/// then offer the old source to the generic pointer-first nonlocal free tail.
+/// The replacement becomes visible only when that tail reports `Freed`.
+///
+/// The generic tail currently has source-consuming transitions for the states
+/// supplied by W03. A PageMap-proven state without such a transition (notably
+/// detached until its own producer/continuation lands) rolls the unpublished
+/// replacement back and fails closed. No former owner, route, client ledger,
+/// scheduler, or synthetic target owner participates.
+fn native_reallocate_pointer_first_nonlocal(
+    allocation: LiveAllocationPointer,
+    new_size: usize,
+) -> NativePageAllocationResult {
+    let source = allocation.into_reallocation_copy_source(new_size);
+    let replacement = match native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false) {
+        NativePageAllocationResult::Allocated(replacement) => replacement,
+        result @ (NativePageAllocationResult::Unavailable
+        | NativePageAllocationResult::AllocationFailed
+        | NativePageAllocationResult::Retained) => {
+            // The old allocation has not entered a consuming source path.
+            // Recovering then dropping its immutable PageMap facts preserves
+            // the exact old client for the caller, including allocation
+            // failure.
+            drop(source.into_live_allocation());
+            return result;
+        }
+    };
+
+    // SAFETY: `source` freezes the exact live client plus its client-relative
+    // readable prefix before replacement allocation. `replacement` is a
+    // distinct still-live allocation from the caller's persistent owner and
+    // covers `new_size`. A live allocator allocation cannot overlap another
+    // live allocation, so the source-shaped memcpy has nonoverlapping ranges.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            source.copy_client().as_ptr(),
+            replacement.as_ptr(),
+            source.copy_prefix_len(),
+        );
+    }
+    if new_size == 0 {
+        // Pinned `mi_theap_realloc_zero_ex` initializes the first byte of a
+        // successful zero-size replacement for callers that observe it before
+        // free. The native zero-size allocation is likewise non-null here.
+        unsafe { replacement.as_ptr().write(0) };
+    }
+
+    match native_free_pointer_first_nonlocal(source.into_live_allocation()) {
+        NativePageFreeResult::Freed => NativePageAllocationResult::Allocated(replacement),
+        NativePageFreeResult::Unavailable
+        | NativePageFreeResult::InvalidPointer
+        | NativePageFreeResult::Retained => {
+            // The replacement is not published until the old source is
+            // consumed. Return it to the caller's direct owner first. If that
+            // direct free cannot be proved, its persistent owner remains
+            // terminally retained with this unreachable replacement; never
+            // claim that it was released or expose it beside the still-live
+            // old source.
+            native_reallocate_release_unpublished_replacement(replacement);
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageAllocationResult::Retained
+        }
+    }
+}
+
+/// Reallocates one C-facing native-shadow block through pointer-derived source
+/// facts and the calling thread's persistent native owner.
+///
+/// # Safety
+///
+/// When present, `block` must be a live result from this native-shadow
+/// allocator and must not be concurrently accessed, remotely published, or
+/// already freed. The caller must not access `block` after an `Allocated`
+/// result: a current source may have been reallocated in place or replaced,
+/// while a noncurrent source has been copied then consumed through generic
+/// pointer-first free. An `AllocationFailed` result leaves the old allocation
+/// live and unchanged. `Retained` is terminal fail-closed: neither the old
+/// input nor an unpublished replacement is returned for caller access. This
+/// boundary never borrows a former owner or widens a source allocation
+/// lifetime.
+#[doc(hidden)]
+pub unsafe fn native_reallocate(
+    block: Option<core::ptr::NonNull<u8>>,
+    new_size: usize,
+) -> NativePageAllocationResult {
+    if !crate::size_class::request_size_is_valid(new_size) {
+        return NativePageAllocationResult::AllocationFailed;
+    }
+    let Some(block) = block else {
+        return native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false);
+    };
+    // SAFETY: forwarded from this boundary's exact-live native-client
+    // contract. The returned observation remains live through one local or
+    // nonlocal source operation below.
+    let allocation = match unsafe { native_live_allocation_for_pointer_reallocation(block) } {
+        Ok(allocation) => allocation,
+        Err(result) => return result,
+    };
+    let Some(current) = current_thread_identity() else {
+        drop(allocation);
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageAllocationResult::Retained;
+    };
+    if allocation.is_associated_with(current) {
+        native_reallocate_pointer_first_local(allocation, new_size, current)
+    } else {
+        if let Err(result) = native_reallocate_prepare_caller_persistent_owner(current) {
+            // Source dispatch has not copied, replaced, or consumed the old
+            // client. Drop its immutable pointer facts before reporting that
+            // the nonlocal replacement target was unavailable or retained.
+            drop(allocation);
+            return result;
+        }
+        native_reallocate_pointer_first_nonlocal(allocation, new_size)
+    }
+}
+
+/// Frees one C-facing native-shadow block from its source page state.
+///
+/// This is the production pointer-first counterpart of pinned
+/// `mi_free_nonnull`: it obtains one coherent PageMap observation before it
+/// compares the captured source owner against the caller. A matching source
+/// owner uses only its current local engine. Every other live, abandoned, or
+/// mapped-abandoned source state moves directly into W03's process-page-facts
+/// continuation, which consumes W07's exact claim internally. A detached
+/// PageMap observation remains a typed source refusal and is fail-closed as
+/// retained; it never revives a former owner through a route, registry,
+/// client ledger, scheduler bridge, or geometry selector.
+///
+/// # Safety
+///
+/// `block` must be a live native-shadow allocation. A wrong-domain pointer
+/// reports `InvalidPointer`. Callers must not route any native failure to the
+/// C allocator as recovery.
+#[doc(hidden)]
+pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        // The pointer contract could not obtain its one process-published
+        // PageMap witness. No caller-local fallback can establish a source
+        // owner after that failure.
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    // SAFETY: `native_free` accepts one exact current native allocation. Its
+    // live source block keeps the selected PageMap entry and metadata stable
+    // through this pointer-only page dispatch; this touches no lifecycle or
+    // owner-local PageMap state.
+    let page = match unsafe { page_map.lookup_page_for_live_client(block) } {
+        Ok(Some(page)) => page,
+        Ok(None) => return NativePageFreeResult::InvalidPointer,
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageFreeResult::Retained;
+        }
+    };
+    // Pinned `mi_free_nonnull` reaches the page before it compares a source
+    // owner identity with the freeing thread. Keep that source order for both
+    // the permanent-initial live-owner publication and the generic fallback.
+    let Some(current) = current_thread_identity() else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    // SAFETY: `page` came from the current allocation's short PageMap lookup;
+    // the helper uses it only for the permanent initial owner, whose source
+    // page remains owner-associated for the process lifetime. Any other page
+    // state continues below through the coherent state-capturing lookup.
+    if let Some(result) = unsafe {
+        native_free_pointer_first_live_initial_foreign_page(page, block, current)
+    } {
+        return result;
+    }
+    // SAFETY: `native_free` accepts only an exact current native allocation.
+    // Its source lifetime keeps the selected registration and page metadata
+    // stable until one branch below consumes the observation.
+    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) => return NativePageFreeResult::InvalidPointer,
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageFreeResult::Retained;
+        }
+    };
+
+    // This is the source `mi_free_nonnull` caller-relative decision after the
+    // complete pointer-derived state capture. Do not select a former owner,
+    // route, or current-thread ledger before this comparison.
+    if allocation.is_associated_with(current) {
+        return native_free_pointer_first_local(allocation, current);
+    }
+
+    native_free_pointer_first_nonlocal(allocation)
+}
+
+/// Publishes a foreign free to the permanent initial owner's live page.
+///
+/// Pinned `mi_free_block_mt` may use its ordinary atomic push without an
+/// abandoned-page claim only when the source owner remains associated for the
+/// complete publication. The process initial owner is the one native runtime
+/// owner with that property: it is persistent process storage and has no
+/// thread-exit teardown. General later-owner and abandoned pages intentionally
+/// return `None` so the state-capturing path below can use the
+/// `allow_collect=true` W03 continuation instead of weakening its race
+/// semantics.
+///
+/// # Safety
+///
+/// `page` must be the PageMap result for `block`, and `block` must be an exact
+/// current native allocation that keeps its page and source block area live
+/// through this atomic publication.
+unsafe fn native_free_pointer_first_live_initial_foreign_page(
+    page: core::ptr::NonNull<Page>,
+    block: core::ptr::NonNull<u8>,
+    current: LiveThreadId,
+) -> Option<NativePageFreeResult> {
+    let initial = RUNTIME_PROCESS.initial_live_thread_identity()?;
+    if current == initial {
+        return None;
+    }
+    // SAFETY: the exact live client pins initialized source metadata. This
+    // check reads only the initial owner's atomic identity/head fields and
+    // confirms that the page never enters a later-owner or abandoned route.
+    if !unsafe { Page::is_live_owner_for_thread_at(page, initial) } {
+        return None;
+    }
+    // SAFETY: the same live client keeps this permanently initial-owned page's
+    // geometry fixed. This is the source aligned/interior canonical recovery
+    // before the remote head receives its free-list block.
+    let Some(canonical_block) =
+        (unsafe { Page::canonical_remote_block_for_live_client_at(page, block) })
+    else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return Some(NativePageFreeResult::Retained);
+    };
+    // SAFETY: the initial owner cannot execute a thread-exit unown transition,
+    // so this stable owner-associated page satisfies `remote_free::push`'s
+    // `allow_collect=false` contract. The foreign caller gives up the exact
+    // canonical block only after this source CAS succeeds.
+    let producer = unsafe { Page::remote_free_producer_state_at(page) };
+    match unsafe { remote_free::push(producer, canonical_block) } {
+        Ok(()) => Some(NativePageFreeResult::Freed),
+        Err(_) => {
+            // A PageMap-proven permanent-initial source cannot legitimately
+            // lose its owner association or canonical alignment. Preserve the
+            // runtime rather than retrying through a registry, scheduler, or
+            // post-exit continuation after an uncertain publication.
+            RUNTIME_PROCESS.retain_page_owner();
+            Some(NativePageFreeResult::Retained)
+        }
+    }
+}
+
+/// Consumes one PageMap-derived allocation through its current source owner.
+///
+/// The caller already compared the captured `xthread_id` against its own
+/// identity. This helper deliberately performs no second PageMap lookup and
+/// never inspects a route, registry, or client ledger to recover local
+/// ownership.
+fn native_free_pointer_first_local(
+    allocation: LiveAllocationPointer,
+    current: LiveThreadId,
+) -> NativePageFreeResult {
+    let client = allocation.client();
+    if RUNTIME_PROCESS.initial_live_thread_identity() == Some(current) {
+        // SAFETY: the preceding PageMap classification associated this exact
+        // live allocation with the current initial source owner.
+        let result = native_initial_thread_free_pointer_first_associated(client);
+        drop(allocation);
+        return result;
+    }
+
+    // The worker's continuously stored owner is already current. Its short
+    // local allocator borrow is the only local source operation; unlike the
+    // historical helper it does not reclassify the pointer or consult a
+    // session handle on a miss.
+    let result = with_current_thread_native_persistent_allocator(false, |allocator| {
+        // SAFETY: the caller's PageMap observation associated `client` with
+        // this exact current owner, and the observation remains live through
+        // this one consuming local source free.
+        unsafe { allocator.free(client) }
+    });
+    drop(allocation);
+    match result {
+        Ok(Ok(())) => NativePageFreeResult::Freed,
+        Ok(Err(_)) | Err(_) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            NativePageFreeResult::Retained
+        }
+    }
+}
+
+/// Consumes one nonlocal PageMap observation through W03's source-state tail.
+///
+/// This is the only nonlocal free continuation. W03 invokes W07's linear
+/// source claim internally and owns any post-CAS retained capability; this
+/// dispatcher receives only scalar disposition/rejection values.
+fn native_free_pointer_first_nonlocal(
+    allocation: LiveAllocationPointer,
+) -> NativePageFreeResult {
+    let detached = allocation.page_state() == LiveAllocationPageState::Detached;
+    let Some(process) = current_native_process_page_arena_pair() else {
+        // The PageMap observation cannot safely continue without the paired
+        // arena capability. This is not a temporary current-owner result.
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    // SAFETY: the active process owns this never-dropped main-Heap lease.
+    // `process` was formed from the same active root immediately above.
+    let Some(main_heap) = (unsafe { RUNTIME_PROCESS.active_main_heap() }) else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    // SAFETY: `allocation` is the exact current PageMap-derived source
+    // pointer, while `process` and `main_heap` are the matching process-wide
+    // PageMap/arena and static-Heap facts required by W03. W03 consumes any
+    // W07 claim rather than exposing or rebuilding it here.
+    match unsafe {
+        crate::single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts(
+            allocation, process, main_heap,
+        )
+    } {
+        Ok(
+            ProcessPostOwnerExitPointerFreeDisposition::PublishedToOwner
+            | ProcessPostOwnerExitPointerFreeDisposition::StillLive
+            | ProcessPostOwnerExitPointerFreeDisposition::Released,
+        ) => NativePageFreeResult::Freed,
+        Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained) => {
+            // W03 already sealed the exact post-CAS source owner. Mark the
+            // runtime terminal only after that consuming operation succeeds.
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageFreeResult::Retained
+        }
+        Err(ProcessPostOwnerExitPointerFreeRejection::Publication(
+            crate::remote_free::RemoteFreeError::NotOwnerAssociated,
+        )) if detached => {
+            // Detached is a valid PageMap observation but has no source
+            // producer. W03 rejected it before any CAS or terminal marker;
+            // retain this scalar result without poisoning the process.
+            NativePageFreeResult::Retained
+        }
+        Err(_) => {
+            // Any other pre-CAS failure contradicts the valid PageMap source
+            // operation. No legacy route can recover it safely.
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageFreeResult::Retained
+        }
+    }
+}
+
+/// Returns the PageMap-derived usable size of one live native allocation.
+///
+/// This follows pinned `mi_usable_size`'s pointer/page geometry calculation:
+/// one immutable PageMap lookup captures the source extent, which this
+/// boundary returns directly. Unlike realloc, usable-size has no current-owner
+/// operation to select, so it performs no identity, TLS owner, route, registry,
+/// scheduler, or page-engine query.
+#[doc(hidden)]
+pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        // `mi_usable_size` turns a missing validated page into its zero-sized
+        // result. This is a read-only pointer observation, so an unavailable
+        // PageMap cannot retain the process or select another owner path.
+        return None;
+    };
+    // SAFETY: `native_usable_size` receives an exact live native client. Its
+    // allocation lifetime keeps this one PageMap source observation stable
+    // until the captured scalar has been copied below.
+    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+        Ok(Some(allocation)) => allocation,
+        // A missing or unusable PageMap fact remains the C-shaped no-extent
+        // result. Do not reinterpret it through an initial-thread, caller,
+        // registry, scheduler, session, or terminal lifecycle path.
+        Ok(None) | Err(_) => return None,
+    };
+    let usable_size = allocation.usable_size();
+    drop(allocation);
+    Some(usable_size)
+}
+
+/// The allocation vocabulary shared by the source-shaped owner-exit fixtures
+/// and the generic TLS-owner preparation.  The latter implementation never
+/// hands its underlying allocator to a caller: every successful allocation is
+/// represented by one linear client capability first.
+///
+/// The raw allocator implementation remains for source-level state audits.
+/// It does not install compiler-TLS state, while the preparation implementation
+/// below records every live client before a worker may suspend.
+trait OwnerExitClientAllocator {
+    type Client;
+    type AllocationError;
+
+    fn allocate_client(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Result<Self::Client, Self::AllocationError>;
+
+    fn allocate_aligned_client(
+        &mut self,
+        request: usize,
+        alignment: usize,
+    ) -> Result<Self::Client, Self::AllocationError>;
+
+    fn free_client(&mut self, client: Self::Client) -> Result<(), ()>;
+
+    fn current_allocation_page_reserved_client(&self, client: &Self::Client) -> Option<usize>;
+}
+
+impl<'attachment, 'main> OwnerExitClientAllocator
+    for MainHeapThreadProcessPageAllocator<'attachment, 'main>
+{
+    type Client = core::ptr::NonNull<u8>;
+    type AllocationError = ();
+
+    #[inline]
+    fn allocate_client(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Result<Self::Client, Self::AllocationError> {
+        self.allocate(request, zero).ok_or(())
+    }
+
+    #[inline]
+    fn allocate_aligned_client(
+        &mut self,
+        request: usize,
+        alignment: usize,
+    ) -> Result<Self::Client, Self::AllocationError> {
+        self.allocate_aligned(request, alignment).ok_or(())
+    }
+
+    #[inline]
+    fn free_client(&mut self, client: Self::Client) -> Result<(), ()> {
+        // SAFETY: the generic source fixture moves each exact allocation
+        // exactly once out of its private slot before calling this adapter.
+        unsafe { self.free(client) }.map_err(|_| ())
+    }
+
+    #[inline]
+    fn current_allocation_page_reserved_client(&self, client: &Self::Client) -> Option<usize> {
+        // SAFETY: the source fixture asks only about a still-live exact
+        // allocation and no producer is in flight through this adapter.
+        unsafe { self.current_allocation_page_reserved(*client) }
+    }
+}
+
+fn free_owner_exit_clients<A: OwnerExitClientAllocator>(
+    allocator: &mut A,
+    clients: &mut [Option<A::Client>],
+) -> Result<(), ()> {
+    for client in clients {
+        if let Some(client) = client.take() {
+            allocator.free_client(client)?;
+        }
+    }
+    Ok(())
+}
+
+// This private witness enters one genuinely mixed departing Theap without
+// choosing a special exit geometry. It keeps direct and non-direct small
+// pages, fills two regular medium pages, gives exactly one client from the
+// first to a joined remote publisher, and leaves the second unchanged. Its
+// large member keeps two clients live so B must preserve its span through one
+// sequential post-exit free before terminal release. It also retains one
+// source arena singleton and one OS-aligned singleton. B receives every
+// remaining small/medium/large/arena/OS client only through the opaque
+// aggregate route. The first full page reaches the source `BIN_FULL`
+// collector with a joined remote free; the second reaches the same traversal
+// still source-unmapped, while the arena member uses its PageMap-only terminal
+// tail and the OS member uses its private-list/clipped-map tail. Every request
+// remains inside the existing general traversal profile.
+struct OwnerExitMappedRegularWorkload<Client> {
+    direct_small: [Option<Client>; OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS],
+    non_direct_small: [Option<Client>; OWNER_EXIT_NON_DIRECT_SMALL_CLIENT_SLOTS],
+    full_medium: [Option<Client>; OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS],
+    unmapped_full_medium: [Option<Client>; OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS],
+    initially_mapped_medium: [Option<Client>; OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS],
+    force_empty_large: Option<Client>,
+    large: [Option<Client>; OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS],
+    arena_singleton: Option<Client>,
+    os_singleton: Option<Client>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OwnerExitMappedRegularWorkloadError {
+    DirectSmallAllocation,
+    NonDirectSmallAllocation,
+    FirstMediumAllocation,
+    FullMediumCapacity,
+    FullMediumAllocation,
+    UnmappedFullMediumAllocation,
+    UnmappedFullMediumCapacity,
+    InitiallyMappedMediumAllocation,
+    InitiallyMappedMediumCapacity,
+    InitiallyMappedMediumLocalFree,
+    ForceEmptyLargeAllocation,
+    LargeAllocation,
+    ArenaSingletonAllocation,
+    OsSingletonAllocation,
+}
+
+impl<Client> OwnerExitMappedRegularWorkload<Client> {
+    fn allocate<A>(allocator: &mut A) -> Result<Self, OwnerExitMappedRegularWorkloadError>
+    where
+        A: OwnerExitClientAllocator<Client = Client>,
+    {
+        let mut workload = Self {
+            direct_small: core::array::from_fn(|_| None),
+            non_direct_small: core::array::from_fn(|_| None),
+            full_medium: core::array::from_fn(|_| None),
+            unmapped_full_medium: core::array::from_fn(|_| None),
+            initially_mapped_medium: core::array::from_fn(|_| None),
+            force_empty_large: None,
+            large: core::array::from_fn(|_| None),
+            arena_singleton: None,
+            os_singleton: None,
+        };
+
+        for slot in &mut workload.direct_small {
+            let Ok(block) = allocator.allocate_client(37, false) else {
+                let _ = workload.free_locals(allocator);
+                return Err(OwnerExitMappedRegularWorkloadError::DirectSmallAllocation);
+            };
+            *slot = Some(block);
+        }
+
+        for slot in &mut workload.non_direct_small {
+            let Ok(block) = allocator.allocate_client(OWNER_EXIT_NON_DIRECT_SMALL_REQUEST, false)
+            else {
+                let _ = workload.free_locals(allocator);
+                return Err(OwnerExitMappedRegularWorkloadError::NonDirectSmallAllocation);
+            };
+            *slot = Some(block);
+        }
+
+        let Ok(first_medium) = allocator.allocate_client(OWNER_EXIT_FULL_MEDIUM_REQUEST, false) else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::FirstMediumAllocation);
+        };
+        workload.full_medium[0] = Some(first_medium);
+        // The allocator vocabulary only exposes this observation for a live
+        // exact client. Current committed capacity may still be one while
+        // normal allocation grows the page.
+        let Some(capacity) = allocator.current_allocation_page_reserved_client(
+            workload.full_medium[0]
+                .as_ref()
+                .expect("the first medium remains in its private workload slot"),
+        )
+            .filter(|capacity| {
+                *capacity >= 2 && *capacity <= OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS
+            })
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::FullMediumCapacity);
+        };
+        for slot in workload.full_medium.iter_mut().take(capacity).skip(1) {
+            let Ok(block) = allocator.allocate_client(OWNER_EXIT_FULL_MEDIUM_REQUEST, false) else {
+                let _ = workload.free_locals(allocator);
+                return Err(OwnerExitMappedRegularWorkloadError::FullMediumAllocation);
+            };
+            *slot = Some(block);
+        }
+
+        // The first full medium is now in BIN_FULL, so this exact same
+        // request obtains a distinct second page. Leave every second-page
+        // client local: it must enter the general aggregate source-unmapped
+        // tail rather than being normalized by force collection.
+        let Ok(first_unmapped_medium) = allocator.allocate_client(OWNER_EXIT_FULL_MEDIUM_REQUEST, false)
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::UnmappedFullMediumAllocation);
+        };
+        workload.unmapped_full_medium[0] = Some(first_unmapped_medium);
+        let Some(unmapped_capacity) = allocator.current_allocation_page_reserved_client(
+            workload.unmapped_full_medium[0]
+                .as_ref()
+                .expect("the first unchanged medium remains in its private workload slot"),
+        )
+        .filter(|capacity| {
+            *capacity >= 2 && *capacity <= OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS
+        })
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::UnmappedFullMediumCapacity);
+        };
+        for slot in workload
+            .unmapped_full_medium
+            .iter_mut()
+            .take(unmapped_capacity)
+            .skip(1)
+        {
+            let Ok(block) = allocator.allocate_client(OWNER_EXIT_FULL_MEDIUM_REQUEST, false) else {
+                let _ = workload.free_locals(allocator);
+                return Err(OwnerExitMappedRegularWorkloadError::UnmappedFullMediumAllocation);
+            };
+            *slot = Some(block);
+        }
+
+        // Fill a third regular medium page, then return one A-local client.
+        // This is an ordinary source unfull transition before owner exit: the
+        // remaining clients are already a mapped, non-full member when
+        // `_mi_theap_collect_ex(MI_ABANDON)` begins. Keep it beside the
+        // force-normalized and source-unmapped full members so the aggregate
+        // coordinator—not a special page route—selects all three states.
+        let Ok(first_initially_mapped_medium) =
+            allocator.allocate_client(OWNER_EXIT_FULL_MEDIUM_REQUEST, false)
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::InitiallyMappedMediumAllocation);
+        };
+        workload.initially_mapped_medium[0] = Some(first_initially_mapped_medium);
+        let Some(initially_mapped_capacity) = allocator
+            .current_allocation_page_reserved_client(
+                workload.initially_mapped_medium[0]
+                    .as_ref()
+                    .expect("the initially mapped medium remains in its private workload slot"),
+            )
+            .filter(|capacity| {
+                *capacity >= 4 && *capacity <= OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS
+            })
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::InitiallyMappedMediumCapacity);
+        };
+        for slot in workload
+            .initially_mapped_medium
+            .iter_mut()
+            .take(initially_mapped_capacity)
+            .skip(1)
+        {
+            let Ok(block) = allocator.allocate_client(OWNER_EXIT_FULL_MEDIUM_REQUEST, false) else {
+                let _ = workload.free_locals(allocator);
+                return Err(OwnerExitMappedRegularWorkloadError::InitiallyMappedMediumAllocation);
+            };
+            *slot = Some(block);
+        }
+        let initially_mapped_local_free = workload.initially_mapped_medium[0]
+            .take()
+            .expect("the full medium keeps the exact A-local client that makes it non-full");
+        if allocator.free_client(initially_mapped_local_free).is_err() {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::InitiallyMappedMediumLocalFree);
+        }
+
+        let Ok(force_empty_large) = allocator.allocate_client(OWNER_EXIT_FORCE_EMPTY_LARGE_REQUEST, false) else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::ForceEmptyLargeAllocation);
+        };
+        workload.force_empty_large = Some(force_empty_large);
+
+        for slot in &mut workload.large {
+            let Ok(block) = allocator.allocate_client(OWNER_EXIT_LIVE_LARGE_REQUEST, false) else {
+                let _ = workload.free_locals(allocator);
+                return Err(OwnerExitMappedRegularWorkloadError::LargeAllocation);
+            };
+            *slot = Some(block);
+        }
+
+        let Ok(arena_singleton) =
+            allocator.allocate_client(OWNER_EXIT_ARENA_SINGLETON_REQUEST, false)
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::ArenaSingletonAllocation);
+        };
+        workload.arena_singleton = Some(arena_singleton);
+
+        let Ok(os_singleton) = allocator.allocate_aligned_client(
+            OWNER_EXIT_OS_SINGLETON_REQUEST,
+            OWNER_EXIT_OS_SINGLETON_ALIGNMENT,
+        ) else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::OsSingletonAllocation);
+        };
+        workload.os_singleton = Some(os_singleton);
+        Ok(workload)
+    }
+
+    #[inline]
+    fn take_remote_clients(
+        &mut self,
+    ) -> Option<(Client, Client)> {
+        let medium = self.full_medium[0].take()?;
+        let Some(large) = self.force_empty_large.take() else {
+            self.full_medium[0] = Some(medium);
+            return None;
+        };
+        Some((medium, large))
+    }
+
+    #[inline]
+    fn restore_remote_clients(
+        &mut self,
+        medium: Client,
+        large: Client,
+    ) {
+        debug_assert!(self.full_medium[0].is_none());
+        debug_assert!(self.force_empty_large.is_none());
+        self.full_medium[0] = Some(medium);
+        self.force_empty_large = Some(large);
+    }
+
+    fn into_post_exit_clients(
+        mut self,
+    ) -> Option<[Option<Client>; RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS]> {
+        // The sole remote client must have left the private workload before
+        // A detaches. Keeping it here would make B hold two aliases to the
+        // same client identity after source collection.
+        if self.full_medium[0].is_some()
+            || self.force_empty_large.is_some()
+            || !self.direct_small.iter().all(Option::is_some)
+            || !self.non_direct_small.iter().all(Option::is_some)
+            || !self.full_medium[1..].iter().all(Option::is_some)
+            || !self.unmapped_full_medium.iter().all(Option::is_some)
+            || !self.initially_mapped_medium[1..].iter().all(Option::is_some)
+            || !self.large.iter().all(Option::is_some)
+            || self.arena_singleton.is_none()
+            || self.os_singleton.is_none()
+        {
+            return None;
+        }
+
+        let mut blocks = core::array::from_fn(|_| None);
+        for (destination, source) in blocks[..OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS]
+            .iter_mut()
+            .zip(&mut self.direct_small)
+        {
+            *destination = source.take();
+        }
+        for (destination, source) in blocks[OWNER_EXIT_NON_DIRECT_SMALL_START..OWNER_EXIT_LIVE_LARGE_START]
+            .iter_mut()
+            .zip(&mut self.non_direct_small)
+        {
+            *destination = source.take();
+        }
+        for (destination, source) in blocks[OWNER_EXIT_LIVE_LARGE_START..OWNER_EXIT_MAPPED_MEDIUM_START]
+            .iter_mut()
+            .zip(&mut self.large)
+        {
+            *destination = source.take();
+        }
+        for (destination, source) in blocks[OWNER_EXIT_MAPPED_MEDIUM_START..OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START]
+            .iter_mut()
+            .zip(&mut self.full_medium[1..])
+        {
+            *destination = source.take();
+        }
+        for (destination, source) in blocks[OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START..OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START]
+            .iter_mut()
+            .zip(&mut self.unmapped_full_medium)
+        {
+            *destination = source.take();
+        }
+        for (destination, source) in blocks
+            [OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START..OWNER_EXIT_ARENA_SINGLETON_INDEX]
+            .iter_mut()
+            .zip(&mut self.initially_mapped_medium[1..])
+        {
+            *destination = source.take();
+        }
+        blocks[OWNER_EXIT_ARENA_SINGLETON_INDEX] = self.arena_singleton.take();
+        blocks[OWNER_EXIT_OS_SINGLETON_INDEX] = self.os_singleton.take();
+        Some(blocks)
+    }
+
+    fn free_locals(
+        &mut self,
+        allocator: &mut impl OwnerExitClientAllocator<Client = Client>,
+    ) -> Result<(), ()> {
+        free_owner_exit_clients(allocator, &mut self.direct_small)?;
+        free_owner_exit_clients(allocator, &mut self.non_direct_small)?;
+        free_owner_exit_clients(allocator, &mut self.full_medium)?;
+        free_owner_exit_clients(allocator, &mut self.unmapped_full_medium)?;
+        free_owner_exit_clients(allocator, &mut self.initially_mapped_medium)?;
+        free_owner_exit_clients(allocator, core::slice::from_mut(&mut self.force_empty_large))?;
+        free_owner_exit_clients(allocator, &mut self.large)?;
+        free_owner_exit_clients(allocator, core::slice::from_mut(&mut self.arena_singleton))?;
+        free_owner_exit_clients(allocator, core::slice::from_mut(&mut self.os_singleton))
+    }
+}
+
+impl OwnerExitMappedRegularWorkload<core::ptr::NonNull<u8>> {
+    /// The direct source-state audits predate the linear TLS preparation and
+    /// inspect the same raw private array while A still owns its engine. They
+    /// never install a compiler-TLS owner through this compatibility helper.
+    #[inline]
+    fn into_post_exit_blocks(
+        self,
+    ) -> Option<[Option<core::ptr::NonNull<u8>>; RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS]> {
+        self.into_post_exit_clients()
+    }
+}
+
+#[cfg(test)]
+impl OwnerExitMappedRegularWorkload<PreparedOwnerExitClient> {
+    /// Selects the three direct-small clients used only by the bounded B/C/D
+    /// regression. The selection remains an opaque ledger-key fact: generic
+    /// post-exit routing neither names these fixture positions nor exposes
+    /// their addresses.
+    #[inline]
+    fn post_exit_remote_publication_group_keys(
+        &self,
+    ) -> Option<DetachedOwnerExitRemotePublicationSelection> {
+        Some(DetachedOwnerExitRemotePublicationSelection {
+            kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+            clients: [
+                self.direct_small[0].as_ref()?.key(),
+                self.direct_small[1].as_ref()?.key(),
+                self.direct_small[2].as_ref()?.key(),
+            ],
+        })
+    }
+
+    /// Selects three still-live clients from the first full-medium member
+    /// after its pre-exit remote free forced it into the mapped regular
+    /// route. `full_medium[0]` has already left A through that pre-exit
+    /// publication; the following three entries remain on the same now
+    /// non-full medium page. Their identities stay private ledger facts, so
+    /// this is a bounded source witness rather than a page selector or a
+    /// general post-exit producer API.
+    #[inline]
+    fn post_exit_mapped_medium_remote_publication_group_keys(
+        &self,
+    ) -> Option<DetachedOwnerExitRemotePublicationSelection> {
+        Some(DetachedOwnerExitRemotePublicationSelection {
+            kind: DetachedOwnerExitRemotePublicationKind::MappedMedium,
+            clients: [
+                self.full_medium[1].as_ref()?.key(),
+                self.full_medium[2].as_ref()?.key(),
+                self.full_medium[3].as_ref()?.key(),
+            ],
+        })
+    }
+
+    /// Selects three remaining clients from the distinct medium page that A
+    /// made non-full through one ordinary local free before owner exit. The
+    /// lower aggregate route already owns every mapped regular member through
+    /// the same source traversal; this selection proves that a pre-existing
+    /// mapped medium can use the bounded B/C/D publication without being
+    /// mistaken for the separate force-normalized source state.
+    #[inline]
+    fn post_exit_initial_mapped_medium_remote_publication_group_keys(
+        &self,
+    ) -> Option<DetachedOwnerExitRemotePublicationSelection> {
+        Some(DetachedOwnerExitRemotePublicationSelection {
+            kind: DetachedOwnerExitRemotePublicationKind::MappedMedium,
+            clients: [
+                self.initially_mapped_medium[1].as_ref()?.key(),
+                self.initially_mapped_medium[2].as_ref()?.key(),
+                self.initially_mapped_medium[3].as_ref()?.key(),
+            ],
+        })
+    }
+
+    /// Produces the same complete private ledger as `into_post_exit_clients`,
+    /// but schedules one normal full-medium client after every other
+    /// post-exit client. The runtime route still has no fixture layout or
+    /// page identity: when this final opaque client is reached, the source
+    /// aggregate decides whether it is the sole mapped regular member and
+    /// otherwise rejects back to the ordinary sequential free.
+    ///
+    /// The mixed witness chooses this order to exercise the aggregate
+    /// last-member handoff with an already-normalized medium page. Its
+    /// pre-exit remote client supplies an immediate source free block, while
+    /// all other source members are terminally released first.
+    fn into_post_exit_clients_for_later_main_adoption(
+        self,
+    ) -> Option<[Option<PreparedOwnerExitClient>; RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS]> {
+        let mut clients = self.into_post_exit_clients()?;
+        clients.swap(
+            OWNER_EXIT_MAPPED_MEDIUM_START,
+            OWNER_EXIT_OS_SINGLETON_INDEX,
+        );
+        Some(clients)
+    }
+}
+
+/// The source-valid reclamation predecessor: one nonfull medium page with
+/// two private live clients and at least one immediate local free block. A's
+/// general owner-exit traversal must therefore return the established sole
+/// mapped-medium route rather than an aggregate registry.
+struct OwnerExitReclaimWorkload<Client> {
+    blocks: [Option<Client>; OWNER_EXIT_RECLAIM_CLIENT_SLOTS],
+}
+
+impl<Client> OwnerExitReclaimWorkload<Client> {
+    fn allocate<A>(allocator: &mut A) -> Result<Self, ()>
+    where
+        A: OwnerExitClientAllocator<Client = Client>,
+    {
+        let mut workload = Self {
+            blocks: core::array::from_fn(|_| None),
+        };
+        for slot in &mut workload.blocks {
+            let Ok(block) = allocator.allocate_client(OWNER_EXIT_RECLAIM_MEDIUM_REQUEST, false) else {
+                let _ = workload.free_locals(allocator);
+                return Err(());
+            };
+            *slot = Some(block);
+        }
+
+        // The aggregate owner-exit traversal may expose the sole-medium
+        // handoff only after source collection transfers a returned local
+        // block into its immediate head. Do not infer that fact merely from
+        // capacity: source page extension is lazy, so two live clients can
+        // still sit at its current commit boundary. Allocate and return one
+        // exact third client while A still owns the engine, matching the
+        // source-shaped collector witness.
+        let Ok(spare) = allocator.allocate_client(OWNER_EXIT_RECLAIM_MEDIUM_REQUEST, false) else {
+            let _ = workload.free_locals(allocator);
+            return Err(());
+        };
+        if allocator.free_client(spare).is_err() {
+            let _ = workload.free_locals(allocator);
+            return Err(());
+        }
+
+        let Some(reserved) = allocator.current_allocation_page_reserved_client(
+            workload.blocks[0]
+                .as_ref()
+                .expect("the reclamation workload keeps its first medium client"),
+        )
+        .filter(|reserved| *reserved > OWNER_EXIT_RECLAIM_CLIENT_SLOTS)
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(());
+        };
+        debug_assert!(reserved > OWNER_EXIT_RECLAIM_CLIENT_SLOTS);
+        Ok(workload)
+    }
+
+    #[inline]
+    fn into_clients(self) -> Option<[Client; OWNER_EXIT_RECLAIM_CLIENT_SLOTS]> {
+        let [first, second] = self.blocks;
+        Some([first?, second?])
+    }
+
+    fn free_locals(
+        &mut self,
+        allocator: &mut impl OwnerExitClientAllocator<Client = Client>,
+    ) -> Result<(), ()> {
+        free_owner_exit_clients(allocator, &mut self.blocks)
+    }
+}
+
+impl OwnerExitReclaimWorkload<core::ptr::NonNull<u8>> {
+    /// Raw source-state audits retain the historical optional-array shape;
+    /// the TLS preparation consumes the stricter all-present linear array.
+    #[inline]
+    fn into_blocks(
+        self,
+    ) -> Option<[Option<core::ptr::NonNull<u8>>; OWNER_EXIT_RECLAIM_CLIENT_SLOTS]> {
+        let [first, second] = self.into_clients()?;
+        Some([Some(first), Some(second)])
+    }
+}
+
+/// The source-valid direct-small reclamation predecessor: two opaque live
+/// clients in one direct-cache page plus one exact local return. The latter
+/// creates the immediate local head required by the existing specialized
+/// `abandon_mapped_small_or_medium_to_process_route` boundary. That boundary,
+/// rather than this fixed request, validates the complete rounded direct-cache
+/// image and refuses every non-direct or malformed shape before A tears down.
+struct OwnerExitDirectSmallReclaimWorkload<Client> {
+    blocks: [Option<Client>; OWNER_EXIT_RECLAIM_CLIENT_SLOTS],
+}
+
+impl<Client> OwnerExitDirectSmallReclaimWorkload<Client> {
+    fn allocate<A>(allocator: &mut A) -> Result<Self, ()>
+    where
+        A: OwnerExitClientAllocator<Client = Client>,
+    {
+        let mut workload = Self {
+            blocks: core::array::from_fn(|_| None),
+        };
+        for slot in &mut workload.blocks {
+            let Ok(block) = allocator.allocate_client(OWNER_EXIT_RECLAIM_DIRECT_SMALL_REQUEST, false)
+            else {
+                let _ = workload.free_locals(allocator);
+                return Err(());
+            };
+            *slot = Some(block);
+        }
+
+        // A direct-small page may begin with a lazy scalar extension. Return
+        // one exact third local client while A still has exclusive ownership,
+        // so the specialized source drain receives the required immediate
+        // head instead of inferring availability from reserved capacity.
+        let Ok(spare) = allocator.allocate_client(OWNER_EXIT_RECLAIM_DIRECT_SMALL_REQUEST, false)
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(());
+        };
+        if allocator.free_client(spare).is_err() {
+            let _ = workload.free_locals(allocator);
+            return Err(());
+        }
+
+        // Preserve a bounded source candidate before suspension. The typed
+        // direct-small drain performs the authoritative direct-cache and
+        // immediate-head validation while it still owns the active queue.
+        let Some(reserved) = allocator.current_allocation_page_reserved_client(
+            workload.blocks[0]
+                .as_ref()
+                .expect("the direct-small reclamation workload keeps its first client"),
+        )
+        .filter(|reserved| *reserved > OWNER_EXIT_RECLAIM_CLIENT_SLOTS)
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(());
+        };
+        debug_assert!(reserved > OWNER_EXIT_RECLAIM_CLIENT_SLOTS);
+        Ok(workload)
+    }
+
+    #[inline]
+    fn into_clients(self) -> Option<[Client; OWNER_EXIT_RECLAIM_CLIENT_SLOTS]> {
+        let [first, second] = self.blocks;
+        Some([first?, second?])
+    }
+
+    fn free_locals(
+        &mut self,
+        allocator: &mut impl OwnerExitClientAllocator<Client = Client>,
+    ) -> Result<(), ()> {
+        free_owner_exit_clients(allocator, &mut self.blocks)
+    }
+}
+
+impl OwnerExitDirectSmallReclaimWorkload<core::ptr::NonNull<u8>> {
+    /// The direct-small state audit needs the first client separately because
+    /// the source drain names it before validating the complete route image.
+    #[inline]
+    fn into_route_parts(
+        self,
+    ) -> Option<(
+        core::ptr::NonNull<u8>,
+        [Option<core::ptr::NonNull<u8>>; OWNER_EXIT_RECLAIM_CLIENT_SLOTS],
+    )> {
+        let [first, second] = self.into_clients()?;
+        Some((first, [Some(first), Some(second)]))
+    }
+}
+
+/// Selects one already-distinct source reclamation predecessor while keeping
+/// its consumer and all client identities in the same private TLS owner.
+#[derive(Clone, Copy)]
+#[cfg(test)]
+enum MappedRegularReclaimPredecessor {
+    Medium,
+    DirectSmall,
+}
+
+/// The result of preparing the private page-bearing TLS owner before the
+/// ordinary post-destructor runtime finish dispatches it into source owner
+/// exit. `Installed` moved the engine borrow into compiler TLS; the ordinary
+/// failures returned their engine empty and may use the existing no-page
+/// finish. Every other state remains terminal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
+enum OwnerExitMappedRegularPageOwnerInstallResult {
+    Installed,
+    AllocationFailed,
+    PublicationFailed,
+    Retained,
+}
+
+#[inline]
+#[cfg(test)]
+fn retain_current_thread_detached_owner_exit() {
+    let slot = current_thread_slot();
+    // The old Theap/TLD has either already detached or its typed terminal
+    // still owns it. In both cases a generic normal finish would be unsound;
+    // retain the admission claim so fork preservation remains closed.
+    slot.state = ThreadLifecycleState::Retained;
+    RUNTIME_PROCESS.retain();
+}
+
+/// Retains an attachment whose page-bearing state has not safely crossed the
+/// source owner-exit boundary.  Unlike the detached-route helper above, this
+/// path still has a live or suspended engine and must also terminally close
+/// ticket zero's dormant-pair scheduler.
+#[inline]
+fn retain_current_thread_live_page_owner() {
+    let slot = current_thread_slot();
+    slot.state = ThreadLifecycleState::Retained;
+    RUNTIME_PROCESS.retain_page_owner();
+}
+
+#[inline]
+#[cfg(test)]
+fn retain_current_thread_detached_owner_exit_with_admission(
+    admission: LaterThreadAdmissionClaim,
+) {
+    let slot = current_thread_slot();
+    slot.retain_terminal_admission(admission);
+    slot.state = ThreadLifecycleState::Retained;
+    RUNTIME_PROCESS.retain();
+}
+
+/// Completes the runtime half of a source owner exit after a private typed
+/// process route has proved `ReleasedAll`.
+///
+/// The proof can only come after the aggregate route's final PageMap release,
+/// whether that release was a direct client-free tail or the consumed target
+/// engine of its source-valid final-member handoff. In particular, this intentionally does not call
+/// `finish_current_thread_after_user_destructors`: that no-page entry would
+/// attempt to access an attachment whose Theap/TLD boundary was already
+/// completed by `finish_after_detached_process_page_route`.
+#[cfg(test)]
+fn finish_current_thread_after_detached_process_page_route(
+    proof: TicketZeroOwnerExitRouteFinished,
+) -> ThreadFinishResult {
+    let slot = current_thread_slot();
+    match slot.state {
+        ThreadLifecycleState::Fresh
+        | ThreadLifecycleState::Finished
+        | ThreadLifecycleState::Retained => {
+            // A terminal proof on any other lifecycle state is an invalid
+            // private transition. Preserve its exact claim rather than
+            // dropping the proof and leaving an unrepresented gate count.
+            retain_current_thread_detached_owner_exit_with_admission(proof.into_admission());
+            return ThreadFinishResult::Retained;
+        }
+        ThreadLifecycleState::Attached => {}
+    }
+    if slot.admission.is_some() {
+        // The only producer moves the TLS claim into the opaque route before
+        // exposing it to B. A second TLS claim therefore indicates a broken
+        // private lifecycle transition. Keep the route claim terminally
+        // retained and never make this worker look fork-quiescent.
+        retain_current_thread_detached_owner_exit_with_admission(proof.into_admission());
+        return ThreadFinishResult::Retained;
+    }
+
+    // The proof is minted only after `finish_thread_owner` detached A's old
+    // Theap/TLD and the last post-exit client free finished the PageMap
+    // lifecycle. An implementation may retain the now-torn-down attachment
+    // in TLS as a diagnostic witness, but the proof—not that storage detail—
+    // is the authority to discard it and release admission.
+    drop(slot.attachment.take());
+
+    match proof.release_worker_admission(&RUNTIME_FORK_ADMISSION) {
+        Ok(()) => {
+            slot.state = ThreadLifecycleState::Finished;
+            ThreadFinishResult::Finished
+        }
+        Err(TicketZeroOwnerExitRouteFinished { admission }) => {
+            // The old attachment is already gone, but the admission count no
+            // longer names this exact source transition. Preserve the exact
+            // claim in TLS rather than making the post-exit route appear
+            // fork-quiescent.
+            slot.admission = Some(admission);
+            retain_current_thread_detached_owner_exit();
+            ThreadFinishResult::Retained
+        }
+    }
+}
+
+#[cfg(test)]
+fn free_owner_exit_locals(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    blocks: &mut [Option<core::ptr::NonNull<u8>>],
+) -> Result<(), ()> {
+    for block in blocks {
+        if let Some(block) = block.take() {
+            // SAFETY: this cleanup remains in A before any producer publishes
+            // or the engine enters the source owner-exit drain.
+            unsafe { allocator.free(block) }.map_err(|_| ())?;
+        }
+    }
+    Ok(())
+}
+
+/// One non-copyable exact client emitted by a page-owner preparation.  It is
+/// deliberately neither a client pointer API nor a public allocation handle:
+/// its only consumers record local free, pre-exit publication, or the one
+/// typed post-exit route that will own it after A's engine suspends.
+#[must_use = "every prepared owner-exit client must be locally freed, published before exit, or transferred into the typed post-exit route"]
+#[cfg(test)]
+struct PreparedOwnerExitClient {
+    slot: usize,
+    generation: usize,
+    block: core::ptr::NonNull<u8>,
+    usable_size: usize,
+    normal_request: Option<usize>,
+}
+
+#[cfg(test)]
+impl PreparedOwnerExitClient {
+    #[inline]
+    fn key(&self) -> DetachedOwnerExitClientKey {
+        DetachedOwnerExitClientKey {
+            slot: self.slot,
+            generation: self.generation,
+        }
+    }
+}
+
+#[cfg(test)]
+impl PreparedOwnerExitClient {
+    /// Creates an intentionally forged second linear capability for the
+    /// ledger regression below. Production code cannot duplicate this
+    /// non-`Copy` capability.
+    #[inline]
+    fn duplicate_for_test(&self) -> Self {
+        Self {
+            slot: self.slot,
+            generation: self.generation,
+            block: self.block,
+            usable_size: self.usable_size,
+            normal_request: self.normal_request,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
+enum PreparedOwnerExitClientState {
+    Vacant,
+    Live {
+        generation: usize,
+        block: core::ptr::NonNull<u8>,
+        usable_size: usize,
+        normal_request: Option<usize>,
+    },
+    /// The raw client address is now inside `DetachedOwnerExit`'s private
+    /// ledger. The source engine has not suspended yet, so preparation abort
+    /// may take that exit back and free these exact local clients. Keeping the
+    /// full immutable client fact here lets a metadata-backed session move
+    /// its private storage into the detached route without reconstructing an
+    /// address from source page state after A's Theap has gone away.
+    TransferredToExit(DetachedOwnerExitClient),
+    /// A joined source remote producer owns the free. Its address never
+    /// appears in the post-exit route and source collection consumes it before
+    /// the engine can suspend.
+    PublishedBeforeExit,
+    Freed,
+}
+
+// The source ordinary allocator returns naturally aligned blocks. The
+// metadata overflow stores only this private enum, whose alignment stays
+// within that source guarantee. Keeping the assertion beside the raw
+// projection below makes an accidental wider state fail at compile time
+// instead of reinterpreting an under-aligned metadata allocation.
+#[cfg(test)]
+const _: [(); 1] = [(); (core::mem::align_of::<PreparedOwnerExitClientState>() <= 16) as usize];
+
+/// One metadata-backed extension of the current thread's private client
+/// ledger. The linear [`MetaAllocation`] stays with the session until every
+/// local client has been freed or the typed exit route has terminally
+/// completed. The raw slot bytes never leave this module.
+#[cfg(test)]
+struct PreparedOwnerExitClientOverflow {
+    allocation: MetaAllocation<'static>,
+    slot_count: usize,
+}
+
+/// The private linear registry for allocations made while preparing a
+/// current-thread page owner. Its inline portion covers the focused source
+/// aggregate, while a real native session may extend it through the detached
+/// metadata allocator. This is storage for existing private client facts, not
+/// a pointer registry: no caller can enumerate or obtain an entry from it.
+///
+/// A typed detached route may take this complete registry after it has
+/// transformed every live entry into an immutable route-owned client fact.
+/// That move keeps overflow storage and all C addresses private while A's
+/// old Theap/TLD is torn down; B can only submit an exact C address to its
+/// opaque route and cannot enumerate this registry.
+#[cfg(test)]
+struct PreparedOwnerExitClients {
+    slots: [PreparedOwnerExitClientState; RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS],
+    overflow: Option<PreparedOwnerExitClientOverflow>,
+    /// `None` is used only by isolated ledger tests. Every runtime session
+    /// records the frozen attachment configuration and can grow its private
+    /// metadata storage before a C allocation escapes the source engine.
+    metadata_config: Option<MemoryConfig>,
+    next_generation: usize,
+}
+
+#[cfg(test)]
+impl PreparedOwnerExitClients {
+    const fn new(metadata_config: Option<MemoryConfig>) -> Self {
+        Self {
+            slots: [
+                PreparedOwnerExitClientState::Vacant;
+                RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS
+            ],
+            overflow: None,
+            metadata_config,
+            next_generation: 0,
+        }
+    }
+
+    #[inline]
+    fn overflow_slots(&self) -> &[PreparedOwnerExitClientState] {
+        let Some(overflow) = self.overflow.as_ref() else {
+            return &[];
+        };
+        // SAFETY: `grow_overflow` initializes every slot before publishing
+        // this capability, and the metadata allocation remains owned by
+        // `self` for the whole returned borrow. The compile-time alignment
+        // assertion above matches the source ordinary-allocation guarantee.
+        unsafe {
+            core::slice::from_raw_parts(
+                overflow
+                    .allocation
+                    .pointer()
+                    .as_ptr()
+                    .cast::<PreparedOwnerExitClientState>(),
+                overflow.slot_count,
+            )
+        }
+    }
+
+    #[inline]
+    fn overflow_slots_mut(&mut self) -> &mut [PreparedOwnerExitClientState] {
+        let Some(overflow) = self.overflow.as_mut() else {
+            return &mut [];
+        };
+        // SAFETY: see `overflow_slots`; this exclusive borrow also excludes
+        // metadata resize or release until the returned slice ends.
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                overflow
+                    .allocation
+                    .pointer()
+                    .as_ptr()
+                    .cast::<PreparedOwnerExitClientState>(),
+                overflow.slot_count,
+            )
+        }
+    }
+
+    /// Initializes a raw metadata range before any typed slice can observe
+    /// it. `MetaAllocator::zalloc` gives bytes, not initialized Rust enum
+    /// values, and `rezalloc` copies only the previous initialized prefix.
+    /// Writing every new slot through a raw pointer keeps the later
+    /// `from_raw_parts[_mut]` projections sound even if `Vacant` stops using
+    /// an all-zero representation.
+    fn initialize_overflow_slots(
+        pointer: core::ptr::NonNull<u8>,
+        start: usize,
+        end: usize,
+    ) {
+        for slot in start..end {
+            // SAFETY: the caller owns a metadata allocation large enough for
+            // `end` client states, and each new slot is written exactly once
+            // before any shared or mutable typed projection is created.
+            unsafe {
+                pointer
+                    .as_ptr()
+                    .cast::<PreparedOwnerExitClientState>()
+                    .add(slot)
+                    .write(PreparedOwnerExitClientState::Vacant);
+            }
+        }
+    }
+
+    #[inline]
+    fn slot_count(&self) -> usize {
+        RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS + self.overflow_slots().len()
+    }
+
+    #[inline]
+    fn state(&self, slot: usize) -> Option<&PreparedOwnerExitClientState> {
+        if slot < self.slots.len() {
+            return self.slots.get(slot);
+        }
+        self.overflow_slots().get(slot - self.slots.len())
+    }
+
+    #[inline]
+    fn state_mut(&mut self, slot: usize) -> Option<&mut PreparedOwnerExitClientState> {
+        if slot < self.slots.len() {
+            return self.slots.get_mut(slot);
+        }
+        let overflow_slot = slot.checked_sub(self.slots.len())?;
+        self.overflow_slots_mut().get_mut(overflow_slot)
+    }
+
+    #[inline]
+    fn any_state(
+        &self,
+        predicate: impl Fn(&PreparedOwnerExitClientState) -> bool,
+    ) -> bool {
+        self.slots.iter().any(&predicate) || self.overflow_slots().iter().any(predicate)
+    }
+
+    #[inline]
+    fn all_states(
+        &self,
+        predicate: impl Fn(&PreparedOwnerExitClientState) -> bool,
+    ) -> bool {
+        self.slots.iter().all(&predicate) && self.overflow_slots().iter().all(predicate)
+    }
+
+    /// Extends the session-local ledger before the next C allocation can
+    /// escape. A failed metadata request changes no source page allocation or
+    /// client state; callers report the normal selected allocation failure.
+    fn grow_overflow(&mut self) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        let Some(config) = self.metadata_config else {
+            return Err(CurrentThreadPageOwnerPreparationError::OverCapacity);
+        };
+        let previous_slots = self.overflow_slots().len();
+        let next_slots = if previous_slots == 0 {
+            RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS
+        } else {
+            previous_slots
+                .checked_mul(2)
+                .ok_or(CurrentThreadPageOwnerPreparationError::AllocationFailed)?
+        };
+        let byte_count = next_slots
+            .checked_mul(core::mem::size_of::<PreparedOwnerExitClientState>())
+            .ok_or(CurrentThreadPageOwnerPreparationError::AllocationFailed)?;
+
+        if let Some(overflow) = self.overflow.as_mut() {
+            let replacement = MetaAllocator::global()
+                .rezalloc(config, Some(&mut overflow.allocation), byte_count)
+                .map_err(|_| CurrentThreadPageOwnerPreparationError::AllocationFailed)?;
+            overflow.allocation = replacement;
+            overflow.slot_count = next_slots;
+            Self::initialize_overflow_slots(
+                overflow.allocation.pointer(),
+                previous_slots,
+                next_slots,
+            );
+        } else {
+            let allocation = MetaAllocator::global()
+                .zalloc(config, byte_count)
+                .map_err(|_| CurrentThreadPageOwnerPreparationError::AllocationFailed)?;
+            Self::initialize_overflow_slots(allocation.pointer(), 0, next_slots);
+            self.overflow = Some(PreparedOwnerExitClientOverflow {
+                allocation,
+                slot_count: next_slots,
+            });
+        }
+        Ok(())
+    }
+
+    /// Releases private metadata only after no local client can still require
+    /// the ledger. Fixed preparation routes copy their small selected set, so
+    /// transferred and source-published states do not keep an otherwise idle
+    /// overflow alive. A metadata-backed detached route uses the stricter
+    /// `release_overflow_without_detached_clients` boundary below instead.
+    /// The caller retains its owner if metadata release fails, so cleanup
+    /// cannot make worker admission look quiescent.
+    fn release_overflow_without_live_clients(
+        &mut self,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        if self.has_live_client() {
+            return Err(CurrentThreadPageOwnerPreparationError::OmittedClient);
+        }
+        let Some(mut overflow) = self.overflow.take() else {
+            return Ok(());
+        };
+        match MetaAllocator::global().free(&mut overflow.allocation) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                self.overflow = Some(overflow);
+                Err(CurrentThreadPageOwnerPreparationError::LocalFree)
+            }
+        }
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn detached_client_at(&self, slot: usize) -> Option<DetachedOwnerExitClient> {
+        match self.state(slot)? {
+            PreparedOwnerExitClientState::TransferredToExit(client) => Some(*client),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn detached_client_for_key(
+        &self,
+        key: DetachedOwnerExitClientKey,
+    ) -> Option<DetachedOwnerExitClient> {
+        self.detached_client_at(key.slot)
+            .filter(|client| client.key == key)
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn has_detached_client(&self) -> bool {
+        self.any_state(|state| {
+            matches!(state, PreparedOwnerExitClientState::TransferredToExit(_))
+        })
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn detached_block_for(&self, key: DetachedOwnerExitClientKey) -> Option<core::ptr::NonNull<u8>> {
+        self.detached_client_for_key(key).map(|client| client.block)
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn next_detached_client(&self) -> Option<DetachedOwnerExitClient> {
+        (0..self.slot_count()).find_map(|slot| self.detached_client_at(slot))
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn take_detached_client_for_key(
+        &mut self,
+        key: DetachedOwnerExitClientKey,
+    ) -> Option<DetachedOwnerExitClient> {
+        let state = self.state_mut(key.slot)?;
+        let PreparedOwnerExitClientState::TransferredToExit(client) = *state else {
+            return None;
+        };
+        if client.key != key {
+            return None;
+        }
+        *state = PreparedOwnerExitClientState::Freed;
+        Some(client)
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn take_next_detached_client(&mut self) -> Option<DetachedOwnerExitClient> {
+        for slot in 0..self.slot_count() {
+            let Some(client) = self.detached_client_at(slot) else {
+                continue;
+            };
+            return self.take_detached_client_for_key(client.key);
+        }
+        None
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn take_detached_client_for_native_free(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Option<DetachedOwnerExitClient> {
+        for slot in 0..self.slot_count() {
+            let Some(client) = self.detached_client_at(slot) else {
+                continue;
+            };
+            if client.block == block {
+                return self.take_detached_client_for_key(client.key);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn only_detached_client_for_native_free(
+        &self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Option<DetachedOwnerExitClient> {
+        let mut only = None;
+        for slot in 0..self.slot_count() {
+            let Some(client) = self.detached_client_at(slot) else {
+                continue;
+            };
+            if only.replace(client).is_some() {
+                return None;
+            }
+        }
+        only.filter(|client| client.block == block)
+    }
+
+    #[inline]
+    #[cfg(test)]
+    fn detached_usable_size_for_native_block(
+        &self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Option<usize> {
+        (0..self.slot_count()).find_map(|slot| {
+            self.detached_client_at(slot)
+                .filter(|client| client.block == block)
+                .map(|client| client.usable_size)
+        })
+    }
+
+    #[cfg(test)]
+    fn take_detached_remote_publication_group(
+        &mut self,
+        selection: DetachedOwnerExitRemotePublicationSelection,
+    ) -> Option<DetachedOwnerExitRemotePublicationGroup> {
+        let [direct, first_published, second_published] = selection.clients;
+        if direct == first_published
+            || direct == second_published
+            || first_published == second_published
+        {
+            return None;
+        }
+        self.detached_client_for_key(direct)?;
+        self.detached_client_for_key(first_published)?;
+        self.detached_client_for_key(second_published)?;
+        let direct = self
+            .take_detached_client_for_key(direct)
+            .expect("the prevalidated direct detached client remains present");
+        let first_published = self
+            .take_detached_client_for_key(first_published)
+            .expect("the distinct first published detached client remains present");
+        let second_published = self
+            .take_detached_client_for_key(second_published)
+            .expect("the distinct second published detached client remains present");
+        Some(DetachedOwnerExitRemotePublicationGroup {
+            kind: selection.kind,
+            direct: Some(direct.block),
+            first_published: Some(first_published.block),
+            second_published: Some(second_published.block),
+        })
+    }
+
+    /// Returns the metadata allocation only after the detached route has no
+    /// still-routable client. A stale local `Live` state is also rejected:
+    /// moving the registry is valid only when every such client crossed the
+    /// same typed route exactly once.
+    #[cfg(test)]
+    fn release_overflow_without_detached_clients(
+        &mut self,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        if self.has_live_client() || self.has_detached_client() {
+            return Err(CurrentThreadPageOwnerPreparationError::OmittedClient);
+        }
+        let Some(mut overflow) = self.overflow.take() else {
+            return Ok(());
+        };
+        match MetaAllocator::global().free(&mut overflow.allocation) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                self.overflow = Some(overflow);
+                Err(CurrentThreadPageOwnerPreparationError::LocalFree)
+            }
+        }
+    }
+
+    fn reserve_slot(&mut self) -> Result<(usize, usize), CurrentThreadPageOwnerPreparationError> {
+        let mut slot = (0..self.slot_count()).find(|slot| {
+            matches!(
+                self.state(*slot),
+                Some(PreparedOwnerExitClientState::Vacant | PreparedOwnerExitClientState::Freed)
+            )
+        });
+        if slot.is_none() {
+            self.grow_overflow()?;
+            slot = (0..self.slot_count()).find(|slot| {
+                matches!(
+                    self.state(*slot),
+                    Some(PreparedOwnerExitClientState::Vacant | PreparedOwnerExitClientState::Freed)
+                )
+            });
+        }
+        let Some(slot) = slot else {
+            return Err(CurrentThreadPageOwnerPreparationError::OverCapacity);
+        };
+        self.next_generation = self.next_generation.wrapping_add(1);
+        if self.next_generation == 0 {
+            // Zero remains an impossible generation so a wrapped stale test
+            // capability cannot name a fresh allocation slot.
+            self.next_generation = 1;
+        }
+        Ok((slot, self.next_generation))
+    }
+
+    fn record_allocation(
+        &mut self,
+        slot: usize,
+        generation: usize,
+        block: core::ptr::NonNull<u8>,
+        usable_size: usize,
+        normal_request: Option<usize>,
+    ) -> Result<PreparedOwnerExitClient, CurrentThreadPageOwnerPreparationError> {
+        if self.any_state(|state| {
+            matches!(
+                state,
+                PreparedOwnerExitClientState::Live {
+                    block: existing,
+                    ..
+                } if *existing == block
+            )
+        }) {
+            return Err(CurrentThreadPageOwnerPreparationError::DuplicateClient);
+        }
+        let Some(state) = self.state_mut(slot) else {
+            return Err(CurrentThreadPageOwnerPreparationError::OverCapacity);
+        };
+        *state = PreparedOwnerExitClientState::Live {
+            generation,
+            block,
+            usable_size,
+            normal_request,
+        };
+        Ok(PreparedOwnerExitClient {
+            slot,
+            generation,
+            block,
+            usable_size,
+            normal_request,
+        })
+    }
+
+    /// Records one ordinary allocation while the exact source engine is
+    /// live. The private registry is the boundary: no allocation may survive
+    /// a park without a corresponding linear client capability, whether that
+    /// capability occupies inline storage or a session-private extension.
+    fn allocate_client(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+        request: usize,
+        zero: bool,
+    ) -> Result<PreparedOwnerExitClient, CurrentThreadPageOwnerPreparationError> {
+        if self.has_published_before_exit() {
+            return Err(CurrentThreadPageOwnerPreparationError::Closed);
+        }
+        let (slot, generation) = self.reserve_slot()?;
+        let Some(block) = allocator.allocate(request, zero) else {
+            return Err(CurrentThreadPageOwnerPreparationError::AllocationFailed);
+        };
+        // SAFETY: this exact block was just returned by the current exclusive
+        // engine. A missing extent would violate the engine's allocation
+        // contract before the block could reach the private ledger.
+        let usable_size = unsafe { allocator.usable_size(block) }
+            .expect("a freshly allocated owner-session block has a usable extent");
+        match self.record_allocation(slot, generation, block, usable_size, Some(request)) {
+            Ok(client) => Ok(client),
+            Err(error) => {
+                // SAFETY: a duplicate registry identity is impossible for a
+                // correct exclusive allocator, but if it occurs the just-made
+                // allocation must not escape this rejected source operation.
+                let _ = unsafe { allocator.free(block) };
+                Err(error)
+            }
+        }
+    }
+
+    /// Records one aligned allocation. The missing normal request is
+    /// intentional: the aggregate final-member adoption edge is restricted
+    /// to ordinary allocation clients and never guesses an aligned request.
+    fn allocate_aligned_client(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+        request: usize,
+        alignment: usize,
+    ) -> Result<PreparedOwnerExitClient, CurrentThreadPageOwnerPreparationError> {
+        if self.has_published_before_exit() {
+            return Err(CurrentThreadPageOwnerPreparationError::Closed);
+        }
+        let (slot, generation) = self.reserve_slot()?;
+        let Some(block) = allocator.allocate_aligned(request, alignment) else {
+            return Err(CurrentThreadPageOwnerPreparationError::AllocationFailed);
+        };
+        // SAFETY: see the ordinary allocation's exact-current query above.
+        let usable_size = unsafe { allocator.usable_size(block) }
+            .expect("a freshly aligned owner-session block has a usable extent");
+        match self.record_allocation(slot, generation, block, usable_size, None) {
+            Ok(client) => Ok(client),
+            Err(error) => {
+                // SAFETY: see the matching ordinary-allocation cleanup.
+                let _ = unsafe { allocator.free(block) };
+                Err(error)
+            }
+        }
+    }
+
+    /// Records one zeroed aligned allocation for the nondefault native libc
+    /// shadow. As with the ordinary aligned path, the missing normal request
+    /// deliberately keeps a later owner-exit traversal from guessing a
+    /// final-member adoption request for an over-aligned C client.
+    fn allocate_aligned_zeroed_client(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+        request: usize,
+        alignment: usize,
+    ) -> Result<PreparedOwnerExitClient, CurrentThreadPageOwnerPreparationError> {
+        if self.has_published_before_exit() {
+            return Err(CurrentThreadPageOwnerPreparationError::Closed);
+        }
+        let (slot, generation) = self.reserve_slot()?;
+        let Some(block) = allocator.allocate_aligned_zeroed(request, alignment) else {
+            return Err(CurrentThreadPageOwnerPreparationError::AllocationFailed);
+        };
+        // SAFETY: see the ordinary allocation's exact-current query above.
+        let usable_size = unsafe { allocator.usable_size(block) }
+            .expect("a freshly zeroed aligned owner-session block has a usable extent");
+        match self.record_allocation(slot, generation, block, usable_size, None) {
+            Ok(client) => Ok(client),
+            Err(error) => {
+                // SAFETY: the just-created allocation has not escaped the
+                // current exclusive engine when the private ledger rejects it.
+                let _ = unsafe { allocator.free(block) };
+                Err(error)
+            }
+        }
+    }
+
+    fn validate_live(
+        &self,
+        client: &PreparedOwnerExitClient,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        let Some(state) = self.state(client.slot) else {
+            return Err(CurrentThreadPageOwnerPreparationError::UnknownClient);
+        };
+        match state {
+            PreparedOwnerExitClientState::Live {
+                generation,
+                block,
+                usable_size,
+                normal_request,
+            } if *generation == client.generation
+                && *block == client.block
+                && *usable_size == client.usable_size
+                && *normal_request == client.normal_request =>
+            {
+                Ok(())
+            }
+            PreparedOwnerExitClientState::Live { .. } => {
+                Err(CurrentThreadPageOwnerPreparationError::UnknownClient)
+            }
+            PreparedOwnerExitClientState::TransferredToExit(_)
+            | PreparedOwnerExitClientState::PublishedBeforeExit
+            | PreparedOwnerExitClientState::Freed => {
+                Err(CurrentThreadPageOwnerPreparationError::DuplicateClient)
+            }
+            PreparedOwnerExitClientState::Vacant => {
+                Err(CurrentThreadPageOwnerPreparationError::UnknownClient)
+            }
+        }
+    }
+
+    /// Validates one opaque client key while the source session still owns its
+    /// complete live registry.  A post-exit B/C pair is selected by these
+    /// keys—not by a raw address—and must be rejected before the transfer
+    /// changes any registry state.
+    #[cfg(test)]
+    fn validate_live_key(
+        &self,
+        key: DetachedOwnerExitClientKey,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        let Some(state) = self.state(key.slot) else {
+            return Err(CurrentThreadPageOwnerPreparationError::UnknownClient);
+        };
+        match state {
+            PreparedOwnerExitClientState::Live { generation, .. }
+                if *generation == key.generation =>
+            {
+                Ok(())
+            }
+            PreparedOwnerExitClientState::Live { .. }
+            | PreparedOwnerExitClientState::Vacant => {
+                Err(CurrentThreadPageOwnerPreparationError::UnknownClient)
+            }
+            PreparedOwnerExitClientState::TransferredToExit(_)
+            | PreparedOwnerExitClientState::PublishedBeforeExit
+            | PreparedOwnerExitClientState::Freed => {
+                Err(CurrentThreadPageOwnerPreparationError::DuplicateClient)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn transfer_clients(
+        &mut self,
+        clients: &mut [Option<PreparedOwnerExitClient>],
+    ) -> Result<DetachedOwnerExitClientLedger, CurrentThreadPageOwnerPreparationError> {
+        self.transfer_clients_with_final_member_adoption(clients, |_| false)
+    }
+
+    /// Transfers a complete selected client set while recording the only
+    /// pre-suspension fact that can authorize a later aggregate
+    /// final-member reclaim attempt. The callback runs only after the linear
+    /// registry has validated each client and must be conservative: `false`
+    /// retains the ordinary sequential-free route, while a false positive
+    /// could turn a reversible route into a post-claim retained owner.
+    #[cfg(test)]
+    fn transfer_clients_with_final_member_adoption(
+        &mut self,
+        clients: &mut [Option<PreparedOwnerExitClient>],
+        mut has_pre_exit_owner_exit_collectable_local_free: impl FnMut(&PreparedOwnerExitClient) -> bool,
+    ) -> Result<DetachedOwnerExitClientLedger, CurrentThreadPageOwnerPreparationError> {
+        // Fixed preparation callers still provide a fixed selected array.
+        // The dynamic session path below moves its own whole registry instead
+        // of silently truncating an overflow into this inline witness.
+        if clients.len() > RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS {
+            return Err(CurrentThreadPageOwnerPreparationError::OverCapacity);
+        }
+        let mut seen = [false; RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS];
+        for client in clients.iter().flatten() {
+            if client.slot >= seen.len() {
+                return Err(CurrentThreadPageOwnerPreparationError::OverCapacity);
+            }
+            self.validate_live(client)?;
+            if seen[client.slot] {
+                return Err(CurrentThreadPageOwnerPreparationError::DuplicateClient);
+            }
+            seen[client.slot] = true;
+        }
+        for slot in 0..self.slot_count() {
+            let state = self
+                .state(slot)
+                .expect("the private ledger range has a matching slot");
+            if matches!(state, PreparedOwnerExitClientState::Live { .. })
+                && (slot >= seen.len() || !seen[slot])
+            {
+                return Err(if slot >= seen.len() {
+                    CurrentThreadPageOwnerPreparationError::OverCapacity
+                } else {
+                    CurrentThreadPageOwnerPreparationError::OmittedClient
+                });
+            }
+        }
+
+        let mut entries = core::array::from_fn(|_| None);
+        for (entry, client) in entries.iter_mut().zip(clients.iter_mut()) {
+            let Some(client) = client.take() else {
+                continue;
+            };
+            let detached = DetachedOwnerExitClient {
+                key: client.key(),
+                block: client.block,
+                usable_size: client.usable_size,
+                normal_request: client.normal_request,
+                has_pre_exit_owner_exit_collectable_local_free: client.normal_request.is_some()
+                    && has_pre_exit_owner_exit_collectable_local_free(&client),
+            };
+            *entry = Some(detached);
+            *self
+                .state_mut(client.slot)
+                .expect("the validated private client keeps its slot") =
+                PreparedOwnerExitClientState::TransferredToExit(detached);
+        }
+        Ok(DetachedOwnerExitClientLedger::from_inline_entries(entries))
+    }
+
+    /// Transfers every still-local client into the private post-exit ledger
+    /// without asking an ordinary session caller to enumerate raw client
+    /// capabilities. A metadata-backed session moves that same private
+    /// storage into the route after its live entries become detached facts;
+    /// source-published clients remain outside the route for source
+    /// collection before A detaches.
+    #[cfg(test)]
+    fn transfer_all_live(
+        &mut self,
+    ) -> Result<DetachedOwnerExitClientLedger, CurrentThreadPageOwnerPreparationError> {
+        self.transfer_all_live_with_final_member_adoption(|_| false)
+    }
+
+    /// Transfers every live client while preserving an A-side owner-exit
+    /// force-collectable local-head fact for the opaque B route. As with the
+    /// selected form, a missing or failed observation is deliberately
+    /// conservative and leaves the client sequential-free-only after A
+    /// detaches.
+    #[cfg(test)]
+    fn transfer_all_live_with_final_member_adoption(
+        &mut self,
+        mut has_pre_exit_owner_exit_collectable_local_free: impl FnMut(&PreparedOwnerExitClient) -> bool,
+    ) -> Result<DetachedOwnerExitClientLedger, CurrentThreadPageOwnerPreparationError> {
+        let live_count = (0..self.slot_count())
+            .filter(|slot| {
+                matches!(
+                    self.state(*slot),
+                    Some(PreparedOwnerExitClientState::Live { .. })
+                )
+            })
+            .count();
+        if live_count == 0 {
+            return Err(CurrentThreadPageOwnerPreparationError::OmittedClient);
+        }
+        if self.overflow.is_none() && live_count > RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS {
+            return Err(CurrentThreadPageOwnerPreparationError::OverCapacity);
+        }
+
+        let has_overflow = self.overflow.is_some();
+        let mut inline_entries = core::array::from_fn(|_| None);
+        let mut entry = 0;
+        for slot in 0..self.slot_count() {
+            let state = *self
+                .state(slot)
+                .expect("the private ledger range has a matching slot");
+            let PreparedOwnerExitClientState::Live {
+                generation,
+                block,
+                usable_size,
+                normal_request,
+            } = state
+            else {
+                continue;
+            };
+            let detached = DetachedOwnerExitClient {
+                key: DetachedOwnerExitClientKey {
+                    slot,
+                    generation,
+                },
+                block,
+                usable_size,
+                normal_request,
+                has_pre_exit_owner_exit_collectable_local_free: normal_request.is_some()
+                    && has_pre_exit_owner_exit_collectable_local_free(&PreparedOwnerExitClient {
+                        slot,
+                        generation,
+                        block,
+                        usable_size,
+                        normal_request,
+                    }),
+            };
+            if !has_overflow {
+                inline_entries[entry] = Some(detached);
+            }
+            *self
+                .state_mut(slot)
+                .expect("the copied live client keeps its private slot") =
+                PreparedOwnerExitClientState::TransferredToExit(detached);
+            entry += 1;
+        }
+        if has_overflow {
+            let metadata_config = self.metadata_config;
+            let clients = core::mem::replace(self, Self::new(metadata_config));
+            Ok(DetachedOwnerExitClientLedger::from_session(clients))
+        } else {
+            Ok(DetachedOwnerExitClientLedger::from_inline_entries(inline_entries))
+        }
+    }
+
+    /// Transfers every live session client and, when requested by the one
+    /// source-valid B/C/D witness, separates three prevalidated opaque entries
+    /// into the scoped post-exit publication group. The keys are validated
+    /// before the linear registry moves, so a stale, duplicate, freed, or
+    /// pre-exit-published selection leaves the parked session recoverable.
+    #[cfg(test)]
+    fn transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
+        &mut self,
+        post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationSelection>,
+        has_pre_exit_owner_exit_collectable_local_free: impl FnMut(&PreparedOwnerExitClient) -> bool,
+    ) -> Result<
+        (
+            DetachedOwnerExitClientLedger,
+            Option<DetachedOwnerExitRemotePublicationGroup>,
+        ),
+        CurrentThreadPageOwnerPreparationError,
+    > {
+        if let Some(selection) = post_exit_remote_publication_group {
+            let [direct, first_published, second_published] = selection.clients;
+            if direct == first_published
+                || direct == second_published
+                || first_published == second_published
+            {
+                return Err(CurrentThreadPageOwnerPreparationError::DuplicateClient);
+            }
+            self.validate_live_key(direct)?;
+            self.validate_live_key(first_published)?;
+            self.validate_live_key(second_published)?;
+        }
+
+        let mut clients = self
+            .transfer_all_live_with_final_member_adoption(
+                has_pre_exit_owner_exit_collectable_local_free,
+            )?;
+        let post_exit_remote_publication_group =
+            post_exit_remote_publication_group.map(|selection| {
+            clients
+                .take_remote_publication_group(selection)
+                .expect("the prevalidated live publication group remains in the just-transferred ledger")
+        });
+        Ok((clients, post_exit_remote_publication_group))
+    }
+
+    fn free_client(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+        client: PreparedOwnerExitClient,
+    ) -> Result<(), ()> {
+        self.validate_live(&client).map_err(|_| ())?;
+        // SAFETY: the registry proves this exact allocation is still local to
+        // the active A-side engine and has not crossed a producer or route.
+        unsafe { allocator.free(client.block) }.map_err(|_| ())?;
+        *self
+            .state_mut(client.slot)
+            .expect("the validated local client keeps its private slot") =
+            PreparedOwnerExitClientState::Freed;
+        Ok(())
+    }
+
+    /// Reconstructs the private linear client for one exact C-facing address
+    /// while the current session still owns it. The raw address enters only at
+    /// the libc friend boundary; it is not an iterable or cross-thread
+    /// registry surface.
+    #[cfg(test)]
+    fn native_client_for_block(
+        &self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Result<PreparedOwnerExitClient, CurrentThreadPageOwnerPreparationError> {
+        for slot in 0..self.slot_count() {
+            let state = self
+                .state(slot)
+                .expect("the private ledger range has a matching slot");
+            let PreparedOwnerExitClientState::Live {
+                generation,
+                block: current,
+                usable_size,
+                normal_request,
+            } = *state
+            else {
+                continue;
+            };
+            if current == block {
+                return Ok(PreparedOwnerExitClient {
+                    slot,
+                    generation,
+                    block,
+                    usable_size,
+                    normal_request,
+                });
+            }
+        }
+        Err(CurrentThreadPageOwnerPreparationError::UnknownClient)
+    }
+
+    /// Returns one exact live C client's source-recorded usable extent
+    /// without resuming its owner engine. The only foreign caller is the
+    /// bounded parked-A read-only route, which holds its registry publication
+    /// exclusively while it proves this address; it never receives the
+    /// client capability, a page, or a PageMap lease.
+    #[cfg(test)]
+    fn recorded_native_usable_size(
+        &self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Result<usize, CurrentThreadPageOwnerPreparationError> {
+        let client = self.native_client_for_block(block)?;
+        self.validate_live(&client)?;
+        Ok(client.usable_size)
+    }
+
+    /// Frees one exact C-facing local client after the native shadow has
+    /// reconstructed its private ledger capability.
+    #[cfg(test)]
+    fn free_native_block(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+        block: core::ptr::NonNull<u8>,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        let client = self.native_client_for_block(block)?;
+        self.free_client(allocator, client)
+            .map_err(|_| CurrentThreadPageOwnerPreparationError::LocalFree)
+    }
+
+    /// Reallocates one exact local C-facing client and replaces the private
+    /// ledger address only after the source engine has returned a current
+    /// replacement. A failed replacement leaves the old ledger entry live.
+    #[cfg(test)]
+    fn reallocate_native_block(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+        block: core::ptr::NonNull<u8>,
+        new_size: usize,
+    ) -> Result<core::ptr::NonNull<u8>, CurrentThreadPageOwnerPreparationError> {
+        let client = self.native_client_for_block(block)?;
+        // SAFETY: `native_client_for_block` proved the exact block is live,
+        // local, and not transferred; this current operation owns the sole
+        // resumed source engine.
+        let Some(replacement) = (unsafe { allocator.reallocate(Some(block), new_size) }) else {
+            return Err(CurrentThreadPageOwnerPreparationError::AllocationFailed);
+        };
+        // SAFETY: successful reallocation returns the exact current
+        // replacement while this source operation still owns the engine.
+        let usable_size = unsafe { allocator.usable_size(replacement) }
+            .expect("a freshly reallocated owner-session block has a usable extent");
+        self.validate_live(&client)?;
+        *self
+            .state_mut(client.slot)
+            .expect("the validated reallocation client keeps its private slot") =
+            PreparedOwnerExitClientState::Live {
+            generation: client.generation,
+            block: replacement,
+            usable_size,
+            // `realloc` returns a normally aligned C allocation even when
+            // the previous pointer entered through an aligned API. Do not
+            // carry an old over-aligned final-member classification forward.
+            normal_request: Some(new_size),
+        };
+        Ok(replacement)
+    }
+
+    /// Queries one exact local C-facing client while the runtime has resumed
+    /// its owner engine. An untracked, transferred, or foreign address has no
+    /// usable native extent.
+    #[cfg(test)]
+    fn native_usable_size(
+        &self,
+        allocator: &MainHeapThreadProcessPageAllocator<'_, '_>,
+        block: core::ptr::NonNull<u8>,
+    ) -> Result<usize, CurrentThreadPageOwnerPreparationError> {
+        let client = self.native_client_for_block(block)?;
+        self.validate_live(&client)?;
+        // SAFETY: the ledger proves this exact block is current in the
+        // exclusive resumed engine and no producer can exist for this route.
+        unsafe { allocator.usable_size(block) }
+            .ok_or(CurrentThreadPageOwnerPreparationError::UnknownClient)
+    }
+
+    fn current_allocation_page_reserved(
+        &self,
+        allocator: &MainHeapThreadProcessPageAllocator<'_, '_>,
+        client: &PreparedOwnerExitClient,
+    ) -> Option<usize> {
+        self.validate_live(client).ok()?;
+        // SAFETY: registry validation proves this exact block is current in
+        // the exclusive source engine; callers use this only outside a
+        // scoped remote producer.
+        unsafe { allocator.current_allocation_page_reserved(client.block) }
+    }
+
+    fn mark_published_before_exit(
+        &mut self,
+        client: &PreparedOwnerExitClient,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        self.validate_live(client)?;
+        *self
+            .state_mut(client.slot)
+            .expect("the validated publication client keeps its private slot") =
+            PreparedOwnerExitClientState::PublishedBeforeExit;
+        Ok(())
+    }
+
+    /// Publishes one joined source remote free from an active TLS session.
+    ///
+    /// This is the same `RemoteFreeProducer` source primitive as the paired
+    /// live-owner witness, but it deliberately has one producer and one
+    /// ledger transition. It admits the source-valid one-client all-free
+    /// drain without turning the session into a general concurrent-free API.
+    fn publish_remote_free(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+        client: PreparedOwnerExitClient,
+        publish: TicketZeroSingleRemoteFreePublisher,
+    ) -> Result<(), PreparedOwnerExitRemoteFreeFailure> {
+        if self.has_published_before_exit() {
+            return Err(PreparedOwnerExitRemoteFreeFailure {
+                client,
+                error: CurrentThreadPageOwnerPreparationError::Closed,
+            });
+        }
+        if let Err(error) = self.validate_live(&client) {
+            return Err(PreparedOwnerExitRemoteFreeFailure { client, error });
+        }
+
+        let producer = match unsafe { allocator.begin_remote_free(client.block) } {
+            Ok(producer) => TicketZeroRemoteFreeProducer { producer },
+            Err(_) => {
+                return Err(PreparedOwnerExitRemoteFreeFailure {
+                    client,
+                    error: CurrentThreadPageOwnerPreparationError::RemotePreparation,
+                });
+            }
+        };
+        if let Err(producer) = publish(producer) {
+            let returned = producer.cancel();
+            // The source token is a linear handoff. If cancellation did not
+            // recover its exact client, no local ledger or route can safely
+            // describe the remaining ownership, so retain terminally.
+            if returned != client.block {
+                return Err(PreparedOwnerExitRemoteFreeFailure {
+                    client,
+                    error: CurrentThreadPageOwnerPreparationError::RemotePublication,
+                });
+            }
+            return Err(PreparedOwnerExitRemoteFreeFailure {
+                client,
+                error: CurrentThreadPageOwnerPreparationError::RemotePublication,
+            });
+        }
+        self.mark_published_before_exit(&client)
+            .expect("the joined producer leaves its validated client live until publication completes");
+        Ok(())
+    }
+
+    fn publish_remote_free_pair(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+        first: PreparedOwnerExitClient,
+        second: PreparedOwnerExitClient,
+        publish: TicketZeroRemoteFreePublisher,
+    ) -> Result<(), PreparedOwnerExitRemotePairFailure> {
+        let validate = || {
+            if self.has_published_before_exit() || first.slot == second.slot {
+                return Err(CurrentThreadPageOwnerPreparationError::Closed);
+            }
+            self.validate_live(&first)?;
+            self.validate_live(&second)?;
+            Ok(())
+        };
+        if let Err(error) = validate() {
+            return Err(PreparedOwnerExitRemotePairFailure {
+                first,
+                second,
+                error,
+            });
+        }
+
+        let producers = match unsafe { allocator.begin_remote_free_pair(first.block, second.block) } {
+            Ok(producers) => TicketZeroRemoteFreeProducerPair { producers },
+            Err(_) => {
+                return Err(PreparedOwnerExitRemotePairFailure {
+                    first,
+                    second,
+                    error: CurrentThreadPageOwnerPreparationError::RemotePreparation,
+                });
+            }
+        };
+        if let Err(producers) = publish(producers) {
+            let (returned_first, returned_second) = producers.cancel();
+            if returned_first != first.block || returned_second != second.block {
+                // The source pair promises exact cancellation. A violated
+                // promise cannot be represented as a local client or a route,
+                // so keep the owner terminal rather than guessing which block
+                // remains live.
+                return Err(PreparedOwnerExitRemotePairFailure {
+                    first,
+                    second,
+                    error: CurrentThreadPageOwnerPreparationError::RemotePublication,
+                });
+            }
+            return Err(PreparedOwnerExitRemotePairFailure {
+                first,
+                second,
+                error: CurrentThreadPageOwnerPreparationError::RemotePublication,
+            });
+        }
+        self.mark_published_before_exit(&first)
+            .expect("the joined first producer leaves its validated client live until publication completes");
+        self.mark_published_before_exit(&second)
+            .expect("the joined second producer leaves its validated client live until publication completes");
+        Ok(())
+    }
+
+    fn has_published_before_exit(&self) -> bool {
+        self.any_state(|state| {
+            matches!(state, PreparedOwnerExitClientState::PublishedBeforeExit)
+        })
+    }
+
+    fn has_live_client(&self) -> bool {
+        self.any_state(|state| matches!(state, PreparedOwnerExitClientState::Live { .. }))
+    }
+
+    /// Whether this active session can enter the all-free source thread-exit
+    /// drain.
+    ///
+    /// A locally freed client has no remaining source ownership. A joined
+    /// pre-exit publication remains on the source remote head, which
+    /// `_mi_theap_collect_abandon` force-collects before it tests
+    /// `mi_page_all_free`; it can therefore enter the same typed drain after
+    /// its publisher has joined. A live or transferred client instead still
+    /// requires its own typed owner-exit disposition.
+    #[inline]
+    fn can_enter_all_free_thread_exit_drain(&self) -> bool {
+        self.all_states(|state| {
+            matches!(
+                state,
+                PreparedOwnerExitClientState::Vacant
+                    | PreparedOwnerExitClientState::Freed
+                    | PreparedOwnerExitClientState::PublishedBeforeExit
+            )
+        })
+    }
+
+    #[cfg(test)]
+    fn free_untransferred_locals(
+        &mut self,
+        allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    ) -> Result<(), ()> {
+        for slot in 0..self.slot_count() {
+            let PreparedOwnerExitClientState::Live { block, .. } = *self
+                .state(slot)
+                .expect("the private ledger range has a matching slot")
+            else {
+                continue;
+            };
+            // SAFETY: every `Live` registry member remains local to the
+            // active preparation; no post-exit route or remote producer can
+            // name it.
+            unsafe { allocator.free(block) }.map_err(|_| ())?;
+            *self
+                .state_mut(slot)
+                .expect("the local client keeps its private slot") =
+                PreparedOwnerExitClientState::Freed;
+        }
+        Ok(())
+    }
+}
+
+/// Why preparation did not yield a complete typed route.  These values stay
+/// private to the runtime boundary; callers receive only the existing
+/// installation result and no client pointer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
+enum CurrentThreadPageOwnerPreparationError {
+    AllocationFailed,
+    OverCapacity,
+    Closed,
+    UnknownClient,
+    DuplicateClient,
+    OmittedClient,
+    LocalFree,
+    RemotePreparation,
+    RemotePublication,
+}
+
+/// A recoverable returned client after an attempted one-client joined
+/// publication. The source handoff either publishes the exact client or
+/// cancels it back to the same active owner, allowing a caller that owns a
+/// recovery policy to retain or locally free it without guessing identity.
+#[cfg(test)]
+struct PreparedOwnerExitRemoteFreeFailure {
+    client: PreparedOwnerExitClient,
+    error: CurrentThreadPageOwnerPreparationError,
+}
+
+#[cfg(test)]
+impl PreparedOwnerExitRemoteFreeFailure {
+    #[inline]
+    fn into_parts(
+        self,
+    ) -> (
+        PreparedOwnerExitClient,
+        CurrentThreadPageOwnerPreparationError,
+    ) {
+        (self.client, self.error)
+    }
+}
+
+/// A recoverable returned pair of linear clients after an attempted joined
+/// pre-exit publication.  Source preparation keeps the same two clients
+/// local when C did not publish, so the failure path can cleanly free them
+/// before the engine finishes rather than suspending a half-described route.
+#[cfg(test)]
+struct PreparedOwnerExitRemotePairFailure {
+    first: PreparedOwnerExitClient,
+    second: PreparedOwnerExitClient,
+    error: CurrentThreadPageOwnerPreparationError,
+}
+
+#[cfg(test)]
+impl PreparedOwnerExitRemotePairFailure {
+    #[inline]
+    fn into_parts(
+        self,
+    ) -> (
+        PreparedOwnerExitClient,
+        PreparedOwnerExitClient,
+        CurrentThreadPageOwnerPreparationError,
+    ) {
+        (self.first, self.second, self.error)
+    }
+}
+
+/// A current-thread-only ordinary page-owner session.  The parked token is
+/// absent only while one private handle has resumed it into a complete
+/// operation; every successful operation restores it before returning to the
+/// caller. The client ledger is the durable boundary across that park/resume
+/// split, never a public pointer registry.
+#[must_use = "an active page-owner session must prepare typed exit, enter its all-free drain, or remain terminally retained"]
+#[cfg(test)]
+struct CurrentThreadPageOwnerSession {
+    parked: Option<RuntimeParkedPersistentPageEngine>,
+    clients: PreparedOwnerExitClients,
+    generation: usize,
+}
+
+/// One non-transferable private capability for the current TLS session.  It
+/// contains neither a raw allocation address nor a page/process capability;
+/// every operation looks up the matching session again in this thread's TLS.
+#[must_use = "a current-thread page-owner session handle must prepare typed exit, leave its owner for all-free finish, or retain it"]
+#[cfg(test)]
+struct CurrentThreadPageOwnerSessionHandle {
+    generation: usize,
+    _current_thread_only: PhantomData<*mut ()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
+enum CurrentThreadPageOwnerSessionError {
+    /// The current TLS image has no active session for this operation.
+    Unavailable,
+    /// Another bounded native page operation temporarily owns the serialized
+    /// runtime/PageMap transition. The current session remains parked and may
+    /// retry without changing its client ledger or lifecycle ownership.
+    Busy,
+    /// A consumed or stale private handle cannot name the current session.
+    Stale,
+    /// The exact source operation was rejected before it changed the parked
+    /// session. The caller may retain or retry through its same handle.
+    Preparation(CurrentThreadPageOwnerPreparationError),
+    /// A lower lifecycle transition became terminal. No ordinary no-page
+    /// finalizer may cross this state.
+    Retained,
+}
+
+#[cfg(test)]
+enum CurrentThreadPageOwnerSessionRemotePairFailure {
+    Preparation(PreparedOwnerExitRemotePairFailure),
+    Session(CurrentThreadPageOwnerSessionError),
+}
+
+#[cfg(test)]
+enum CurrentThreadPageOwnerSessionRemoteFreeFailure {
+    Preparation(PreparedOwnerExitRemoteFreeFailure),
+    Session(CurrentThreadPageOwnerSessionError),
+}
+
+#[cfg(test)]
+fn take_current_thread_page_owner_session(
+    generation: usize,
+) -> Result<CurrentThreadPageOwnerSession, CurrentThreadPageOwnerSessionError> {
+    let slot = current_thread_slot();
+    if slot.state != ThreadLifecycleState::Attached {
+        return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+    }
+    let Some(owner) = slot.page_owner.take() else {
+        return Err(CurrentThreadPageOwnerSessionError::Stale);
+    };
+    match owner {
+        ThreadLifecyclePageOwner::Session(session) if session.generation == generation => {
+            Ok(session)
+        }
+        owner => {
+            slot.page_owner = Some(owner);
+            Err(CurrentThreadPageOwnerSessionError::Stale)
+        }
+    }
+}
+
+#[cfg(test)]
+fn restore_current_thread_page_owner_session(session: CurrentThreadPageOwnerSession) {
+    let slot = current_thread_slot();
+    if slot.state == ThreadLifecycleState::Attached && slot.page_owner.is_none() {
+        slot.page_owner = Some(ThreadLifecyclePageOwner::Session(session));
+        return;
+    }
+
+    // This can arise only from an impossible reentrant/private transition.
+    // Do not drop a parked source token into an apparently fresh slot.
+    drop(session);
+    slot.state = ThreadLifecycleState::Retained;
+    RUNTIME_PROCESS.retain_page_owner();
+}
+
+/// Preserves one session only as a terminal diagnostic owner.
+#[cfg(test)]
+fn retain_current_thread_page_owner_session(session: CurrentThreadPageOwnerSession) {
+    let slot = current_thread_slot();
+    if slot.state == ThreadLifecycleState::Attached && slot.page_owner.is_none() {
+        slot.page_owner = Some(ThreadLifecyclePageOwner::Session(session));
+    } else {
+        core::mem::forget(session);
+    }
+    retain_current_thread_live_page_owner();
+}
+
+/// Preserves a moved session as a terminal diagnostic owner after an
+/// irrecoverable lower transition.
+#[cfg(test)]
+fn retain_forgotten_current_thread_page_owner_session(session: CurrentThreadPageOwnerSession) {
+    core::mem::forget(session);
+    retain_current_thread_live_page_owner();
+}
+
+#[cfg(test)]
+impl CurrentThreadPageOwnerSessionHandle {
+    /// Runs one bounded ordinary operation after resuming the exact parked
+    /// source engine, then parks it again before any result becomes visible.
+    /// The callback receives the allocator only alongside the private ledger,
+    /// so it cannot manufacture an untracked client or retain the engine.
+    fn with_active_operation<R>(
+        &self,
+        operation: impl FnOnce(
+            &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+            &mut PreparedOwnerExitClients,
+        ) -> R,
+    ) -> Result<R, CurrentThreadPageOwnerSessionError> {
+        let mut session = take_current_thread_page_owner_session(self.generation)?;
+        let parked = session
+            .parked
+            .take()
+            .expect("an active TLS session retains its one parked engine");
+        let has_attachment = {
+            let slot = current_thread_slot();
+            slot.attachment.is_some()
+        };
+        if !has_attachment {
+            session.parked = Some(parked);
+            restore_current_thread_page_owner_session(session);
+            let slot = current_thread_slot();
+            slot.state = ThreadLifecycleState::Retained;
+            RUNTIME_PROCESS.retain_page_owner();
+            return Err(CurrentThreadPageOwnerSessionError::Retained);
+        }
+        let resume = {
+            let slot = current_thread_slot();
+            let attachment = slot
+                .attachment
+                .as_mut()
+                .expect("the checked current session attachment remains present");
+            parked.resume(attachment)
+        };
+        let mut engine = match resume {
+            Ok(engine) => engine,
+            Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked }) => {
+                session.parked = Some(parked);
+                restore_current_thread_page_owner_session(session);
+                if page_owner_transition_is_retryable(
+                    RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+                ) {
+                    return Err(CurrentThreadPageOwnerSessionError::Busy);
+                }
+                return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Rejected {
+                parked,
+                ..
+            }) => {
+                session.parked = Some(parked);
+                restore_current_thread_page_owner_session(session);
+                return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy {
+                parked,
+                ..
+            }) => {
+                session.parked = Some(parked);
+                restore_current_thread_page_owner_session(session);
+                return Err(CurrentThreadPageOwnerSessionError::Busy);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Retained { terminal, .. }) => {
+                core::mem::forget(terminal);
+                retain_forgotten_current_thread_page_owner_session(session);
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained) => {
+                retain_forgotten_current_thread_page_owner_session(session);
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            }
+        };
+
+        let result = operation(
+            engine
+                .allocator
+                .as_mut()
+                .expect("a resumed session retains its ordinary allocator"),
+            &mut session.clients,
+        );
+        match engine.suspend() {
+            Ok(parked) => {
+                session.parked = Some(parked);
+                restore_current_thread_page_owner_session(session);
+                Ok(result)
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::Rejected { engine, .. })
+            | Err(RuntimePersistentPageEngineSuspendFailure::InterleavingOperation { engine }) => {
+                core::mem::forget(engine);
+                retain_forgotten_current_thread_page_owner_session(session);
+                Err(CurrentThreadPageOwnerSessionError::Retained)
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, .. }) => {
+                core::mem::forget(terminal);
+                retain_forgotten_current_thread_page_owner_session(session);
+                Err(CurrentThreadPageOwnerSessionError::Retained)
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained) => {
+                retain_forgotten_current_thread_page_owner_session(session);
+                Err(CurrentThreadPageOwnerSessionError::Retained)
+            }
+        }
+    }
+
+    fn allocate(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Result<PreparedOwnerExitClient, CurrentThreadPageOwnerSessionError> {
+        match self.with_active_operation(|allocator, clients| {
+            clients.allocate_client(allocator, request, zero)
+        }) {
+            Ok(result) => result.map_err(CurrentThreadPageOwnerSessionError::Preparation),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn allocate_aligned(
+        &mut self,
+        request: usize,
+        alignment: usize,
+    ) -> Result<PreparedOwnerExitClient, CurrentThreadPageOwnerSessionError> {
+        match self.with_active_operation(|allocator, clients| {
+            clients.allocate_aligned_client(allocator, request, alignment)
+        }) {
+            Ok(result) => result.map_err(CurrentThreadPageOwnerSessionError::Preparation),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn free(
+        &mut self,
+        client: PreparedOwnerExitClient,
+    ) -> Result<(), CurrentThreadPageOwnerSessionError> {
+        match self.with_active_operation(|allocator, clients| {
+            clients.free_client(allocator, client)
+        }) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(())) => Err(CurrentThreadPageOwnerSessionError::Preparation(
+                CurrentThreadPageOwnerPreparationError::LocalFree,
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn current_allocation_page_reserved(&self, client: &PreparedOwnerExitClient) -> Option<usize> {
+        self.with_active_operation(|allocator, clients| {
+            clients.current_allocation_page_reserved(allocator, client)
+        })
+        .ok()
+        .flatten()
+    }
+
+    fn publish_remote_free(
+        &mut self,
+        client: PreparedOwnerExitClient,
+        publish: TicketZeroSingleRemoteFreePublisher,
+    ) -> Result<(), CurrentThreadPageOwnerSessionRemoteFreeFailure> {
+        match self.with_active_operation(|allocator, clients| {
+            clients.publish_remote_free(allocator, client, publish)
+        }) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(failure)) => Err(CurrentThreadPageOwnerSessionRemoteFreeFailure::Preparation(
+                failure,
+            )),
+            Err(error) => Err(CurrentThreadPageOwnerSessionRemoteFreeFailure::Session(error)),
+        }
+    }
+
+    fn publish_remote_free_pair(
+        &mut self,
+        first: PreparedOwnerExitClient,
+        second: PreparedOwnerExitClient,
+        publish: TicketZeroRemoteFreePublisher,
+    ) -> Result<(), CurrentThreadPageOwnerSessionRemotePairFailure> {
+        match self.with_active_operation(|allocator, clients| {
+            clients.publish_remote_free_pair(allocator, first, second, publish)
+        }) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(failure)) => Err(CurrentThreadPageOwnerSessionRemotePairFailure::Preparation(
+                failure,
+            )),
+            Err(error) => Err(CurrentThreadPageOwnerSessionRemotePairFailure::Session(error)),
+        }
+    }
+
+    /// Consumes this active ordinary session into the one general sequential
+    /// source owner-exit disposition. Its ledger accounts for every remaining
+    /// local client, while a source-published pre-exit pair stays with the
+    /// existing collector before A detaches.
+    #[cfg(test)]
+    fn prepare_sequential_exit(
+        self,
+        free_after_exit: TicketZeroOwnerExitFreeConsumer,
+    ) -> Result<(), CurrentThreadPageOwnerSessionError> {
+        self.prepare_sequential_exit_with(None, free_after_exit)
+    }
+
+    /// Prepares the same generic sequential route while carrying the one
+    /// source-valid scoped B/C/D publication group. The group contains only
+    /// opaque registry keys selected before suspension; it grants neither a
+    /// caller address nor a general post-exit producer route.
+    #[cfg(test)]
+    fn prepare_sequential_exit_with_post_exit_remote_publication_group(
+        self,
+        post_exit_remote_publication_group: DetachedOwnerExitRemotePublicationSelection,
+        free_after_exit: TicketZeroOwnerExitFreeConsumer,
+    ) -> Result<(), CurrentThreadPageOwnerSessionError> {
+        self.prepare_sequential_exit_with(
+            Some(post_exit_remote_publication_group),
+            free_after_exit,
+        )
+    }
+
+    #[cfg(test)]
+    fn prepare_sequential_exit_with(
+        self,
+        post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationSelection>,
+        free_after_exit: TicketZeroOwnerExitFreeConsumer,
+    ) -> Result<(), CurrentThreadPageOwnerSessionError> {
+        let mut session = take_current_thread_page_owner_session(self.generation)?;
+        let parked = session
+            .parked
+            .take()
+            .expect("an active TLS session retains its one parked engine");
+        let has_attachment = {
+            let slot = current_thread_slot();
+            slot.attachment.is_some()
+        };
+        if !has_attachment {
+            session.parked = Some(parked);
+            restore_current_thread_page_owner_session(session);
+            let slot = current_thread_slot();
+            slot.state = ThreadLifecycleState::Retained;
+            RUNTIME_PROCESS.retain_page_owner();
+            return Err(CurrentThreadPageOwnerSessionError::Retained);
+        }
+        let resume = {
+            let slot = current_thread_slot();
+            let attachment = slot
+                .attachment
+                .as_mut()
+                .expect("the checked current session attachment remains present");
+            parked.resume(attachment)
+        };
+        let engine = match resume {
+            Ok(engine) => engine,
+            Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked }) => {
+                session.parked = Some(parked);
+                restore_current_thread_page_owner_session(session);
+                if page_owner_transition_is_retryable(
+                    RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+                ) {
+                    // A concurrent prepared exit owns the complete scheduler
+                    // handoff, but this exact session is still parked and
+                    // unchanged in TLS. Let the native destructor boundary
+                    // retry that typed state instead of relabeling it as an
+                    // owner-exit failure before its route exists.
+                    return Err(CurrentThreadPageOwnerSessionError::Busy);
+                }
+                return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Rejected { parked, .. }) => {
+                session.parked = Some(parked);
+                restore_current_thread_page_owner_session(session);
+                return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy { parked, .. }) => {
+                session.parked = Some(parked);
+                restore_current_thread_page_owner_session(session);
+                if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) != PAGE_OWNER_RETAINED
+                    && RUNTIME_PROCESS.state.load(Ordering::Acquire) != PROCESS_RETAINED
+                {
+                    // A detached route may transiently own its short map
+                    // access after another A has republished the scheduler.
+                    // This parked session has not changed, so its native
+                    // owner-exit preparation may retry the map handoff.
+                    return Err(CurrentThreadPageOwnerSessionError::Busy);
+                }
+                return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Retained { terminal, .. }) => {
+                core::mem::forget(terminal);
+                retain_forgotten_current_thread_page_owner_session(session);
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained) => {
+                retain_forgotten_current_thread_page_owner_session(session);
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            }
+        };
+
+        let (clients, post_exit_remote_publication_group) = match {
+            let allocator = engine
+                .allocator
+                .as_ref()
+                .expect("a resumed session retains its ordinary allocator");
+            session
+                .clients
+                .transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
+                    post_exit_remote_publication_group,
+                    |client| {
+                        // SAFETY: the session registry has already validated
+                        // the client as live in this exclusive source engine,
+                        // and no producer survives into its prepared exit.
+                        unsafe {
+                            allocator
+                                .current_allocation_page_has_owner_exit_collectable_local_free(
+                                    client.block,
+                                )
+                        }
+                        .unwrap_or(false)
+                    },
+                )
+        } {
+            Ok(clients) => clients,
+            Err(error) => match engine.suspend() {
+                Ok(parked) => {
+                    session.parked = Some(parked);
+                    restore_current_thread_page_owner_session(session);
+                    return Err(CurrentThreadPageOwnerSessionError::Preparation(error));
+                }
+                Err(RuntimePersistentPageEngineSuspendFailure::Rejected { engine, .. })
+                | Err(RuntimePersistentPageEngineSuspendFailure::InterleavingOperation {
+                    engine,
+                }) => {
+                    core::mem::forget(engine);
+                    retain_forgotten_current_thread_page_owner_session(session);
+                    return Err(CurrentThreadPageOwnerSessionError::Retained);
+                }
+                Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, .. }) => {
+                    core::mem::forget(terminal);
+                    retain_forgotten_current_thread_page_owner_session(session);
+                    return Err(CurrentThreadPageOwnerSessionError::Retained);
+                }
+                Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained) => {
+                    retain_forgotten_current_thread_page_owner_session(session);
+                    return Err(CurrentThreadPageOwnerSessionError::Retained);
+                }
+            },
+        };
+        let disposition = DetachedOwnerExitDisposition::SequentialFree {
+            free_after_exit,
+            post_exit_remote_publication_group,
+        };
+        let exit = DetachedOwnerExit { clients, disposition };
+
+        match engine.suspend() {
+            Ok(parked) => {
+                // The old session's parked field is intentionally empty after
+                // resume. Dropping it cannot run the parked-token retention
+                // path.
+                drop(session);
+                let slot = current_thread_slot();
+                if slot.state != ThreadLifecycleState::Attached || slot.page_owner.is_some() {
+                    drop(parked);
+                    core::mem::forget(exit);
+                    slot.state = ThreadLifecycleState::Retained;
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return Err(CurrentThreadPageOwnerSessionError::Retained);
+                }
+                slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
+                    ThreadLifecyclePreparedPageOwner { parked, exit },
+                ));
+                Ok(())
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::Rejected { engine, .. })
+            | Err(RuntimePersistentPageEngineSuspendFailure::InterleavingOperation { engine }) => {
+                core::mem::forget(engine);
+                core::mem::forget(exit);
+                retain_forgotten_current_thread_page_owner_session(session);
+                Err(CurrentThreadPageOwnerSessionError::Retained)
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, .. }) => {
+                core::mem::forget(terminal);
+                core::mem::forget(exit);
+                retain_forgotten_current_thread_page_owner_session(session);
+                Err(CurrentThreadPageOwnerSessionError::Retained)
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained) => {
+                core::mem::forget(exit);
+                retain_forgotten_current_thread_page_owner_session(session);
+                Err(CurrentThreadPageOwnerSessionError::Retained)
+            }
+        }
+    }
+}
+
+/// Starts one private persistent page-owner session for an already attached
+/// worker. It immediately parks the engine in compiler TLS, so ordinary
+/// session operations must explicitly resume and re-park the same source
+/// attachment before returning. This is internal runtime state, not an
+/// allocator API or a raw-pointer escape hatch.
+#[cfg(test)]
+fn begin_current_thread_page_owner_session(
+) -> Result<CurrentThreadPageOwnerSessionHandle, CurrentThreadPageOwnerSessionError> {
+    let slot = current_thread_slot();
+    if slot.state != ThreadLifecycleState::Attached || slot.page_owner.is_some() {
+        return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+    }
+    let (parked, metadata_config) = {
+        let Some(attachment) = slot.attachment.as_mut() else {
+            slot.state = ThreadLifecycleState::Retained;
+            RUNTIME_PROCESS.retain_page_owner();
+            return Err(CurrentThreadPageOwnerSessionError::Retained);
+        };
+        let metadata_config = match attachment.memory_config() {
+            Ok(config) => config,
+            Err(_) => {
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            }
+        };
+        let engine = loop {
+            match RUNTIME_PROCESS.begin_persistent_later_engine(attachment) {
+                Ok(engine) => break engine,
+                Err(
+                    RuntimePersistentPageEngineBeginError::Unavailable
+                    | RuntimePersistentPageEngineBeginError::PageMapBusy,
+                )
+                    if page_owner_session_begin_is_retryable(
+                        RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+                    ) =>
+                {
+                    // A peer may hold the serialized PageMap operation while
+                    // it creates or resumes its own ordinary native session.
+                    // This first C allocation has no parked session of its
+                    // own yet, but the source allocator's concurrent malloc
+                    // path must wait for that bounded internal handoff rather
+                    // than returning a spurious null to caller code that is
+                    // about to establish its normal owner.
+                    core::hint::spin_loop();
+                }
+                Err(
+                    RuntimePersistentPageEngineBeginError::Unavailable
+                    | RuntimePersistentPageEngineBeginError::PageMapBusy,
+                ) => {
+                    return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+                }
+                Err(RuntimePersistentPageEngineBeginError::Attachment(_)) => {
+                    slot.state = ThreadLifecycleState::Retained;
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return Err(CurrentThreadPageOwnerSessionError::Retained);
+                }
+            }
+        };
+        match engine.suspend() {
+            Ok(parked) => (parked, metadata_config),
+            Err(RuntimePersistentPageEngineSuspendFailure::Rejected { engine, .. })
+            | Err(RuntimePersistentPageEngineSuspendFailure::InterleavingOperation { engine }) => {
+                core::mem::forget(engine);
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, .. }) => {
+                core::mem::forget(terminal);
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained) => {
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            }
+        }
+    };
+    let generation = slot.next_page_owner_session_generation();
+    slot.page_owner = Some(ThreadLifecyclePageOwner::Session(
+        CurrentThreadPageOwnerSession {
+            parked: Some(parked),
+            clients: PreparedOwnerExitClients::new(Some(metadata_config)),
+            generation,
+        },
+    ));
+    Ok(CurrentThreadPageOwnerSessionHandle {
+        generation,
+        _current_thread_only: PhantomData,
+    })
+}
+
+fn native_later_thread_allocate_aligned(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    let result = with_current_thread_native_persistent_allocator(true, |allocator| {
+        if alignment <= NATIVE_C_MALLOC_ALIGNMENT {
+            allocator.allocate(request, zero)
+        } else if zero {
+            allocator.allocate_aligned_zeroed(request, alignment)
+        } else {
+            allocator.allocate_aligned(request, alignment)
+        }
+    });
+    match result {
+        Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
+        Ok(None) => NativePageAllocationResult::AllocationFailed,
+        Err(NativePersistentThreadOwnerAccessError::Retained) => {
+            NativePageAllocationResult::Retained
+        }
+        Err(
+            NativePersistentThreadOwnerAccessError::NotInstalled
+            | NativePersistentThreadOwnerAccessError::Unavailable,
+        ) => NativePageAllocationResult::Unavailable,
+    }
+}
+
+/// Returns whether this attached worker can make one pointer-private native
+/// post-exit route operation.
+///
+/// A fresh B has no page owner. A B that established its own native session
+/// before seeing A's pointer is also admissible, but only while that session
+/// is parked: the route's short PageMap operation then serializes with B's
+/// future long engine operation through the existing scheduler. A prepared
+/// exit has already consumed B's source clients into another typed route, so
+/// it cannot advance an A route. A completed A route remains opaque and live
+/// in the registry until B finishes, but B may continue to consume a distinct
+/// still-active route through the same bounded pointer-private dispatcher.
+#[inline]
+#[cfg(test)]
+fn current_thread_can_access_native_post_exit_route() -> bool {
+    let slot = current_thread_slot();
+    if slot.state != ThreadLifecycleState::Attached {
+        return false;
+    }
+    match slot.page_owner.as_ref() {
+        None => true,
+        Some(ThreadLifecyclePageOwner::Session(session)) => session.parked.is_some(),
+        Some(ThreadLifecyclePageOwner::PreparedExit(_)) => false,
+    }
+}
+
+#[cfg(test)]
+impl OwnerExitClientAllocator for CurrentThreadPageOwnerSessionHandle {
+    type Client = PreparedOwnerExitClient;
+    type AllocationError = CurrentThreadPageOwnerSessionError;
+
+    #[inline]
+    fn allocate_client(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Result<Self::Client, Self::AllocationError> {
+        self.allocate(request, zero)
+    }
+
+    #[inline]
+    fn allocate_aligned_client(
+        &mut self,
+        request: usize,
+        alignment: usize,
+    ) -> Result<Self::Client, Self::AllocationError> {
+        self.allocate_aligned(request, alignment)
+    }
+
+    #[inline]
+    fn free_client(&mut self, client: Self::Client) -> Result<(), ()> {
+        self.free(client).map_err(|_| ())
+    }
+
+    #[inline]
+    fn current_allocation_page_reserved_client(&self, client: &Self::Client) -> Option<usize> {
+        self.current_allocation_page_reserved(client)
+    }
+}
+
+/// The only allocator surface available while a current thread prepares a
+/// page-bearing TLS owner. It owns the linear client registry alongside the
+/// live engine borrow, so a closure cannot manufacture a raw post-exit block
+/// list or hide an ordinary allocation from the eventual typed route.
+#[cfg(test)]
+struct CurrentThreadPageOwnerPreparation<'allocator, 'attachment, 'main> {
+    allocator: &'allocator mut MainHeapThreadProcessPageAllocator<'attachment, 'main>,
+    clients: PreparedOwnerExitClients,
+    exit: Option<DetachedOwnerExit>,
+}
+
+#[cfg(test)]
+impl<'allocator, 'attachment, 'main>
+    CurrentThreadPageOwnerPreparation<'allocator, 'attachment, 'main>
+{
+    #[inline]
+    fn new(
+        allocator: &'allocator mut MainHeapThreadProcessPageAllocator<'attachment, 'main>,
+        metadata_config: MemoryConfig,
+    ) -> Self {
+        Self {
+            allocator,
+            clients: PreparedOwnerExitClients::new(Some(metadata_config)),
+            exit: None,
+        }
+    }
+
+    fn allocate(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Result<PreparedOwnerExitClient, CurrentThreadPageOwnerPreparationError> {
+        if self.exit.is_some() {
+            return Err(CurrentThreadPageOwnerPreparationError::Closed);
+        }
+        self.clients.allocate_client(self.allocator, request, zero)
+    }
+
+    fn allocate_aligned(
+        &mut self,
+        request: usize,
+        alignment: usize,
+    ) -> Result<PreparedOwnerExitClient, CurrentThreadPageOwnerPreparationError> {
+        if self.exit.is_some() {
+            return Err(CurrentThreadPageOwnerPreparationError::Closed);
+        }
+        self.clients
+            .allocate_aligned_client(self.allocator, request, alignment)
+    }
+
+    fn free(
+        &mut self,
+        client: PreparedOwnerExitClient,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        if self.exit.is_some() {
+            return Err(CurrentThreadPageOwnerPreparationError::Closed);
+        }
+        self.clients
+            .free_client(self.allocator, client)
+            .map_err(|_| CurrentThreadPageOwnerPreparationError::LocalFree)
+    }
+
+    fn current_allocation_page_reserved(
+        &self,
+        client: &PreparedOwnerExitClient,
+    ) -> Option<usize> {
+        self.clients
+            .current_allocation_page_reserved(self.allocator, client)
+    }
+
+    fn publish_remote_free_pair(
+        &mut self,
+        first: PreparedOwnerExitClient,
+        second: PreparedOwnerExitClient,
+        publish: TicketZeroRemoteFreePublisher,
+    ) -> Result<(), PreparedOwnerExitRemotePairFailure> {
+        if self.exit.is_some() {
+            return Err(PreparedOwnerExitRemotePairFailure {
+                first,
+                second,
+                error: CurrentThreadPageOwnerPreparationError::Closed,
+            });
+        }
+        self.clients
+            .publish_remote_free_pair(self.allocator, first, second, publish)
+    }
+
+    /// Transfers an arbitrary complete set of A-side live clients into the
+    /// general sequential post-exit disposition. The caller supplies only
+    /// linear capabilities; this preparation validates that they account for
+    /// every live registry entry before the engine can suspend.
+    fn finish_sequential(
+        &mut self,
+        clients: &mut [Option<PreparedOwnerExitClient>],
+        post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationSelection>,
+        free_after_exit: TicketZeroOwnerExitFreeConsumer,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        if self.exit.is_some() {
+            return Err(CurrentThreadPageOwnerPreparationError::Closed);
+        }
+        let allocator = &*self.allocator;
+        let mut clients = self
+            .clients
+            .transfer_clients_with_final_member_adoption(clients, |client| {
+                // SAFETY: this preparation validated the exact live client
+                // while its source allocator still owns the exclusive page
+                // lifecycle. A failed observation remains sequential-only.
+                unsafe {
+                    allocator.current_allocation_page_has_owner_exit_collectable_local_free(
+                        client.block,
+                    )
+                }
+                .unwrap_or(false)
+            })?;
+        let post_exit_remote_publication_group = match post_exit_remote_publication_group {
+            Some(selection) => {
+                let [direct, first_published, second_published] = selection.clients;
+                if direct == first_published
+                    || direct == second_published
+                    || first_published == second_published
+                {
+                    return Err(CurrentThreadPageOwnerPreparationError::DuplicateClient);
+                }
+                Some(
+                    clients
+                        .take_remote_publication_group(selection)
+                        .ok_or(CurrentThreadPageOwnerPreparationError::UnknownClient)?,
+                )
+            }
+            None => None,
+        };
+        self.exit = Some(DetachedOwnerExit {
+            clients,
+            disposition: DetachedOwnerExitDisposition::SequentialFree {
+                free_after_exit,
+                post_exit_remote_publication_group,
+            },
+        });
+        Ok(())
+    }
+
+    /// Transfers the source-proved sole immediate mapped regular outcome.
+    /// `direct_small` changes only A's lower source drain; after that drain
+    /// both source entrances expose the same later-owner adoption route.
+    fn finish_sole_immediate_mapped_regular_reclaim(
+        &mut self,
+        clients: [PreparedOwnerExitClient; OWNER_EXIT_RECLAIM_CLIENT_SLOTS],
+        direct_small: bool,
+        request: usize,
+        reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
+    ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
+        if self.exit.is_some() {
+            return Err(CurrentThreadPageOwnerPreparationError::Closed);
+        }
+        let [first, second] = clients;
+        let first_key = first.key();
+        let mut clients = [Some(first), Some(second)];
+        let clients = self.clients.transfer_clients(&mut clients)?;
+        let source = if direct_small {
+            DetachedOwnerExitReclaimSource::DirectSmall { first: first_key }
+        } else {
+            DetachedOwnerExitReclaimSource::AggregateTraversal
+        };
+        self.exit = Some(DetachedOwnerExit {
+            clients,
+            disposition: DetachedOwnerExitDisposition::SoleImmediateMappedRegularReclaim {
+                source,
+                request,
+                reclaim_after_exit,
+            },
+        });
+        Ok(())
+    }
+
+    fn take_exit(
+        &mut self,
+    ) -> Result<DetachedOwnerExit, CurrentThreadPageOwnerPreparationError> {
+        if self.clients.has_live_client() {
+            return Err(CurrentThreadPageOwnerPreparationError::OmittedClient);
+        }
+        let exit = self
+            .exit
+            .take()
+            .ok_or(CurrentThreadPageOwnerPreparationError::OmittedClient)?;
+        if self.clients.release_overflow_without_live_clients().is_err() {
+            self.exit = Some(exit);
+            return Err(CurrentThreadPageOwnerPreparationError::LocalFree);
+        }
+        Ok(exit)
+    }
+
+    /// Returns every still-local allocation before an unsuccessful preparation
+    /// asks the persistent engine to perform its normal all-free finish. A
+    /// published pre-exit client is deliberately left to the joined source
+    /// collector; it never became a post-exit route member.
+    fn abort(&mut self) -> Result<(), ()> {
+        if let Some(exit) = self.exit.take() {
+            exit.free_locals(self.allocator)?;
+        }
+        self.clients.free_untransferred_locals(self.allocator)?;
+        self.clients
+            .release_overflow_without_live_clients()
+            .map_err(|_| ())
+    }
+}
+
+#[cfg(test)]
+impl<'allocator, 'attachment, 'main> OwnerExitClientAllocator
+    for CurrentThreadPageOwnerPreparation<'allocator, 'attachment, 'main>
+{
+    type Client = PreparedOwnerExitClient;
+    type AllocationError = CurrentThreadPageOwnerPreparationError;
+
+    #[inline]
+    fn allocate_client(
+        &mut self,
+        request: usize,
+        zero: bool,
+    ) -> Result<Self::Client, Self::AllocationError> {
+        self.allocate(request, zero)
+    }
+
+    #[inline]
+    fn allocate_aligned_client(
+        &mut self,
+        request: usize,
+        alignment: usize,
+    ) -> Result<Self::Client, Self::AllocationError> {
+        self.allocate_aligned(request, alignment)
+    }
+
+    #[inline]
+    fn free_client(&mut self, client: Self::Client) -> Result<(), ()> {
+        self.free(client).map_err(|_| ())
+    }
+
+    #[inline]
+    fn current_allocation_page_reserved_client(&self, client: &Self::Client) -> Option<usize> {
+        self.current_allocation_page_reserved(client)
+    }
+}
+
+/// Moves any qualifying current-thread page engine into the one private
+/// compiler-TLS owner state after ordinary source activity has prepared a
+/// complete typed post-exit handoff.
+///
+/// The closure receives the linear preparation vocabulary rather than the
+/// live allocator. It can allocate, locally free, publish the established
+/// joined pre-exit pair, and finalize one typed route, but it cannot pack raw
+/// client addresses or suspend an engine with a client omitted from that
+/// route. The source fast-slot clear and Theap/TLD teardown remain solely in
+/// [`finish_current_thread_after_user_destructors`]. A failed preparation
+/// restores every local client before the ordinary all-free engine finish;
+/// any unfinished engine remains terminal.
+#[cfg(test)]
+fn install_current_thread_page_owner(
+    prepare: impl FnOnce(
+        &mut CurrentThreadPageOwnerPreparation<'_, '_, '_>,
+    ) -> Result<(), OwnerExitMappedRegularPageOwnerInstallResult>,
+) -> OwnerExitMappedRegularPageOwnerInstallResult {
+    let (parked, exit) = {
+        let slot = current_thread_slot();
+        if slot.page_owner.is_some() {
+            return OwnerExitMappedRegularPageOwnerInstallResult::Retained;
+        }
+        let Some(attachment) = slot.attachment.as_mut() else {
+            return OwnerExitMappedRegularPageOwnerInstallResult::Retained;
+        };
+        let metadata_config = match attachment.memory_config() {
+            Ok(config) => config,
+            Err(_) => return OwnerExitMappedRegularPageOwnerInstallResult::Retained,
+        };
+        let mut engine = match RUNTIME_PROCESS.begin_persistent_later_engine(attachment) {
+            Ok(engine) => engine,
+            Err(_) => return OwnerExitMappedRegularPageOwnerInstallResult::Retained,
+        };
+        let mut preparation = CurrentThreadPageOwnerPreparation::new(
+            engine
+                .allocator
+                .as_mut()
+                .expect("a runtime persistent engine retains its normal allocator"),
+            metadata_config,
+        );
+        let exit = match prepare(&mut preparation) {
+            Ok(()) => match preparation.take_exit() {
+                Ok(exit) => exit,
+                Err(_) => {
+                    if preparation.abort().is_err() {
+                        core::mem::forget(engine);
+                        return OwnerExitMappedRegularPageOwnerInstallResult::Retained;
+                    }
+                    return match engine.finish() {
+                        Ok(()) => OwnerExitMappedRegularPageOwnerInstallResult::Retained,
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            OwnerExitMappedRegularPageOwnerInstallResult::Retained
+                        }
+                    };
+                }
+            },
+            Err(result) => {
+                if preparation.abort().is_err() {
+                    core::mem::forget(engine);
+                    return OwnerExitMappedRegularPageOwnerInstallResult::Retained;
+                }
+                return match engine.finish() {
+                    Ok(()) => result,
+                    Err(failure) => {
+                        core::mem::forget(failure);
+                        OwnerExitMappedRegularPageOwnerInstallResult::Retained
+                    }
+                };
+            }
+        };
+        drop(preparation);
+
+        match engine.suspend() {
+            Ok(parked) => (parked, exit),
+            Err(RuntimePersistentPageEngineSuspendFailure::Rejected { engine, .. })
+            | Err(RuntimePersistentPageEngineSuspendFailure::InterleavingOperation { engine }) => {
+                core::mem::forget(engine);
+                return OwnerExitMappedRegularPageOwnerInstallResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, .. }) => {
+                core::mem::forget(terminal);
+                return OwnerExitMappedRegularPageOwnerInstallResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained) => {
+                return OwnerExitMappedRegularPageOwnerInstallResult::Retained;
+            }
+        }
+    };
+
+    let slot = current_thread_slot();
+    if slot.page_owner.is_some() {
+        // A second suspended engine in one compiler-TLS slot would erase the
+        // matching attachment marker. Dropping the new token makes the
+        // runtime/page-map terminal; the caller records that state below.
+        drop(parked);
+        return OwnerExitMappedRegularPageOwnerInstallResult::Retained;
+    }
+    slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
+        ThreadLifecyclePreparedPageOwner {
+            parked,
+            exit,
+        },
+    ));
+    OwnerExitMappedRegularPageOwnerInstallResult::Installed
+}
+
+/// Builds the mixed Gate 5C source image through
+/// [`install_current_thread_page_owner`]. The workload remains a regression
+/// fixture; it is not the runtime's page-owner state.
+#[cfg(test)]
+fn install_mapped_regular_owner_exit_page_owner(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> OwnerExitMappedRegularPageOwnerInstallResult {
+    install_current_thread_page_owner(|preparation| {
+        let mut workload = OwnerExitMappedRegularWorkload::allocate(preparation)
+            .map_err(|_| OwnerExitMappedRegularPageOwnerInstallResult::AllocationFailed)?;
+        let (medium, large) = workload
+            .take_remote_clients()
+            .expect("the bounded owner-exit workload allocated both remote clients");
+        if let Err(failure) =
+            preparation.publish_remote_free_pair(medium, large, publish_before_exit)
+        {
+            let (medium, large, _) = failure.into_parts();
+            workload.restore_remote_clients(medium, large);
+            let _ = workload.free_locals(preparation);
+            return Err(OwnerExitMappedRegularPageOwnerInstallResult::PublicationFailed);
+        }
+        let post_exit_remote_publication_group = workload.post_exit_remote_publication_group_keys();
+        let Some(mut clients) = workload.into_post_exit_clients_for_later_main_adoption() else {
+            return Err(OwnerExitMappedRegularPageOwnerInstallResult::Retained);
+        };
+        preparation
+            .finish_sequential(
+                &mut clients,
+                post_exit_remote_publication_group,
+                free_after_exit,
+            )
+            .map_err(|_| OwnerExitMappedRegularPageOwnerInstallResult::Retained)
+    })
+}
+
+/// Creates one source-valid reclaim predecessor through the same suspended
+/// compiler-TLS owner transition as the mixed aggregate witness. Medium
+/// enters the shared aggregate traversal; direct small enters its existing
+/// specialized cache-validating source drain. Both transfer only the same
+/// typed mapped regular route to B, which must adopt and drain the exact
+/// page. The predecessor workload is consumed before suspension, so it is
+/// never a property of the TLS lifecycle state.
+#[cfg(test)]
+fn install_mapped_regular_owner_exit_reclaim_page_owner(
+    predecessor: MappedRegularReclaimPredecessor,
+    reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
+) -> OwnerExitMappedRegularPageOwnerInstallResult {
+    install_current_thread_page_owner(|preparation| match predecessor {
+        MappedRegularReclaimPredecessor::Medium => {
+            let workload = OwnerExitReclaimWorkload::allocate(preparation)
+                .map_err(|_| OwnerExitMappedRegularPageOwnerInstallResult::AllocationFailed)?;
+            let Some(clients) = workload.into_clients() else {
+                return Err(OwnerExitMappedRegularPageOwnerInstallResult::Retained);
+            };
+            preparation
+                .finish_sole_immediate_mapped_regular_reclaim(
+                    clients,
+                    false,
+                    OWNER_EXIT_RECLAIM_MEDIUM_REQUEST,
+                    reclaim_after_exit,
+                )
+                .map_err(|_| OwnerExitMappedRegularPageOwnerInstallResult::Retained)
+        }
+        MappedRegularReclaimPredecessor::DirectSmall => {
+            let workload = OwnerExitDirectSmallReclaimWorkload::allocate(preparation)
+                .map_err(|_| OwnerExitMappedRegularPageOwnerInstallResult::AllocationFailed)?;
+            let Some(clients) = workload.into_clients() else {
+                return Err(OwnerExitMappedRegularPageOwnerInstallResult::Retained);
+            };
+            preparation
+                .finish_sole_immediate_mapped_regular_reclaim(
+                    clients,
+                    true,
+                    OWNER_EXIT_RECLAIM_DIRECT_SMALL_REQUEST,
+                    reclaim_after_exit,
+                )
+                .map_err(|_| OwnerExitMappedRegularPageOwnerInstallResult::Retained)
+        }
+    })
+}
+
+// This fixed, pointer-private test workload deliberately crosses the source
+// small, medium, large, and singleton allocation branches. Two small and two
+// medium blocks remain live while their siblings are freed and reacquired, so
+// the reuse check observes local page ownership rather than a freshly released
+// page or a ticket-zero handoff. The final singleton is larger than one large
+// page to require a multi-page source singleton span.
+const PERSISTENT_WORKER_LOCAL_REQUESTS: [(usize, u8); 7] = [
+    (37, 0x11),
+    (37, 0x22),
+    (SMALL_MAX_OBJ_SIZE + 1, 0x33),
+    (SMALL_MAX_OBJ_SIZE + 1, 0x44),
+    (MEDIUM_MAX_OBJ_SIZE + 1, 0x55),
+    (LARGE_MAX_OBJ_SIZE + 1, 0x66),
+    (LARGE_MAX_OBJ_SIZE + 64 * 1024 + 1, 0x77),
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistentLocalWorkerError {
+    AllocationFailed,
+    PatternMismatch,
+    Free,
+}
+
+#[inline]
+unsafe fn fill_worker_pattern(block: core::ptr::NonNull<u8>, size: usize, seed: u8) {
+    for offset in 0..size {
+        // SAFETY: the caller proves this exact current allocation has at
+        // least `size` writable bytes and no concurrent or aliased access.
+        unsafe {
+            block
+                .as_ptr()
+                .add(offset)
+                .write(seed.wrapping_add(offset as u8));
+        }
+    }
+}
+
+#[inline]
+unsafe fn worker_pattern_matches(block: core::ptr::NonNull<u8>, size: usize, seed: u8) -> bool {
+    for offset in 0..size {
+        // SAFETY: the caller proves this exact current allocation has at
+        // least `size` readable bytes and no concurrent or aliased access.
+        let observed = unsafe { block.as_ptr().add(offset).read() };
+        if observed != seed.wrapping_add(offset as u8) {
+            return false;
+        }
+    }
+    true
+}
+
+#[inline]
+fn free_persistent_worker_block(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    block: &mut Option<core::ptr::NonNull<u8>>,
+) -> Result<(), PersistentLocalWorkerError> {
+    let block = block.take().ok_or(PersistentLocalWorkerError::Free)?;
+    // SAFETY: this helper consumes exactly one current local allocation and
+    // never publishes it outside the persistent worker engine.
+    unsafe { allocator.free(block) }.map_err(|_| PersistentLocalWorkerError::Free)
+}
+
+fn free_remaining_persistent_worker_blocks(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    blocks: &mut [Option<core::ptr::NonNull<u8>>; PERSISTENT_WORKER_LOCAL_REQUESTS.len()],
+) -> Result<(), PersistentLocalWorkerError> {
+    for block in blocks {
+        if block.is_some() {
+            free_persistent_worker_block(allocator, block)?;
+        }
+    }
+    Ok(())
+}
+
+/// Exercises one worker-owned page engine for the complete local Gate 5A
+/// witness. It has no transfer, remote-free, abandonment, or owner-exit
+/// operation: every pointer stays private to this thread and is freed before
+/// its enclosing engine can finish.
+fn run_persistent_local_worker_workload(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+) -> Result<(), PersistentLocalWorkerError> {
+    let mut blocks = [None; PERSISTENT_WORKER_LOCAL_REQUESTS.len()];
+
+    for (slot, (request, seed)) in blocks.iter_mut().zip(PERSISTENT_WORKER_LOCAL_REQUESTS) {
+        let Some(block) = allocator.allocate(request, false) else {
+            free_remaining_persistent_worker_blocks(allocator, &mut blocks)?;
+            return Err(PersistentLocalWorkerError::AllocationFailed);
+        };
+        // SAFETY: `block` is the exact newly allocated, local block and the
+        // request is the checked allocation length for this workload.
+        unsafe { fill_worker_pattern(block, request, seed) };
+        *slot = Some(block);
+    }
+
+    for (block, (request, seed)) in blocks.iter().zip(PERSISTENT_WORKER_LOCAL_REQUESTS) {
+        let block = block.ok_or(PersistentLocalWorkerError::PatternMismatch)?;
+        // SAFETY: each allocation remains current and exclusively local until
+        // the mixed free sequence below consumes it.
+        if !unsafe { worker_pattern_matches(block, request, seed) } {
+            free_remaining_persistent_worker_blocks(allocator, &mut blocks)?;
+            return Err(PersistentLocalWorkerError::PatternMismatch);
+        }
+    }
+
+    free_persistent_worker_block(allocator, &mut blocks[0])?;
+    let Some(reused_small) = allocator.allocate(PERSISTENT_WORKER_LOCAL_REQUESTS[0].0, false)
+    else {
+        free_remaining_persistent_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentLocalWorkerError::AllocationFailed);
+    };
+    blocks[0] = Some(reused_small);
+    // SAFETY: this post-free allocation is current and private to this worker.
+    unsafe {
+        fill_worker_pattern(
+            reused_small,
+            PERSISTENT_WORKER_LOCAL_REQUESTS[0].0,
+            PERSISTENT_WORKER_LOCAL_REQUESTS[0].1,
+        )
+    };
+
+    free_persistent_worker_block(allocator, &mut blocks[2])?;
+    let Some(reused_medium) = allocator.allocate(PERSISTENT_WORKER_LOCAL_REQUESTS[2].0, false)
+    else {
+        free_remaining_persistent_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentLocalWorkerError::AllocationFailed);
+    };
+    blocks[2] = Some(reused_medium);
+    // SAFETY: this post-free allocation is current and private to this worker.
+    unsafe {
+        fill_worker_pattern(
+            reused_medium,
+            PERSISTENT_WORKER_LOCAL_REQUESTS[2].0,
+            PERSISTENT_WORKER_LOCAL_REQUESTS[2].1,
+        )
+    };
+
+    // Deliberately free across page kinds rather than in allocation order.
+    for index in [4, 1, 6, 5, 3, 2, 0] {
+        free_persistent_worker_block(allocator, &mut blocks[index])?;
+    }
+    Ok(())
+}
+
+/// Runs the fixed mixed-local witness through the runtime's typed persistent
+/// operation rather than the older closure-shaped dormant-pair handoff.
+///
+/// The operation owns the `READY -> BUSY -> READY` scheduler transition and
+/// can therefore be the same A-side capability that a separate focused test
+/// parks before one bounded B-side operation. This local witness does not
+/// park, transfer a client, or admit B; it proves that the prefixed C fixture
+/// exercises the typed scheduler without widening its ABI.
+fn run_runtime_persistent_local_worker_lifecycle<'attachment, 'main>(
+    runtime: &'static RuntimeProcessStorage,
+    attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+) -> Result<PersistentLocalWorkerResult, ()> {
+    let mut engine = runtime
+        .begin_persistent_later_engine(attachment)
+        .map_err(|_| ())?;
+    let workload = engine.run_persistent_local_workload();
+    match (workload, engine.finish()) {
+        (Ok(()), Ok(())) => Ok(PersistentLocalWorkerResult::Completed),
+        (Err(PersistentLocalWorkerError::AllocationFailed), Ok(())) => {
+            Ok(PersistentLocalWorkerResult::AllocationFailed)
+        }
+        (
+            Err(PersistentLocalWorkerError::PatternMismatch | PersistentLocalWorkerError::Free),
+            Ok(()),
+        ) => {
+            // The lower engine did reach its all-free finish, but this witness
+            // observed a broken local invariant. Match the former
+            // closure-shaped route: preserve a terminal process outcome rather
+            // than reopening ticket zero after an unaccounted test failure.
+            runtime.retain_page_owner();
+            Err(())
+        }
+        (_, Err(_)) => Err(()),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistentLocalWorkerResult {
+    Completed,
+    AllocationFailed,
+}
+
+// A regular small page has at most this many exact 37-byte requests: source
+// block rounding and page metadata can only decrease the capacity. The
+// read-only engine observation below supplies the exact current capacity, so
+// the owner fills one page without crossing into a successor before B publishes
+// the remote free.
+const PERSISTENT_REMOTE_REQUEST: usize = 37;
+const PERSISTENT_REMOTE_BLOCK_SLOTS: usize = SMALL_PAGE_SIZE / PERSISTENT_REMOTE_REQUEST;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistentRemoteWorkerError {
+    AllocationFailed,
+    PublicationFailed,
+    PageCapacityInvalid,
+    ReuseFailed,
+    Free,
+}
+
+#[inline]
+fn free_persistent_remote_worker_block(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    block: &mut Option<core::ptr::NonNull<u8>>,
+) -> Result<(), PersistentRemoteWorkerError> {
+    let block = block.take().ok_or(PersistentRemoteWorkerError::Free)?;
+    // SAFETY: the helper consumes one current block that the remote handoff
+    // never received, or that owner collection returned to this exact engine.
+    unsafe { allocator.free(block) }.map_err(|_| PersistentRemoteWorkerError::Free)
+}
+
+fn free_remaining_persistent_remote_worker_blocks(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    blocks: &mut [Option<core::ptr::NonNull<u8>>; PERSISTENT_REMOTE_BLOCK_SLOTS],
+) -> Result<(), PersistentRemoteWorkerError> {
+    for block in blocks {
+        if block.is_some() {
+            free_persistent_remote_worker_block(allocator, block)?;
+        }
+    }
+    Ok(())
+}
+
+/// Exercises the live-owner half of Gate 5B. The first small page becomes full
+/// before two exact blocks transfer as logical remote publications; the
+/// joined owner's next ordinary allocations perform the source false
+/// collection, receive both exact blocks back, and finish with no client
+/// allocation.
+///
+/// `publish` owns only the two source remote-free capabilities. It cannot
+/// access the worker attachment, page engine, PageMap lease, arena, or client
+/// pointers. The owner remains stopped until the callback returns both tokens
+/// as published or not-published, so this is not an owner-exit or general
+/// asynchronous path.
+fn run_persistent_remote_worker_workload(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    publish: TicketZeroRemoteFreePublisher,
+) -> Result<(), PersistentRemoteWorkerError> {
+    let mut blocks = [None; PERSISTENT_REMOTE_BLOCK_SLOTS];
+    let Some(first) = allocator.allocate(PERSISTENT_REMOTE_REQUEST, false) else {
+        return Err(PersistentRemoteWorkerError::AllocationFailed);
+    };
+    // SAFETY: `first` is the exact current allocation and no remote producer
+    // exists while the owner observes its page's fixed source capacity.
+    let capacity = unsafe { allocator.current_allocation_page_capacity(first) }
+        .filter(|capacity| *capacity >= 2 && *capacity <= PERSISTENT_REMOTE_BLOCK_SLOTS)
+        .ok_or(PersistentRemoteWorkerError::PageCapacityInvalid)?;
+    blocks[0] = Some(first);
+    for slot in blocks.iter_mut().take(capacity).skip(1) {
+        let Some(block) = allocator.allocate(PERSISTENT_REMOTE_REQUEST, false) else {
+            free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+            return Err(PersistentRemoteWorkerError::AllocationFailed);
+        };
+        *slot = Some(block);
+    }
+
+    let first_transferred = blocks[0]
+        .take()
+        .ok_or(PersistentRemoteWorkerError::Free)?;
+    let second_transferred = blocks[1]
+        .take()
+        .ok_or(PersistentRemoteWorkerError::Free)?;
+    // SAFETY: the bounded fixed request filled the target's first small page
+    // before these transfers. Both blocks are current, distinct, and remain
+    // PageMap-published until B/C join and owner A collects them.
+    let producers = unsafe {
+        allocator.begin_remote_free_pair(first_transferred, second_transferred)
+    }
+        .map_err(|_| PersistentRemoteWorkerError::PublicationFailed)?;
+    let producers = TicketZeroRemoteFreeProducerPair { producers };
+    if let Err(producers) = publish(producers) {
+        let (first, second) = producers.cancel();
+        blocks[0] = Some(first);
+        blocks[1] = Some(second);
+        free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentRemoteWorkerError::PublicationFailed);
+    }
+
+    let Some(reused) = allocator.allocate(PERSISTENT_REMOTE_REQUEST, false) else {
+        free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentRemoteWorkerError::AllocationFailed);
+    };
+    let Some(second_reused) = allocator.allocate(PERSISTENT_REMOTE_REQUEST, false) else {
+        blocks[0] = Some(reused);
+        free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentRemoteWorkerError::AllocationFailed);
+    };
+    blocks[0] = Some(reused);
+    blocks[1] = Some(second_reused);
+    free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+    if (reused == first_transferred && second_reused == second_transferred)
+        || (reused == second_transferred && second_reused == first_transferred)
+    {
+        Ok(())
+    } else {
+        Err(PersistentRemoteWorkerError::ReuseFailed)
+    }
+}
+
+/// Runs the fixed live-owner remote-free witness through the runtime's typed
+/// persistent operation rather than the older closure-shaped dormant-pair
+/// handoff.
+///
+/// The worker remains the sole A-side engine owner throughout the scoped B
+/// publication and join. Its `READY -> BUSY -> READY` transition therefore
+/// stays coupled to the exact engine that collects the remote frees, while
+/// the publisher remains unable to obtain a general page operation.
+fn run_runtime_persistent_remote_worker_lifecycle<'attachment, 'main>(
+    runtime: &'static RuntimeProcessStorage,
+    attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    publish: TicketZeroRemoteFreePublisher,
+) -> Result<PersistentRemoteWorkerResult, ()> {
+    let mut engine = runtime
+        .begin_persistent_later_engine(attachment)
+        .map_err(|_| ())?;
+    let workload = engine.run_persistent_remote_workload(publish);
+    match (workload, engine.finish()) {
+        (Ok(()), Ok(())) => Ok(PersistentRemoteWorkerResult::Completed),
+        (Err(PersistentRemoteWorkerError::AllocationFailed), Ok(())) => {
+            Ok(PersistentRemoteWorkerResult::AllocationFailed)
+        }
+        (Err(PersistentRemoteWorkerError::PublicationFailed), Ok(())) => {
+            Ok(PersistentRemoteWorkerResult::PublicationFailed)
+        }
+        (Err(PersistentRemoteWorkerError::ReuseFailed), Ok(())) => {
+            Ok(PersistentRemoteWorkerResult::ReuseFailed)
+        }
+        (
+            Err(PersistentRemoteWorkerError::PageCapacityInvalid | PersistentRemoteWorkerError::Free),
+            Ok(()),
+        ) => {
+            // As with the former closure-shaped handoff, an unaccounted
+            // source invariant failure must not reopen ticket zero merely
+            // because the lower engine happened to become all-free.
+            runtime.retain_page_owner();
+            Err(())
+        }
+        (_, Err(_)) => Err(()),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistentRemoteWorkerResult {
+    Completed,
+    AllocationFailed,
+    PublicationFailed,
+    ReuseFailed,
+}
+
+/// Runs the bounded mixed owner-exit witness through the real normal
+/// post-destructor runtime finish dispatch.
+///
+/// This stores A's page-bearing owner in the current thread's compiler TLS
+/// before it invokes [`finish_current_thread_after_user_destructors`]. The
+/// normal finish must therefore resume the typed engine, run the general
+/// aggregate coordinator, and wait for B's opaque terminal proof before it
+/// may release A's worker admission. It remains a pointer-private test seam,
+/// not a libc backend or a general post-exit free API.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    match install_mapped_regular_owner_exit_page_owner(publish_before_exit, free_after_exit) {
+        OwnerExitMappedRegularPageOwnerInstallResult::Installed => {
+            match finish_current_thread_after_user_destructors() {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        OwnerExitMappedRegularPageOwnerInstallResult::AllocationFailed => {
+            match finish_current_thread_after_user_destructors() {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::AllocationFailed,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        OwnerExitMappedRegularPageOwnerInstallResult::PublicationFailed => {
+            match finish_current_thread_after_user_destructors() {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Unavailable,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        OwnerExitMappedRegularPageOwnerInstallResult::Retained => {
+            retain_current_thread_live_page_owner();
+            TicketZeroLaterThreadPageResult::Retained
+        }
+    }
+}
+
+/// The source choice that changes a parked session's post-exit consumer
+/// preparation. Every case retains the same generic aggregate route and its
+/// private client ledger; a scoped source interleaving moves two opaque client
+/// keys outside that ledger only for B to hand C/D their bounded producers.
+#[derive(Clone, Copy)]
+enum ParkedSessionPostExitPublication {
+    Ordinary,
+    ScopedDirectSmallRemoteFree,
+    ScopedMappedMediumRemoteFree,
+    ScopedInitiallyMappedMediumRemoteFree,
+}
+
+/// Exercises the ordinary owner-exit dispatcher from a real parked TLS
+/// session rather than from the one-shot preparation closure used by the
+/// historical fixed workload witness.
+///
+/// The session performs ordinary allocation, local free/reuse, a joined
+/// source remote publication, and further allocations across separate
+/// park/resume operations before it consumes its own private ledger into the
+/// general sequential route. No raw client address, allocator, page identity,
+/// or general post-exit selector crosses this Rust-only test seam.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_session_owner_exit_through_normal_finish(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_exit_publication(
+        publish_before_exit,
+        free_after_exit,
+        ParkedSessionPostExitPublication::Ordinary,
+    )
+}
+
+/// Exercises the source-valid direct-small B/C/D post-exit publication from
+/// the same parked TLS session lifecycle. A selects three still-live clients
+/// only by private ledger key before it suspends; fresh B receives the opaque
+/// route and may lend C/D scoped atomic producers only after B has the source
+/// low-bit claim. This is not a public producer or pointer-handoff API.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_through_normal_finish(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_exit_publication(
+        publish_before_exit,
+        free_after_exit,
+        ParkedSessionPostExitPublication::ScopedDirectSmallRemoteFree,
+    )
+}
+
+/// Exercises the separately bounded mapped-medium B/C/D publication from the
+/// same parked TLS session lifecycle. A selects three remaining medium
+/// clients only by private ledger key after the page's pre-exit source remote
+/// free has normalized it into the mapped regular route. Fresh B can lend C/D
+/// the nominally mapped-medium producers only after B holds the source low
+/// owner bit. This is neither a general concurrent free route nor a public
+/// pointer-handoff API.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_mapped_medium_publisher_through_normal_finish(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_exit_publication(
+        publish_before_exit,
+        free_after_exit,
+        ParkedSessionPostExitPublication::ScopedMappedMediumRemoteFree,
+    )
+}
+
+/// Exercises the same bounded B/C/D publication from a medium member that
+/// was already mapped and non-full when A entered the general owner-exit
+/// traversal. A reaches that source state through one ordinary local free;
+/// the aggregate route still chooses and owns the member, while fresh B may
+/// lend C/D the nominally mapped-medium producers only after B has claimed
+/// the page's source low owner bit. This remains neither a general concurrent
+/// free route nor a public pointer-handoff API.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_session_owner_exit_with_initial_mapped_medium_post_exit_publisher_through_normal_finish(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_exit_publication(
+        publish_before_exit,
+        free_after_exit,
+        ParkedSessionPostExitPublication::ScopedInitiallyMappedMediumRemoteFree,
+    )
+}
+
+#[cfg(test)]
+fn ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_exit_publication(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+    post_exit_publication: ParkedSessionPostExitPublication,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let mut session = match begin_current_thread_page_owner_session() {
+        Ok(session) => session,
+        Err(CurrentThreadPageOwnerSessionError::Busy
+        | CurrentThreadPageOwnerSessionError::Unavailable
+        | CurrentThreadPageOwnerSessionError::Stale) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Unavailable;
+        }
+        Err(CurrentThreadPageOwnerSessionError::Preparation(_) | CurrentThreadPageOwnerSessionError::Retained) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+
+    // The one source operation proves that a local free can immediately feed
+    // another same-class allocation. The allocator need not return the exact
+    // same address: its source free-list policy may choose another local
+    // block. The following workload operations each cross the parked-session
+    // boundary, so the session still proves durable ordinary state.
+    let local_reuse = session.with_active_operation(|allocator, clients| {
+        let first = clients.allocate_client(allocator, 37, false)?;
+        clients
+            .free_client(allocator, first)
+            .map_err(|_| CurrentThreadPageOwnerPreparationError::LocalFree)?;
+        let reused = clients.allocate_client(allocator, 37, false)?;
+        clients
+            .free_client(allocator, reused)
+            .map_err(|_| CurrentThreadPageOwnerPreparationError::LocalFree)?;
+        Ok::<(), CurrentThreadPageOwnerPreparationError>(())
+    });
+    match local_reuse {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) | Err(_) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    }
+
+    // This remains a source-state fixture, but every allocation now goes
+    // through the live TLS session's ordinary operation boundary. The active
+    // session—not this local workload value—owns the durable client ledger.
+    let mut workload = match OwnerExitMappedRegularWorkload::allocate(&mut session) {
+        Ok(workload) => workload,
+        Err(_) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    let Some((medium, large)) = workload.take_remote_clients() else {
+        retain_current_thread_live_page_owner();
+        return TicketZeroLaterThreadPageResult::Retained;
+    };
+    if let Err(failure) = session.publish_remote_free_pair(medium, large, publish_before_exit) {
+        match failure {
+            CurrentThreadPageOwnerSessionRemotePairFailure::Preparation(failure) => {
+                let (medium, large, _) = failure.into_parts();
+                workload.restore_remote_clients(medium, large);
+                let _ = workload.free_locals(&mut session);
+            }
+            CurrentThreadPageOwnerSessionRemotePairFailure::Session(error) => {
+                // The source session already owns the terminal state for this
+                // failed operation. Keep the exact error consumed here so the
+                // outer boundary cannot mistake it for a recoverable pair.
+                let _ = error;
+            }
+        }
+        // A session-level failure may have retained the exact parked/live
+        // source state already. Neither branch may call the no-page finalizer
+        // while this unfinished session still owns its client ledger.
+        retain_current_thread_live_page_owner();
+        return TicketZeroLaterThreadPageResult::Retained;
+    }
+    let post_exit_remote_publication_group = match post_exit_publication {
+        ParkedSessionPostExitPublication::Ordinary => None,
+        ParkedSessionPostExitPublication::ScopedDirectSmallRemoteFree => {
+            match workload.post_exit_remote_publication_group_keys() {
+                Some(group) => Some(group),
+                None => {
+                    retain_current_thread_live_page_owner();
+                    return TicketZeroLaterThreadPageResult::Retained;
+                }
+            }
+        }
+        ParkedSessionPostExitPublication::ScopedMappedMediumRemoteFree => {
+            match workload.post_exit_mapped_medium_remote_publication_group_keys() {
+                Some(group) => Some(group),
+                None => {
+                    retain_current_thread_live_page_owner();
+                    return TicketZeroLaterThreadPageResult::Retained;
+                }
+            }
+        }
+        ParkedSessionPostExitPublication::ScopedInitiallyMappedMediumRemoteFree => {
+            match workload.post_exit_initial_mapped_medium_remote_publication_group_keys() {
+                Some(group) => Some(group),
+                None => {
+                    retain_current_thread_live_page_owner();
+                    return TicketZeroLaterThreadPageResult::Retained;
+                }
+            }
+        }
+    };
+    drop(workload);
+
+    let prepare_exit = match post_exit_remote_publication_group {
+        Some(group) => session
+            .prepare_sequential_exit_with_post_exit_remote_publication_group(group, free_after_exit),
+        None => session.prepare_sequential_exit(free_after_exit),
+    };
+    match prepare_exit {
+        Ok(()) => match finish_current_thread_after_user_destructors() {
+            ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+            ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+            ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                TicketZeroLaterThreadPageResult::Unavailable
+            }
+        },
+        Err(_) => {
+            retain_current_thread_live_page_owner();
+            TicketZeroLaterThreadPageResult::Retained
+        }
+    }
+}
+
+/// Exercises the source retired-page prepass through an actual parked TLS
+/// session before that session transfers its one surviving client into the
+/// ordinary aggregate owner-exit route.
+///
+/// The first allocation is a direct-small page that a normal local free leaves
+/// queued with a nonzero source retirement countdown. The second is a distinct
+/// medium page with one live client. At normal finish,
+/// `_mi_theap_collect_abandon` must release the retired direct-small span
+/// before it traverses and publishes the live medium into B's opaque route.
+/// A still owns its worker admission until that route terminally releases and
+/// B completes its own attachment; this seam never supplies an address to the
+/// caller or substitutes the no-page finalizer after abandonment.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_retired_then_live_session_owner_exit_through_normal_finish(
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let mut session = match begin_current_thread_page_owner_session() {
+        Ok(session) => session,
+        Err(CurrentThreadPageOwnerSessionError::Busy
+        | CurrentThreadPageOwnerSessionError::Unavailable
+        | CurrentThreadPageOwnerSessionError::Stale) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Unavailable;
+        }
+        Err(CurrentThreadPageOwnerSessionError::Preparation(_) | CurrentThreadPageOwnerSessionError::Retained) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+
+    let retired = match session.allocate(37, false) {
+        Ok(block) => block,
+        Err(_) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    if session.free(retired).is_err() {
+        retain_current_thread_live_page_owner();
+        return TicketZeroLaterThreadPageResult::Retained;
+    }
+
+    // This request occupies a distinct medium page, so the direct-small
+    // source cache remains retired instead of being revived by the live
+    // session client. The lower coordinator validates and releases that
+    // cache image during its retired-page prepass before it publishes this
+    // surviving client into the general route.
+    if session.allocate(SMALL_MAX_OBJ_SIZE + 1, false).is_err() {
+        retain_current_thread_live_page_owner();
+        return TicketZeroLaterThreadPageResult::Retained;
+    }
+
+    match session.prepare_sequential_exit(free_after_exit) {
+        Ok(()) => match finish_current_thread_after_user_destructors() {
+            ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+            ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+            ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                TicketZeroLaterThreadPageResult::Unavailable
+            }
+        },
+        Err(_) => {
+            retain_current_thread_live_page_owner();
+            TicketZeroLaterThreadPageResult::Retained
+        }
+    }
+}
+
+/// Exercises the all-free side of the active parked-session lifecycle through
+/// the ordinary post-destructor finish entry.
+///
+/// Every session allocation is locally freed before the finish boundary. The
+/// session therefore has no client that could require the typed post-exit
+/// route, but it still owns a suspended page engine and cannot be treated as
+/// a no-page attachment. The normal dispatcher must resume that exact engine,
+/// run the all-free page drain, then finish the old Theap/TLD before releasing
+/// this worker's admission. This is a Rust-only regression seam, not allocator
+/// routing or a permission to finalize a live session through the no-page
+/// path.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_all_free_session_through_normal_finish(
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let mut session = match begin_current_thread_page_owner_session() {
+        Ok(session) => session,
+        Err(CurrentThreadPageOwnerSessionError::Busy
+        | CurrentThreadPageOwnerSessionError::Unavailable
+        | CurrentThreadPageOwnerSessionError::Stale) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Unavailable;
+        }
+        Err(CurrentThreadPageOwnerSessionError::Preparation(_) | CurrentThreadPageOwnerSessionError::Retained) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    let block = match session.allocate(37, false) {
+        Ok(block) => block,
+        Err(_) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    if session.free(block).is_err() {
+        retain_current_thread_live_page_owner();
+        return TicketZeroLaterThreadPageResult::Retained;
+    }
+    drop(session);
+
+    match finish_current_thread_after_user_destructors() {
+        ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+        ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+        ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+            TicketZeroLaterThreadPageResult::Unavailable
+        }
+    }
+}
+
+/// Exercises the source-published all-free side of the active parked-session
+/// boundary.
+///
+/// Both clients have crossed the joined source remote-free protocol before the
+/// destructor boundary, so neither is a locally live ledger entry. They still
+/// remain page-bearing until source collection force-collects their remote
+/// heads. The normal finish must therefore use the typed all-free page drain,
+/// not the no-page finalizer; only after that drain and A's attachment teardown
+/// may it release this worker's admission. This is a Rust-only regression
+/// seam, not allocator routing.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_source_published_session_through_normal_finish(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let mut session = match begin_current_thread_page_owner_session() {
+        Ok(session) => session,
+        Err(CurrentThreadPageOwnerSessionError::Busy
+        | CurrentThreadPageOwnerSessionError::Unavailable
+        | CurrentThreadPageOwnerSessionError::Stale) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Unavailable;
+        }
+        Err(CurrentThreadPageOwnerSessionError::Preparation(_) | CurrentThreadPageOwnerSessionError::Retained) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    let first = match session.allocate(37, false) {
+        Ok(block) => block,
+        Err(_) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    let second = match session.allocate(37, false) {
+        Ok(block) => block,
+        Err(_) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    if session
+        .publish_remote_free_pair(first, second, publish_before_exit)
+        .is_err()
+    {
+        // A failed publication may leave the exact live source session in
+        // TLS. The test seam has no recovery route for that state and must
+        // never invoke the no-page finalizer merely to report a result.
+        retain_current_thread_live_page_owner();
+        return TicketZeroLaterThreadPageResult::Retained;
+    }
+    drop(session);
+
+    match finish_current_thread_after_user_destructors() {
+        ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+        ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+        ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+            TicketZeroLaterThreadPageResult::Unavailable
+        }
+    }
+}
+
+/// Exercises the one-client source-published all-free side of the active
+/// parked-session boundary.
+///
+/// The client crosses one joined source remote-free handoff before the
+/// destructor boundary. It is still page-bearing until the source
+/// `_mi_theap_collect_abandon` pass force-collects the remote head, so normal
+/// finish must run the typed all-free page drain and attachment teardown before
+/// releasing this worker's admission. This remains a pointer-private Rust-only
+/// regression seam, not allocator routing or a general remote-free API.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_single_source_published_session_through_normal_finish(
+    publish_before_exit: TicketZeroSingleRemoteFreePublisher,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let mut session = match begin_current_thread_page_owner_session() {
+        Ok(session) => session,
+        Err(CurrentThreadPageOwnerSessionError::Busy
+        | CurrentThreadPageOwnerSessionError::Unavailable
+        | CurrentThreadPageOwnerSessionError::Stale) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Unavailable;
+        }
+        Err(CurrentThreadPageOwnerSessionError::Preparation(_) | CurrentThreadPageOwnerSessionError::Retained) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    let client = match session.allocate(37, false) {
+        Ok(block) => block,
+        Err(_) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    if let Err(failure) = session.publish_remote_free(client, publish_before_exit) {
+        match failure {
+            CurrentThreadPageOwnerSessionRemoteFreeFailure::Preparation(failure) => {
+                let _ = failure.into_parts();
+            }
+            CurrentThreadPageOwnerSessionRemoteFreeFailure::Session(error) => {
+                let _ = error;
+            }
+        }
+        // The failed handoff leaves its exact source client/session in TLS.
+        // This seam has no recovery policy, and must not invoke the no-page
+        // finalizer merely to convert that state into a result code.
+        retain_current_thread_live_page_owner();
+        return TicketZeroLaterThreadPageResult::Retained;
+    }
+    drop(session);
+
+    match finish_current_thread_after_user_destructors() {
+        ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+        ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+        ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+            TicketZeroLaterThreadPageResult::Unavailable
+        }
+    }
+}
+
+/// Exercises the negative lifecycle boundary for an active parked TLS page
+/// owner. The session deliberately retains one live private client but does
+/// not select a typed post-exit route before it invokes the ordinary finish
+/// entry. That entry must retain the exact active owner; it must not mistake
+/// the parked engine for a no-page attachment and release this worker's
+/// admission. This is a Rust-only regression seam, not allocator routing.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_active_session_rejects_normal_finish(
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let mut session = match begin_current_thread_page_owner_session() {
+        Ok(session) => session,
+        Err(CurrentThreadPageOwnerSessionError::Busy
+        | CurrentThreadPageOwnerSessionError::Unavailable
+        | CurrentThreadPageOwnerSessionError::Stale) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Unavailable;
+        }
+        Err(CurrentThreadPageOwnerSessionError::Preparation(_) | CurrentThreadPageOwnerSessionError::Retained) => {
+            retain_current_thread_live_page_owner();
+            return TicketZeroLaterThreadPageResult::Retained;
+        }
+    };
+    if session.allocate(37, false).is_err() {
+        // The active session remains in TLS on an ordinary source allocation
+        // refusal. Preserve it terminally rather than attempting the old
+        // no-page fallback merely to classify this test-only seam.
+        retain_current_thread_live_page_owner();
+        return TicketZeroLaterThreadPageResult::Retained;
+    }
+    drop(session);
+
+    match finish_current_thread_after_user_destructors() {
+        ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+        ThreadFinishResult::Finished
+        | ThreadFinishResult::NotAttached
+        | ThreadFinishResult::AlreadyFinished => TicketZeroLaterThreadPageResult::Unavailable,
+    }
+}
+
+/// Runs the bounded sole-medium reclamation witness through the real normal
+/// post-destructor runtime finish dispatch.
+///
+/// A's page-bearing state is suspended into compiler TLS before ordinary
+/// finish resumes it and runs the same aggregate source traversal as the
+/// mixed witness. The sole route keeps A's admission until B has adopted,
+/// used, drained, and terminally finished it. This remains a pointer-private
+/// test seam, not a general reclamation or libc allocator interface.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal_finish(
+    reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
+        MappedRegularReclaimPredecessor::Medium,
+        reclaim_after_exit,
+    )
+}
+
+/// Runs the bounded direct-small reclamation witness through the same real
+/// normal post-destructor runtime finish dispatch.
+///
+/// A's page-bearing state suspends into compiler TLS before ordinary finish
+/// enters the existing direct-small cache-validating source drain. B receives
+/// only the resulting opaque regular-page adoption capability; it must use,
+/// drain, and finish the reclaimed page before the common typed proof releases
+/// A's admission. This is private lifecycle evidence, not an aggregate-route
+/// claim, a public reclamation API, or a libc allocator interface.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_finish(
+    reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
+        MappedRegularReclaimPredecessor::DirectSmall,
+        reclaim_after_exit,
+    )
+}
+
+#[cfg(test)]
+fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
+    predecessor: MappedRegularReclaimPredecessor,
+    reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    match install_mapped_regular_owner_exit_reclaim_page_owner(predecessor, reclaim_after_exit) {
+        OwnerExitMappedRegularPageOwnerInstallResult::Installed => {
+            match finish_current_thread_after_user_destructors() {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        OwnerExitMappedRegularPageOwnerInstallResult::AllocationFailed => {
+            match finish_current_thread_after_user_destructors() {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::AllocationFailed,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        OwnerExitMappedRegularPageOwnerInstallResult::PublicationFailed => {
+            // The reclaim predecessor publishes no remote client before A
+            // exits. Keep this exhaustive result mapping explicit so a later
+            // shared installer cannot accidentally reinterpret it as success.
+            match finish_current_thread_after_user_destructors() {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Unavailable,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        OwnerExitMappedRegularPageOwnerInstallResult::Retained => {
+            retain_current_thread_live_page_owner();
+            TicketZeroLaterThreadPageResult::Retained
+        }
+    }
+}
+
+/// Runs the bounded real-lifecycle Gate 5C witness against the dormant
+/// ticket-zero process pair.
+///
+/// A publishes two clients to joined B/C before it crosses the existing
+/// general regular-page owner-exit traversal: one from a full medium page and
+/// one from a distinct large page. The traversal force-collects both, moving
+/// the medium out of `BIN_FULL` while immediately releasing the now-empty
+/// large page; a second full medium remains source-unmapped. It then detaches
+/// A's Theap/TLD and returns one opaque aggregate route. A second fresh joined
+/// B receives that route, frees every remaining private small/medium/large/
+/// arena-singleton/OS-singleton client, and completes only B's own no-page
+/// attachment before returning the proof of the final PageMap lifecycle. This
+/// test-only seam accepts no raw pointer, does not route libc allocation, and
+/// does not create a new page-shape-specific owner-exit entry point.
+//
+// Kept out of the compiled crate only while this source file is being
+// consolidated: the normal-finish witnesses above now provide the one active
+// lifecycle route for the same fixed workload. It is not an alternate API or
+// fallback path.
+#[cfg(any())]
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_mapped_regular_owner_exit(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let page_result = RUNTIME_PROCESS.with_dormant_page_pair(|pair| {
+        let lifecycle_slot = current_thread_slot();
+        let Some(attachment) = lifecycle_slot.attachment.as_mut() else {
+            return Err(());
+        };
+        let owner_exit_result = {
+            let mut allocator = match MainHeapThreadProcessPageAllocator::begin(attachment, pair) {
+                Ok(allocator) => allocator,
+                Err(_) => return Err(()),
+            };
+            let mut workload = match OwnerExitMappedRegularWorkload::allocate(&mut allocator) {
+                Ok(workload) => workload,
+                Err(_) => {
+                    return match allocator.finish() {
+                        Ok(()) => Ok(OwnerExitMappedRegularWorkerResult::AllocationFailed),
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            Ok(OwnerExitMappedRegularWorkerResult::Retained)
+                        }
+                    };
+                }
+            };
+
+            let (medium, large) = workload
+                .take_remote_clients()
+                .expect("the bounded owner-exit witness allocated both remote clients");
+            // SAFETY: `medium` and `large` are distinct exact current
+            // clients. The first belongs to a source-full regular medium page
+            // and the second is the sole client of a separate regular large
+            // page. B/C receive only logical remote-free producers; A remains
+            // alive until both have published or returned.
+            let producers = match unsafe { allocator.begin_remote_free_pair(medium, large) } {
+                Ok(producers) => TicketZeroRemoteFreeProducerPair { producers },
+                Err(_) => {
+                    workload.restore_remote_clients(medium, large);
+                    let _ = workload.free_locals(&mut allocator);
+                    return match allocator.finish() {
+                        Ok(()) => Ok(OwnerExitMappedRegularWorkerResult::PublicationFailed),
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            Ok(OwnerExitMappedRegularWorkerResult::Retained)
+                        }
+                    };
+                }
+            };
+            if let Err(producers) = publish_before_exit(producers) {
+                let (medium, large) = producers.cancel();
+                workload.restore_remote_clients(medium, large);
+                let _ = workload.free_locals(&mut allocator);
+                return match allocator.finish() {
+                    Ok(()) => Ok(OwnerExitMappedRegularWorkerResult::PublicationFailed),
+                    Err(failure) => {
+                        core::mem::forget(failure);
+                        Ok(OwnerExitMappedRegularWorkerResult::Retained)
+                    }
+                };
+            }
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(crate::main_heap_page::MainHeapThreadProcessPageExitDrainFailure::Retained {
+                    allocator,
+                    ..
+                }) => {
+                    core::mem::forget(allocator);
+                    return Ok(OwnerExitMappedRegularWorkerResult::Retained);
+                }
+            };
+            match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
+                Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => {
+                    // The aggregate route has already detached every source page
+                    // and completed the old Theap/TLD boundary. The retired
+                    // attachment remains in TLS until the final release proof
+                    // lets the runtime atomically complete its admission.
+                    let Some(blocks) = workload.into_post_exit_blocks() else {
+                        // The route has detached A already. Retaining it keeps
+                        // both the source route and its worker admission closed
+                        // if a private workload invariant ever regresses.
+                        core::mem::forget(route);
+                        return Ok(OwnerExitMappedRegularWorkerResult::Retained);
+                    };
+                    let Some(admission) = lifecycle_slot.admission.take() else {
+                        // The route has detached A already. Without the exact
+                        // linear admission token it must remain terminal; a
+                        // generic no-page finalizer may not decrement the
+                        // count for this post-exit owner.
+                        core::mem::forget(route);
+                        return Ok(OwnerExitMappedRegularWorkerResult::Retained);
+                    };
+                    match free_after_exit(TicketZeroOwnerExitFreeRoute {
+                        route,
+                        blocks,
+                        pair,
+                        admission,
+                        _consumer: PhantomData,
+                    }) {
+                        TicketZeroOwnerExitFreeOutcome::Finished(proof) => {
+                            Ok(OwnerExitMappedRegularWorkerResult::Completed(proof))
+                        }
+                        TicketZeroOwnerExitFreeOutcome::Retained(route) => {
+                            core::mem::forget(route);
+                            Ok(OwnerExitMappedRegularWorkerResult::Retained)
+                        }
+                        TicketZeroOwnerExitFreeOutcome::Poisoned(poisoned) => {
+                            Ok(OwnerExitMappedRegularWorkerResult::Poisoned(poisoned))
+                        }
+                    }
+                }
+                Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                    // The fixed workload retains multiple pages; a special
+                    // one-page result means its source invariant no longer holds.
+                    core::mem::forget(route);
+                    Ok(OwnerExitMappedRegularWorkerResult::Retained)
+                }
+                Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
+                    core::mem::forget(drain);
+                    Ok(OwnerExitMappedRegularWorkerResult::Retained)
+                }
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    Ok(OwnerExitMappedRegularWorkerResult::Retained)
+                }
+            }
+        };
+        owner_exit_result
+    });
+
+    match page_result {
+        Some(OwnerExitMappedRegularWorkerResult::Completed(proof)) => {
+            match finish_current_thread_after_detached_process_page_route(proof) {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        Some(
+            OwnerExitMappedRegularWorkerResult::AllocationFailed
+            | OwnerExitMappedRegularWorkerResult::PublicationFailed,
+        ) => match finish_current_thread_after_user_destructors() {
+            ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::AllocationFailed,
+            ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+            ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                TicketZeroLaterThreadPageResult::Unavailable
+            }
+        },
+        Some(OwnerExitMappedRegularWorkerResult::Retained) => {
+            retain_current_thread_detached_owner_exit();
+            TicketZeroLaterThreadPageResult::Retained
+        }
+        Some(OwnerExitMappedRegularWorkerResult::Poisoned(poisoned)) => {
+            retain_current_thread_detached_owner_exit_with_admission(poisoned.into_admission());
+            TicketZeroLaterThreadPageResult::Retained
+        }
+        None => {
+            retain_current_thread_detached_owner_exit();
+            TicketZeroLaterThreadPageResult::Retained
+        }
+    }
+}
+
+#[cfg(any())]
+enum OwnerExitReclaimWorkerResult {
+    Completed(TicketZeroOwnerExitRouteFinished),
+    AllocationFailed,
+    Retained,
+    Poisoned(TicketZeroOwnerExitRoutePoisoned),
+}
+
+/// Runs the source-valid post-exit reclamation half of Gate 5C against the
+/// dormant ticket-zero process pair.
+///
+/// A owns one initially-nonfull medium page with a returned local free that
+/// source exit collection turns into the immediate head. It crosses the same
+/// source-shaped aggregate owner-exit traversal as the mixed witness and
+/// receives only its typed sole-medium route. Joined B gets that opaque route,
+/// attaches through the normal runtime boundary, reclaims the exact page, uses
+/// it once, frees every private A/B client, and completes its own page-bearing
+/// lifecycle. Only then can B return the proof that releases A's original
+/// admission claim. No client pointer, PageMap lease, or generic normal
+/// finalizer crosses the A/B boundary.
+#[cfg(any())]
+#[doc(hidden)]
+#[cfg(test)]
+pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim(
+    reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let page_result = RUNTIME_PROCESS.with_dormant_page_pair(|pair| {
+        let lifecycle_slot = current_thread_slot();
+        let Some(attachment) = lifecycle_slot.attachment.as_mut() else {
+            return Err(());
+        };
+        let owner_exit_result = {
+            let mut allocator = match MainHeapThreadProcessPageAllocator::begin(attachment, pair) {
+                Ok(allocator) => allocator,
+                Err(_) => return Err(()),
+            };
+            let workload = match OwnerExitReclaimWorkload::allocate(&mut allocator) {
+                Ok(workload) => workload,
+                Err(()) => {
+                    return match allocator.finish() {
+                        Ok(()) => Ok(OwnerExitReclaimWorkerResult::AllocationFailed),
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            Ok(OwnerExitReclaimWorkerResult::Retained)
+                        }
+                    };
+                }
+            };
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(crate::main_heap_page::MainHeapThreadProcessPageExitDrainFailure::Retained {
+                    allocator,
+                    ..
+                }) => {
+                    core::mem::forget(allocator);
+                    return Ok(OwnerExitReclaimWorkerResult::Retained);
+                }
+            };
+            match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
+                Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(
+                    route,
+                )) => {
+                    // The completed source traversal already tore down A's
+                    // Theap/TLD. Transfer A's admission into the only route
+                    // that can cause B's reclaim/drain to return completion.
+                    let Some(blocks) = workload.into_blocks() else {
+                        core::mem::forget(route);
+                        return Ok(OwnerExitReclaimWorkerResult::Retained);
+                    };
+                    let Some(admission) = lifecycle_slot.admission.take() else {
+                        core::mem::forget(route);
+                        return Ok(OwnerExitReclaimWorkerResult::Retained);
+                    };
+                    match reclaim_after_exit(TicketZeroOwnerExitReclaimRoute {
+                        route,
+                        blocks,
+                        request: OWNER_EXIT_RECLAIM_MEDIUM_REQUEST,
+                        pair,
+                        admission,
+                    }) {
+                        TicketZeroOwnerExitReclaimOutcome::Finished(proof) => {
+                            Ok(OwnerExitReclaimWorkerResult::Completed(proof))
+                        }
+                        TicketZeroOwnerExitReclaimOutcome::Retained(route) => {
+                            core::mem::forget(route);
+                            Ok(OwnerExitReclaimWorkerResult::Retained)
+                        }
+                        TicketZeroOwnerExitReclaimOutcome::Poisoned(poisoned) => {
+                            Ok(OwnerExitReclaimWorkerResult::Poisoned(poisoned))
+                        }
+                    }
+                }
+                Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => {
+                    // Exactly one initially nonfull medium predecessor must
+                    // not silently fall back to the aggregate free-only path.
+                    core::mem::forget(route);
+                    Ok(OwnerExitReclaimWorkerResult::Retained)
+                }
+                Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
+                    core::mem::forget(drain);
+                    Ok(OwnerExitReclaimWorkerResult::Retained)
+                }
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    Ok(OwnerExitReclaimWorkerResult::Retained)
+                }
+            }
+        };
+        owner_exit_result
+    });
+
+    match page_result {
+        Some(OwnerExitReclaimWorkerResult::Completed(proof)) => {
+            match finish_current_thread_after_detached_process_page_route(proof) {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        Some(OwnerExitReclaimWorkerResult::AllocationFailed) => {
+            match finish_current_thread_after_user_destructors() {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::AllocationFailed,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        Some(OwnerExitReclaimWorkerResult::Retained) => {
+            retain_current_thread_detached_owner_exit();
+            TicketZeroLaterThreadPageResult::Retained
+        }
+        Some(OwnerExitReclaimWorkerResult::Poisoned(poisoned)) => {
+            retain_current_thread_detached_owner_exit_with_admission(poisoned.into_admission());
+            TicketZeroLaterThreadPageResult::Retained
+        }
+        None => {
+            retain_current_thread_detached_owner_exit();
+            TicketZeroLaterThreadPageResult::Retained
+        }
+    }
+}
+
+/// Runs one complete persistent later-worker page-engine lifecycle against
+/// the dormant ticket-zero process pair.
+///
+/// This private evidence/control seam attaches a fresh worker exactly once,
+/// retains one page engine through a fixed mixed local workload, returns that
+/// engine empty, and only then completes normal worker attachment teardown.
+/// It enters through the runtime's typed A-side scheduler operation, but never
+/// parks or grants any B-side operation. It accepts and returns no allocation
+/// pointer, does not route libc allocation, and is deliberately not a
+/// concurrent or general worker-owner API.
+#[doc(hidden)]
+pub fn ticket_zero_later_thread_persistent_local_workload() -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let page_result = (|| {
+        let slot = current_thread_slot();
+        let attachment = slot.attachment.as_mut().ok_or(())?;
+        run_runtime_persistent_local_worker_lifecycle(&RUNTIME_PROCESS, attachment)
+    })()
+    .ok();
+    let finish = finish_current_thread_after_user_destructors();
+    match (page_result, finish) {
+        (Some(PersistentLocalWorkerResult::Completed), ThreadFinishResult::Finished) => {
+            TicketZeroLaterThreadPageResult::Completed
+        }
+        (Some(PersistentLocalWorkerResult::AllocationFailed), ThreadFinishResult::Finished) => {
+            TicketZeroLaterThreadPageResult::AllocationFailed
+        }
+        (_, ThreadFinishResult::Retained)
+        | (_, _) if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_RETAINED
+            || RUNTIME_PROCESS.state.load(Ordering::Acquire) == PROCESS_RETAINED =>
+        {
+            TicketZeroLaterThreadPageResult::Retained
+        }
+        _ => TicketZeroLaterThreadPageResult::Unavailable,
+    }
+}
+
+/// Runs one complete live-owner remote-free lifecycle against the dormant
+/// ticket-zero process pair.
+///
+/// The current fresh worker is owner A. It retains one ordinary page engine,
+/// gives the supplied joined publisher the one opaque source remote-free
+/// capability for B, then collects and reuses the returned block while A is
+/// still alive. The typed A-side operation carries the runtime's
+/// `READY -> BUSY -> READY` transition; the publisher carries no client
+/// pointer and the caller must return it only after B has published or failed
+/// without publication. This remains a test-only bounded witness: it does not
+/// create concurrent page engines, owner-exit handling, or a libc allocation
+/// route.
+#[doc(hidden)]
+pub fn ticket_zero_later_thread_remote_free_roundtrip(
+    publish: TicketZeroRemoteFreePublisher,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let page_result = (|| {
+        let slot = current_thread_slot();
+        let attachment = slot.attachment.as_mut().ok_or(())?;
+        run_runtime_persistent_remote_worker_lifecycle(&RUNTIME_PROCESS, attachment, publish)
+    })()
+    .ok();
+    let finish = finish_current_thread_after_user_destructors();
+    match (page_result, finish) {
+        (Some(PersistentRemoteWorkerResult::Completed), ThreadFinishResult::Finished) => {
+            TicketZeroLaterThreadPageResult::Completed
+        }
+        (Some(PersistentRemoteWorkerResult::AllocationFailed), ThreadFinishResult::Finished) => {
+            TicketZeroLaterThreadPageResult::AllocationFailed
+        }
+        (
+            Some(
+                PersistentRemoteWorkerResult::PublicationFailed
+                | PersistentRemoteWorkerResult::ReuseFailed,
+            ),
+            ThreadFinishResult::Finished,
+        ) => {
+            TicketZeroLaterThreadPageResult::Unavailable
+        }
+        (_, ThreadFinishResult::Retained)
+        | (_, _) if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_RETAINED
+            || RUNTIME_PROCESS.state.load(Ordering::Acquire) == PROCESS_RETAINED =>
+        {
+            TicketZeroLaterThreadPageResult::Retained
+        }
+        _ => TicketZeroLaterThreadPageResult::Unavailable,
     }
 }
 
@@ -854,18 +11886,27 @@ pub fn ticket_zero_later_thread_page_roundtrip(
 }
 
 /// Prevents a later attachment from beginning across libc's direct raw-fork
-/// boundary and snapshots whether this no-page bridge can survive in the
-/// child.
+/// boundary and snapshots whether its narrow quiescent ticket-zero image can
+/// survive in the child.
 ///
 /// Libc invokes this after public prepare handlers and before the raw Linux
 /// fork-equivalent syscall. It has no C ABI, does not allocate, and does not
 /// consume a public `pthread_atfork` registration slot. The child is eligible
-/// for preservation only when the caller is the ticket-zero TPIDR_EL0 image
-/// and no later bridge attachment is live or retained.
+/// for preservation only when the caller is the original ticket-zero
+/// TPIDR_EL0 image, no later bridge attachment is live or retained, and its
+/// ticket-zero source owner is either unmapped or has returned to its source
+/// all-free dormant image. A normal all-free resident initial engine is
+/// collected only at this held boundary through its existing source finish;
+/// a failed collection, live page engine, or client remains non-preserving.
+/// That owner may remain in the static staging slot or, after one-time
+/// promotion, in the initial thread's pinned compiler-TLS cell. It does not
+/// repair a live page engine or client.
 #[doc(hidden)]
 #[inline]
 pub fn before_fork() {
-    RUNTIME_FORK_ADMISSION.before_fork(RUNTIME_PROCESS.is_active_on_initial_thread());
+    RUNTIME_FORK_ADMISSION.before_fork_with(|| {
+        RUNTIME_PROCESS.prepare_quiescent_on_initial_thread_for_held_fork_gate()
+    });
 }
 
 /// Releases the parent's direct fork admission boundary before public parent
@@ -896,22 +11937,28 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     if !RUNTIME_PROCESS.is_active() {
         return ThreadAttachResult::Inactive;
     }
-    if !RUNTIME_FORK_ADMISSION.claim_later_thread() {
+    let Some(admission) = RUNTIME_FORK_ADMISSION.claim_later_thread() else {
         // A count overflow cannot be mistaken for a fresh process state. It
         // is not a practical capacity policy; it is a terminal failure of the
         // bridge's precise fork-admission accounting.
         slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
         return ThreadAttachResult::Retained;
-    }
-    slot.admission_held = true;
+    };
+    slot.admission = Some(admission);
 
     // SAFETY: a published process owner and its main-thread-minted immutable
     // Heap lease stay in final static slots for the process lifetime.
     let Some(process_owner) = (unsafe { RUNTIME_PROCESS.active_owner() }) else {
-        if RUNTIME_FORK_ADMISSION.release_later_thread() {
-            slot.admission_held = false;
-            return ThreadAttachResult::Inactive;
+        let admission = slot
+            .admission
+            .take()
+            .expect("a claimed worker admission remains in its fresh TLS slot");
+        match RUNTIME_FORK_ADMISSION.release_later_thread(admission) {
+            Ok(()) => return ThreadAttachResult::Inactive,
+            Err(admission) => {
+                slot.admission = Some(admission);
+            }
         }
         slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
@@ -920,6 +11967,7 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     let ready = match process_owner.ready() {
         Ok(ready) => ready,
         Err(_) => {
+            slot.state = ThreadLifecycleState::Retained;
             RUNTIME_PROCESS.retain();
             return ThreadAttachResult::Retained;
         }
@@ -927,11 +11975,23 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     let config = match ready.memory_config() {
         Ok(config) => config,
         Err(_) => {
+            slot.state = ThreadLifecycleState::Retained;
             RUNTIME_PROCESS.retain();
             return ThreadAttachResult::Retained;
         }
     };
     let Some(main_heap) = (unsafe { RUNTIME_PROCESS.active_main_heap() }) else {
+        slot.state = ThreadLifecycleState::Retained;
+        RUNTIME_PROCESS.retain();
+        return ThreadAttachResult::Retained;
+    };
+    #[cfg(test)]
+    let Some(completion_generation) = claim_native_post_exit_completion_owner_generation() else {
+        // A wrapped test-only completion identity could make a
+        // process-lifetime oracle entry appear to belong to this new B.
+        // Preserve the claimed admission rather than letting the oracle
+        // witness treat two attachments as one.
+        slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
         return ThreadAttachResult::Retained;
     };
@@ -943,6 +12003,8 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     match unsafe { MainHeapThreadAttachment::begin(main_heap, config) } {
         Ok(attachment) => {
             slot.attachment = Some(attachment);
+            #[cfg(test)]
+            slot.begin_post_exit_route_completion_lifecycle(completion_generation);
             slot.state = ThreadLifecycleState::Attached;
             ThreadAttachResult::Attached
         }
@@ -966,47 +12028,88 @@ pub fn attach_current_thread() -> ThreadAttachResult {
 }
 
 /// Finishes one attached worker after libc's cleanup-handler and TSD phases.
+///
+/// A pointer-first post-owner-exit free reaches its PageMap/W03 terminal state
+/// at the free boundary. This worker therefore finishes only its own
+/// attachment and admission; it never completes an exited owner's release.
 #[doc(hidden)]
+#[cfg(not(test))]
 pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
-    let slot = current_thread_slot();
-    match slot.state {
-        ThreadLifecycleState::Fresh => return ThreadFinishResult::NotAttached,
-        ThreadLifecycleState::Finished => return ThreadFinishResult::AlreadyFinished,
-        ThreadLifecycleState::Retained => return ThreadFinishResult::Retained,
-        ThreadLifecycleState::Attached => {}
-    }
-    if !slot.admission_held {
-        slot.state = ThreadLifecycleState::Retained;
-        RUNTIME_PROCESS.retain();
-        return ThreadFinishResult::Retained;
+    if current_thread_has_native_persistent_owner() {
+        return finish_current_thread_native_persistent_owner_after_user_destructors();
     }
 
-    let Some(mut attachment) = slot.attachment.take() else {
+    finish_current_thread_no_page_after_user_destructors()
+}
+
+#[doc(hidden)]
+#[cfg(test)]
+pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
+    if current_thread_has_native_persistent_owner() {
+        return finish_current_thread_native_persistent_owner_after_user_destructors();
+    }
+
+    let page_owner = {
+        let slot = current_thread_slot();
+        match slot.state {
+            ThreadLifecycleState::Fresh => return ThreadFinishResult::NotAttached,
+            ThreadLifecycleState::Finished => return ThreadFinishResult::AlreadyFinished,
+            ThreadLifecycleState::Retained => return ThreadFinishResult::Retained,
+            ThreadLifecycleState::Attached => slot.page_owner.take(),
+        }
+    };
+
+    match page_owner {
+        Some(owner) => finish_current_thread_page_owner_after_user_destructors(owner),
+        None => finish_current_thread_no_page_after_user_destructors(),
+    }
+}
+
+/// Finishes the native allocator lifecycle after libc's cleanup-handler and
+/// TSD phases.
+///
+/// Native allocation state is persistent and pointer-first. The native entry
+/// point therefore shares the ordinary finalizer.
+#[doc(hidden)]
+pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResult {
+    finish_current_thread_after_user_destructors()
+}
+/// Consumes the continuously stored native owner at the source destructor
+/// boundary. No client ledger participates: the lower engine follows source
+/// collect-abandon, releasing all-free pages and abandoning surviving live
+/// pages before its Theap/TLD boundary. A pre-drain refusal restores the exact
+/// engine; a failure after source queue state changed retains the terminal
+/// engine and must fail-stop rather than reach native thread return. Since libc
+/// reclaims the ELF TLS image immediately after this boundary, an unresolved
+/// retained payload cannot become a normal thread-return result.
+fn finish_current_thread_native_persistent_owner_after_user_destructors(
+) -> ThreadFinishResult {
+    let teardown = current_thread_native_persistent_owner_cell()
+        .teardown(|mut owner| owner.as_mut().get_mut().teardown());
+    match teardown {
+        Ok(()) => {}
+        Err(
+            PersistentCompilerTlsOwnerTeardownError::Owner(())
+            | PersistentCompilerTlsOwnerTeardownError::State(_),
+        ) => {
+            fail_stop_with_current_thread_native_owner();
+        }
+    }
+    current_thread_slot().native_persistent_owner_installed = false;
+
+    let slot = current_thread_slot();
+    let Some(admission) = slot.admission.take() else {
         slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
         return ThreadFinishResult::Retained;
     };
-    match attachment.finish_after_user_destructors() {
+    match RUNTIME_FORK_ADMISSION.release_later_thread(admission) {
         Ok(()) => {
-            if RUNTIME_FORK_ADMISSION.release_later_thread() {
-                slot.admission_held = false;
-                slot.state = ThreadLifecycleState::Finished;
-                ThreadFinishResult::Finished
-            } else {
-                // The source owner is already torn down, but its fork
-                // accounting no longer names this transition. Retain the
-                // process rather than claiming a child-preserving boundary
-                // from an inconsistent count.
-                slot.state = ThreadLifecycleState::Retained;
-                RUNTIME_PROCESS.retain();
-                ThreadFinishResult::Retained
-            }
+            slot.state = ThreadLifecycleState::Finished;
+            ThreadFinishResult::Finished
         }
-        Err(_) => {
-            // The `must_use` owner still carries concrete roots/list/metadata
-            // state. Retain it in TLS and stop admitting new workers rather
-            // than claiming that `_mi_thread_done` completed.
-            slot.attachment = Some(attachment);
+        Err(admission) => {
+            slot.admission = Some(admission);
             slot.state = ThreadLifecycleState::Retained;
             RUNTIME_PROCESS.retain();
             ThreadFinishResult::Retained
@@ -1014,19 +12117,624 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
     }
 }
 
-/// Preserves only a quiescent ticket-zero no-page image in the post-fork child,
+/// The ordinary no-page half of the runtime finish boundary.  It is separate
+/// from [`finish_current_thread_after_user_destructors`] so a page-bearing TLS
+/// owner cannot accidentally become a no-page attachment merely because its
+/// allocator borrow was suspended into a typed token.
+fn finish_current_thread_no_page_after_user_destructors() -> ThreadFinishResult {
+    let slot = current_thread_slot();
+    match slot.state {
+        ThreadLifecycleState::Fresh => return ThreadFinishResult::NotAttached,
+        ThreadLifecycleState::Finished => return ThreadFinishResult::AlreadyFinished,
+        ThreadLifecycleState::Retained => return ThreadFinishResult::Retained,
+        ThreadLifecycleState::Attached => {}
+    }
+    let Some(admission) = slot.admission.take() else {
+        slot.state = ThreadLifecycleState::Retained;
+        RUNTIME_PROCESS.retain();
+        return ThreadFinishResult::Retained;
+    };
+
+    let Some(mut attachment) = slot.attachment.take() else {
+        slot.admission = Some(admission);
+        slot.state = ThreadLifecycleState::Retained;
+        RUNTIME_PROCESS.retain();
+        return ThreadFinishResult::Retained;
+    };
+    match attachment.finish_after_user_destructors() {
+        Ok(()) => {
+            match RUNTIME_FORK_ADMISSION.release_later_thread(admission) {
+                Ok(()) => {
+                    slot.state = ThreadLifecycleState::Finished;
+                    ThreadFinishResult::Finished
+                }
+                Err(admission) => {
+                    // The source owner is already torn down, but its fork
+                    // accounting no longer names this transition. Keep the
+                    // exact claim terminally retained rather than claiming a
+                    // child-preserving boundary from an inconsistent count.
+                    slot.admission = Some(admission);
+                    slot.state = ThreadLifecycleState::Retained;
+                    RUNTIME_PROCESS.retain();
+                    ThreadFinishResult::Retained
+                }
+            }
+        }
+        Err(_) => {
+            // The `must_use` owner still carries concrete roots/list/metadata
+            // state. Retain it in TLS and stop admitting new workers rather
+            // than claiming that `_mi_thread_done` completed.
+            slot.attachment = Some(attachment);
+            slot.admission = Some(admission);
+            slot.state = ThreadLifecycleState::Retained;
+            RUNTIME_PROCESS.retain();
+            ThreadFinishResult::Retained
+        }
+    }
+}
+
+/// Returns the dormant-pair scheduler to `READY` only after a typed post-exit
+/// route has terminally released, then consumes that route's matching A-side
+/// admission proof. Both aggregate-free and sole-page-reclaim outcomes use
+/// this one boundary; neither may invoke the ordinary no-page finalizer for
+/// A after its source traversal already tore down the old Theap/TLD.
+#[cfg(test)]
+fn finish_current_thread_page_owner_after_post_exit_route(
+    operation: RuntimeDormantPageOperation,
+    proof: TicketZeroOwnerExitRouteFinished,
+) -> ThreadFinishResult {
+    let finish_state = operation.finish_state();
+    match operation.settle(finish_state) {
+        Ok(()) => finish_current_thread_after_detached_process_page_route(proof),
+        Err(operation) => {
+            // The route did physically finish, but ticket zero's scheduler
+            // no longer recognizes the matching current owner. Keep A's
+            // exact admission terminally represented instead of making
+            // either boundary look quiescent.
+            drop(operation);
+            retain_current_thread_detached_owner_exit_with_admission(proof.into_admission());
+            ThreadFinishResult::Retained
+        }
+    }
+}
+
+/// Moves one typed mapped-regular reclamation route into its private fresh-B
+/// consumer. The route retains A's admission until that consumer has adopted,
+/// used, drained, and finished B; both source-valid medium and direct-small
+/// predecessors converge here after their distinct A-side source drains.
+#[cfg(test)]
+fn finish_current_thread_page_owner_reclaim_route(
+    operation: RuntimeDormantPageOperation,
+    route: MainHeapThreadProcessPageExitMappedRegularRoute<'static>,
+    clients: DetachedOwnerExitClientLedger,
+    request: usize,
+    pair: ProcessPageArenaLease,
+    reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
+) -> ThreadFinishResult {
+    let admission = {
+        let slot = current_thread_slot();
+        let Some(admission) = slot.admission.take() else {
+            core::mem::forget(route);
+            drop(operation);
+            retain_current_thread_detached_owner_exit();
+            return ThreadFinishResult::Retained;
+        };
+        admission
+    };
+    match reclaim_after_exit(TicketZeroOwnerExitReclaimRoute {
+        route,
+        clients,
+        request,
+        pair,
+        admission,
+    }) {
+        TicketZeroOwnerExitReclaimOutcome::Finished(proof) => {
+            finish_current_thread_page_owner_after_post_exit_route(operation, proof)
+        }
+        TicketZeroOwnerExitReclaimOutcome::Retained(route) => {
+            core::mem::forget(route);
+            drop(operation);
+            retain_current_thread_detached_owner_exit();
+            ThreadFinishResult::Retained
+        }
+        TicketZeroOwnerExitReclaimOutcome::Poisoned(poisoned) => {
+            drop(operation);
+            retain_current_thread_detached_owner_exit_with_admission(poisoned.into_admission());
+            ThreadFinishResult::Retained
+        }
+    }
+}
+
+/// Completes the all-free side of an active parked TLS page-owner session.
+///
+/// Unlike a prepared exit, this path has no detached post-exit client route
+/// and may finish only when the session has no locally live client. It still
+/// does *not* use the no-page finalizer: the parked engine must resume, clear
+/// the source fast slot, force-collect joined source-published heads, release
+/// pages that then become all-free, and complete the attachment's page-drain
+/// teardown before its worker-admission claim can leave the runtime. Only a
+/// live or transferred client stays terminally retained for the typed
+/// owner-exit path instead.
+#[cfg(test)]
+fn finish_current_thread_all_free_page_owner_after_user_destructors(
+    mut session: CurrentThreadPageOwnerSession,
+) -> ThreadFinishResult {
+    if !session.clients.can_enter_all_free_thread_exit_drain() {
+        retain_current_thread_page_owner_session(session);
+        return ThreadFinishResult::Retained;
+    }
+    if session
+        .clients
+        .release_overflow_without_live_clients()
+        .is_err()
+    {
+        retain_current_thread_page_owner_session(session);
+        return ThreadFinishResult::Retained;
+    }
+
+    let Some(mut parked) = session.parked.take() else {
+        retain_current_thread_live_page_owner();
+        return ThreadFinishResult::Retained;
+    };
+    let engine = loop {
+        let resume = {
+            let slot = current_thread_slot();
+            let Some(attachment) = slot.attachment.as_mut() else {
+                session.parked = Some(parked);
+                retain_current_thread_page_owner_session(session);
+                return ThreadFinishResult::Retained;
+            };
+            parked.resume(attachment)
+        };
+        match resume {
+            Ok(engine) => break engine,
+            Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked: retry }) => {
+                parked = retry;
+                if page_owner_transition_is_retryable(
+                    RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+                ) {
+                    // An independently parked native session is completing a
+                    // bounded operation, or just changed the parked count
+                    // between this token's load and CAS. Its scheduler token
+                    // still represents this worker's parked owner, so this
+                    // all-free destructor finish may retry rather than
+                    // retaining a valid local owner.
+                    core::hint::spin_loop();
+                    continue;
+                }
+                session.parked = Some(parked);
+                retain_current_thread_page_owner_session(session);
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy { parked: retry, .. }) => {
+                parked = retry;
+                if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) != PAGE_OWNER_RETAINED
+                    && RUNTIME_PROCESS.state.load(Ordering::Acquire) != PROCESS_RETAINED
+                {
+                    // A short post-exit route can transiently hold the map
+                    // while the scheduler still names parked normal engines.
+                    // It owns no B attachment, so wait for its exact free to
+                    // restore the map instead of poisoning this all-free B.
+                    core::hint::spin_loop();
+                    continue;
+                }
+                session.parked = Some(parked);
+                retain_current_thread_page_owner_session(session);
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Rejected {
+                parked: retry,
+                ..
+            }) => {
+                session.parked = Some(retry);
+                retain_current_thread_page_owner_session(session);
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Retained { terminal, .. }) => {
+                core::mem::forget(terminal);
+                retain_current_thread_live_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained) => {
+                retain_current_thread_live_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+        }
+    };
+    // The resumed engine now owns the only parked token. Dropping the empty
+    // session cannot invoke the parked-token retention path.
+    drop(session);
+
+    let (drain, operation, pair) = match engine.begin_thread_exit_drain() {
+        Ok(parts) => parts,
+        Err(engine) => {
+            core::mem::forget(engine);
+            retain_current_thread_live_page_owner();
+            return ThreadFinishResult::Retained;
+        }
+    };
+    // The all-free path has no post-exit consumer. The pair remains an
+    // identity witness for the engine transition only and cannot authorize a
+    // second page lifecycle once the drain begins.
+    drop(pair);
+
+    if let Err(failure) = drain.finish() {
+        core::mem::forget(failure);
+        drop(operation);
+        retain_current_thread_live_page_owner();
+        return ThreadFinishResult::Retained;
+    }
+
+    let attachment_finished = {
+        let slot = current_thread_slot();
+        match slot.attachment.as_mut() {
+            Some(attachment) => attachment.finish_after_page_drain().is_ok(),
+            None => false,
+        }
+    };
+    if !attachment_finished {
+        drop(operation);
+        retain_current_thread_live_page_owner();
+        return ThreadFinishResult::Retained;
+    }
+
+    let admission = {
+        let slot = current_thread_slot();
+        let Some(admission) = slot.admission.take() else {
+            drop(operation);
+            retain_current_thread_live_page_owner();
+            return ThreadFinishResult::Retained;
+        };
+        admission
+    };
+    // The page drain already completed the old Theap/TLD transition. Remove
+    // the torn-down diagnostic owner before a successful scheduler settle can
+    // make the dormant ticket-zero pair available again.
+    drop(current_thread_slot().attachment.take());
+
+    let finish_state = operation.finish_state();
+    match operation.settle(finish_state) {
+        Ok(()) => match RUNTIME_FORK_ADMISSION.release_later_thread(admission) {
+            Ok(()) => {
+                current_thread_slot().state = ThreadLifecycleState::Finished;
+                ThreadFinishResult::Finished
+            }
+            Err(admission) => {
+                let slot = current_thread_slot();
+                slot.admission = Some(admission);
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain();
+                ThreadFinishResult::Retained
+            }
+        },
+        Err(operation) => {
+            let slot = current_thread_slot();
+            slot.admission = Some(admission);
+            drop(operation);
+            retain_current_thread_live_page_owner();
+            ThreadFinishResult::Retained
+        }
+    }
+}
+
+/// Completes the page-bearing half of the ordinary runtime finish boundary.
+///
+/// The suspended owner is current-thread compiler-TLS state, not an
+/// externally callable allocator route.  It resumes only against the exact
+/// attachment that recorded its suspended marker, clears the source fast
+/// slot through `begin_thread_exit_drain`, and enters the one aggregate
+/// `MI_ABANDON` coordinator.  A live post-exit route remains the sole owner
+/// of A's client identities and admission claim until B returns its typed
+/// terminal proof.  Every failure stays terminal; this function must never
+/// fall back to [`finish_current_thread_no_page_after_user_destructors`].
+#[cfg(test)]
+fn finish_current_thread_page_owner_after_user_destructors(
+    owner: ThreadLifecyclePageOwner,
+) -> ThreadFinishResult {
+    let ThreadLifecyclePageOwner::PreparedExit(ThreadLifecyclePreparedPageOwner {
+        parked,
+        exit,
+    }) = owner
+    else {
+        let ThreadLifecyclePageOwner::Session(session) = owner else {
+            unreachable!("the page-owner state has exactly active and prepared variants");
+        };
+        return finish_current_thread_all_free_page_owner_after_user_destructors(session);
+    };
+
+    let mut parked = parked;
+    let engine = loop {
+        let resume = {
+            let slot = current_thread_slot();
+            let Some(attachment) = slot.attachment.as_mut() else {
+                slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
+                    ThreadLifecyclePreparedPageOwner {
+                        parked,
+                        exit,
+                    },
+                ));
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return ThreadFinishResult::Retained;
+            };
+            parked.resume(attachment)
+        };
+        match resume {
+            Ok(engine) => break engine,
+            Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked: retry }) => {
+                parked = retry;
+                if page_owner_transition_is_retryable(
+                    RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+                ) {
+                    // A peer's deferred owner exit temporarily owns the one
+                    // scheduler/PageMap mutation slot. This worker still owns
+                    // its separate parked token and complete deferred route,
+                    // so it must wait for the peer to republish the parked
+                    // count rather than retaining a valid source exit.
+                    core::hint::spin_loop();
+                    continue;
+                }
+                let slot = current_thread_slot();
+                slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
+                    ThreadLifecyclePreparedPageOwner {
+                        parked,
+                        exit,
+                    },
+                ));
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy {
+                parked: retry,
+                ..
+            }) => {
+                parked = retry;
+                if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) != PAGE_OWNER_RETAINED
+                    && RUNTIME_PROCESS.state.load(Ordering::Acquire) != PROCESS_RETAINED
+                {
+                    // A peer may have republished the scheduler while its
+                    // detached route completes one short PageMap operation.
+                    // The current prepared exit has not crossed its own drain
+                    // boundary yet, so retry against the same parked token.
+                    core::hint::spin_loop();
+                    continue;
+                }
+                let slot = current_thread_slot();
+                slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
+                    ThreadLifecyclePreparedPageOwner {
+                        parked,
+                        exit,
+                    },
+                ));
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Rejected {
+                parked: retry,
+                ..
+            }) => {
+                let slot = current_thread_slot();
+                slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
+                    ThreadLifecyclePreparedPageOwner {
+                        parked: retry,
+                        exit,
+                    },
+                ));
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Retained {
+                terminal,
+                ..
+            }) => {
+                core::mem::forget(terminal);
+                let slot = current_thread_slot();
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained) => {
+                let slot = current_thread_slot();
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+        }
+    };
+
+    let (drain, operation, pair) = match engine.begin_thread_exit_drain() {
+        Ok(parts) => parts,
+        Err(engine) => {
+            // The engine still owns its attachment borrow and PageMap lease.
+            // It cannot be returned to compiler TLS as a self-reference, so
+            // retain that exact source owner rather than dropping into a
+            // no-page finalizer.
+            core::mem::forget(engine);
+            retain_current_thread_live_page_owner();
+            return ThreadFinishResult::Retained;
+        }
+    };
+    let DetachedOwnerExit {
+        clients,
+        disposition,
+    } = exit;
+
+    // Direct small has a distinct source entrance because its owner exit must
+    // prove and clear the exact rounded direct-cache image before the page
+    // can cross into a regular post-exit route. It nevertheless converges on
+    // the same opaque B-side adoption capability and admission proof as the
+    // aggregate predecessor below. The disposition names its first source
+    // client only by an opaque ledger key; the raw address stays private here.
+    if let DetachedOwnerExitDisposition::SoleImmediateMappedRegularReclaim {
+        source: DetachedOwnerExitReclaimSource::DirectSmall { first },
+        request,
+        reclaim_after_exit,
+    } = &disposition
+    {
+        let Some(first_block) = clients.block_for(*first) else {
+            drop(operation);
+            retain_current_thread_detached_owner_exit();
+            return ThreadFinishResult::Retained;
+        };
+        // SAFETY: preparation recorded this exact live client in the detached
+        // ledger and no producer survives. The lower source boundary validates
+        // the direct-cache and immediate-head image while it owns A's drain.
+        match unsafe { drain.abandon_mapped_small_or_medium_to_process_route(first_block) } {
+            Ok(route) => {
+                return finish_current_thread_page_owner_reclaim_route(
+                    operation,
+                    route,
+                    clients,
+                    *request,
+                    pair,
+                    *reclaim_after_exit,
+                );
+            }
+            Err(failure) => {
+                core::mem::forget(failure);
+                drop(operation);
+                retain_current_thread_detached_owner_exit();
+                return ThreadFinishResult::Retained;
+            }
+        }
+    }
+
+    // SAFETY: `ThreadLifecyclePageOwner` was installed only after the current
+    // attachment's matching persistent engine had suspended. It owns every
+    // remaining client identity in `exit`, no scoped pre-exit producer
+    // survives, and this normal finish is the source fast-slot-clear boundary.
+    let route_begin = unsafe { drain.abandon_mapped_regular_pages_to_process_route() };
+    match route_begin {
+        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => {
+            match disposition {
+                DetachedOwnerExitDisposition::SequentialFree {
+                    free_after_exit,
+                    post_exit_remote_publication_group,
+                } => {
+                let admission = {
+                    let slot = current_thread_slot();
+                    let Some(admission) = slot.admission.take() else {
+                        core::mem::forget(route);
+                        drop(operation);
+                        retain_current_thread_detached_owner_exit();
+                        return ThreadFinishResult::Retained;
+                    };
+                    admission
+                };
+                match free_after_exit(TicketZeroOwnerExitFreeRoute {
+                    route,
+                    clients,
+                    post_exit_remote_publication_group,
+                    pair,
+                    admission,
+                    _consumer: PhantomData,
+                }) {
+                    TicketZeroOwnerExitFreeOutcome::Finished(proof) => {
+                        finish_current_thread_page_owner_after_post_exit_route(operation, proof)
+                    }
+                    TicketZeroOwnerExitFreeOutcome::Retained(route) => {
+                        core::mem::forget(route);
+                        drop(operation);
+                        retain_current_thread_detached_owner_exit();
+                        ThreadFinishResult::Retained
+                    }
+                    TicketZeroOwnerExitFreeOutcome::Poisoned(poisoned) => {
+                        drop(operation);
+                        retain_current_thread_detached_owner_exit_with_admission(
+                            poisoned.into_admission(),
+                        );
+                        ThreadFinishResult::Retained
+                    }
+                }
+                }
+                DetachedOwnerExitDisposition::SoleImmediateMappedRegularReclaim { .. } => {
+                    // A source-proved sole-page reclamation must not silently
+                    // use the aggregate release route. Retain the exact source
+                    // result rather than broadening a mismatched lifecycle
+                    // transition.
+                    core::mem::forget(route);
+                    drop(operation);
+                    retain_current_thread_detached_owner_exit();
+                    ThreadFinishResult::Retained
+                }
+            }
+        }
+        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(
+            route,
+        )) => {
+            match disposition {
+                DetachedOwnerExitDisposition::SequentialFree { .. } => {
+                    // A sequential detached ledger can describe several live
+                    // pages, so a sole adoption result cannot name its private
+                    // source image.
+                    core::mem::forget(route);
+                    drop(operation);
+                    retain_current_thread_detached_owner_exit();
+                    ThreadFinishResult::Retained
+                }
+                DetachedOwnerExitDisposition::SoleImmediateMappedRegularReclaim {
+                    source: DetachedOwnerExitReclaimSource::AggregateTraversal,
+                    request,
+                    reclaim_after_exit,
+                } => finish_current_thread_page_owner_reclaim_route(
+                    operation,
+                    route,
+                    clients,
+                    request,
+                    pair,
+                    reclaim_after_exit,
+                ),
+                DetachedOwnerExitDisposition::SoleImmediateMappedRegularReclaim {
+                    source: DetachedOwnerExitReclaimSource::DirectSmall { .. },
+                    ..
+                } => {
+                    // Direct-small returned above through its own cache-
+                    // validating source drain. It must not appear as an
+                    // aggregate `SoleImmediateMedium` result.
+                    core::mem::forget(route);
+                    drop(operation);
+                    retain_current_thread_detached_owner_exit();
+                    ThreadFinishResult::Retained
+                }
+            }
+        }
+        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
+            // Neither private workload can become all-free without losing the
+            // client accounting held by its suspended TLS owner. Preserve the
+            // lower drain and scheduler state terminally.
+            core::mem::forget(drain);
+            drop(operation);
+            retain_current_thread_detached_owner_exit();
+            ThreadFinishResult::Retained
+        }
+        Err(failure) => {
+            core::mem::forget(failure);
+            drop(operation);
+            retain_current_thread_detached_owner_exit();
+            ThreadFinishResult::Retained
+        }
+    }
+}
+
+/// Preserves only a quiescent ticket-zero image in the post-fork child,
 /// otherwise disables this incomplete lifecycle without acquiring an
 /// inherited allocator lock or walking inherited thread/page ownership.
 ///
 /// The caller is libc's raw-fork child path. `fork_was_prepared` is true only
 /// for the direct public `fork` path that just called [`before_fork`]. That
 /// explicit token, plus the gate, preserves the copied process owner only when
-/// no later bridge attachment was live or retained and the raw fork ran on the
-/// original ticket-zero TLS image. It prevents another raw-fork caller from
-/// borrowing a concurrently copied gate. A preserving child may attach a
-/// fresh pthread through the existing no-page path. Every other child remains
-/// disabled: this is intentionally not a general fork repair and never
-/// traverses inherited locks, roots, lists, or page ownership.
+/// no later bridge attachment was live or retained, the raw fork ran on the
+/// original ticket-zero TLS image, and its source owner was unmapped or
+/// all-free dormant in either the static staging slot or pinned initial TLS
+/// cell. It prevents another raw-fork caller from borrowing a concurrently
+/// copied gate. A preserving child may reactivate that dormant ticket-zero
+/// owner or attach a fresh pthread through the existing no-page path. Every
+/// other child remains disabled: this is intentionally not a general fork
+/// repair and never traverses inherited locks, roots, lists, or page
+/// ownership.
 #[doc(hidden)]
 pub fn after_fork_child(fork_was_prepared: bool) {
     if RUNTIME_FORK_ADMISSION.after_fork_child(fork_was_prepared) {
@@ -1044,10 +12752,18 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::main_theap::MainStaticAttachmentStorage;
+    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
+    use crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine;
+    use crate::main_heap_thread::{
+        MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
+    };
+    use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
     use crate::meta::MetaAllocator;
+    use crate::os::{MapAccess, Mapping};
+    use crate::process_arena::ProcessSharedArenaStorage;
     use crate::process_page_map::ProcessPageMapStorage;
     use crate::subproc::MainSubprocess;
+    use std::sync::mpsc;
     use std::thread;
 
     fn memory_config() -> MemoryConfig {
@@ -1057,6 +12773,732 @@ mod tests {
             false,
             false,
         )
+    }
+
+    fn native_persistent_owner_process_pair(
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> ProcessPageArenaLease {
+        let page_map = ProcessPageMapStorage::test_static_owner()
+            .initialize(config, subprocess)
+            .expect("the focused persistent-owner test initializes one process PageMap");
+        let mapping = Mapping::map_aligned_for_allocator(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Committed,
+        )
+        .expect("the focused persistent-owner test owns one complete arena mapping");
+        let arena = match ProcessSharedArenaStorage::test_static_owner()
+            .install_one_owned_external_arena(page_map, mapping)
+        {
+            Ok(arena) => arena,
+            Err(_) => panic!("the focused persistent-owner test installs its paired process arena"),
+        };
+        ProcessPageArenaLease::join(page_map, arena)
+            .expect("the focused persistent-owner test joins its matching PageMap and arena")
+    }
+
+    fn with_native_persistent_owner_fixture(
+        operation: impl FnOnce(&mut NativePersistentThreadOwner) + Send + 'static,
+    ) {
+        thread::spawn(move || {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let pair = native_persistent_owner_process_pair(config, subprocess);
+            // The real compiler-TLS owner stores its attachment with a static
+            // process-main lease. Keep this isolated test root alive for the
+            // worker's complete terminal-state observation rather than
+            // shortening that production lifetime in a fixture.
+            let main = std::boxed::Box::leak(std::boxed::Box::new(unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+                .expect("ticket zero attaches the focused source-static main image")
+            }));
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the focused persistent worker borrows the static main Heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("focused persistent attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("focused persistent attachment retained: {error:?}")
+                        }
+                    };
+                    let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut attachment, pair)
+                        .expect("the focused attachment creates one persistent owner engine");
+                    let mut owner = NativePersistentThreadOwner {
+                        attachment,
+                        state: NativePersistentThreadOwnerExitState::PreDrain(engine),
+                    };
+                    operation(&mut owner);
+                });
+                worker
+                    .join()
+                    .expect("the focused persistent owner remains current-thread local");
+            });
+        })
+        .join()
+        .expect("the focused persistent-owner fixture remains current-thread local");
+    }
+
+    #[test]
+    fn native_persistent_owner_collect_abandon_predrain_retains_the_exact_engine() {
+        with_native_persistent_owner_fixture(|owner| {
+            let NativePersistentThreadOwner { attachment: _, state } = owner;
+            let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
+                panic!("the focused persistent owner starts before its drain boundary");
+            };
+            engine.test_begin_borrowed_state();
+
+            assert_eq!(
+                owner.teardown(),
+                Err(()),
+                "a preflight failure remains retryable before the fast slot or engine changes"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::PreDrain(_)
+            ));
+
+            let NativePersistentThreadOwner { attachment, state } = owner;
+            let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
+                panic!("the preflight failure restores its exact persistent engine");
+            };
+            engine.test_end_borrowed_state();
+            engine
+                .with_local_allocator(attachment, |allocator| {
+                    let block = allocator
+                        .allocate(73, false)
+                        .expect("the restored engine still performs a normal local allocation");
+                    // SAFETY: this block is current in the exact engine which
+                    // the pre-drain failure returned unchanged.
+                    unsafe { allocator.free(block) }
+                        .expect("the restored engine still performs its normal local free");
+                })
+                .expect("the exact pre-drain engine is usable after its rejected teardown");
+
+            assert_eq!(
+                owner.teardown(),
+                Ok(()),
+                "the restored engine later enters the normal collect-abandon finish once"
+            );
+        });
+    }
+
+    #[test]
+    fn native_persistent_owner_collect_abandon_failure_is_terminal_without_retry_or_allocation() {
+        with_native_persistent_owner_fixture(|owner| {
+            let NativePersistentThreadOwner { attachment, state } = owner;
+            let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
+                panic!("the focused persistent owner starts before its drain boundary");
+            };
+            engine
+                .with_local_allocator(attachment, |allocator| {
+                    let _live = allocator
+                        .allocate(81, false)
+                        .expect("the focused worker creates one source-live page");
+                    allocator.inject_page_free_collect_failure_once();
+                })
+                .expect("the focused collection injection stays on the exact local owner");
+
+            assert_eq!(
+                owner.teardown(),
+                Err(()),
+                "an injected source collection failure retains the changed drain terminally"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_)
+            ));
+
+            let allocation_entered = core::cell::Cell::new(false);
+            assert_eq!(
+                owner.with_local_allocator(|_| allocation_entered.set(true)),
+                Err(()),
+                "the terminal owner never reopens allocation authority"
+            );
+            assert!(
+                !allocation_entered.get(),
+                "the rejected terminal owner never forms a local allocator view"
+            );
+            assert_eq!(
+                owner.teardown(),
+                Err(()),
+                "a retained terminal engine never re-enters source queue collection"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_)
+            ));
+        });
+    }
+
+    #[test]
+    fn native_persistent_owner_collect_abandon_attachment_only_retries_no_page_boundary() {
+        with_native_persistent_owner_fixture(|owner| {
+            // The first fault is observed by the lower consumed drain; the
+            // second is observed by this call's attachment-only retry. The
+            // next teardown must then finish only the no-page boundary.
+            owner
+                .attachment
+                .test_fail_detached_process_page_finish_times(2);
+            assert_eq!(
+                owner.teardown(),
+                Err(()),
+                "a post-drain attachment failure consumes the page engine without recreating it"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::AttachmentOnly
+            ));
+
+            let allocation_entered = core::cell::Cell::new(false);
+            assert_eq!(
+                owner.with_local_allocator(|_| allocation_entered.set(true)),
+                Err(()),
+                "attachment-only continuation has no page engine to borrow"
+            );
+            assert!(
+                !allocation_entered.get(),
+                "attachment-only continuation never recreates allocation authority"
+            );
+            assert_eq!(
+                owner.teardown(),
+                Ok(()),
+                "the next attempt retries only the already-drained attachment boundary"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::AttachmentOnly
+            ));
+        });
+    }
+
+    // Keep this deterministic audit materially longer than the one-cycle
+    // owner-exit route regressions while leaving the 128-cycle C lane as the
+    // watchdog-bound soak witness. Each cycle constructs fresh A and B
+    // threads: A detaches its old owner, B terminally releases the opaque
+    // route and finishes its own no-page attachment, and only then may the
+    // next worker begin.
+    const OWNER_EXIT_STATE_AUDIT_CYCLES: usize = 8;
+
+    /// Publishes C and D's two private post-exit clients only while B holds
+    /// the source low owner bit for its direct free. Each scoped join is part
+    /// of the test contract: it proves both producers complete before B's
+    /// exact `mi_free_block_mt` -> `mi_free_try_collect_mt` collector resumes.
+    fn publish_post_exit_remote_free_from_scoped_workers<'route>(
+        producers: TicketZeroOwnerExitRemoteFreeProducerPair<'route>,
+    ) -> Result<(), TicketZeroOwnerExitRemoteFreeProducerPair<'route>> {
+        let (first, second) = producers.split();
+        thread::scope(|scope| {
+            assert!(
+                scope
+                    .spawn(move || first.publish())
+                    .join()
+                    .expect("the first scoped post-exit publisher joins before B resumes collection")
+                    .is_ok(),
+                "the first post-exit publisher reaches B's held source remote head"
+            );
+        });
+        thread::scope(|scope| {
+            assert!(
+                scope
+                    .spawn(move || second.publish())
+                    .join()
+                    .expect("the second scoped post-exit publisher joins before B resumes collection")
+                    .is_ok(),
+                "the second post-exit publisher appends before B resumes collection"
+            );
+        });
+        Ok(())
+    }
+
+    fn ledger_test_client(
+        clients: &mut PreparedOwnerExitClients,
+        address: usize,
+    ) -> PreparedOwnerExitClient {
+        let (slot, generation) = clients
+            .reserve_slot()
+            .expect("the bounded ledger accepts its next synthetic client");
+        clients
+            .record_allocation(
+                slot,
+                generation,
+                core::ptr::NonNull::new(address as *mut u8)
+                    .expect("the synthetic client address is non-null"),
+                1,
+                Some(1),
+            )
+            .expect("each synthetic live client occupies one distinct ledger slot")
+    }
+
+    #[test]
+    fn prepared_owner_exit_ledger_rejects_omission_duplicate_and_over_capacity_before_transfer() {
+        // `transfer_clients` is called by every typed finalizer immediately
+        // before `CurrentThreadPageOwnerPreparation` stores its exit. The
+        // engine cannot suspend until it succeeds, so these isolated checks
+        // prove an incomplete registry cannot become compiler-TLS state.
+        let mut omitted = PreparedOwnerExitClients::new(None);
+        let first = ledger_test_client(&mut omitted, 0x1000);
+        let second = ledger_test_client(&mut omitted, 0x2000);
+        let mut omitted_route: [
+            Option<PreparedOwnerExitClient>;
+            RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS
+        ] = core::array::from_fn(|_| None);
+        omitted_route[0] = Some(first);
+        assert!(matches!(
+            omitted.transfer_clients(&mut omitted_route),
+            Err(CurrentThreadPageOwnerPreparationError::OmittedClient)
+        ), "every live A client must be selected before the post-exit route exists");
+        assert!(matches!(
+            omitted.slots[second.slot],
+            PreparedOwnerExitClientState::Live { .. }
+        ));
+
+        let mut duplicate = PreparedOwnerExitClients::new(None);
+        let first = ledger_test_client(&mut duplicate, 0x3000);
+        let copied = first.duplicate_for_test();
+        let mut duplicate_route: [
+            Option<PreparedOwnerExitClient>;
+            RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS
+        ] = core::array::from_fn(|_| None);
+        duplicate_route[0] = Some(first);
+        duplicate_route[1] = Some(copied);
+        assert!(matches!(
+            duplicate.transfer_clients(&mut duplicate_route),
+            Err(CurrentThreadPageOwnerPreparationError::DuplicateClient)
+        ), "the one test-only forged duplicate cannot create two route aliases");
+
+        let mut full = PreparedOwnerExitClients::new(None);
+        for slot in 0..RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS {
+            let _ = ledger_test_client(&mut full, 0x4000 + slot * 0x1000);
+        }
+        assert_eq!(
+            full.reserve_slot(),
+            Err(CurrentThreadPageOwnerPreparationError::OverCapacity),
+            "capacity rejects before a caller can allocate an untracked client"
+        );
+    }
+
+    #[test]
+    fn prepared_owner_exit_ledger_transfers_all_live_session_clients_without_client_enumeration() {
+        // An active TLS session does not hand a workload-shaped pointer list
+        // back into the runtime when it prepares exit. Its fixed private
+        // ledger alone selects every still-local client, while a source
+        // publication remains outside the post-exit ledger for collection.
+        let mut clients = PreparedOwnerExitClients::new(None);
+        let first = ledger_test_client(&mut clients, 0x1000);
+        let published = ledger_test_client(&mut clients, 0x2000);
+        let second = ledger_test_client(&mut clients, 0x3000);
+        clients
+            .mark_published_before_exit(&published)
+            .expect("the synthetic source publication starts from one live client");
+
+        let ledger = clients
+            .transfer_all_live()
+            .expect("the session moves every remaining live client without a caller list");
+        assert_eq!(
+            ledger.block_for(first.key()),
+            Some(first.block),
+            "the first live client keeps its exact opaque identity"
+        );
+        assert_eq!(
+            ledger.block_for(second.key()),
+            Some(second.block),
+            "the later live client keeps its exact opaque identity"
+        );
+        assert_eq!(
+            ledger.block_for(published.key()),
+            None,
+            "the source-published client never aliases the post-exit ledger"
+        );
+        assert!(matches!(
+            clients.slots[first.slot],
+            PreparedOwnerExitClientState::TransferredToExit(_)
+        ));
+        assert!(matches!(
+            clients.slots[second.slot],
+            PreparedOwnerExitClientState::TransferredToExit(_)
+        ));
+        assert!(matches!(
+            clients.slots[published.slot],
+            PreparedOwnerExitClientState::PublishedBeforeExit
+        ));
+        assert!(matches!(
+            clients.transfer_all_live(),
+            Err(CurrentThreadPageOwnerPreparationError::OmittedClient)
+        ), "a prepared session cannot transfer the same live client set twice");
+    }
+
+    #[test]
+    fn dynamic_session_exit_ledger_keeps_metadata_until_its_last_detached_client() {
+        // The normal native session must not inherit the fixed-preparation
+        // client ceiling. Once it grows past the inline source witness, its
+        // exact client facts move as one typed route-owned registry. Releasing
+        // that metadata before the final exact post-exit free would destroy
+        // the only private membership proof while A's admission remains live.
+        let mut clients = PreparedOwnerExitClients::new(Some(memory_config()));
+        let client_count = RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS + 3;
+        for index in 0..client_count {
+            let _ = ledger_test_client(&mut clients, 0x10_000 + index * 0x100);
+        }
+
+        let mut ledger = clients
+            .transfer_all_live()
+            .expect("the session moves every inline and overflow client into its typed route");
+        assert!(matches!(
+            &ledger,
+            DetachedOwnerExitClientLedger::Session(_)
+        ), "an overflow-backed session moves its storage instead of truncating to the fixed preparation array");
+
+        for _ in 1..client_count {
+            assert!(
+                ledger.take_next().is_some(),
+                "each nonfinal detached client remains privately routable"
+            );
+        }
+        assert!(
+            matches!(
+                ledger.release_overflow_when_empty(),
+                Err(CurrentThreadPageOwnerPreparationError::OmittedClient)
+            ),
+            "the metadata capability cannot release while one typed route client remains"
+        );
+        assert!(ledger.take_next().is_some(), "the final private client remains available");
+        assert!(ledger.is_empty());
+        assert_eq!(
+            ledger.release_overflow_when_empty(),
+            Ok(()),
+            "only the terminal empty route may return its metadata capability"
+        );
+    }
+
+    #[test]
+    fn parked_session_post_exit_publication_group_validates_before_moving_the_ledger() {
+        // The active-session B/C/D route names its direct source client and
+        // two prospective publishers only by private generation-checked keys.
+        // A bad selection must reject while the session is still fully parked
+        // and recoverable; it may not first transfer a partial ledger and then
+        // discover a stale publication group.
+        let mut clients = PreparedOwnerExitClients::new(None);
+        let first = ledger_test_client(&mut clients, 0x1000);
+        let second = ledger_test_client(&mut clients, 0x2000);
+        let third = ledger_test_client(&mut clients, 0x3000);
+        let fourth = ledger_test_client(&mut clients, 0x4000);
+
+        assert!(matches!(
+            clients.transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
+                Some(DetachedOwnerExitRemotePublicationSelection {
+                    kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+                    clients: [first.key(), first.key(), second.key()],
+                }),
+                |_| false,
+            ),
+            Err(CurrentThreadPageOwnerPreparationError::DuplicateClient)
+        ), "a duplicate opaque publication group rejects before the session registry moves");
+        assert!(matches!(
+            clients.slots[first.slot],
+            PreparedOwnerExitClientState::Live { .. }
+        ));
+        assert!(matches!(
+            clients.slots[second.slot],
+            PreparedOwnerExitClientState::Live { .. }
+        ));
+
+        let stale = DetachedOwnerExitClientKey {
+            slot: third.slot,
+            generation: third.generation.wrapping_add(1),
+        };
+        assert!(matches!(
+            clients.transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
+                Some(DetachedOwnerExitRemotePublicationSelection {
+                    kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+                    clients: [first.key(), stale, third.key()],
+                }),
+                |_| false,
+            ),
+            Err(CurrentThreadPageOwnerPreparationError::UnknownClient)
+        ), "a stale opaque key rejects before it can turn a parked session terminal");
+        assert!(matches!(
+            clients.slots[third.slot],
+            PreparedOwnerExitClientState::Live { .. }
+        ));
+
+        let (ledger, mut group) = clients
+            .transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
+                Some(DetachedOwnerExitRemotePublicationSelection {
+                    kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+                    clients: [first.key(), second.key(), third.key()],
+                }),
+                |_| false,
+            )
+            .expect("three validated live keys move only into the scoped post-exit publication group");
+        assert_eq!(
+            ledger.block_for(first.key()),
+            None,
+            "the direct scoped source client leaves the ordinary B ledger"
+        );
+        assert_eq!(
+            ledger.block_for(second.key()),
+            None,
+            "the first publisher source client leaves the ordinary B ledger"
+        );
+        assert_eq!(
+            ledger.block_for(third.key()),
+            None,
+            "the second publisher source client leaves the ordinary B ledger"
+        );
+        assert_eq!(
+            ledger.block_for(fourth.key()),
+            Some(fourth.block),
+            "unselected live clients remain in the ordinary opaque ledger"
+        );
+        let group = group
+            .as_mut()
+            .expect("the validated group retains all three source client identities");
+        assert_eq!(
+            group.kind,
+            DetachedOwnerExitRemotePublicationKind::DirectSmall,
+            "the opaque ledger retains the source page-shape proof with its clients"
+        );
+        assert_eq!(group.take_next(), Some(first.block));
+        assert_eq!(group.take_next(), Some(second.block));
+        assert_eq!(group.take_next(), Some(third.block));
+        assert!(group.is_empty());
+    }
+
+    #[test]
+    fn detached_owner_exit_keeps_admission_until_typed_route_proof() {
+        let admissions = RuntimeForkAdmission::new();
+        let claim = admissions
+            .claim_later_thread()
+            .expect("the isolated admission word accepts one worker");
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+            1,
+            "A remains admitted while the detached post-exit route owns its clients"
+        );
+
+        // Only the private final route result can package this linear claim
+        // for release. Construct it directly here because this module owns
+        // both sides of the capability boundary; the aggregate-route tests
+        // separately prove that production code creates this result only at
+        // `ReleasedAll` after PageMap quiescence.
+        let finished = TicketZeroOwnerExitRouteFinished { admission: claim };
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+            1,
+            "constructing a terminal proof does not itself reopen fork admission"
+        );
+        assert!(
+            finished.release_worker_admission(&admissions).is_ok(),
+            "consuming the typed proof releases its exact worker claim"
+        );
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+            0,
+            "only the terminal proof makes the worker fork-quiescent"
+        );
+    }
+
+    #[test]
+    fn poisoned_owner_exit_keeps_its_admission_claim_terminally_visible() {
+        let admissions = RuntimeForkAdmission::new();
+        let claim = admissions
+            .claim_later_thread()
+            .expect("the isolated admission word accepts one worker");
+        let poisoned = TicketZeroOwnerExitRoutePoisoned { admission: claim };
+        let mut slot = ThreadLifecycleSlot::new();
+        slot.retain_terminal_admission(poisoned.into_admission());
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+            1,
+            "a poisoned final PageMap wake cannot make the detached worker fork-quiescent"
+        );
+        admissions.before_fork(true);
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_PRESERVE,
+            0,
+            "a fork while the poisoned claim remains retained cannot preserve the runtime image"
+        );
+        admissions.after_fork_parent();
+        let claim = slot
+            .admission
+            .take()
+            .expect("the poisoned result retains its exact linear claim");
+        assert!(
+            admissions.release_later_thread(claim).is_ok(),
+            "the retained value remains the exact claim that would otherwise release"
+        );
+    }
+
+    #[test]
+    fn fork_predicate_runs_only_after_gate_excludes_every_later_admission() {
+        let admissions = RuntimeForkAdmission::new();
+        let claim = admissions
+            .claim_later_thread()
+            .expect("the isolated admission word accepts one worker");
+        let inspected = std::sync::atomic::AtomicBool::new(false);
+
+        admissions.before_fork_with(|| {
+            inspected.store(true, Ordering::Release);
+            true
+        });
+        assert!(
+            !inspected.load(Ordering::Acquire),
+            "a live later admission prevents the fork predicate from borrowing the permanent owner"
+        );
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_PRESERVE,
+            0,
+            "a nonzero admission count cannot preserve a copied runtime image"
+        );
+        admissions.after_fork_parent();
+        assert!(
+            admissions.release_later_thread(claim).is_ok(),
+            "the isolated worker releases before the quiescent fork boundary"
+        );
+
+        admissions.before_fork_with(|| {
+            assert_eq!(
+                admissions.state.load(Ordering::Acquire),
+                FORK_GATE_HELD,
+                "the predicate observes the gate held with every later admission excluded"
+            );
+            inspected.store(true, Ordering::Release);
+            true
+        });
+        assert!(
+            inspected.load(Ordering::Acquire),
+            "the quiescent gate invokes its private preservation predicate"
+        );
+        assert_ne!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_PRESERVE,
+            0,
+            "only the held zero-count boundary records a preserving child image"
+        );
+        assert!(
+            admissions.after_fork_child(true),
+            "the prepared child consumes exactly the preserving gate record"
+        );
+    }
+
+    /// A read-only audit of the process-long objects that a completed Gate 5A
+    /// worker must return to their pre-worker state. `total_thread_count` is
+    /// intentionally separate: mimalloc's source sequence is monotonic, while
+    /// live TLD, metadata-capability, and shared-later-Theap counts must be
+    /// restored.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct PersistentWorkerStateAudit {
+        runtime_process_state: u8,
+        page_owner_state: usize,
+        page_map_root: usize,
+        page_map_committed_count: usize,
+        page_map_reserved_count: usize,
+        page_map_registered_entry_count: usize,
+        page_map_published_submap_count: usize,
+        page_map_lazy_submap_allocation_count: usize,
+        arena_address: usize,
+        arena_registry_count: usize,
+        total_thread_count: usize,
+        live_thread_count: usize,
+        metadata_live_capability_count: usize,
+        shared_later_theap_count: usize,
+        main_heap_abandoned_counts: [usize; crate::config::BIN_COUNT],
+        main_heap_os_abandoned_page: usize,
+    }
+
+    fn persistent_worker_state_audit(
+        runtime: &'static RuntimeProcessStorage,
+        arena_storage: &'static ProcessSharedArenaStorage,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+    ) -> PersistentWorkerStateAudit {
+        // SAFETY: this fixture leaked the one permanent process owner before
+        // starting its workers, and this audit runs only after a worker join.
+        let owner = unsafe { runtime.active_owner() }
+            .expect("the isolated runtime keeps its process owner published");
+        let ready = owner
+            .ready()
+            .expect("the permanent ticket-zero owner remains process-ready");
+        let process_page_map = ready
+            .page_map()
+            .expect("the process-ready owner retains its PageMap lease");
+        let page_map = process_page_map
+            .page_map()
+            .expect("the initialized PageMap root remains auditably published");
+        let arena = arena_storage
+            .ready_lease()
+            .expect("the first ticket-zero request published one retained arena");
+        let main_heap = owner
+            .shared_main_heap_lease()
+            .expect("the permanent ticket-zero owner retains its static main Heap witness");
+        let (main_heap_abandoned_counts, main_heap_os_abandoned_page) = {
+            let mut heap = main_heap
+                .lock_heap()
+                .expect("the retained static main Heap remains auditable after worker join");
+            let abandoned_counts = core::array::from_fn(|bin| {
+                heap.heap_mut()
+                    .abandoned_count(bin)
+                    .expect("every static-main abandoned-count slot remains addressable")
+            });
+            let os_abandoned_page = heap.heap_mut().test_os_abandoned_page_head().addr();
+            heap.unlock()
+                .expect("the retained static main Heap unlocks after its audit");
+            (abandoned_counts, os_abandoned_page)
+        };
+        PersistentWorkerStateAudit {
+            runtime_process_state: runtime.state.load(Ordering::Acquire),
+            page_owner_state: runtime.page_owner_state.load(Ordering::Acquire),
+            page_map_root: process_page_map
+                .root()
+                .expect("the PageMap root remains stable")
+                .as_ptr()
+                .addr(),
+            page_map_committed_count: page_map
+                .committed_count()
+                .expect("the PageMap committed extent remains readable"),
+            page_map_reserved_count: page_map.reserved_count(),
+            page_map_registered_entry_count: page_map
+                .test_registered_entry_count()
+                .expect("the finished worker leaves only stable PageMap entries"),
+            page_map_published_submap_count: page_map
+                .test_published_submap_count()
+                .expect("the PageMap published-submap audit remains readable"),
+            page_map_lazy_submap_allocation_count: page_map.test_lazy_submap_allocation_count(),
+            arena_address: core::ptr::from_ref(
+                arena
+                    .arena()
+                    .expect("the process arena remains registry-published")
+                    .arena(),
+            )
+            .addr(),
+            arena_registry_count: arena
+                .test_registry_count()
+                .expect("the process arena registry remains readable"),
+            total_thread_count: subprocess.total_thread_count(),
+            live_thread_count: subprocess.live_thread_count(),
+            metadata_live_capability_count: metadata
+                .test_allocation_audit()
+                .live_capability_count,
+            shared_later_theap_count: main_static.test_shared_later_theap_count(),
+            main_heap_abandoned_counts,
+            main_heap_os_abandoned_page,
+        }
     }
 
     /// Publishes a fully constructed isolated source ticket-zero owner into
@@ -1097,7 +13539,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_ticket_zero_page_owner_is_lazy_and_closes_no_page_fork_preservation() {
+    fn runtime_ticket_zero_page_owner_is_lazy_and_preserves_only_a_quiescent_fork_image() {
         thread::spawn(|| {
             let process_storage = ProcessMainInitializationStorage::test_static_owner();
             let main_static = MainStaticAttachmentStorage::test_static_owner();
@@ -1120,8 +13562,17 @@ mod tests {
             // every source/process owner alive through the permanent fixture.
             unsafe { publish_test_owner(runtime, owner) };
             let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let admissions = RuntimeForkAdmission::new();
+            let is_preserved_at_quiescent_fork_boundary = || {
+                admissions.before_fork_with(|| {
+                    runtime.prepare_quiescent_on_initial_thread_for_held_fork_gate()
+                });
+                let preserves = admissions.state.load(Ordering::Acquire) & FORK_GATE_PRESERVE != 0;
+                admissions.after_fork_parent();
+                preserves
+            };
 
-            assert!(runtime.is_active_on_initial_thread());
+            assert!(is_preserved_at_quiescent_fork_boundary());
             assert!(
                 runtime.start_ticket_zero_page_owner_with_storage(arena_storage),
                 "the runtime creates its permanent owner without an arena reservation"
@@ -1131,8 +13582,8 @@ mod tests {
                 "the runtime page owner remains mapping-free until its first valid request"
             );
             assert!(
-                !runtime.is_active_on_initial_thread(),
-                "the old no-page fork bridge refuses to preserve a permanent page authority"
+                is_preserved_at_quiescent_fork_boundary(),
+                "an unmapped permanent ticket-zero owner remains quiescent for fork"
             );
 
             let block = runtime
@@ -1141,6 +13592,10 @@ mod tests {
                 })
                 .flatten()
                 .expect("the first ordinary runtime request activates the source default arena");
+            assert!(
+                !is_preserved_at_quiescent_fork_boundary(),
+                "a live ticket-zero client keeps the copied child outside the narrow fork contract"
+            );
             assert!(
                 !arena_storage.test_is_cold(),
                 "only the valid first miss publishes the default arena"
@@ -1151,8 +13606,48 @@ mod tests {
                     // by this runtime's sole ticket-zero page owner.
                     unsafe { owner.free(block) }
             })
-            .expect("the permanent owner remains callable after activation");
+                .expect("the permanent owner remains callable after activation");
             assert!(free.is_ok(), "the exact ticket-zero allocation frees normally");
+            assert!(
+                is_preserved_at_quiescent_fork_boundary(),
+                "the all-free source finish restores the permanent owner to the quiescent fork image"
+            );
+
+            let aligned = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate_aligned(65, 64, true)
+                })
+                .flatten()
+                .expect("the dormant owner reactivates its first arena for aligned allocation");
+            assert_eq!(
+                aligned.as_ptr().addr() % 64,
+                0,
+                "the permanent runtime owner preserves the requested source alignment"
+            );
+            // SAFETY: `aligned` is still the exact current allocation from
+            // this runtime owner, whose operation guard remains exclusive.
+            let usable = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| unsafe {
+                    owner.usable_size(aligned)
+                })
+                .flatten()
+                .expect("the aligned ticket-zero allocation remains inspectable");
+            assert!(
+                usable >= 65,
+                "the native usable-size query reports space the caller may use"
+            );
+            // SAFETY: `aligned` remains current and is consumed exactly once
+            // by this permanent owner before the next reactivation.
+            let aligned_free = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| unsafe {
+                    owner.free(aligned)
+                })
+                .expect("the permanent owner remains callable for aligned free");
+            assert!(
+                aligned_free.is_ok(),
+                "the aligned ticket-zero allocation returns to the dormant state"
+            );
+
             let reused = runtime
                 .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
                     owner.allocate(73, false)
@@ -1181,7 +13676,196 @@ mod tests {
     }
 
     #[test]
-    fn dormant_ticket_zero_page_owner_lends_one_scoped_later_main_page_engine() {
+    fn ticket_zero_starts_private_operation_while_detached_routes_remain_parked() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            let owner = unsafe {
+                process_storage.initialize_with_test_components(
+                    memory_config(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the isolated runtime fixture constructs ticket zero");
+            // SAFETY: this test supplies the one final runtime publication and
+            // keeps every source/process owner alive through its assertions.
+            unsafe { publish_test_owner(runtime, owner) };
+
+            let initial = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(79, false)
+                })
+                .flatten()
+                .expect("ticket zero creates its live client before A exits");
+            assert!(
+                runtime
+                    .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                        owner.prepare_live_engine_for_later_thread()
+                    })
+                    .is_some_and(|prepared| prepared),
+                "ticket zero parks only its own live engine before the later owner starts"
+            );
+            assert_eq!(
+                runtime.page_owner_state.load(Ordering::Acquire),
+                PAGE_OWNER_PARKED,
+                "ticket zero contributes the first parked scheduler token"
+            );
+
+            // This models two typed A routes after source teardown has
+            // converted each active operation into a detached parked token.
+            // The test intentionally holds no route client address: only the
+            // tokens' lifecycle effect is relevant to ticket-zero scheduling.
+            assert_eq!(
+                runtime.page_owner_state.compare_exchange(
+                    PAGE_OWNER_PARKED,
+                    page_owner_parked_state(3)
+                        .expect("three parked owners remain representable"),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ),
+                Ok(PAGE_OWNER_PARKED),
+                "two synthetic detached routes join ticket zero's parked token"
+            );
+            assert!(
+                runtime.register_active_post_exit_route()
+                    && runtime.register_active_post_exit_route(),
+                "each synthetic detached route publishes its source-active capability before its parked token"
+            );
+            let first_route = RuntimeParkedPostExitRoute {
+                runtime,
+                source_route_active: true,
+                terminal_completion_pending: false,
+                terminal_retained: false,
+                active: true,
+            };
+            let second_route = RuntimeParkedPostExitRoute {
+                runtime,
+                source_route_active: true,
+                terminal_completion_pending: false,
+                terminal_retained: false,
+                active: true,
+            };
+
+            let usable = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| unsafe {
+                    // SAFETY: `initial` is ticket zero's exact still-live client.
+                    owner.usable_size(initial)
+                })
+                .flatten()
+                .expect("ticket zero may inspect its own client while A remains parked");
+            assert!(usable >= 79);
+            let initial_free = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `initial` remains the exact ticket-zero client
+                    // and is consumed once by this operation.
+                    unsafe { owner.free(initial) }
+                })
+                .expect("ticket zero keeps its own parked engine callable beside A's route");
+            assert!(
+                initial_free.is_ok(),
+                "ticket zero frees its own client without taking A's route"
+            );
+            assert_eq!(
+                page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                Some(2),
+                "ticket zero's all-free transition removes only its own token"
+            );
+            let bookkeeping = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(97, true)
+                })
+                .flatten()
+                .expect(
+                    "ticket zero starts its next private source operation while detached routes retain admission",
+                );
+            assert_eq!(
+                page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                Some(2),
+                "ticket zero's ordinary private operation leaves both detached tokens intact"
+            );
+            assert!(
+                runtime
+                    .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                        // SAFETY: `bookkeeping` is ticket zero's exact fresh client.
+                        unsafe { owner.free(bookkeeping) }
+                    })
+                    .expect("ticket zero keeps its new private engine callable beside detached routes")
+                    .is_ok(),
+                "ticket zero settles only its own renewed engine"
+            );
+            assert_eq!(
+                page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                Some(2),
+                "both detached route claims remain after ticket zero finishes its private operation"
+            );
+
+            let first_route = match first_route.finish_source_route() {
+                Ok(route) => route,
+                Err(_) => panic!("the first synthetic route converts into B's terminal completion"),
+            };
+            let second_route = match second_route.finish_source_route() {
+                Ok(route) => route,
+                Err(_) => panic!("the second synthetic route converts into B's terminal completion"),
+            };
+            assert!(
+                runtime
+                    .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                        owner.allocate(61, false)
+                    })
+                    .is_none(),
+                "terminal B completions keep ticket zero unavailable after every source route released"
+            );
+            assert!(
+                first_route.finish_after_b().is_ok(),
+                "the first B terminal finish removes only its matching detached token"
+            );
+            assert_eq!(
+                page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                Some(1),
+                "the second detached route retains its worker-admission claim"
+            );
+            assert!(
+                second_route.finish_after_b().is_ok(),
+                "only the second matched B terminal finish releases the final detached token"
+            );
+            assert_eq!(
+                runtime.page_owner_state.load(Ordering::Acquire),
+                PAGE_OWNER_READY,
+                "both terminal proofs restore the dormant scheduler"
+            );
+
+            let after = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(53, false)
+                })
+                .flatten()
+                .expect("ticket zero remains usable after both terminal route releases");
+            assert!(
+                runtime
+                    .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                        // SAFETY: `after` is ticket zero's exact fresh client.
+                        unsafe { owner.free(after) }
+                    })
+                    .expect("ticket zero remains callable after A's route release")
+                    .is_ok(),
+                "the resumed initial owner returns to its dormant state"
+            );
+        })
+        .join()
+        .expect("the isolated runtime keeps ticket zero and detached routes distinct");
+    }
+
+    #[test]
+    fn dormant_ticket_zero_page_owner_lends_persistent_mixed_local_worker_engine() {
         thread::spawn(|| {
             let process_storage = ProcessMainInitializationStorage::test_static_owner();
             let main_static = MainStaticAttachmentStorage::test_static_owner();
@@ -1219,44 +13903,117 @@ mod tests {
                 .expect("the ticket-zero owner remains callable")
                 .expect("the first ticket-zero block frees into the dormant state");
 
-            thread::spawn(move || {
-                // SAFETY: the test's permanent process owner and copied main
-                // Heap lease remain in final runtime storage for this worker.
-                let process_owner = unsafe { runtime.active_owner() }
-                    .expect("the process owner stays published for the worker");
-                let config = process_owner
-                    .ready()
-                    .and_then(|ready| ready.memory_config())
-                    .expect("the worker observes the frozen process config");
-                let main_heap = unsafe { runtime.active_main_heap() }
-                    .expect("the worker copies the ticket-zero main Heap witness");
-                let mut attachment = match unsafe {
-                    MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
-                } {
-                    Ok(attachment) => attachment,
-                    Err(_) => panic!("the worker begins its normal shared-main attachment"),
-                };
+            let baseline =
+                persistent_worker_state_audit(runtime, arena_storage, metadata, main_static, subprocess);
+            assert_eq!(baseline.page_map_registered_entry_count, 0);
+            assert_eq!(baseline.live_thread_count, 1);
+            assert_eq!(baseline.shared_later_theap_count, 0);
 
-                let completed = runtime.with_dormant_page_pair(|pair| {
-                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair)
-                        .map_err(|_| ())?;
-                    let block = allocator.allocate(73, false).ok_or(())?;
-                    // SAFETY: `block` is the exact current allocation of this
-                    // scoped later-main page engine.
-                    unsafe { allocator.free(block) }.map_err(|_| ())?;
-                    allocator.finish().map_err(|_| ())
-                });
-                assert_eq!(
-                    completed,
-                    Some(()),
-                    "only the dormant ticket-zero owner lends its published pair to the empty worker engine"
+            for worker_number in 1..=3 {
+                thread::spawn(move || {
+                    // SAFETY: the test's permanent process owner and copied
+                    // main Heap lease remain in final runtime storage for this
+                    // worker.
+                    let process_owner = unsafe { runtime.active_owner() }
+                        .expect("the process owner stays published for the worker");
+                    let config = process_owner
+                        .ready()
+                        .and_then(|ready| ready.memory_config())
+                        .expect("the worker observes the frozen process config");
+                    let main_heap = unsafe { runtime.active_main_heap() }
+                        .expect("the worker copies the ticket-zero main Heap witness");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(_) => panic!("the worker begins its normal shared-main attachment"),
+                    };
+
+                    let completed = run_runtime_persistent_local_worker_lifecycle(
+                        runtime,
+                        &mut attachment,
+                    )
+                    .ok();
+                    assert_eq!(
+                        completed,
+                        Some(PersistentLocalWorkerResult::Completed),
+                        "the typed runtime operation lends its published pair to persistent local worker {worker_number}"
+                    );
+                    assert_eq!(
+                        runtime.page_owner_state.load(Ordering::Acquire),
+                        PAGE_OWNER_READY,
+                        "worker {worker_number} returns ticket zero only after its typed engine finishes"
+                    );
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the empty persistent worker engine restores normal worker teardown");
+                })
+                .join()
+                .expect("each later-main page engine stays on its worker thread");
+
+                let after_worker = persistent_worker_state_audit(
+                    runtime,
+                    arena_storage,
+                    metadata,
+                    main_static,
+                    subprocess,
                 );
-                attachment
-                    .finish_after_user_destructors()
-                    .expect("the empty scoped page engine restores normal worker teardown");
-            })
-            .join()
-            .expect("the one later-main page engine stays on its worker thread");
+                assert_eq!(
+                    after_worker.page_map_root,
+                    baseline.page_map_root,
+                    "worker {worker_number} retains the one process PageMap root"
+                );
+                assert_eq!(
+                    after_worker.page_map_committed_count,
+                    baseline.page_map_committed_count,
+                    "worker {worker_number} returns the PageMap commitment boundary"
+                );
+                assert_eq!(
+                    after_worker.page_map_reserved_count,
+                    baseline.page_map_reserved_count,
+                    "worker {worker_number} does not change PageMap reservation ownership"
+                );
+                assert_eq!(
+                    after_worker.page_map_registered_entry_count,
+                    baseline.page_map_registered_entry_count,
+                    "worker {worker_number} leaves no PageMap registrations"
+                );
+                assert_eq!(
+                    after_worker.page_map_published_submap_count,
+                    baseline.page_map_published_submap_count,
+                    "worker {worker_number} leaves no additional published PageMap submap"
+                );
+                assert_eq!(
+                    after_worker.page_map_lazy_submap_allocation_count,
+                    baseline.page_map_lazy_submap_allocation_count,
+                    "worker {worker_number} leaves no lazy PageMap allocation"
+                );
+                assert_eq!(
+                    after_worker.arena_address,
+                    baseline.arena_address,
+                    "worker {worker_number} retains the one process arena identity"
+                );
+                assert_eq!(
+                    after_worker.arena_registry_count,
+                    baseline.arena_registry_count,
+                    "worker {worker_number} leaves no arena registry ownership"
+                );
+                assert_eq!(
+                    after_worker.live_thread_count,
+                    baseline.live_thread_count,
+                    "worker {worker_number} restores the source live-TLD count"
+                );
+                assert_eq!(
+                    after_worker.shared_later_theap_count,
+                    baseline.shared_later_theap_count,
+                    "worker {worker_number} restores the shared-later-Theap count"
+                );
+                assert_eq!(
+                    after_worker.total_thread_count,
+                    baseline.total_thread_count + worker_number,
+                    "worker {worker_number} consumes exactly one monotonic source thread sequence"
+                );
+            }
 
             let resumed = runtime
                 .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
@@ -1273,6 +14030,2275 @@ mod tests {
                 .expect("the resumed ticket-zero block frees normally");
         })
         .join()
-        .expect("the runtime alternates the one process pair between ticket zero and one worker");
+        .expect("the runtime alternates the one process pair between ticket zero and one persistent worker");
+    }
+
+    #[test]
+    fn dormant_ticket_zero_page_owner_parks_live_engine_until_interleaving_worker_finishes() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            let owner = unsafe {
+                process_storage.initialize_with_test_components(
+                    memory_config(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the isolated runtime fixture constructs ticket zero");
+            // SAFETY: this fixture owns the one final runtime publication and
+            // keeps every source process object alive for both joined workers.
+            unsafe { publish_test_owner(runtime, owner) };
+
+            let first = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(37, false)
+                })
+                .flatten()
+                .expect("ticket zero activates the first arena before it lends the dormant pair");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `first` is the exact current ticket-zero client.
+                    unsafe { owner.free(first) }
+                })
+                .expect("the permanent owner remains callable after first activation")
+                .expect("ticket zero returns to the dormant existing-arena state");
+
+            let baseline =
+                persistent_worker_state_audit(runtime, arena_storage, metadata, main_static, subprocess);
+            assert_eq!(baseline.runtime_process_state, PROCESS_ACTIVE);
+            assert_eq!(baseline.page_owner_state, PAGE_OWNER_READY);
+            assert_eq!(baseline.page_map_registered_entry_count, 0);
+            assert_eq!(baseline.live_thread_count, 1);
+            assert_eq!(baseline.shared_later_theap_count, 0);
+
+            // SAFETY: the process owner and its heap lease are final static
+            // runtime values. Each worker constructs its own current-thread
+            // TLD/Theap attachment over this immutable witness.
+            let process_owner = unsafe { runtime.active_owner() }
+                .expect("the permanent process owner stays published");
+            let config = process_owner
+                .ready()
+                .and_then(|ready| ready.memory_config())
+                .expect("workers observe the frozen process configuration");
+            let main_heap = unsafe { runtime.active_main_heap() }
+                .expect("workers copy the ticket-zero static heap witness");
+
+            let (a_parked_tx, a_parked_rx) = mpsc::sync_channel::<()>(0);
+            let (start_b_tx, start_b_rx) = mpsc::sync_channel::<()>(0);
+            let (b_finished_tx, b_finished_rx) = mpsc::sync_channel::<()>(0);
+            let (resume_a_tx, resume_a_rx) = mpsc::sync_channel::<()>(0);
+
+            thread::scope(|scope| {
+                let a = scope.spawn(move || {
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("A attaches before its persistent operation: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { attachment, error }) => {
+                            core::mem::forget(attachment);
+                            panic!("A attachment remains healthy: {error:?}")
+                        }
+                    };
+                    let mut engine = match runtime.begin_persistent_later_engine(&mut attachment) {
+                        Ok(engine) => engine,
+                        Err(error) => panic!("A acquires the dormant runtime pair: {error:?}"),
+                    };
+                    let first = engine
+                        .allocate(37, false)
+                        .expect("A keeps one live client across its persistent pause");
+                    let parked = match engine.suspend() {
+                        Ok(parked) => parked,
+                        Err(RuntimePersistentPageEngineSuspendFailure::Rejected { engine, error }) => {
+                            core::mem::forget(engine);
+                            panic!("A records its suspended attachment marker: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::InterleavingOperation { engine }) => {
+                            core::mem::forget(engine);
+                            panic!("the original A operation alone may park")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, error }) => {
+                            core::mem::forget(terminal);
+                            panic!("A's PageMap pause handoff remains healthy: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained) => {
+                            panic!("A's runtime page-owner claim remains exact while it parks")
+                        }
+                    };
+
+                    a_parked_tx
+                        .send(())
+                        .expect("the parent observes A's parked live engine");
+                    resume_a_rx
+                        .recv()
+                        .expect("A waits until B's complete operation returns the parked state");
+
+                    let mut engine = match parked.resume(&mut attachment) {
+                        Ok(engine) => engine,
+                        Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked }) => {
+                            core::mem::forget(parked);
+                            panic!("B released the runtime busy claim before A resumes")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::Rejected { parked, error }) => {
+                            core::mem::forget(parked);
+                            panic!("A retains the matching suspended attachment marker: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy { parked, error }) => {
+                            core::mem::forget(parked);
+                            panic!("B completed its whole PageMap operation before A resumes: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::Retained { terminal, error }) => {
+                            core::mem::forget(terminal);
+                            panic!("A's resumed PageMap handoff remains healthy: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained) => {
+                            panic!("A's parked runtime claim remains exact on resume")
+                        }
+                    };
+                    // SAFETY: `first` never crossed a producer or post-exit
+                    // route, and A recovered its unique normal engine first.
+                    unsafe { engine.free(first) }
+                        .expect("A frees its pre-pause local client only after resume");
+                    match engine.finish() {
+                        Ok(()) => {}
+                        Err(RuntimePersistentPageEngineFinishFailure::Allocator(error)) => {
+                            core::mem::forget(error);
+                            panic!("A becomes all-free before it returns ticket zero to ready")
+                        }
+                        Err(RuntimePersistentPageEngineFinishFailure::PageOwnerRetained) => {
+                            panic!("A owns the matching runtime busy claim through its all-free finish")
+                        }
+                    }
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("A tears down only after its resumed engine is empty");
+                });
+
+                let b = scope.spawn(move || {
+                    start_b_rx
+                        .recv()
+                        .expect("B starts only after A has parked its live engine");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("B attaches for its interleaving operation: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { attachment, error }) => {
+                            core::mem::forget(attachment);
+                            panic!("B attachment remains healthy: {error:?}")
+                        }
+                    };
+                    let engine = match runtime.begin_interleaving_persistent_later_engine(&mut attachment) {
+                        Ok(engine) => engine,
+                        Err(error) => panic!("B acquires the parked runtime pair for one complete operation: {error:?}"),
+                    };
+                    let mut engine = match engine.suspend() {
+                        Err(RuntimePersistentPageEngineSuspendFailure::InterleavingOperation { engine }) => {
+                            engine
+                        }
+                        Ok(parked) => {
+                            core::mem::forget(parked);
+                            panic!("B cannot create a second parked live engine beside A")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::Rejected { engine, error }) => {
+                            core::mem::forget(engine);
+                            panic!("B's non-parkable operation does not touch its attachment: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, error }) => {
+                            core::mem::forget(terminal);
+                            panic!("B's non-parkable operation does not transfer its PageMap state: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained) => {
+                            panic!("B's non-parkable operation preserves A's parked runtime claim")
+                        }
+                    };
+                    let block = engine
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("B owns an independent ordinary medium allocation while A is parked");
+                    // SAFETY: `block` belongs only to B's current complete
+                    // operation and never crosses A's private paused token.
+                    unsafe { engine.free(block) }
+                        .expect("B frees its own local client before returning the parked state");
+                    match engine.finish() {
+                        Ok(()) => {}
+                        Err(RuntimePersistentPageEngineFinishFailure::Allocator(error)) => {
+                            core::mem::forget(error);
+                            panic!("B becomes all-free before it restores A's parked state")
+                        }
+                        Err(RuntimePersistentPageEngineFinishFailure::PageOwnerRetained) => {
+                            panic!("B restores exactly the prior parked runtime state")
+                        }
+                    }
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("B tears down after its complete empty engine operation");
+                    b_finished_tx
+                        .send(())
+                        .expect("the parent observes B's complete operation before A resumes");
+                });
+
+                a_parked_rx
+                    .recv()
+                    .expect("A publishes its typed parked engine state");
+                assert_eq!(
+                    runtime.page_owner_state.load(Ordering::Acquire),
+                    PAGE_OWNER_PARKED,
+                    "A's live separated engine keeps ticket zero outside the runtime scheduler"
+                );
+                assert!(
+                    runtime
+                        .with_ticket_zero_page_owner_with_storage(arena_storage, |_| ())
+                        .is_none(),
+                    "ticket zero cannot reactivate while A owns a parked live engine"
+                );
+                assert_eq!(
+                    runtime.page_owner_state.load(Ordering::Acquire),
+                    PAGE_OWNER_PARKED,
+                    "the rejected ticket-zero attempt leaves A's exact parked claim intact"
+                );
+
+                start_b_tx
+                    .send(())
+                    .expect("the parent admits B's one complete interleaving operation");
+                b_finished_rx
+                    .recv()
+                    .expect("B returns A's parked state before A resumes");
+                assert_eq!(
+                    runtime.page_owner_state.load(Ordering::Acquire),
+                    PAGE_OWNER_PARKED,
+                    "B's empty engine restores the same parked A-side runtime state"
+                );
+                resume_a_tx
+                    .send(())
+                    .expect("the parent permits A to reclaim its typed normal engine");
+
+                a.join()
+                    .expect("A resumes and tears down after B's complete operation");
+                b.join()
+                    .expect("B remains a separate later-thread lifecycle owner");
+            });
+
+            let after =
+                persistent_worker_state_audit(runtime, arena_storage, metadata, main_static, subprocess);
+            assert_eq!(after.runtime_process_state, PROCESS_ACTIVE);
+            assert_eq!(after.page_owner_state, PAGE_OWNER_READY);
+            assert_eq!(after.page_map_root, baseline.page_map_root);
+            assert_eq!(after.page_map_committed_count, baseline.page_map_committed_count);
+            assert_eq!(after.page_map_reserved_count, baseline.page_map_reserved_count);
+            assert_eq!(after.page_map_registered_entry_count, 0);
+            assert_eq!(after.arena_address, baseline.arena_address);
+            assert_eq!(after.arena_registry_count, baseline.arena_registry_count);
+            assert_eq!(after.live_thread_count, baseline.live_thread_count);
+            assert_eq!(
+                after.total_thread_count,
+                baseline.total_thread_count + 2,
+                "A and B each consume one monotonic source later-thread ticket"
+            );
+            assert_eq!(
+                after.metadata_live_capability_count,
+                baseline.metadata_live_capability_count,
+                "both complete worker attachments release their TLD/Theap metadata"
+            );
+            assert_eq!(after.shared_later_theap_count, baseline.shared_later_theap_count);
+            assert_eq!(after.main_heap_abandoned_counts, baseline.main_heap_abandoned_counts);
+            assert_eq!(after.main_heap_os_abandoned_page, baseline.main_heap_os_abandoned_page);
+
+            let resumed = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(73, false)
+                })
+                .flatten()
+                .expect("ticket zero reactivates only after A returns its exact engine empty");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `resumed` is the exact fresh ticket-zero client.
+                    unsafe { owner.free(resumed) }
+                })
+                .expect("ticket zero is callable after the A/B persistent lifecycle")
+                .expect("ticket zero frees after the parked engine fully returns to ready");
+        })
+        .join()
+        .expect("the runtime scheduler keeps each persistent engine current-thread local");
+    }
+
+    #[test]
+    fn dormant_ticket_zero_page_owner_keeps_two_parked_engines_distinct_until_each_finishes() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            let owner = unsafe {
+                process_storage.initialize_with_test_components(
+                    memory_config(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the isolated runtime fixture constructs ticket zero");
+            // SAFETY: the fixture retains every process-static component
+            // through both independently attached worker lifecycles.
+            unsafe { publish_test_owner(runtime, owner) };
+
+            let first = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(37, false)
+                })
+                .expect("ticket zero starts its first native page engine")
+                .expect("the first ticket-zero allocation succeeds");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `first` is the exact current ticket-zero client.
+                    unsafe { owner.free(first) }
+                })
+                .expect("ticket zero remains callable after first activation")
+                .expect("ticket zero returns its first native page engine dormant");
+
+            let baseline =
+                persistent_worker_state_audit(runtime, arena_storage, metadata, main_static, subprocess);
+            assert_eq!(baseline.page_owner_state, PAGE_OWNER_READY);
+            assert_eq!(baseline.page_map_registered_entry_count, 0);
+            assert_eq!(baseline.live_thread_count, 1);
+
+            // SAFETY: the published process owner and shared Heap lease have
+            // process lifetime throughout this scoped two-worker fixture.
+            let process_owner = unsafe { runtime.active_owner() }
+                .expect("the permanent process owner stays published");
+            let config = process_owner
+                .ready()
+                .and_then(|ready| ready.memory_config())
+                .expect("both workers observe the frozen process configuration");
+            let main_heap = unsafe { runtime.active_main_heap() }
+                .expect("both workers copy the ticket-zero static Heap witness");
+
+            let (a_parked_tx, a_parked_rx) = mpsc::sync_channel::<()>(0);
+            let (start_b_tx, start_b_rx) = mpsc::sync_channel::<()>(0);
+            let (b_started_tx, b_started_rx) = mpsc::sync_channel::<bool>(0);
+            let (b_parked_tx, b_parked_rx) = mpsc::sync_channel::<()>(0);
+            let (resume_b_tx, resume_b_rx) = mpsc::sync_channel::<()>(0);
+            let (b_finished_tx, b_finished_rx) = mpsc::sync_channel::<()>(0);
+            let (resume_a_tx, resume_a_rx) = mpsc::sync_channel::<()>(0);
+            let (a_finished_tx, a_finished_rx) = mpsc::sync_channel::<()>(0);
+
+            thread::scope(|scope| {
+                let a = scope.spawn(move || {
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("A attaches before its persistent operation: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { attachment, error }) => {
+                            core::mem::forget(attachment);
+                            panic!("A attachment remains healthy: {error:?}")
+                        }
+                    };
+                    let mut engine = match runtime.begin_persistent_later_engine(&mut attachment) {
+                        Ok(engine) => engine,
+                        Err(error) => panic!("A acquires the dormant runtime pair: {error:?}"),
+                    };
+                    let block = engine
+                        .allocate(37, false)
+                        .expect("A keeps one live local allocation while parked");
+                    let parked = match engine.suspend() {
+                        Ok(parked) => parked,
+                        Err(RuntimePersistentPageEngineSuspendFailure::Rejected { engine, error }) => {
+                            core::mem::forget(engine);
+                            panic!("A records its suspended attachment marker: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::InterleavingOperation { engine }) => {
+                            core::mem::forget(engine);
+                            panic!("A's ordinary persistent operation may park")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, error }) => {
+                            core::mem::forget(terminal);
+                            panic!("A's PageMap pause handoff remains healthy: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained) => {
+                            panic!("A's runtime owner claim remains exact while it parks")
+                        }
+                    };
+                    a_parked_tx
+                        .send(())
+                        .expect("the parent observes A's parked engine");
+                    resume_a_rx
+                        .recv()
+                        .expect("A waits until B has completed its own lifecycle");
+                    let mut engine = match parked.resume(&mut attachment) {
+                        Ok(engine) => engine,
+                        Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked }) => {
+                            core::mem::forget(parked);
+                            panic!("A resumes after B released its independent parked owner")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::Rejected { parked, error }) => {
+                            core::mem::forget(parked);
+                            panic!("A retains its matching suspended attachment marker: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy { parked, error }) => {
+                            core::mem::forget(parked);
+                            panic!("A resumes only after B has released the PageMap mutation lease: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::Retained { terminal, error }) => {
+                            core::mem::forget(terminal);
+                            panic!("A's resumed PageMap handoff remains healthy: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained) => {
+                            panic!("A's parked runtime claim remains exact on resume")
+                        }
+                    };
+                    // SAFETY: `block` stayed local to A's exact paused engine.
+                    unsafe { engine.free(block) }
+                        .expect("A frees its live allocation only after its own resume");
+                    match engine.finish() {
+                        Ok(()) => {}
+                        Err(RuntimePersistentPageEngineFinishFailure::Allocator(error)) => {
+                            core::mem::forget(error);
+                            panic!("A becomes all-free before it returns its runtime claim")
+                        }
+                        Err(RuntimePersistentPageEngineFinishFailure::PageOwnerRetained) => {
+                            panic!("A finishes against its exact runtime scheduler claim")
+                        }
+                    }
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("A tears down only after its empty engine finishes");
+                    a_finished_tx
+                        .send(())
+                        .expect("the parent observes A's complete lifecycle");
+                });
+
+                let b = scope.spawn(move || {
+                    start_b_rx
+                        .recv()
+                        .expect("B starts only after A has parked its live engine");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("B attaches for its independent persistent operation: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { attachment, error }) => {
+                            core::mem::forget(attachment);
+                            panic!("B attachment remains healthy: {error:?}")
+                        }
+                    };
+                    let mut engine = match runtime.begin_persistent_later_engine(&mut attachment) {
+                        Ok(engine) => {
+                            b_started_tx
+                                .send(true)
+                                .expect("the parent observes B's second persistent engine");
+                            engine
+                        }
+                        Err(_) => {
+                            b_started_tx
+                                .send(false)
+                                .expect("the parent observes B's rejected second persistent engine");
+                            return;
+                        }
+                    };
+                    let block = engine
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("B keeps an independent medium allocation while A remains parked");
+                    let parked = match engine.suspend() {
+                        Ok(parked) => parked,
+                        Err(RuntimePersistentPageEngineSuspendFailure::Rejected { engine, error }) => {
+                            core::mem::forget(engine);
+                            panic!("B records its own suspended attachment marker: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::InterleavingOperation { engine }) => {
+                            core::mem::forget(engine);
+                            panic!("B's ordinary persistent operation may park beside A")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::Retained { terminal, error }) => {
+                            core::mem::forget(terminal);
+                            panic!("B's PageMap pause handoff remains healthy: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineSuspendFailure::PageOwnerRetained) => {
+                            panic!("B's runtime owner claim remains exact while it parks")
+                        }
+                    };
+                    b_parked_tx
+                        .send(())
+                        .expect("the parent observes B's independent parked engine");
+                    resume_b_rx
+                        .recv()
+                        .expect("B waits for the parent to choose its resume order");
+                    let mut engine = match parked.resume(&mut attachment) {
+                        Ok(engine) => engine,
+                        Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked }) => {
+                            core::mem::forget(parked);
+                            panic!("B resumes while A remains parked")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::Rejected { parked, error }) => {
+                            core::mem::forget(parked);
+                            panic!("B retains its matching suspended attachment marker: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy { parked, error }) => {
+                            core::mem::forget(parked);
+                            panic!("B owns the one serialized PageMap mutation lease: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::Retained { terminal, error }) => {
+                            core::mem::forget(terminal);
+                            panic!("B's resumed PageMap handoff remains healthy: {error:?}")
+                        }
+                        Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained) => {
+                            panic!("B's parked runtime claim remains exact on resume")
+                        }
+                    };
+                    // SAFETY: `block` stayed local to B's exact paused engine.
+                    unsafe { engine.free(block) }
+                        .expect("B frees its live allocation only after its own resume");
+                    match engine.finish() {
+                        Ok(()) => {}
+                        Err(RuntimePersistentPageEngineFinishFailure::Allocator(error)) => {
+                            core::mem::forget(error);
+                            panic!("B becomes all-free before it returns its runtime claim")
+                        }
+                        Err(RuntimePersistentPageEngineFinishFailure::PageOwnerRetained) => {
+                            panic!("B finishes against its exact runtime scheduler claim")
+                        }
+                    }
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("B tears down only after its empty engine finishes");
+                    b_finished_tx
+                        .send(())
+                        .expect("the parent observes B's complete lifecycle");
+                });
+
+                a_parked_rx
+                    .recv()
+                    .expect("A publishes its typed parked engine state");
+                assert_eq!(
+                    runtime.page_owner_state.load(Ordering::Acquire),
+                    PAGE_OWNER_PARKED,
+                    "one parked owner keeps ticket zero outside the runtime scheduler"
+                );
+                assert_eq!(
+                    page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                    Some(1),
+                    "A's suspended token is the one counted parked owner"
+                );
+                start_b_tx
+                    .send(())
+                    .expect("the parent permits B to create its independent parked engine");
+                if !b_started_rx
+                    .recv()
+                    .expect("B reports whether the scheduler admitted its independent engine")
+                {
+                    resume_a_tx
+                        .send(())
+                        .expect("the parent releases A after B's rejected second engine");
+                    a_finished_rx
+                        .recv()
+                        .expect("A completes after B's rejected second engine");
+                    a.join()
+                        .expect("A still owns its exact current-thread paused engine");
+                    b.join()
+                        .expect("B tears down its no-page attachment after the scheduler rejection");
+                    panic!("the scheduler must admit B's independent parked engine while A remains parked");
+                }
+                b_parked_rx
+                    .recv()
+                    .expect("B publishes its independent typed parked engine state");
+                assert_eq!(
+                    page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                    Some(2),
+                    "A and B each retain an independent suspended engine token"
+                );
+                assert!(
+                    runtime
+                        .with_ticket_zero_page_owner_with_storage(arena_storage, |_| ())
+                        .is_none(),
+                    "ticket zero cannot reactivate while either parked engine remains live"
+                );
+
+                resume_b_tx
+                    .send(())
+                    .expect("the parent resumes B before A");
+                b_finished_rx
+                    .recv()
+                    .expect("B completes without resuming A");
+                assert_eq!(
+                    page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                    Some(1),
+                    "A's parked engine remains the sole scheduler claim after B finishes"
+                );
+                assert!(
+                    runtime
+                        .with_ticket_zero_page_owner_with_storage(arena_storage, |_| ())
+                        .is_none(),
+                    "ticket zero remains blocked until A also finishes"
+                );
+
+                resume_a_tx
+                    .send(())
+                    .expect("the parent resumes the remaining parked A engine");
+                a_finished_rx
+                    .recv()
+                    .expect("A completes after B has already torn down");
+                a.join()
+                    .expect("A retains its exact current-thread paused engine");
+                b.join()
+                    .expect("B retains its independent current-thread paused engine");
+            });
+
+            let after =
+                persistent_worker_state_audit(runtime, arena_storage, metadata, main_static, subprocess);
+            assert_eq!(after.runtime_process_state, PROCESS_ACTIVE);
+            assert_eq!(after.page_owner_state, PAGE_OWNER_READY);
+            assert_eq!(after.page_map_root, baseline.page_map_root);
+            assert_eq!(after.page_map_registered_entry_count, 0);
+            assert_eq!(after.live_thread_count, baseline.live_thread_count);
+            assert_eq!(after.shared_later_theap_count, baseline.shared_later_theap_count);
+            assert_eq!(
+                after.total_thread_count,
+                baseline.total_thread_count + 2,
+                "two independently attached workers consume two source later-thread tickets"
+            );
+
+            let resumed = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(73, false)
+                })
+                .flatten()
+                .expect("ticket zero reactivates only after both parked engines finish");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `resumed` is the exact fresh ticket-zero client.
+                    unsafe { owner.free(resumed) }
+                })
+                .expect("ticket zero remains callable after both independent worker lifecycles")
+                .expect("the reactivated ticket-zero client frees normally");
+        })
+        .join()
+        .expect("the runtime scheduler serializes mutations while retaining multiple paused owners");
+    }
+
+    fn publish_remote_from_scoped_test_thread<'owner>(
+        producers: TicketZeroRemoteFreeProducerPair<'owner>,
+    ) -> Result<(), TicketZeroRemoteFreeProducerPair<'owner>> {
+        let (first, second) = producers.split();
+        thread::scope(|scope| {
+            let first = scope.spawn(move || first.publish());
+            let second = scope.spawn(move || second.publish());
+            match first
+                .join()
+                .expect("the first remote publisher remains bounded by its owner join")
+            {
+                Ok(()) => {}
+                Err(_) => panic!("the first remote publisher accepts its exact source block"),
+            }
+            match second
+                .join()
+                .expect("the second remote publisher remains bounded by its owner join")
+            {
+                Ok(()) => {}
+                Err(_) => panic!("the second remote publisher accepts its exact source block"),
+            }
+            Ok(())
+        })
+    }
+
+    fn reject_remote_publication<'owner>(
+        producers: TicketZeroRemoteFreeProducerPair<'owner>,
+    ) -> Result<(), TicketZeroRemoteFreeProducerPair<'owner>> {
+        Err(producers)
+    }
+
+    #[test]
+    fn dormant_ticket_zero_page_owner_reuses_remote_frees_and_cleans_failed_publication() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            let owner = unsafe {
+                process_storage.initialize_with_test_components(
+                    memory_config(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the isolated runtime fixture constructs ticket zero");
+            // SAFETY: this test supplies the one fresh runtime slot and keeps
+            // every source/process owner alive through the permanent fixture.
+            unsafe { publish_test_owner(runtime, owner) };
+
+            let first = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(37, false)
+                })
+                .expect("the ticket-zero owner starts its first page engine")
+                .expect("the first ticket-zero allocation succeeds");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    unsafe { owner.free(first) }
+                })
+                .expect("the ticket-zero owner remains callable")
+                .expect("the first ticket-zero block frees into the dormant state");
+
+            let baseline =
+                persistent_worker_state_audit(runtime, arena_storage, metadata, main_static, subprocess);
+            assert_eq!(baseline.page_map_registered_entry_count, 0);
+            assert_eq!(baseline.live_thread_count, 1);
+            assert_eq!(baseline.shared_later_theap_count, 0);
+
+            let cases: [(TicketZeroRemoteFreePublisher, PersistentRemoteWorkerResult); 4] = [
+                (
+                    publish_remote_from_scoped_test_thread,
+                    PersistentRemoteWorkerResult::Completed,
+                ),
+                (
+                    publish_remote_from_scoped_test_thread,
+                    PersistentRemoteWorkerResult::Completed,
+                ),
+                (
+                    publish_remote_from_scoped_test_thread,
+                    PersistentRemoteWorkerResult::Completed,
+                ),
+                (
+                    reject_remote_publication,
+                    PersistentRemoteWorkerResult::PublicationFailed,
+                ),
+            ];
+            for (worker_index, (publish, expected_result)) in cases.into_iter().enumerate() {
+                let worker_number = worker_index + 1;
+                thread::spawn(move || {
+                    // SAFETY: this fixture keeps the permanent process owner
+                    // and its shared main Heap lease process-static while A
+                    // owns one engine and its scoped B publisher joins.
+                    let process_owner = unsafe { runtime.active_owner() }
+                        .expect("the process owner stays published for remote owner A");
+                    let config = process_owner
+                        .ready()
+                        .and_then(|ready| ready.memory_config())
+                        .expect("remote owner A observes the frozen process config");
+                    let main_heap = unsafe { runtime.active_main_heap() }
+                        .expect("remote owner A copies the ticket-zero main Heap witness");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(_) => panic!("remote owner A begins its normal shared-main attachment"),
+                    };
+
+                    let completed = run_runtime_persistent_remote_worker_lifecycle(
+                        runtime,
+                        &mut attachment,
+                        publish,
+                    )
+                    .ok();
+                    assert_eq!(
+                        completed,
+                        Some(expected_result),
+                        "the typed runtime operation preserves its bounded remote outcome for owner A {worker_number}"
+                    );
+                    assert_eq!(
+                        runtime.page_owner_state.load(Ordering::Acquire),
+                        PAGE_OWNER_READY,
+                        "remote owner A {worker_number} returns ticket zero after its joined B publication or canceled opaque route"
+                    );
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("remote owner A tears down after B has joined and all pages are empty");
+                })
+                .join()
+                .expect("each live remote-free owner remains on its fresh worker thread");
+
+                let after_worker = persistent_worker_state_audit(
+                    runtime,
+                    arena_storage,
+                    metadata,
+                    main_static,
+                    subprocess,
+                );
+                let expected = PersistentWorkerStateAudit {
+                    total_thread_count: baseline.total_thread_count + worker_number,
+                    ..baseline
+                };
+                assert_eq!(
+                    after_worker, expected,
+                    "remote owner A {worker_number} leaves no PageMap, arena, TLD, or Theap residue"
+                );
+            }
+
+            let resumed = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(73, false)
+                })
+                .expect("ticket zero reactivates after every remote owner joins")
+                .expect("the reactivated ticket-zero allocation succeeds");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    unsafe { owner.free(resumed) }
+                })
+                .expect("the resumed ticket-zero owner stays callable")
+                .expect("the reactivated ticket-zero block frees normally");
+        })
+        .join()
+        .expect("the isolated runtime restores its retained baseline after repeated live remote frees");
+    }
+
+    #[test]
+    fn dormant_ticket_zero_page_owner_repeats_mixed_owner_exit_without_state_growth() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            let owner = unsafe {
+                process_storage.initialize_with_test_components(
+                    memory_config(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the isolated runtime fixture constructs ticket zero");
+            // SAFETY: this test supplies the one fresh runtime slot and keeps
+            // every source/process owner alive through the permanent fixture.
+            unsafe { publish_test_owner(runtime, owner) };
+
+            let first = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(37, false)
+                })
+                .expect("ticket zero starts its first page engine")
+                .expect("the first ticket-zero allocation succeeds");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `first` is the exact current ticket-zero block.
+                    unsafe { owner.free(first) }
+                })
+                .expect("ticket zero remains callable after its first allocation")
+                .expect("the first ticket-zero block frees into the dormant state");
+
+            let baseline =
+                persistent_worker_state_audit(runtime, arena_storage, metadata, main_static, subprocess);
+            assert_eq!(baseline.runtime_process_state, PROCESS_ACTIVE);
+            assert_eq!(baseline.page_owner_state, PAGE_OWNER_READY);
+            assert_eq!(baseline.page_map_registered_entry_count, 0);
+            assert_eq!(baseline.live_thread_count, 1);
+            assert_eq!(
+                baseline.metadata_live_capability_count, 0,
+                "the dormant ticket-zero owner retains no worker metadata capability"
+            );
+            assert_eq!(baseline.shared_later_theap_count, 0);
+            assert_eq!(
+                baseline.main_heap_abandoned_counts,
+                [0; crate::config::BIN_COUNT],
+                "the dormant ticket-zero owner has no leaked static-main abandoned bitmap/count pairing"
+            );
+            assert_eq!(
+                baseline.main_heap_os_abandoned_page,
+                0,
+                "the dormant ticket-zero owner has no leaked private OS-abandoned list member"
+            );
+            // The first OS-aligned singleton route may lazily allocate the
+            // PageMap submaps that cover its clipped alias/mapping range.
+            // Those process-owned submaps are intentionally retained after
+            // terminal release, so require the complete state to plateau
+            // after one warmup cycle rather than falsely treating this first
+            // immutable publication as a per-worker leak.
+            let mut warmed_owner_exit_state = None;
+            let mut warmed_metadata_high_water = None;
+
+            for worker_number in 1..=OWNER_EXIT_STATE_AUDIT_CYCLES {
+                thread::spawn(move || {
+                    // SAFETY: the fixture keeps the permanent process owner
+                    // and its immutable shared main Heap witness alive while
+                    // A detaches and its joined B consumes only the opaque
+                    // post-exit route.
+                    let process_owner = unsafe { runtime.active_owner() }
+                        .expect("the process owner stays published for owner-exit A");
+                    let config = process_owner
+                        .ready()
+                        .and_then(|ready| ready.memory_config())
+                        .expect("owner-exit A observes the frozen process config");
+                    let main_heap = unsafe { runtime.active_main_heap() }
+                        .expect("owner-exit A copies the ticket-zero main Heap witness");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("owner-exit A begins its shared-main attachment: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("owner-exit A cannot retain during attachment: {error:?}")
+                        }
+                    };
+                    let admissions = RuntimeForkAdmission::new();
+
+                    let completed = runtime.with_dormant_page_pair(|pair| {
+                        let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair)
+                            .expect("the dormant ticket-zero pair admits the mixed owner-exit worker");
+                        let mut workload = OwnerExitMappedRegularWorkload::allocate(&mut allocator)
+                            .expect("the mixed owner-exit worker allocates its bounded source workload");
+
+                        let direct_small_page_pointer = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(
+                                workload.direct_small[0]
+                                    .expect("the owner-exit workload has a direct-small client"),
+                            )
+                        })
+                        .expect("the direct-small page stays PageMap-published before exit");
+                        let direct_small_page = unsafe { direct_small_page_pointer.as_ref() };
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(
+                                direct_small_page.block_size(),
+                            ),
+                            Some(crate::types::PageKind::Small),
+                            "the mixed source image retains a direct small page"
+                        );
+                        assert!(
+                            direct_small_page.block_size() <= SMALL_SIZE_MAX,
+                            "the direct-small page remains inside the source direct-cache range"
+                        );
+                        assert_eq!(
+                            direct_small_page.used(),
+                            OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS,
+                            "both direct-small clients remain live through A's aggregate exit"
+                        );
+                        for (index, block) in workload.direct_small.iter().enumerate() {
+                            let block = block
+                                .expect("the owner-exit workload retains each direct-small client");
+                            assert_eq!(
+                                unsafe { allocator.test_page_for_block(block) },
+                                direct_small_page_pointer.as_ptr(),
+                                "direct-small client {index} stays in its exact source page"
+                            );
+                        }
+
+                        let non_direct_small_page_pointer = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(
+                                workload.non_direct_small[0]
+                                    .expect("the owner-exit workload has a non-direct-small client"),
+                            )
+                        })
+                        .expect("the non-direct-small page stays PageMap-published before exit");
+                        let non_direct_small_page = unsafe { non_direct_small_page_pointer.as_ref() };
+                        assert_ne!(
+                            non_direct_small_page_pointer,
+                            direct_small_page_pointer,
+                            "the two source small classes stay in independently classified pages"
+                        );
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(
+                                non_direct_small_page.block_size(),
+                            ),
+                            Some(crate::types::PageKind::Small),
+                            "the mixed source image retains a non-direct small page"
+                        );
+                        assert!(
+                            non_direct_small_page.block_size() > SMALL_SIZE_MAX,
+                            "the non-direct small page does not borrow a source direct-cache slot"
+                        );
+                        assert_eq!(
+                            non_direct_small_page.used(),
+                            OWNER_EXIT_NON_DIRECT_SMALL_CLIENT_SLOTS,
+                            "the non-direct-small client remains live through A's aggregate exit"
+                        );
+
+                        let medium_page_pointer = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(
+                                workload.full_medium[0]
+                                    .expect("the owner-exit workload has a medium client"),
+                            )
+                        })
+                        .expect("the owner-exit medium page stays PageMap-published before exit");
+                        let medium_page = unsafe { medium_page_pointer.as_ref() };
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(medium_page.block_size()),
+                            Some(crate::types::PageKind::Medium),
+                            "the post-exit coordinator sees the source medium class"
+                        );
+                        assert_eq!(
+                            medium_page.used(),
+                            usize::from(medium_page.reserved()),
+                            "the joined remote publication starts from a full source medium page"
+                        );
+                        assert!(
+                            crate::types::page_queue::page_is_in_full(medium_page),
+                            "the full source medium remains in BIN_FULL until force collection"
+                        );
+                        for (index, block) in workload.full_medium.iter().enumerate() {
+                            let Some(block) = *block else {
+                                continue;
+                            };
+                            assert_eq!(
+                                unsafe { allocator.test_page_for_block(block) },
+                                medium_page_pointer.as_ptr(),
+                                "full-medium client {index} stays in the exact source BIN_FULL page"
+                            );
+                        }
+
+                        let unmapped_medium_page_pointer = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(
+                                workload.unmapped_full_medium[0]
+                                    .expect("the owner-exit workload has an unchanged medium client"),
+                            )
+                        })
+                        .expect("the unchanged owner-exit medium page stays PageMap-published before exit");
+                        assert_ne!(
+                            unmapped_medium_page_pointer,
+                            medium_page_pointer,
+                            "the source-unmapped witness occupies a distinct full medium page"
+                        );
+                        let unmapped_medium_page = unsafe { unmapped_medium_page_pointer.as_ref() };
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(
+                                unmapped_medium_page.block_size(),
+                            ),
+                            Some(crate::types::PageKind::Medium),
+                            "the unchanged source member remains a regular medium page"
+                        );
+                        assert_eq!(
+                            unmapped_medium_page.used(),
+                            usize::from(unmapped_medium_page.reserved()),
+                            "the second full medium remains live without a joined remote free"
+                        );
+                        assert!(
+                            crate::types::page_queue::page_is_in_full(unmapped_medium_page)
+                                && !unmapped_medium_page.has_published_remote_free(),
+                            "the second source member stays full and source-unmapped before A exits"
+                        );
+                        let full_medium_bin = crate::size_class::bin(medium_page.block_size())
+                            .expect("both full medium pages use one regular bitmap bin");
+                        assert_eq!(
+                            crate::size_class::bin(unmapped_medium_page.block_size()),
+                            Some(full_medium_bin),
+                            "the paired medium witnesses share the same static-main bitmap class"
+                        );
+                        for (index, block) in workload.unmapped_full_medium.iter().enumerate() {
+                            let Some(block) = *block else {
+                                continue;
+                            };
+                            assert_eq!(
+                                unsafe { allocator.test_page_for_block(block) },
+                                unmapped_medium_page_pointer.as_ptr(),
+                                "source-unmapped full-medium client {index} stays in its exact BIN_FULL page"
+                            );
+                        }
+
+                        let initially_mapped_medium_page_pointer = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(
+                                workload.initially_mapped_medium[1].expect(
+                                    "the owner-exit workload retains an initially mapped medium client",
+                                ),
+                            )
+                        })
+                        .expect("the initially mapped medium page stays PageMap-published before exit");
+                        assert_ne!(
+                            initially_mapped_medium_page_pointer,
+                            medium_page_pointer,
+                            "the initially mapped source member is distinct from the force-normalized medium"
+                        );
+                        assert_ne!(
+                            initially_mapped_medium_page_pointer,
+                            unmapped_medium_page_pointer,
+                            "the initially mapped source member is distinct from the source-unmapped full medium"
+                        );
+                        let initially_mapped_medium_page =
+                            unsafe { initially_mapped_medium_page_pointer.as_ref() };
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(
+                                initially_mapped_medium_page.block_size(),
+                            ),
+                            Some(crate::types::PageKind::Medium),
+                            "the local-free source member remains a regular medium page"
+                        );
+                        assert_eq!(
+                            initially_mapped_medium_page.used() + 1,
+                            usize::from(initially_mapped_medium_page.reserved()),
+                            "A's one ordinary local free makes the third medium non-full before owner exit"
+                        );
+                        assert!(
+                            !crate::types::page_queue::page_is_in_full(initially_mapped_medium_page)
+                                && !initially_mapped_medium_page.has_published_remote_free(),
+                            "the third medium reaches owner exit as an already-mapped, local-free regular member"
+                        );
+                        assert_eq!(
+                            crate::size_class::bin(initially_mapped_medium_page.block_size()),
+                            Some(full_medium_bin),
+                            "all three medium members retain their one regular static-main bitmap class"
+                        );
+                        assert!(
+                            workload.initially_mapped_medium[0].is_none(),
+                            "the A-local medium client has left the private ledger before owner exit"
+                        );
+                        for (index, block) in workload.initially_mapped_medium[1..].iter().enumerate() {
+                            let block = block.expect(
+                                "the owner-exit workload retains every remaining initially mapped medium client",
+                            );
+                            assert_eq!(
+                                unsafe { allocator.test_page_for_block(block) },
+                                initially_mapped_medium_page_pointer.as_ptr(),
+                                "initially mapped medium client {} stays in its exact regular page",
+                                index + 1,
+                            );
+                        }
+
+                        let force_empty_large_page_pointer = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(
+                                workload.force_empty_large.expect(
+                                    "the owner-exit workload has its force-empty large client",
+                                ),
+                            )
+                        })
+                        .expect("the force-empty large page stays PageMap-published before exit");
+                        let force_empty_large_page = unsafe { force_empty_large_page_pointer.as_ref() };
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(
+                                force_empty_large_page.block_size(),
+                            ),
+                            Some(crate::types::PageKind::Large),
+                            "the source traversal receives a regular large page that can become empty"
+                        );
+                        assert_eq!(
+                            force_empty_large_page.used(),
+                            1,
+                            "the joined remote free is the large page's sole live client"
+                        );
+                        assert!(
+                            !crate::types::page_queue::page_is_in_full(force_empty_large_page),
+                            "the force-empty large page reaches the ordinary source queue before collection"
+                        );
+                        let live_large_page_pointer = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(
+                                workload
+                                    .large
+                                    [0]
+                                    .expect("the owner-exit workload has its first surviving large client"),
+                            )
+                        })
+                        .expect("the live large page stays PageMap-published before exit");
+                        let live_large_page = unsafe { live_large_page_pointer.as_ref() };
+                        assert_ne!(
+                            force_empty_large_page_pointer,
+                            live_large_page_pointer,
+                            "distinct large bins keep the force-empty and abandoned branches independent"
+                        );
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(live_large_page.block_size()),
+                            Some(crate::types::PageKind::Large),
+                            "the mixed departing Theap retains a second live large member"
+                        );
+                        assert_eq!(
+                            live_large_page.used(),
+                            OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS,
+                            "both large clients remain live for B's sequential post-exit route"
+                        );
+                        for (index, block) in workload.large.iter().enumerate() {
+                            let block = block
+                                .expect("the owner-exit workload retains each live large client");
+                            assert_eq!(
+                                unsafe { allocator.test_page_for_block(block) },
+                                live_large_page_pointer.as_ptr(),
+                                "live large client {index} stays in one source page through owner exit"
+                            );
+                        }
+
+                        let arena_singleton_page_pointer = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(
+                                workload
+                                    .arena_singleton
+                                    .expect("the owner-exit workload has its live arena singleton"),
+                            )
+                        })
+                        .expect("the live arena singleton stays PageMap-published before exit");
+                        assert_ne!(
+                            arena_singleton_page_pointer,
+                            live_large_page_pointer,
+                            "the source singleton remains distinct from the regular large member"
+                        );
+                        let arena_singleton_page = unsafe { arena_singleton_page_pointer.as_ref() };
+                        assert_eq!(
+                            arena_singleton_page.memid().kind(),
+                            crate::types::MemoryKind::Arena,
+                            "the bounded singleton follows the arena terminal-release branch"
+                        );
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(
+                                arena_singleton_page.block_size(),
+                            ),
+                            Some(crate::types::PageKind::Singleton),
+                            "the bounded request crosses the source singleton page class"
+                        );
+                        assert_eq!(arena_singleton_page.reserved(), 1);
+                        assert_eq!(arena_singleton_page.used(), 1);
+                        assert!(
+                            crate::types::page_queue::page_is_in_full(arena_singleton_page)
+                                && !arena_singleton_page.has_published_remote_free(),
+                            "the live arena singleton reaches source owner exit without a force-empty remote free"
+                        );
+
+                        let (medium, force_empty_large) = workload
+                            .take_remote_clients()
+                            .expect("the mixed owner-exit witness has both pre-exit remote clients");
+                        // SAFETY: the medium and large clients are distinct,
+                        // exact current allocations. B/C receive only their
+                        // joined logical publication capabilities before A
+                        // starts source collection.
+                        let producers = TicketZeroRemoteFreeProducerPair {
+                            producers: unsafe {
+                                allocator.begin_remote_free_pair(medium, force_empty_large)
+                            }
+                            .expect(
+                                "the full medium and force-empty large admit joined remote publication",
+                            ),
+                        };
+                        let (medium_producer, large_producer) = producers.split();
+                        let (medium_publication, large_publication) = thread::scope(|scope| {
+                            let medium_publisher = scope.spawn(move || medium_producer.publish());
+                            let large_publisher = scope.spawn(move || large_producer.publish());
+                            (
+                                medium_publisher
+                                    .join()
+                                    .expect("the medium publisher remains bounded by its join"),
+                                large_publisher
+                                    .join()
+                                    .expect("the large publisher remains bounded by its join"),
+                            )
+                        });
+                        if let Err(producer) = medium_publication {
+                            let _ = producer.cancel();
+                            panic!("the full source medium publishes its joined remote client");
+                        }
+                        if let Err(producer) = large_publication {
+                            let _ = producer.cancel();
+                            panic!("the sole source large page publishes its joined remote client");
+                        }
+
+                        let drain = match allocator.begin_thread_exit_drain() {
+                            Ok(drain) => drain,
+                            Err(crate::main_heap_page::MainHeapThreadProcessPageExitDrainFailure::Retained {
+                                allocator,
+                                error,
+                            }) => {
+                                core::mem::forget(allocator);
+                                panic!(
+                                    "the mixed full-medium worker enters its source exit drain: {error:?}"
+                                );
+                            }
+                        };
+                        let route = match unsafe {
+                            drain.abandon_mapped_regular_pages_to_process_route()
+                        } {
+                            Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(
+                                route,
+                            )) => route,
+                            Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(
+                                route,
+                            )) => {
+                                core::mem::forget(route);
+                                return Err(());
+                            }
+                            Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(
+                                drain,
+                            )) => {
+                                core::mem::forget(drain);
+                                return Err(());
+                            }
+                            Err(
+                                crate::main_heap_page::MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::Rejected {
+                                    drain,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(drain);
+                                panic!(
+                                    "the mixed full-medium owner-exit source is rejected before collection: {error:?}"
+                                );
+                            }
+                            Err(
+                                crate::main_heap_page::MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::RetainedDrain {
+                                    drain,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(drain);
+                                panic!(
+                                    "the mixed full-medium owner-exit source is retained after collection: {error:?}"
+                                );
+                            }
+                            Err(failure) => {
+                                core::mem::forget(failure);
+                                panic!(
+                                    "the mixed full-medium owner-exit source cannot fail after route teardown"
+                                );
+                            }
+                        };
+                        assert_eq!(
+                            route.test_remaining_pages(),
+                            8,
+                            "the aggregate releases the force-empty large during collection and retains direct-small, non-direct-small, live-large, force-normalized-medium, source-unmapped-full-medium, initially-mapped-medium, live-arena-singleton, and private-OS-singleton members"
+                        );
+                        assert_eq!(
+                            route.test_abandoned_count_for_bin(full_medium_bin),
+                            Some(2),
+                            "the force-normalized and initially mapped mediums enter the static-main mapped bitmap at owner exit"
+                        );
+                        assert_eq!(
+                            unmapped_medium_page.used(),
+                            usize::from(unmapped_medium_page.reserved()),
+                            "the unchanged full medium reaches B with every client still live"
+                        );
+                        assert!(
+                            !crate::types::page_queue::page_is_in_full(unmapped_medium_page),
+                            "A clears the old full-queue link before the source-unmapped aggregate tail begins"
+                        );
+                        let admission = admissions
+                            .claim_later_thread()
+                            .expect("the isolated admission word accepts owner-exit A");
+                        let Some(mut blocks) = workload.into_post_exit_blocks() else {
+                            core::mem::forget(route);
+                            panic!("the remote medium client leaves the private workload before A exits");
+                        };
+                        // This direct lower-level test intentionally retains
+                        // the historical direct-small witness positions solely
+                        // to select the B/C/D publication group. The runtime
+                        // owner path converts the same selection into opaque
+                        // ledger keys before it suspends A;
+                        // `TicketZeroOwnerExitFreeRoute` itself has no
+                        // fixture-shaped indexing.
+                        let Some(direct) = blocks[0].take() else {
+                            core::mem::forget(route);
+                            panic!("the post-exit B/C/D witness keeps its direct same-page client");
+                        };
+                        let Some(first_published) = blocks[1].take() else {
+                            core::mem::forget(route);
+                            panic!("the post-exit B/C/D witness keeps its first publisher same-page client");
+                        };
+                        let Some(second_published) = blocks[2].take() else {
+                            core::mem::forget(route);
+                            panic!("the post-exit B/C/D witness keeps its second publisher same-page client");
+                        };
+                        let mut entries = core::array::from_fn(|slot| {
+                                blocks.get(slot).copied().flatten().map(|block| DetachedOwnerExitClient {
+                                    key: DetachedOwnerExitClientKey {
+                                        slot,
+                                        generation: 1,
+                                    },
+                                    block,
+                                    // This direct source-state fixture
+                                    // retains the B/C/D group and therefore
+                                    // deliberately has no raw-C
+                                    // `malloc_usable_size` surface (see
+                                    // `TicketZeroOwnerExitFreeRoute::native_usable_size`).
+                                    // Keep a nonzero synthetic extent solely
+                                    // so its private ledger still satisfies
+                                    // the concrete detached-client shape; the
+                                    // value is never observable outside this
+                                    // lower-level witness.
+                                    usable_size: 1,
+                                    normal_request: match slot {
+                                        0..OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS => Some(37),
+                                        OWNER_EXIT_NON_DIRECT_SMALL_START..OWNER_EXIT_LIVE_LARGE_START => {
+                                            Some(OWNER_EXIT_NON_DIRECT_SMALL_REQUEST)
+                                        }
+                                        OWNER_EXIT_LIVE_LARGE_START..OWNER_EXIT_MAPPED_MEDIUM_START => {
+                                            Some(OWNER_EXIT_LIVE_LARGE_REQUEST)
+                                        }
+                                        OWNER_EXIT_MAPPED_MEDIUM_START..OWNER_EXIT_ARENA_SINGLETON_INDEX => {
+                                            Some(OWNER_EXIT_FULL_MEDIUM_REQUEST)
+                                        }
+                                        OWNER_EXIT_ARENA_SINGLETON_INDEX => {
+                                            Some(OWNER_EXIT_ARENA_SINGLETON_REQUEST)
+                                        }
+                                        OWNER_EXIT_OS_SINGLETON_INDEX => None,
+                                        _ => None,
+                                    },
+                                    // This direct lower-level fixture has
+                                    // already proven the force-normalized
+                                    // mapped medium's immediate source head.
+                                    // Preserve that one fact when it builds a
+                                    // private ledger without an A-side
+                                    // preparation object; every other member
+                                    // remains sequential-only.
+                                    has_pre_exit_owner_exit_collectable_local_free:
+                                        slot == OWNER_EXIT_MAPPED_MEDIUM_START,
+                                })
+                            });
+                        // The private ledger schedules the force-normalized
+                        // medium's last live client after every other member.
+                        // Its address remains inside the ledger; when B
+                        // reaches it, the aggregate route must make the
+                        // source bitmap claim rather than fall through to a
+                        // final sequential free.
+                        entries.swap(
+                            OWNER_EXIT_MAPPED_MEDIUM_START,
+                            OWNER_EXIT_OS_SINGLETON_INDEX,
+                        );
+                        let clients = DetachedOwnerExitClientLedger::from_inline_entries(entries);
+                        let adoption_count_before =
+                            AGGREGATE_LAST_MAPPED_REGULAR_ADOPTION_COUNT.load(Ordering::Relaxed);
+                        let post_exit = TicketZeroOwnerExitFreeRoute {
+                            route,
+                            clients,
+                            post_exit_remote_publication_group: Some(
+                                DetachedOwnerExitRemotePublicationGroup {
+                                    kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+                                    direct: Some(direct),
+                                    first_published: Some(first_published),
+                                    second_published: Some(second_published),
+                                },
+                            ),
+                            pair,
+                            admission,
+                            _consumer: PhantomData,
+                        };
+                        assert_eq!(
+                            admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+                            1,
+                            "A stays admitted until B proves the aggregate route terminally released"
+                        );
+                        assert_eq!(
+                            attachment.finish_after_page_drain(),
+                            Err(crate::main_heap_thread::MainHeapThreadAttachmentError::TornDown),
+                            "A's old Theap/TLD is gone before B receives the private route"
+                        );
+
+                        let outcome = thread::scope(|scope| {
+                            let admissions = &admissions;
+                            let consumer = scope.spawn(move || {
+                                // B owns neither A's detached attachment nor
+                                // any of A's private client identities. It
+                                // first creates its own independent no-page
+                                // attachment, consumes only the opaque route,
+                                // and proves that its ordinary finish leaves
+                                // no shared-main/TLD metadata residue.
+                                let b_admission = admissions
+                                    .claim_later_thread()
+                                    .expect("the fresh post-exit consumer B receives its own admission");
+                                assert_eq!(
+                                    admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+                                    2,
+                                    "A's detached route and B's new attachment remain independently admitted"
+                                );
+                                let mut b_attachment = match unsafe {
+                                    MainHeapThreadAttachment::begin_with_test_metadata(
+                                        main_heap,
+                                        metadata,
+                                        config,
+                                    )
+                                } {
+                                    Ok(attachment) => attachment,
+                                    Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                                        panic!(
+                                            "the fresh post-exit consumer B begins its no-page attachment: {error:?}"
+                                        )
+                                    }
+                                    Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                                        panic!(
+                                            "the fresh post-exit consumer B cannot retain during attachment: {error:?}"
+                                        )
+                                    }
+                                };
+                                let outcome = post_exit.free_remaining_with_post_exit_publisher(
+                                    &mut b_attachment,
+                                    TicketZeroOwnerExitPostExitPublisher::DirectSmall(
+                                        publish_post_exit_remote_free_from_scoped_workers,
+                                    ),
+                                );
+                                b_attachment
+                                    .finish_after_user_destructors()
+                                    .expect(
+                                        "the route-consuming B finishes only its own no-page attachment",
+                                    );
+                                match admissions.release_later_thread(b_admission) {
+                                    Ok(()) => {}
+                                    Err(admission) => {
+                                        core::mem::forget(admission);
+                                        panic!(
+                                            "B releases its own admission before returning A's terminal proof"
+                                        );
+                                    }
+                                }
+                                assert_eq!(
+                                    admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+                                    1,
+                                    "B's normal finalizer cannot release A's detached-route admission"
+                                );
+                                outcome
+                            });
+                            consumer
+                                .join()
+                                .expect("the post-exit consumer remains bounded by its join")
+                        });
+                        match outcome {
+                            TicketZeroOwnerExitFreeOutcome::Finished(proof) => {
+                                assert!(
+                                    AGGREGATE_LAST_MAPPED_REGULAR_ADOPTION_COUNT
+                                        .load(Ordering::Relaxed)
+                                        > adoption_count_before,
+                                    "the final force-normalized medium crosses the aggregate last-member adoption boundary"
+                                );
+                                match proof.release_worker_admission(&admissions) {
+                                    Ok(()) => {}
+                                    Err(proof) => {
+                                        core::mem::forget(proof);
+                                        panic!(
+                                            "the terminal route proof releases its exact worker admission"
+                                        );
+                                    }
+                                }
+                            }
+                            TicketZeroOwnerExitFreeOutcome::Retained(route) => {
+                                core::mem::forget(route);
+                                panic!("the private full-medium owner-exit route terminally releases");
+                            }
+                            TicketZeroOwnerExitFreeOutcome::Poisoned(poisoned) => {
+                                core::mem::forget(poisoned);
+                                panic!("the private full-medium owner-exit route avoids PageMap poisoning");
+                            }
+                        }
+                        assert_eq!(
+                            admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+                            0,
+                            "B's terminal proof is the only transition that makes A fork-quiescent"
+                        );
+                        Ok(())
+                    });
+                    assert_eq!(
+                        completed,
+                        Some(()),
+                        "the dormant ticket-zero pair completes mixed owner-exit cycle {worker_number}"
+                    );
+                })
+                .join()
+                .expect("each mixed owner-exit A remains on a fresh worker thread");
+
+                let after_worker = persistent_worker_state_audit(
+                    runtime,
+                    arena_storage,
+                    metadata,
+                    main_static,
+                    subprocess,
+                );
+                let expected_total_thread_count = baseline.total_thread_count + worker_number * 2;
+                match warmed_owner_exit_state {
+                    Some(warmed) => {
+                        let expected = PersistentWorkerStateAudit {
+                            total_thread_count: expected_total_thread_count,
+                            ..warmed
+                        };
+                        assert_eq!(
+                            after_worker, expected,
+                            "mixed owner-exit cycle {worker_number} leaves no PageMap, arena, TLD, or Theap residue after warmup"
+                        );
+                    }
+                    None => {
+                        assert!(
+                            after_worker.page_map_published_submap_count
+                                >= baseline.page_map_published_submap_count
+                                && after_worker.page_map_lazy_submap_allocation_count
+                                    >= baseline.page_map_lazy_submap_allocation_count,
+                            "the first OS owner-exit cycle may publish, but never discard, its process PageMap submaps"
+                        );
+                        let expected = PersistentWorkerStateAudit {
+                            total_thread_count: expected_total_thread_count,
+                            page_map_published_submap_count: after_worker
+                                .page_map_published_submap_count,
+                            page_map_lazy_submap_allocation_count: after_worker
+                                .page_map_lazy_submap_allocation_count,
+                            ..baseline
+                        };
+                        assert_eq!(
+                            after_worker, expected,
+                            "the first mixed owner-exit warmup leaves only the retained process PageMap submaps"
+                        );
+                        warmed_owner_exit_state = Some(after_worker);
+                    }
+                }
+                let metadata_audit = metadata.test_allocation_audit();
+                assert_eq!(
+                    metadata_audit.live_capability_count,
+                    baseline.metadata_live_capability_count,
+                    "mixed owner-exit cycle {worker_number} releases every TLD/Theap metadata capability"
+                );
+                match warmed_metadata_high_water {
+                    Some(high_water) => assert_eq!(
+                        metadata_audit.high_water_capability_count,
+                        high_water,
+                        "mixed owner-exit cycle {worker_number} does not raise metadata capability high-water after warmup"
+                    ),
+                    None => {
+                        warmed_metadata_high_water =
+                            Some(metadata_audit.high_water_capability_count);
+                    }
+                }
+            }
+
+            let resumed = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(73, false)
+                })
+                .expect("ticket zero reactivates after every owner-exit cycle")
+                .expect("the resumed ticket-zero allocation succeeds");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `resumed` is the exact current ticket-zero block.
+                    unsafe { owner.free(resumed) }
+                })
+                .expect("the resumed ticket-zero owner stays callable")
+                .expect("the resumed ticket-zero block frees normally");
+        })
+        .join()
+        .expect("the isolated runtime restores its retained baseline after repeated mixed owner exits");
+    }
+
+    #[test]
+    fn dormant_ticket_zero_page_owner_repeats_mapped_regular_reclamation_without_state_growth() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            let owner = unsafe {
+                process_storage.initialize_with_test_components(
+                    memory_config(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the isolated runtime fixture constructs ticket zero");
+            // SAFETY: this test supplies the one fresh runtime slot and keeps
+            // every source/process owner alive through the permanent fixture.
+            unsafe { publish_test_owner(runtime, owner) };
+
+            let first = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(37, false)
+                })
+                .expect("ticket zero starts its first page engine")
+                .expect("the first ticket-zero allocation succeeds");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `first` is the exact current ticket-zero block.
+                    unsafe { owner.free(first) }
+                })
+                .expect("ticket zero remains callable after its first allocation")
+                .expect("the first ticket-zero block frees into the dormant state");
+
+            let baseline =
+                persistent_worker_state_audit(runtime, arena_storage, metadata, main_static, subprocess);
+            assert_eq!(baseline.runtime_process_state, PROCESS_ACTIVE);
+            assert_eq!(baseline.page_owner_state, PAGE_OWNER_READY);
+            assert_eq!(baseline.page_map_registered_entry_count, 0);
+            assert_eq!(baseline.live_thread_count, 1);
+            assert_eq!(baseline.metadata_live_capability_count, 0);
+            assert_eq!(baseline.shared_later_theap_count, 0);
+            assert_eq!(
+                baseline.main_heap_abandoned_counts,
+                [0; crate::config::BIN_COUNT],
+                "the dormant ticket-zero owner has no leaked static-main abandoned bitmap/count pairing"
+            );
+            assert_eq!(
+                baseline.main_heap_os_abandoned_page,
+                0,
+                "the dormant ticket-zero owner has no leaked private OS-abandoned list member"
+            );
+
+            // A medium span may be the first source user of its PageMap
+            // submap. That immutable process allocation is not a worker leak,
+            // but every subsequent A -> B reclamation cycle must plateau. The
+            // test alternates the aggregate sole-medium result and the distinct
+            // direct-small drain: these are source-specific lower boundaries,
+            // while their B adoption/drain and terminal accounting are one
+            // common mapped-regular lifecycle.
+            let mut warmed_reclaim_state = None;
+            let mut warmed_metadata_high_water = None;
+
+            for worker_number in 1..=OWNER_EXIT_STATE_AUDIT_CYCLES {
+                let predecessor = if worker_number % 2 == 0 {
+                    MappedRegularReclaimPredecessor::DirectSmall
+                } else {
+                    MappedRegularReclaimPredecessor::Medium
+                };
+                thread::spawn(move || {
+                    // SAFETY: the test keeps the permanent process owner and
+                    // copied shared-main Heap witness alive through both A's
+                    // source exit and B's exact reclaim/drain lifecycle.
+                    let process_owner = unsafe { runtime.active_owner() }
+                        .expect("the process owner stays published for reclaim A");
+                    let config = process_owner
+                        .ready()
+                        .and_then(|ready| ready.memory_config())
+                        .expect("reclaim A observes the frozen process config");
+                    let main_heap = unsafe { runtime.active_main_heap() }
+                        .expect("reclaim A copies the ticket-zero main Heap witness");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("reclaim A begins its shared-main attachment: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("reclaim A cannot retain during attachment: {error:?}")
+                        }
+                    };
+                    let admissions = RuntimeForkAdmission::new();
+
+                    let completed = runtime.with_dormant_page_pair(|pair| {
+                        let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair)
+                            .expect("the dormant ticket-zero pair admits reclaim A");
+                        let (first, blocks, request, expected_kind, source_name) = match predecessor {
+                            MappedRegularReclaimPredecessor::Medium => {
+                                let workload = OwnerExitReclaimWorkload::allocate(&mut allocator)
+                                    .expect("reclaim A establishes the sole immediate-medium source image");
+                                let blocks = workload
+                                    .into_blocks()
+                                    .expect("the medium reclamation workload retains both opaque A clients");
+                                (
+                                    blocks[0].expect("the first medium reclamation client remains live"),
+                                    blocks,
+                                    OWNER_EXIT_RECLAIM_MEDIUM_REQUEST,
+                                    crate::types::PageKind::Medium,
+                                    "sole-medium aggregate",
+                                )
+                            }
+                            MappedRegularReclaimPredecessor::DirectSmall => {
+                                let workload = OwnerExitDirectSmallReclaimWorkload::allocate(&mut allocator)
+                                    .expect("reclaim A establishes the direct-small source image");
+                                let (first, blocks) = workload
+                                    .into_route_parts()
+                                    .expect("the direct-small workload retains both opaque A clients");
+                                (
+                                    first,
+                                    blocks,
+                                    OWNER_EXIT_RECLAIM_DIRECT_SMALL_REQUEST,
+                                    crate::types::PageKind::Small,
+                                    "direct-small source drain",
+                                )
+                            }
+                        };
+                        let second = blocks[1]
+                            .expect("the second opaque reclamation client remains live");
+                        let page = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(first)
+                        })
+                        .expect("the source reclamation page remains PageMap-published before exit");
+                        assert_eq!(
+                            unsafe { allocator.test_page_for_block(second) },
+                            page.as_ptr(),
+                            "both inherited reclamation clients occupy the one {source_name} page"
+                        );
+                        let page_ref = unsafe { page.as_ref() };
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                            Some(expected_kind),
+                            "the runtime reclamation witness starts from the {source_name} class"
+                        );
+                        assert_eq!(
+                            page_ref.used(),
+                            OWNER_EXIT_RECLAIM_CLIENT_SLOTS,
+                            "only the two opaque inherited clients remain live when A exits"
+                        );
+                        let page_address = page.as_ptr().expose_provenance();
+                        let block_addresses = blocks.map(|block| {
+                            block
+                                .expect("each opaque source client remains live")
+                                .as_ptr()
+                                .expose_provenance()
+                        });
+
+                        let drain = match allocator.begin_thread_exit_drain() {
+                            Ok(drain) => drain,
+                            Err(crate::main_heap_page::MainHeapThreadProcessPageExitDrainFailure::Retained {
+                                allocator,
+                                error,
+                            }) => {
+                                core::mem::forget(allocator);
+                                panic!("reclaim A enters its source exit drain: {error:?}");
+                            }
+                        };
+                        let route = match predecessor {
+                            MappedRegularReclaimPredecessor::Medium => match unsafe {
+                                drain.abandon_mapped_regular_pages_to_process_route()
+                            } {
+                                Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(
+                                    route,
+                                )) => route,
+                                Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => {
+                                    core::mem::forget(route);
+                                    panic!("the sole source medium must not broaden into an aggregate registry");
+                                }
+                                Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
+                                    core::mem::forget(drain);
+                                    panic!("two live inherited clients cannot become an empty source drain");
+                                }
+                                Err(failure) => {
+                                    core::mem::forget(failure);
+                                    panic!("the source-shaped sole medium completes A's owner exit");
+                                }
+                            },
+                            MappedRegularReclaimPredecessor::DirectSmall => match unsafe {
+                                drain.abandon_mapped_small_or_medium_to_process_route(first)
+                            } {
+                                Ok(route) => route,
+                                Err(failure) => {
+                                    core::mem::forget(failure);
+                                    panic!("the direct-small source drain completes A's owner exit");
+                                }
+                            },
+                        };
+                        assert!(
+                            !unsafe { page.as_ref().free_list_head() }.is_null(),
+                            "A's {source_name} owner exit transfers the returned spare into the source route's required immediate head"
+                        );
+                        assert_eq!(
+                            route.test_abandoned_count(),
+                            Some(1),
+                            "A publishes exactly its one {source_name} page to the static-main abandoned count"
+                        );
+                        let admission = admissions
+                            .claim_later_thread()
+                            .expect("the isolated admission word accepts reclaim A");
+                        assert_eq!(
+                            attachment.finish_after_page_drain(),
+                            Err(crate::main_heap_thread::MainHeapThreadAttachmentError::TornDown),
+                            "A's old Theap/TLD is gone before B receives the reclaim route"
+                        );
+
+                        let proof = thread::scope(|scope| {
+                            let admissions = &admissions;
+                            let target = scope.spawn(move || {
+                                let target_admission = admissions
+                                    .claim_later_thread()
+                                    .expect("the isolated admission word accepts reclaim B");
+                                let mut target_attachment = match unsafe {
+                                    MainHeapThreadAttachment::begin_with_test_metadata(
+                                        main_heap,
+                                        metadata,
+                                        config,
+                                    )
+                                } {
+                                    Ok(attachment) => attachment,
+                                    Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                                        panic!("reclaim B begins its shared-main attachment: {error:?}")
+                                    }
+                                    Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                                        panic!("reclaim B cannot retain during attachment: {error:?}")
+                                    }
+                                };
+                                let mut target_allocator = match route
+                                    .adopt_into_later_main(&mut target_attachment, pair)
+                                {
+                                    Ok(allocator) => allocator,
+                                    Err(
+                                        MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                                            route,
+                                            error,
+                                        },
+                                    ) => {
+                                        core::mem::forget(route);
+                                        panic!("reclaim B adopts A's exact source route: {error:?}");
+                                    }
+                                    Err(
+                                        MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                                            adoption,
+                                            error,
+                                        },
+                                    ) => {
+                                        core::mem::forget(adoption);
+                                        panic!("reclaim B cannot retain its source-valid adoption: {error:?}");
+                                    }
+                                    Err(
+                                        MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                            adoption,
+                                            error,
+                                        },
+                                    ) => {
+                                        core::mem::forget(adoption);
+                                        panic!("the immediate-head reclaim cannot reabandon: {error:?}");
+                                    }
+                                };
+                                let reused = target_allocator
+                                    .allocate(request, false)
+                                    .expect("reclaim B consumes A's immediate source head");
+                                assert_eq!(
+                                    unsafe { target_allocator.test_page_for_block(reused) },
+                                    core::ptr::with_exposed_provenance_mut(page_address),
+                                    "B's first allocation reuses A's exact PageMap identity"
+                                );
+                                for address in block_addresses {
+                                    let block = core::ptr::NonNull::new(
+                                        core::ptr::with_exposed_provenance_mut(address),
+                                    )
+                                    .expect("the inherited A client address remains non-null");
+                                    // SAFETY: A transferred this exact once-live client only through
+                                    // the joined typed source route; B now owns its normal engine.
+                                    unsafe { target_allocator.free(block) }
+                                        .expect("B frees each inherited A client through its reclaimed page");
+                                }
+                                // SAFETY: `reused` is B's exact current allocation in the same
+                                // reclaimed engine and has no external alias.
+                                unsafe { target_allocator.free(reused) }
+                                    .expect("B frees its reclaimed-page allocation");
+                                match target_allocator.finish() {
+                                    Ok(()) => {}
+                                    Err(allocator) => {
+                                        core::mem::forget(allocator);
+                                        panic!("B's page engine finishes only after all reclaimed clients free");
+                                    }
+                                }
+                                target_attachment
+                                    .finish_after_user_destructors()
+                                    .expect("B completes ordinary later-thread teardown after its engine drains");
+                                match admissions.release_later_thread(target_admission) {
+                                    Ok(()) => {}
+                                    Err(admission) => {
+                                        core::mem::forget(admission);
+                                        panic!("B releases its own completed admission before returning A's proof");
+                                    }
+                                }
+                                TicketZeroOwnerExitRouteFinished { admission }
+                            });
+                            target
+                                .join()
+                                .expect("the distinct reclaim B remains bounded by its join")
+                        });
+                        match proof.release_worker_admission(&admissions) {
+                            Ok(()) => {}
+                            Err(proof) => {
+                                core::mem::forget(proof);
+                                panic!(
+                                    "only B's terminal reclaim/drain proof releases A's admission"
+                                );
+                            }
+                        }
+                        assert_eq!(
+                            admissions.state.load(Ordering::Acquire) & FORK_GATE_COUNT_MASK,
+                            0,
+                            "both A and B admissions complete only after the reclaimed page terminally drains"
+                        );
+                        Ok(())
+                    });
+                    assert_eq!(
+                        completed,
+                        Some(()),
+                        "the dormant ticket-zero pair completes mapped-regular reclamation cycle {worker_number}"
+                    );
+                })
+                .join()
+                .expect("each mapped-regular reclamation A remains on a fresh worker thread");
+
+                let after_worker = persistent_worker_state_audit(
+                    runtime,
+                    arena_storage,
+                    metadata,
+                    main_static,
+                    subprocess,
+                );
+                let expected_total_thread_count = baseline.total_thread_count + worker_number * 2;
+                match warmed_reclaim_state {
+                    Some(warmed) => {
+                        let expected = PersistentWorkerStateAudit {
+                            total_thread_count: expected_total_thread_count,
+                            ..warmed
+                        };
+                        assert_eq!(
+                            after_worker, expected,
+                            "mapped-regular reclamation cycle {worker_number} leaves no PageMap, arena, TLD, Theap, or abandoned-page residue after warmup"
+                        );
+                    }
+                    None => {
+                        assert!(
+                            after_worker.page_map_published_submap_count
+                                >= baseline.page_map_published_submap_count
+                                && after_worker.page_map_lazy_submap_allocation_count
+                                    >= baseline.page_map_lazy_submap_allocation_count,
+                            "the first mapped-regular reclamation cycle may publish, but never discard, process PageMap submaps"
+                        );
+                        let expected = PersistentWorkerStateAudit {
+                            total_thread_count: expected_total_thread_count,
+                            page_map_published_submap_count: after_worker
+                                .page_map_published_submap_count,
+                            page_map_lazy_submap_allocation_count: after_worker
+                                .page_map_lazy_submap_allocation_count,
+                            ..baseline
+                        };
+                        assert_eq!(
+                            after_worker, expected,
+                            "the first mapped-regular reclamation warmup leaves only retained process PageMap submaps"
+                        );
+                        warmed_reclaim_state = Some(after_worker);
+                    }
+                }
+                let metadata_audit = metadata.test_allocation_audit();
+                assert_eq!(
+                    metadata_audit.live_capability_count,
+                    baseline.metadata_live_capability_count,
+                    "mapped-regular reclamation cycle {worker_number} releases every A/B TLD and Theap metadata capability"
+                );
+                match warmed_metadata_high_water {
+                    Some(high_water) => assert_eq!(
+                        metadata_audit.high_water_capability_count,
+                        high_water,
+                        "mapped-regular reclamation cycle {worker_number} does not raise metadata capability high-water after warmup"
+                    ),
+                    None => {
+                        warmed_metadata_high_water =
+                            Some(metadata_audit.high_water_capability_count);
+                    }
+                }
+            }
+
+            let resumed = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(73, false)
+                })
+                .expect("ticket zero reactivates after every mapped-regular reclamation cycle")
+                .expect("the resumed ticket-zero allocation succeeds");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `resumed` is the exact current ticket-zero block.
+                    unsafe { owner.free(resumed) }
+                })
+                .expect("the resumed ticket-zero owner stays callable")
+                .expect("the resumed ticket-zero block frees normally");
+        })
+        .join()
+        .expect("the isolated runtime restores its retained baseline after repeated mapped-regular reclamation");
+    }
+
+    /// A short post-exit route operation and a fresh persistent session both
+    /// take the lower PageMap mutation lease, while only the latter holds the
+    /// runtime scheduler claim. The lower `LifecycleBusy` refusal is therefore
+    /// a normal bounded interleaving: it must restore that scheduler claim so
+    /// the fresh worker can retry once the route operation returns.
+    #[test]
+    fn persistent_engine_begin_restores_scheduler_after_page_map_contention() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let owner = unsafe {
+                process_storage.initialize_with_test_components(
+                    memory_config(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the isolated runtime fixture constructs ticket zero");
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            // SAFETY: this test publishes one permanent owner into its fresh
+            // isolated runtime before any worker observes the scheduler.
+            unsafe { publish_test_owner(runtime, owner) };
+
+            let first = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(37, false)
+                })
+                .flatten()
+                .expect("ticket zero activates the shared first arena");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `first` is still the exact current ticket-zero
+                    // client and this exclusive operation consumes it once.
+                    unsafe { owner.free(first) }
+                })
+                .expect("ticket zero remains callable after the first allocation")
+                .expect("ticket zero returns the first arena to its dormant pair");
+
+            assert!(
+                runtime.register_active_post_exit_route(),
+                "the synthetic source route records its narrower active capability before it parks"
+            );
+            assert_eq!(
+                runtime.page_owner_state.compare_exchange(
+                    PAGE_OWNER_READY,
+                    PAGE_OWNER_PARKED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ),
+                Ok(PAGE_OWNER_READY),
+                "the synthetic source route contributes the one parked scheduler token"
+            );
+            let parked_route = RuntimeParkedPostExitRoute {
+                runtime,
+                source_route_active: true,
+                terminal_completion_pending: false,
+                terminal_retained: false,
+                active: true,
+            };
+
+            let process_owner = unsafe { runtime.active_owner() }
+                .expect("the permanent process owner stays published");
+            let config = process_owner
+                .ready()
+                .and_then(|ready| ready.memory_config())
+                .expect("the worker observes the process-frozen configuration");
+            let main_heap = unsafe { runtime.active_main_heap() }
+                .expect("the worker copies the permanent main-heap witness");
+            let page_map = process_owner
+                .ready()
+                .and_then(|ready| ready.page_map())
+                .expect("the permanent owner retains its PageMap lease");
+            let contention = page_map
+                .begin_page_lifecycle()
+                .expect("the test owns one complete lower PageMap operation");
+
+            thread::scope(|scope| {
+                scope
+                    .spawn(|| {
+                        let mut attachment = match unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(
+                                main_heap, metadata, config,
+                            )
+                        } {
+                            Ok(attachment) => attachment,
+                            Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                                panic!("the contender attaches before it asks for a page engine: {error:?}")
+                            }
+                            Err(MainHeapThreadAttachmentBeginError::Retained {
+                                attachment,
+                                error,
+                            }) => {
+                                core::mem::forget(attachment);
+                                panic!("the contender attachment stays healthy: {error:?}")
+                            }
+                        };
+                        assert!(
+                            matches!(
+                                runtime.begin_persistent_later_engine(&mut attachment),
+                                Err(RuntimePersistentPageEngineBeginError::PageMapBusy)
+                            ),
+                            "a lower PageMap contention restores the scheduler instead of retaining the runtime"
+                        );
+                        attachment
+                            .finish_after_user_destructors()
+                            .expect("the rejected contender still has its ordinary no-page teardown");
+                    })
+                    .join()
+                    .expect("the contending worker returns from its retryable begin refusal");
+            });
+
+            assert_eq!(
+                runtime.state.load(Ordering::Acquire),
+                PROCESS_ACTIVE,
+                "a retryable PageMap contention leaves the process runtime active"
+            );
+            assert_eq!(
+                runtime.page_owner_state.load(Ordering::Acquire),
+                PAGE_OWNER_PARKED,
+                "the rejected fresh session restores exactly the scheduler state it claimed"
+            );
+            contention
+                .finish()
+                .expect("the independently held lower PageMap operation completes normally");
+
+            thread::scope(|scope| {
+                scope
+                    .spawn(|| {
+                        let mut attachment = match unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(
+                                main_heap, metadata, config,
+                            )
+                        } {
+                            Ok(attachment) => attachment,
+                            Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                                panic!("the retry worker attaches after contention clears: {error:?}")
+                            }
+                            Err(MainHeapThreadAttachmentBeginError::Retained {
+                                attachment,
+                                error,
+                            }) => {
+                                core::mem::forget(attachment);
+                                panic!("the retry worker attachment stays healthy: {error:?}")
+                            }
+                        };
+                        let engine = runtime
+                            .begin_persistent_later_engine(&mut attachment)
+                            .expect("the same fresh session begins after the lower operation returns");
+                        match engine.finish() {
+                            Ok(()) => {}
+                            Err(error) => {
+                                core::mem::forget(error);
+                                panic!("the empty retry engine restores the dormant scheduler")
+                            }
+                        }
+                        attachment
+                            .finish_after_user_destructors()
+                            .expect("the successful retry worker completes normal teardown");
+                    })
+                    .join()
+                    .expect("the retry worker completes after PageMap contention clears");
+            });
+
+            assert_eq!(
+                runtime.page_owner_state.load(Ordering::Acquire),
+                PAGE_OWNER_PARKED,
+                "the successful retry retains the detached route's one parked scheduler token"
+            );
+            let terminal_route = match parked_route.finish_source_route() {
+                Ok(route) => route,
+                Err(route) => {
+                    core::mem::forget(route);
+                    panic!("the synthetic source route becomes a terminal B completion")
+                }
+            };
+            match terminal_route.finish_after_b() {
+                Ok(()) => {}
+                Err(route) => {
+                    core::mem::forget(route);
+                    panic!("the synthetic B completion releases its one parked route token")
+                }
+            }
+            assert_eq!(
+                runtime.page_owner_state.load(Ordering::Acquire),
+                PAGE_OWNER_READY,
+                "the terminal source route finally returns ticket zero to its dormant state"
+            );
+        })
+        .join()
+        .expect("the isolated retryable-contention runtime remains thread-local");
     }
 }

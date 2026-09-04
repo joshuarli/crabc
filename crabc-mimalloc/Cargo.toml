@@ -11,27 +11,153 @@ publish = false
 [lib]
 name = "crabc_mimalloc"
 
+[[test]]
+name = "native_multiple_post_exit_completions"
+path = "tests/native_multiple_post_exit_completions.rs"
+# This direct lifecycle witness keeps B's own admission independent while it
+# consumes two abandoned A sources through pointer-first PageMap dispatch.
+# The audit surface is absent from the production allocator and libc friend API.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_terminal_completion_live_remote_free"
+path = "tests/native_terminal_completion_live_remote_free.rs"
+# This direct lifecycle witness proves abandoned-A frees do not obstruct B's
+# independent persistent owner while it source-publishes one exact live C
+# client through generic PageMap dispatch. The audit exposes only the
+# aggregate admission count.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_live_remote_owner_registry_reuse"
+path = "tests/native_live_remote_owner_registry_reuse.rs"
+# Repeated native remote-free epochs remain a direct persistent PageMap
+# witness; the historical target name does not select a registry audit.
+
+[[test]]
+name = "native_post_exit_failed_os_release"
+path = "tests/native_post_exit_failed_os_release.rs"
+# This direct-only fault witness retains a failed PageMap terminal release.
+# Neither the fault hook nor its scalar audit ships in the production surface.
+required-features = ["native-runtime-test-audit", "native-runtime-test-fault"]
+
+[[test]]
+name = "native_pointer_first_post_exit_os_release"
+path = "tests/native_pointer_first_post_exit_os_release.rs"
+# This direct-only pointer dispatcher witness verifies the PageMap-owned
+# post-exit OS terminal release. Neither its fault hook nor scalar audit ships
+# in the production allocator or libc friend surface.
+required-features = ["native-runtime-test-audit", "native-runtime-test-fault"]
+
+[[test]]
+name = "native_pointer_first_initial_local_free"
+path = "tests/native_pointer_first_initial_local_free.rs"
+# This direct-only audit ratchet proves initial-thread pointer-first local
+# free does not re-enter the legacy page-owner scheduler or parked bridge.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_initial_persistent_live_transfer"
+path = "tests/native_initial_persistent_live_transfer.rs"
+# This direct-only ownership-transition witness distinguishes a source-dormant
+# initial promotion, which may prepare a later worker, from an attempted live
+# transfer, which must retain rather than park or revive the old static owner.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_initial_persistent_quiescent_fork"
+path = "tests/native_initial_persistent_quiescent_fork.rs"
+# This direct-only fork witness proves that the source-dormant promoted
+# initial owner is inspected through its pinned TLS cell and remains usable
+# in the prepared child; the scalar audit feature is absent from production.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_initial_all_free_local_fork"
+path = "tests/native_initial_all_free_local_fork.rs"
+# This direct-only fork witness leaves the initial local engine resident after
+# its last ordinary free, then proves the held fork gate performs the one
+# all-free-only source collection before preserving the child image.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_source_published_live_owner_exit"
+path = "tests/native_source_published_live_owner_exit.rs"
+# This direct-only lifecycle witness uses ordinary persistent-owner allocation,
+# source publication, collect-abandon, and pointer-first post-exit free paths.
+
+[[test]]
+name = "native_concurrent_post_exit_page_release"
+path = "tests/native_concurrent_post_exit_page_release.rs"
+# Sixteen fresh releasers begin distinct terminal pointer-first post-owner-exit
+# frees together. The direct witness proves structural lifecycle contention
+# serializes valid source clients without selecting libc shadow ABI machinery.
+
+[[test]]
+name = "native_persistent_worker_fastpath"
+path = "tests/native_persistent_worker_fastpath.rs"
+# This direct Phase-B witness exercises one, two, four, and eight independent
+# persistent local owners under the scalar lifecycle audit only.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_pointer_first_current_owner_reallocate"
+path = "tests/native_pointer_first_current_owner_reallocate.rs"
+# This direct Phase-B/C witness keeps exact current local realloc dispatch
+# behind the scalar audit surface rather than the production allocator ABI.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_pointer_first_usable_size"
+path = "tests/native_pointer_first_usable_size.rs"
+# This direct Phase-C witness keeps exact-client usable-size observation
+# behind the scalar audit surface rather than the production allocator ABI.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_owner_exit_collection_race"
+path = "tests/native_owner_exit_collection_race.rs"
+# This direct owner-exit witness pauses only the existing source head-load/CAS
+# interleaving while raw native pointers take the production PageMap path.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_ordinary_mapped_medium_reclaim"
+path = "tests/native_ordinary_mapped_medium_reclaim.rs"
+# This direct allocation-time witness keeps B independent of A's former
+# pointer and route while it proves the ordinary same-bin path reclaims one
+# mapped-abandoned medium page before it would claim a fresh span.
+required-features = ["native-runtime-test-audit"]
+
 [features]
 default = []
 # Private, allocation-backed process context used only by the standalone
 # prefixed C adapter's tests. Production builds retain the allocation-free engine.
 test-adapter = []
 # Enables the private Loom model for the bounded live and abandoned remote-head protocols.
-# This is meaningful only for this crate's unit-test build, where `loom` is a
-# dev-dependency; it never selects a production atomic backend.
-loom = []
+# This activates the optional test-model dependency, while the model source
+# remains restricted to this crate's `cfg(test)` library target. It never
+# selects a production atomic backend.
+loom = ["dep:loom"]
 # Retains named, test-only witnesses for the allocator's private compiler-TLS
 # roots so the pinned target-specific ELF harness can inspect their exact access model.
 # Normal allocator builds expose neither these witnesses nor a TLS ABI.
 tls-codegen-probe = []
+# Enables read-only scalar lifecycle and fork-admission audits used by focused
+# PageMap post-exit regressions and the test-only ticket-zero C soak adapter.
+# They expose no raw client address, PageMap root, allocator, or release
+# capability and are absent from normal builds.
+native-runtime-test-audit = []
+# Enables one deliberately narrow direct-test injection: the next allocator
+# `munmap` fails during a pointer-first PageMap terminal release. It is absent
+# from normal allocator and libc builds.
+native-runtime-test-fault = []
 
 [dependencies]
 chacha20 = { version = "=0.10.1", default-features = false, features = ["legacy", "zeroize"] }
 crabc-core = { path = "../crabc-core", features = ["allocator-x86-evidence"] }
+# Cargo builds every dev-dependency for an ordinary selected test target, even
+# when that target cannot reach the Loom-gated source. Keep the model optional
+# so only `--features loom` resolves its std-only scheduler graph.
+loom = { version = "=0.7.2", default-features = false, optional = true }
 zeroize = { version = "=1.9.0", default-features = false }
-
-[dev-dependencies]
-# Test-only finite scheduler for the exact live and abandoned remote-head transitions.
-# See `src/remote_free_loom.rs`; this is deliberately absent from normal
-# Linux/AArch64 and Linux/x86-64 allocator builds.
-loom = { version = "=0.7.2", default-features = false }

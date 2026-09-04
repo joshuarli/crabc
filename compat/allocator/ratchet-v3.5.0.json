@@ -1,23 +1,34 @@
 {
   "adapted_omitted_test_count": 21,
   "adapted_selected_test_count": 33,
-  "adapted_test_contract_sha256": "b1e79563c518f4becaf15b651f2d0ac4099d5e5afc80c9f94b0155800cca5a8e",
-  "api_contract_sha256": "aa1f71c2c758719a385f584bbee46e2a90d5d382085d90fd14c408cd17d9e21d",
+  "adapted_stress_fixture_count": 1,
+  "adapted_stress_test_contract_sha256": "8e19e8de1b9a663d6de475ac0e29d8f8ad2f5edb52880f7f787b160f7d2d77cd",
+  "adapted_test_contract_sha256": "a7ddac380531f7504035d3f4162a2685a408e9b0fbf117fc8bf1068ccaa38d50",
+  "api_contract_sha256": "37505c25acb50d8cf0fc558c58f0c29b87e698b39ccbb600affc177aff297137",
   "api_total_item_count": 336,
   "configuration_profile_count": 5,
   "format": 1,
+  "m1_foundations_contract_sha256": "73044a9fa746b17002a5c2f73123234a1c4d5a88d090dd8cba8030c3746dbe19",
+  "m2_memory_substrate_contract_sha256": "1569e4639ba792a2a58d8a5ef35c47bbb7177b056761a2d42cd430e95e81e08b",
+  "native_shadow_stress_contract_sha256": "cdef617f743ccd7c26283a3ce22ce17c43d6ae79b3873ac400a54fb1749139c8",
+  "native_shadow_stress_fixture_count": 1,
+  "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
   "port_map_counts": {
-    "differential_verified": 15,
-    "exported": 2,
-    "implemented": 138,
-    "item_count": 134,
+    "differential_verified": 41,
+    "exported": 4,
+    "implemented": 186,
+    "item_count": 182,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 138
+    "unit_verified": 186
   },
-  "port_map_sha256": "e8643611986267c37db30f6f35b3d213d53a10fa0be0bcfa8b55dde11b494595",
+  "port_map_sha256": "d70603d3f38bfd24d37c59a3b2398879eb27663f0e9d3f2f7b729d37053fcd5b",
   "port_map_true_statuses": {
+    "item:include/mimalloc/atomic.h:mi_atomic_do_once-callsite-disposition-ledger": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
       "unit_verified"
@@ -56,7 +67,13 @@
     ],
     "item:include/mimalloc/internal.h:_mi_memid_create_os-and-_mi_memid_size": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:include/mimalloc/internal.h:_mi_memid_create_static-and-malloc": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:include/mimalloc/internal.h:_mi_page_map_index": [
       "implemented",
@@ -64,15 +81,26 @@
     ],
     "item:include/mimalloc/internal.h:alignment-division-and-slice-invariants": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
     ],
     "item:include/mimalloc/internal.h:nonallocating-byte-memory-support-kernels": [
       "implemented",
       "unit_verified"
     ],
+    "item:include/mimalloc/internal.h:pointer-alignment-predicate": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:include/mimalloc/prim-tls.h:linux-aarch64-private-compiler-tls-root-codegen": [
       "implemented",
       "unit_verified"
+    ],
+    "item:include/mimalloc/prim-tls.h:linux-aarch64-private-compiler-tls-root-image-and-thread-identity": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:include/mimalloc/types.h:linux-aarch64-default-release-constants": [
       "implemented",
@@ -103,6 +131,11 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/alloc-aligned.c:nondefault-crabc-libc-native-mimalloc-shadow-aligned-boundary": [
+      "exported",
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/alloc.c:explicit-default-theap-fundamental-operation-record": [
       "implemented",
       "unit_verified",
@@ -116,6 +149,11 @@
       "implemented",
       "unit_verified",
       "differential_verified"
+    ],
+    "item:src/alloc.c:nondefault-crabc-libc-native-mimalloc-shadow-ordinary-boundary": [
+      "exported",
+      "implemented",
+      "unit_verified"
     ],
     "item:src/alloc.c:ordinary-reallocation-decision-and-extents": [
       "implemented",
@@ -132,6 +170,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:_mi_arenas_page_alloc-kind-selection": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:all-committed-external-arena-claim-linux-reuse-caller": [
       "implemented",
       "unit_verified"
     ],
@@ -152,6 +194,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:external-arena-contiguous-claim-page-metadata-and-release": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:later-main-aggregate-last-mapped-regular-post-exit-allocation-adoption": [
       "implemented",
       "unit_verified"
     ],
@@ -199,13 +245,23 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/arena.c:owner-local-selected-static-main-medium-mapped-abandoned-reclaim": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/arena.c:process-ready-published-shared-arena-pair": [
       "implemented",
       "unit_verified"
     ],
     "item:src/bitmap.c:abandoned-page-claim-and-clear-once-set-quiescence": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/bitmap.c:binned-bitmap-highest-clear-relaxed-scan": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/bitmap.c:mi_bbitmap-layout-bins-search-and-rollback": [
       "implemented",
@@ -219,11 +275,38 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/bitmap.c:ordinary-bitmap-highest-set-relaxed-stale-chunkmap-scan": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/bitmap.c:ordinary-bitmap-popcount-relaxed-conservative-chunkmap": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/bitmap.c:scalar-clear-range-visitor-for-default-arena-purge": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/bitmap.c:scalar-rangesn-aligned-window-visitor": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/bitmap.c:scalar-read-only-set-bit-visitor": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/bitmap.h:mi_bfield_t-and-mi_bchunk_t-default-layout": [
       "implemented",
       "unit_verified"
     ],
     "item:src/bitmap.h:mi_bitmap_t-dynamic-layout": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/free.c:later-main-bounded-post-exit-same-page-remote-publication": [
       "implemented",
       "unit_verified"
     ],
@@ -243,6 +326,19 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/free.c:page-owned-post-owner-exit-exact-remote-claim-terminal-tail": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/free.c:pointer-first-native-free-page-state-dispatch": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/init.c:MI_MEMID_STATIC-bootstrap-page-and-theap-images": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/init.c:MI_PAGE_QUEUES_EMPTY-block-size-table": [
       "implemented",
       "unit_verified",
@@ -256,9 +352,19 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/init.c:detached-tld-static-preimage-init": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/init.c:feature-gated-one-thread-test-process-context": [
       "implemented",
       "unit_verified"
+    ],
+    "item:src/init.c:immutable-static-bootstrap-image-relational-vector": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/init.c:later-thread-process-static-main-heap-no-page-attachment": [
       "implemented",
@@ -266,7 +372,18 @@
     ],
     "item:src/init.c:mi_page_empty-and-MI_PAGE_QUEUES_EMPTY": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/init.c:normal-tld-direct-helper-post-ticket-sequence-seven": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/init.c:page-free-same-tld-mi-thread-theaps-done-sequence": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/init.c:private-lazy-ticket-zero-runtime-first-arena-page-owner": [
       "implemented",
@@ -277,11 +394,24 @@
       "unit_verified",
       "stress_verified"
     ],
+    "item:src/init.c:static-first-tld-create-direct-success-arm": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/init.c:static-main-heap-canonical-identity-publication": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/init.c:ticket-zero-process-lifetime-page-session-with-shared-main-lease": [
       "implemented",
       "unit_verified"
     ],
     "item:src/init.c:ticket-zero-process-static-main-heap-default-theap-attachment": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/init.c:ticket-zero-static-tld-fixed-numa-wrapper-caller": [
       "implemented",
       "unit_verified"
     ],
@@ -293,11 +423,24 @@
       "implemented",
       "unit_verified"
     ],
-    "item:src/os.c:mi_os_mem_config-and-good-allocation-size": [
+    "item:src/os.c:fixed-no-option-numa-cache-and-current-node-normalization": [
       "implemented",
       "unit_verified"
     ],
+    "item:src/os.c:linux-os-reuse-contained-range-noop": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/os.c:mi_os_mem_config-and-good-allocation-size": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/os.c:mi_os_page_align_areax": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/os.c:normal-offset-os-allocation-full-provenance-owner": [
       "implemented",
       "unit_verified"
     ],
@@ -343,6 +486,10 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/page.c:later-main-aggregate-deferred-free-invocation": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/page.c:later-main-one-member-page-area-commit-direct-small-post-exit-allocation-adoption": [
       "implemented",
       "unit_verified"
@@ -352,6 +499,10 @@
       "unit_verified"
     ],
     "item:src/page.c:later-main-one-member-scalar-direct-small-post-exit-allocation-adoption": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page.c:later-main-thread-exit-retired-page-prepass": [
       "implemented",
       "unit_verified"
     ],
@@ -368,21 +519,60 @@
       "unit_verified",
       "differential_verified"
     ],
+    "item:src/prim/prim-tls.c:canonical-empty-cached-root-transition": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/prim/unix/prim.c:linux-direct-process-thread-and-entropy-observations": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/prim/unix/prim.c:linux-false-threadpool-observation": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/prim/unix/prim.c:linux-raw-numa-node-count-observation": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/prim/unix/prim.c:linux-regular-map-memory-transitions": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/random.c:original-chacha-context-state-and-output-contract": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/subproc.c:bound-subprocess-metadata-page-identity-query": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/subproc.c:bound-subprocess-theap-meta-lock-direct-allocation-phase": [
       "implemented",
       "unit_verified"
     ],
     "item:src/subproc.c:detached-malloc-metadata-theap-checkpoint": [
       "implemented",
       "unit_verified"
+    ],
+    "item:src/subproc.c:same-thread-metadata-direct-demand-recursion-guard": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/subproc.c:same-thread-metadata-malloc-free-reentry-before-capability-mutation": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:cached-theap-reference-pair": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/theap.c:default-theap-prefix-and-exclusive-pinned-bootstrap": [
       "implemented",
@@ -555,10 +745,30 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/theap.c:later-persistent-owner-source-collect-abandon-exit": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:nonexclusive-dynamic-theap-direct-malloc-lifetime-checkpoint": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/theap.c:private-current-thread-regular-key-dynamic-theap-attachment": [
       "implemented",
       "unit_verified",
       "differential_verified"
+    ],
+    "item:src/theap.c:requested-parent-arena-theap-prefix-lifecycle": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:requested-parent-theap-one-slice-arena-reservation": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:runtime-active-session-retired-page-prepass-before-opaque-route": [
+      "implemented",
+      "unit_verified"
     ],
     "item:src/threadlocal.c:aarch64-versioned-key-and-caller-owned-slot-substrate": [
       "implemented",
@@ -568,7 +778,24 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/threadlocal.c:count-zero-root-image-and-positive-regular-reset": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/threadlocal.c:current-thread-allocator-owned-regular-tls-backing": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/threadlocal.c:dynamic-theap-backing-release-preclaim-retry-continuation": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/threadlocal.c:threadlocal-live-rezalloc-malloc-capability-lifetime-checkpoint": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/threadlocal.c:threadlocal-teardown-malloc-preclaim-retry-checkpoint": [
       "implemented",
       "unit_verified"
     ],
@@ -619,7 +846,7 @@
     "unit:src/theap.c": [],
     "unit:src/threadlocal.c": []
   },
-  "upstream_test_contract_sha256": "cff9fc7dda0343add3aada9a8fb1950f9630d74c1e2c7febc619143bea31b28e",
+  "upstream_test_contract_sha256": "f7f746f661cde6950c475f5afc49a33b883040b8b12d2ab0cacc09c0a5b55030",
   "upstream_test_inventory_file_count": 16,
   "upstream_test_source_count": 13
 }

@@ -16,10 +16,12 @@
 // This is the frozen normal-release path only: `MI_ENCODE_FREELIST == 0` and
 // `MI_PADDING == 0`. This module neither detaches `xthread_free` nor performs
 // queue/theap/allocation policy. Its bounded raw collection transfer supports
-// both source force modes after `remote_free` has detached a caller-proved
-// joined/quiescent live producer list. Ordinary lifecycle callers use only
-// the false-force form; the bounded later-main all-free exit drain uses the
-// force append before it decides whether a departing owner's page can release.
+// both source force modes after `remote_free` has detached the current live
+// producer-list snapshot. A concurrent producer may publish a later atomic
+// head while the owner operates on only disjoint ordinary fields. Ordinary
+// lifecycle callers use only the false-force form; the bounded later-main
+// all-free exit drain uses the force append before it decides whether a
+// departing owner's page can release.
 // That raw operation is not by itself a general owner-exit traversal. The
 // explicit detached metadata branch has no remote producer path and uses the
 // false-force transfer directly. The existing borrowed core
@@ -66,20 +68,22 @@ pub(crate) enum FreeListError {
 /// projection from `types::Page`; the raw constructor makes the same core
 /// available to aligned caller-owned test buffers. It is neither `Send` nor a
 /// remote-free adapter by contract; callers use it only while exclusively
-/// owning the page.
-pub(crate) struct LocalFreeList<'a> {
+/// owning the ordinary local-list fields and the source-selected block nodes
+/// they actually access. A source remote-free producer may write its own
+/// distinct current block and retain only its disjoint atomic projection.
+pub(crate) struct LocalFreeList {
     base: NonNull<u8>,
     bytes: usize,
     block_size: usize,
-    capacity: &'a mut u16,
+    capacity: NonNull<u16>,
     reserved: u16,
-    free: &'a mut *mut Block,
-    local_free: &'a mut *mut Block,
-    used: &'a mut usize,
-    free_is_zero: &'a mut bool,
+    free: NonNull<*mut Block>,
+    local_free: NonNull<*mut Block>,
+    used: NonNull<usize>,
+    free_is_zero: NonNull<bool>,
 }
 
-impl<'a> LocalFreeList<'a> {
+impl LocalFreeList {
     /// Binds scalar free-list operations to caller-owned page state.
     ///
     /// A fresh page supplies zero initialized capacity and no free-list links,
@@ -100,12 +104,12 @@ impl<'a> LocalFreeList<'a> {
         base: NonNull<u8>,
         bytes: usize,
         block_size: usize,
-        capacity: &'a mut u16,
+        capacity: &mut u16,
         reserved: u16,
-        free: &'a mut *mut Block,
-        local_free: &'a mut *mut Block,
-        used: &'a mut usize,
-        free_is_zero: &'a mut bool,
+        free: &mut *mut Block,
+        local_free: &mut *mut Block,
+        used: &mut usize,
+        free_is_zero: &mut bool,
     ) -> Result<Self, FreeListError> {
         if reserved == 0
             || block_size < LINK_SIZE
@@ -128,12 +132,12 @@ impl<'a> LocalFreeList<'a> {
             base,
             bytes: required,
             block_size,
-            capacity,
+            capacity: NonNull::from(capacity),
             reserved,
-            free,
-            local_free,
-            used,
-            free_is_zero,
+            free: NonNull::from(free),
+            local_free: NonNull::from(local_free),
+            used: NonNull::from(used),
+            free_is_zero: NonNull::from(free_is_zero),
         })
     }
 
@@ -141,12 +145,15 @@ impl<'a> LocalFreeList<'a> {
     ///
     /// # Safety
     ///
-    /// The caller must uphold the live-area, exclusive-page, and local-list
-    /// invariants documented by `Page::local_free_list_state`. In particular,
-    /// no remote-free, queue, page-map, or lifecycle operation may observe the
-    /// projected fields while this borrowed view is alive.
+    /// The caller must uphold the live-area, owner-field, block-partition, and
+    /// local-list invariants documented by
+    /// `Page::local_free_list_state_at`. In particular, no queue, page-map,
+    /// lifecycle, or other owner operation may observe the projected ordinary
+    /// fields while this raw view is used. A live client may concurrently
+    /// access only its distinct current block and disjoint atomic producer
+    /// projection.
     pub(crate) unsafe fn from_page_state(
-        state: PageFreeListState<'a>,
+        state: PageFreeListState,
     ) -> Result<Self, FreeListError> {
         let PageFreeListState {
             area,
@@ -160,76 +167,106 @@ impl<'a> LocalFreeList<'a> {
             free_is_zero,
         } = state;
         // SAFETY: the caller upholds the projection's concrete backing-area
-        // and exclusive metadata contracts; this only validates the scalar
-        // geometry before retaining those same borrows.
-        unsafe {
-            Self::from_raw_parts(
-                area,
-                area_bytes,
-                block_size,
-                capacity,
-                reserved,
-                free,
-                local_free,
-                used,
-                free_is_zero,
-            )
+        // and exclusive metadata contracts; direct reads name only its
+        // disjoint ordinary subobjects.
+        if reserved == 0
+            || block_size < LINK_SIZE
+            || block_size % LINK_ALIGN != 0
+            || area.addr().get() % LINK_ALIGN != 0
+        {
+            return Err(FreeListError::InvalidPage);
         }
+        let required = (reserved as usize)
+            .checked_mul(block_size)
+            .ok_or(FreeListError::InvalidPage)?;
+        if area_bytes < required {
+            return Err(FreeListError::InsufficientStorage);
+        }
+        // SAFETY: state construction proves initialized owner-only fields.
+        if unsafe { ptr::read(capacity.as_ptr()) } > reserved
+            || unsafe { ptr::read(used.as_ptr()) }
+                > unsafe { ptr::read(capacity.as_ptr()) } as usize
+        {
+            return Err(FreeListError::InvalidPage);
+        }
+        Ok(Self {
+            base: area,
+            bytes: required,
+            block_size,
+            capacity,
+            reserved,
+            free,
+            local_free,
+            used,
+            free_is_zero,
+        })
     }
 
-    /// Borrows the scalar local-list state of one live `types::Page`.
+    /// Projects the scalar local-list state of one live `types::Page`.
     ///
     /// # Safety
     ///
-    /// The caller must exclusively own `page`, its full writable block area,
-    /// and the associated live theap for the duration of the returned view.
+    /// The caller must own the projected ordinary fields and associated live
+    /// theap while this value is used. The complete block area must stay live,
+    /// but access is partitioned by source allocation state: the owner may
+    /// touch only its list nodes, extension range, selected pop block, or exact
+    /// local-free input; a producer may touch its own distinct current block.
     /// The page's `page_offset`, block geometry, and local list pointers must
     /// meet the concrete requirements documented by
-    /// `Page::local_free_list_state`; no remote-free, page-map, queue, or
-    /// lifecycle operation may observe the page while the view exists.
+    /// `Page::local_free_list_state_at`; no page-map, queue, lifecycle, or
+    /// other owner operation may observe the projected ordinary fields while
+    /// this value is used. A valid live client may retain only the disjoint
+    /// remote-free producer atomics.
     #[inline]
-    pub(crate) unsafe fn from_page(page: &'a mut Page) -> Result<Self, FreeListError> {
-        // SAFETY: the caller upholds the exclusive live-page contract needed
-        // by the narrow `Page` projection.
-        let state = unsafe { page.local_free_list_state() };
+    pub(crate) unsafe fn from_page_at(page: NonNull<Page>) -> Result<Self, FreeListError> {
+        // SAFETY: the caller upholds the ordinary-field, block-partition, and
+        // stable live-page contracts needed by the raw narrow projection.
+        let state = unsafe { Page::local_free_list_state_at(page) };
         // SAFETY: `state` retains exactly the same caller-proven page area and
-        // local metadata borrows for this scalar view.
+        // local metadata projection for this scalar view.
         unsafe { Self::from_page_state(state) }
     }
 
     #[inline]
     fn capacity_value(&self) -> u16 {
-        *self.capacity
+        // SAFETY: construction proves this initialized owner-only field.
+        unsafe { ptr::read(self.capacity.as_ptr()) }
     }
 
     #[inline]
     fn free(&self) -> *mut u8 {
-        (*self.free).cast()
+        // SAFETY: construction proves this initialized owner-only field.
+        unsafe { ptr::read(self.free.as_ptr()) }.cast()
     }
 
     #[inline]
     fn set_free(&mut self, free: *mut u8) {
-        *self.free = free.cast();
+        // SAFETY: this owner has exclusive access to the ordinary field.
+        unsafe { ptr::write(self.free.as_ptr(), free.cast()) };
     }
 
     #[inline]
     fn local_free(&self) -> *mut u8 {
-        (*self.local_free).cast()
+        // SAFETY: construction proves this initialized owner-only field.
+        unsafe { ptr::read(self.local_free.as_ptr()) }.cast()
     }
 
     #[inline]
     fn set_local_free(&mut self, local_free: *mut u8) {
-        *self.local_free = local_free.cast();
+        // SAFETY: this owner has exclusive access to the ordinary field.
+        unsafe { ptr::write(self.local_free.as_ptr(), local_free.cast()) };
     }
 
     #[inline]
     fn used_value(&self) -> usize {
-        *self.used
+        // SAFETY: construction proves this initialized owner-only field.
+        unsafe { ptr::read(self.used.as_ptr()) }
     }
 
     #[inline]
     fn free_is_zero_value(&self) -> bool {
-        *self.free_is_zero
+        // SAFETY: construction proves this initialized owner-only field.
+        unsafe { ptr::read(self.free_is_zero.as_ptr()) }
     }
 
     /// Returns the source-defined next extension count before any link write.
@@ -341,9 +378,11 @@ impl<'a> LocalFreeList<'a> {
         // path's final `mi_block_set_next` write.
         unsafe { Self::write_next(last, self.free()) };
         self.set_free(first.as_ptr());
-        *self.capacity = capacity
+        let next_capacity = capacity
             .checked_add(extend)
             .ok_or(FreeListError::InvalidPage)?;
+        // SAFETY: this owner has exclusive access to the ordinary field.
+        unsafe { ptr::write(self.capacity.as_ptr(), next_capacity) };
         Ok(extend)
     }
 
@@ -364,12 +403,13 @@ impl<'a> LocalFreeList<'a> {
         }
         let next = self.checked_next(block)?;
 
-        // SAFETY: `block` was checked as the current list head and the page
-        // remains exclusively owned. Clearing its link is the source's
+        // SAFETY: `block` was checked as the current owner-list head and this
+        // operation owns its link word. Clearing that link is the source's
         // `block->next = 0` non-leak transition before client use.
         unsafe { Self::write_next(block, ptr::null_mut()) };
         self.set_free(next);
-        *self.used = used + 1;
+        // SAFETY: this owner has exclusive access to the ordinary field.
+        unsafe { ptr::write(self.used.as_ptr(), used + 1) };
 
         if zero && !self.free_is_zero_value() {
             // SAFETY: `block` names exactly `block_size` writable bytes in the
@@ -388,13 +428,15 @@ impl<'a> LocalFreeList<'a> {
     ///
     /// # Safety
     ///
-    /// The caller must exclusively own this page and `block` must be an
-    /// aligned pointer in its live backing allocation. On an `Ok` result it
-    /// must be one block previously returned by [`Self::pop`] that has not
-    /// already been freed; violating that exactly-once rule can create a
-    /// cyclic list that the source fast path does not detect. A pointer outside
-    /// the initialized range, or a free attempted after the checked `used ==
-    /// 0` state, instead returns an error without writing a link.
+    /// The caller must exclusively own the projected ordinary local-list
+    /// fields and this exact current `block`; other clients may own distinct
+    /// current blocks. `block` must be aligned in the live backing allocation.
+    /// On an `Ok` result it must be one block previously returned by
+    /// [`Self::pop`] that has not already been freed; violating that
+    /// exactly-once rule can create a cyclic list that the source fast path
+    /// does not detect. A pointer outside the initialized range, or a free
+    /// attempted after the checked `used == 0` state, instead returns an error
+    /// without writing a link.
     #[inline]
     pub(crate) unsafe fn push_local(
         &mut self,
@@ -413,7 +455,8 @@ impl<'a> LocalFreeList<'a> {
         // owns uniquely as an allocation; `local_free` is null or a validated
         // link target in the same backing allocation.
         unsafe { Self::write_next(block, self.local_free()) };
-        *self.used = used - 1;
+        // SAFETY: this owner has exclusive access to the ordinary field.
+        unsafe { ptr::write(self.used.as_ptr(), used - 1) };
         self.set_local_free(block.as_ptr());
         Ok(())
     }
@@ -455,7 +498,8 @@ impl<'a> LocalFreeList<'a> {
         self.validate_initialized_block(local_free)?;
         self.set_free(local_free.as_ptr());
         self.set_local_free(ptr::null_mut());
-        *self.free_is_zero = false;
+        // SAFETY: this owner has exclusive access to the ordinary field.
+        unsafe { ptr::write(self.free_is_zero.as_ptr(), false) };
         Ok(true)
     }
 
@@ -473,7 +517,8 @@ impl<'a> LocalFreeList<'a> {
         if self.free().is_null() {
             self.set_free(local_free.as_ptr());
             self.set_local_free(ptr::null_mut());
-            *self.free_is_zero = false;
+            // SAFETY: this owner has exclusive access to the ordinary field.
+            unsafe { ptr::write(self.free_is_zero.as_ptr(), false) };
             return Ok(true);
         }
         if !force {
@@ -489,7 +534,8 @@ impl<'a> LocalFreeList<'a> {
         unsafe { Self::write_next(tail, free.as_ptr()) };
         self.set_free(local_free.as_ptr());
         self.set_local_free(ptr::null_mut());
-        *self.free_is_zero = false;
+        // SAFETY: this owner has exclusive access to the ordinary field.
+        unsafe { ptr::write(self.free_is_zero.as_ptr(), false) };
         Ok(true)
     }
 
@@ -602,10 +648,10 @@ impl<'a> LocalFreeList<'a> {
 /// lists are non-empty, it validates the source local list, appends the old
 /// immediate head to its tail, and installs that local head as `free`. This
 /// raw state is distinct from [`LocalFreeList`]: it avoids a whole-page
-/// mutable borrow. The enclosing lifecycle still has a caller-proved
-/// joined/quiescent precondition before it makes any queue transition. The
-/// detached metadata branch instead has an explicit no-remote-producer
-/// contract.
+/// mutable borrow. The enclosing lifecycle's queue transitions likewise use
+/// raw disjoint link fields, so a valid client may retain or use only its
+/// atomic producer projection throughout. The detached metadata branch instead
+/// has an explicit no-remote-producer contract.
 ///
 /// # Safety
 ///
@@ -773,12 +819,12 @@ mod tests {
         }
     }
 
-    fn list_for<'a, const N: usize>(
-        state: &'a mut TestPageState,
+    fn list_for<const N: usize>(
+        state: &mut TestPageState,
         storage: &mut Page<N>,
         block_size: usize,
         reserved: u16,
-    ) -> LocalFreeList<'a> {
+    ) -> LocalFreeList {
         let base = NonNull::new(storage.0.as_mut_ptr()).unwrap();
         // SAFETY: `storage` remains alive and uniquely borrowed for the test,
         // its explicit alignment satisfies every tested block boundary, and
@@ -788,12 +834,12 @@ mod tests {
             area: base,
             area_bytes: N,
             block_size,
-            capacity: &mut state.capacity,
+            capacity: NonNull::from(&mut state.capacity),
             reserved,
-            free: &mut state.free,
-            local_free: &mut state.local_free,
-            used: &mut state.used,
-            free_is_zero: &mut state.free_is_zero,
+            free: NonNull::from(&mut state.free),
+            local_free: NonNull::from(&mut state.local_free),
+            used: NonNull::from(&mut state.used),
+            free_is_zero: NonNull::from(&mut state.free_is_zero),
         };
         // SAFETY: the test state and backing buffer meet the mirrored live
         // `PageFreeListState` contract above.

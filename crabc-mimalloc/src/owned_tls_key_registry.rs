@@ -187,7 +187,10 @@ impl OwnedThreadLocalKeyRegistry {
     /// Claims a regular key while validating the one selected main-subprocess
     /// metadata identity. This stays internal to the current-thread dynamic
     /// attachment; callers may not use it to route a registry image through a
-    /// thread-local backing or a different subprocess.
+    /// thread-local backing or a different subprocess. The selected
+    /// `metadata`/`subprocess` pair must already have completed
+    /// `MetaAllocator::prepare_for_main_subprocess`; a key claim does not
+    /// perform process initialization.
     pub(crate) fn claim_for_main_subprocess(
         &'static self,
         config: MemoryConfig,
@@ -637,10 +640,15 @@ mod tests {
         Pin<&'static MetaAllocator>,
         &'static MainSubprocess,
     ) {
+        let subprocess = MainSubprocess::test_static_owner();
+        let metadata = MetaAllocator::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the isolated source process publishes metadata before registry demand");
         (
             OwnedThreadLocalKeyRegistry::test_static_owner(),
-            MetaAllocator::test_static_owner(),
-            MainSubprocess::test_static_owner(),
+            metadata,
+            subprocess,
         )
     }
 

@@ -19,7 +19,7 @@ use crate::arena::{manage_external_in_place, ArenaId, ArenaRegistry, ArenaView};
 use crate::bootstrap::ExclusiveTheapBootstrap;
 use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
 use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize, StartupInput};
-use crate::page_map::{PageMap, PageMapRoot};
+use crate::page_map::{PageMap, PageMapInitializationError, PageMapRoot};
 use crate::rust_alloc::boxed::Box;
 use crate::single_thread::{FreeError, SingleThreadAllocator};
 use crate::types::{LiveThreadId, PAGE_FLAG_BITS};
@@ -48,6 +48,111 @@ pub enum TestContextInitError {
     ThreadIdentity,
     /// Pinning and activating the default single-thread bootstrap failed.
     Bootstrap,
+}
+
+/// A failed test-context construction together with every VM owner that could
+/// not be released before publication.
+///
+/// The copyable [`TestContextInitError`] is only the public reason. This
+/// value is the actual ownership boundary: it retains an unpublished arena
+/// map, an initialized private PageMap, or a PageMap bootstrap map until
+/// [`Self::retry_cleanup`] succeeds. It has no destructor that changes VM
+/// state, matching the engine's explicit-release contract.
+#[must_use = "a failed test-context initialization may retain VM ownership that must be retried"]
+pub struct TestContextInitFailure {
+    reason: TestContextInitError,
+    arena_mapping: Option<Mapping>,
+    page_map: Option<Box<PageMap>>,
+    page_map_initialization_mapping: Option<Mapping>,
+}
+
+impl TestContextInitFailure {
+    #[inline]
+    fn released(reason: TestContextInitError) -> Self {
+        Self {
+            reason,
+            arena_mapping: None,
+            page_map: None,
+            page_map_initialization_mapping: None,
+        }
+    }
+
+    /// Attempts the necessary reverse-acquisition cleanup once, retaining
+    /// every still-live owner when one release fails.
+    fn cleanup_or_retain(
+        reason: TestContextInitError,
+        page_map: Option<Box<PageMap>>,
+        arena_mapping: Option<Mapping>,
+        page_map_initialization_mapping: Option<Mapping>,
+    ) -> Self {
+        let failure = Self {
+            reason,
+            arena_mapping,
+            page_map,
+            page_map_initialization_mapping,
+        };
+        match failure.retry_cleanup() {
+            Ok(()) => Self::released(reason),
+            Err(failure) => failure,
+        }
+    }
+
+    /// Returns the source setup boundary that failed.
+    #[inline]
+    pub const fn reason(&self) -> TestContextInitError { self.reason }
+
+    /// Reports whether a caller must retain this value and retry cleanup.
+    #[inline]
+    pub fn has_pending_cleanup(&self) -> bool {
+        self.arena_mapping.is_some()
+            || self.page_map.is_some()
+            || self.page_map_initialization_mapping.is_some()
+    }
+
+    /// Retries explicit cleanup in strict reverse acquisition order.
+    ///
+    /// A returned `Err(Self)` owns precisely the unreleased mapping or map;
+    /// it may be retried again after the failure condition is removed.
+    pub fn retry_cleanup(mut self) -> core::result::Result<(), Self> {
+        if let Some(mut mapping) = self.arena_mapping.take() {
+            match mapping.unmap() {
+                Ok(()) => {}
+                Err(_) => {
+                    self.arena_mapping = Some(mapping);
+                    return Err(self);
+                }
+            }
+        }
+        if let Some(page_map) = self.page_map.as_mut() {
+            // SAFETY: this failure type is formed only before `PageMapRoot`
+            // publication or allocator activation succeeds, so no reader or
+            // page-map entry can still access this private map.
+            if unsafe { page_map.destroy() }.is_err() {
+                return Err(self);
+            }
+        }
+        drop(self.page_map.take());
+        if let Some(mut mapping) = self.page_map_initialization_mapping.take() {
+            match mapping.unmap() {
+                Ok(()) => {}
+                Err(_) => {
+                    self.page_map_initialization_mapping = Some(mapping);
+                    return Err(self);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl core::fmt::Debug for TestContextInitFailure {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("TestContextInitFailure")
+            .field("reason", &self.reason)
+            .field("has_pending_cleanup", &self.has_pending_cleanup())
+            .finish()
+    }
 }
 
 /// One allocation request could not be completed by an active context.
@@ -150,7 +255,7 @@ impl TestAllocatorContext {
     /// startup state, TLS, or global allocator lifecycle is used.  Publication
     /// of `PageMapRoot` occurs last, after the bootstrap and allocator are
     /// already live.
-    pub fn new() -> Result<Self, TestContextInitError> {
+    pub fn new() -> core::result::Result<Self, TestContextInitFailure> {
         Self::new_with_thread_source(live_thread_id)
     }
 
@@ -551,35 +656,55 @@ impl TestAllocatorContext {
 
     fn new_with_thread_source(
         thread_source: fn() -> Option<LiveThreadId>,
-    ) -> Result<Self, TestContextInitError> {
+    ) -> core::result::Result<Self, TestContextInitFailure> {
         let raw_page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
-            .ok_or(TestContextInitError::PageSizeUnavailable)?;
-        let page_size = PageSize::new(raw_page_size).ok_or(TestContextInitError::InvalidPageSize)?;
+            .ok_or_else(|| TestContextInitFailure::released(TestContextInitError::PageSizeUnavailable))?;
+        let page_size = PageSize::new(raw_page_size).ok_or_else(|| {
+            TestContextInitFailure::released(TestContextInitError::InvalidPageSize)
+        })?;
         let config = MemoryConfig::detect(StartupInput::new(page_size));
-        let mut page_map = Box::new(
-            PageMap::initialize(config, 0, true)
-                .map_err(|_| TestContextInitError::PageMapInitialization)?,
-        );
-        let mut arena_mapping = match Mapping::map_aligned_for_allocator(
+        let mut page_map = Box::new(match PageMap::initialize(config, 0, true) {
+            Ok(page_map) => page_map,
+            Err(PageMapInitializationError::Failed { .. }) => {
+                return Err(TestContextInitFailure::released(
+                    TestContextInitError::PageMapInitialization,
+                ));
+            }
+            Err(PageMapInitializationError::Retained { mapping, .. }) => {
+                return Err(TestContextInitFailure::cleanup_or_retain(
+                    TestContextInitError::PageMapInitialization,
+                    None,
+                    None,
+                    Some(mapping),
+                ));
+            }
+        });
+        let arena_mapping = match Mapping::map_aligned_for_allocator(
             config,
             ARENA_MIN_SIZE,
             ARENA_ALIGNMENT,
             MapAccess::Committed,
         ) {
             Ok(mapping) => mapping,
-            Err(_) => {
-                // SAFETY: no root or allocator was published, so this newly
-                // initialized page map has no readers and is ours to release.
-                let _ = unsafe { page_map.destroy() };
-                return Err(TestContextInitError::ArenaMapping);
+            Err(failure) => {
+                return Err(TestContextInitFailure::cleanup_or_retain(
+                    TestContextInitError::ArenaMapping,
+                    Some(page_map),
+                    failure.into_mapping(),
+                    None,
+                ));
             }
         };
         let registry = Box::new(ArenaRegistry::new(ptr::null_mut()));
         let arena_start = match arena_mapping.base() {
             Ok(start) => start,
             Err(_) => {
-                Self::rollback_initialization(&mut page_map, Some(&mut arena_mapping));
-                return Err(TestContextInitError::ArenaMapping);
+                return Err(TestContextInitFailure::cleanup_or_retain(
+                    TestContextInitError::ArenaMapping,
+                    Some(page_map),
+                    Some(arena_mapping),
+                    None,
+                ));
             }
         };
         let arena_initially_committed = arena_mapping.initially_committed();
@@ -604,15 +729,23 @@ impl TestAllocatorContext {
         } {
             Ok(managed) => managed,
             Err(_) => {
-                Self::rollback_initialization(&mut page_map, Some(&mut arena_mapping));
-                return Err(TestContextInitError::ArenaManagement);
+                return Err(TestContextInitFailure::cleanup_or_retain(
+                    TestContextInitError::ArenaManagement,
+                    Some(page_map),
+                    Some(arena_mapping),
+                    None,
+                ));
             }
         };
         let arena = match unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) } {
             Some(arena) => arena,
             None => {
-                Self::rollback_initialization(&mut page_map, Some(&mut arena_mapping));
-                return Err(TestContextInitError::ArenaView);
+                return Err(TestContextInitFailure::cleanup_or_retain(
+                    TestContextInitError::ArenaView,
+                    Some(page_map),
+                    Some(arena_mapping),
+                    None,
+                ));
             }
         };
         // Request the source-shaped Linux identity after both address-stable
@@ -620,8 +753,12 @@ impl TestAllocatorContext {
         let thread_id = match thread_source() {
             Some(thread_id) => thread_id,
             None => {
-                Self::rollback_initialization(&mut page_map, Some(&mut arena_mapping));
-                return Err(TestContextInitError::ThreadIdentity);
+                return Err(TestContextInitFailure::cleanup_or_retain(
+                    TestContextInitError::ThreadIdentity,
+                    Some(page_map),
+                    Some(arena_mapping),
+                    None,
+                ));
             }
         };
         let mut bootstrap = Box::pin(ExclusiveTheapBootstrap::new());
@@ -637,7 +774,9 @@ impl TestAllocatorContext {
                 core::mem::transmute(bootstrap.as_mut())
             };
             // SAFETY: see the shared stable-owner proof immediately above.
-            let page_map: &'static mut PageMap = unsafe { core::mem::transmute(&mut *page_map_ptr) };
+            let page_map_ref: &'static mut PageMap = unsafe {
+                core::mem::transmute(&mut *page_map_ptr)
+            };
             // SAFETY: see the shared stable-owner proof immediately above.
             let arena: ArenaView<'static> = unsafe { core::mem::transmute(arena) };
             match SingleThreadAllocator::activate(
@@ -645,7 +784,7 @@ impl TestAllocatorContext {
                 thread_id,
                 arena,
                 ArenaId::none(),
-                page_map,
+                page_map_ref,
                 0,
             ) {
                 Ok(allocator) => allocator,
@@ -655,9 +794,12 @@ impl TestAllocatorContext {
                     // owner. The raw pointer still denotes the same stable
                     // Box pointee, so this is the only pre-publication
                     // cleanup path after the lifetime extension above.
-                    let _ = arena_mapping.unmap();
-                    let _ = unsafe { (&mut *page_map_ptr).destroy() };
-                    return Err(TestContextInitError::Bootstrap);
+                    return Err(TestContextInitFailure::cleanup_or_retain(
+                        TestContextInitError::Bootstrap,
+                        Some(page_map),
+                        Some(arena_mapping),
+                        None,
+                    ));
                 }
             }
         };
@@ -679,17 +821,6 @@ impl TestAllocatorContext {
             #[cfg(test)]
             fail_shutdown_once_at: None,
         })
-    }
-
-    /// Attempts every explicit pre-publication release in strict reverse
-    /// acquisition order.  There is no `Drop`-based VM transition here.
-    fn rollback_initialization(page_map: &mut PageMap, arena_mapping: Option<&mut Mapping>) {
-        if let Some(mapping) = arena_mapping {
-            let _ = mapping.unmap();
-        }
-        // SAFETY: this helper is called only before root publication and before
-        // an allocator escapes, so the page map has no reader or page entry.
-        let _ = unsafe { page_map.destroy() };
     }
 
     fn allocate_with(
@@ -949,16 +1080,69 @@ mod tests {
             None
         }
 
-        assert!(matches!(
-            TestAllocatorContext::new_with_thread_source(no_live_thread_id),
-            Err(TestContextInitError::ThreadIdentity),
-        ));
+        let failure = match TestAllocatorContext::new_with_thread_source(no_live_thread_id) {
+            Ok(_) => panic!("a missing Linux thread identity rejects construction"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.reason(), TestContextInitError::ThreadIdentity);
+        assert!(
+            !failure.has_pending_cleanup(),
+            "the ordinary rollback must release both unpublished VM owners"
+        );
 
         // The failed construction already explicitly destroyed the independent
         // page map and unmapped its arena. A fresh context must still initialize
         // and release normally without inheriting any published root or owner.
         let mut context = TestAllocatorContext::new().unwrap();
         assert_eq!(context.shutdown(), Ok(()));
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn initialization_failure_retains_then_retries_the_aligned_map_and_page_map_owners() {
+        let page_size = PageSize::new(4 * KIB).expect("the selected native page size is valid");
+        let mut config = MemoryConfig::from_observations(page_size, 1024 * 1024, false, false);
+        config.test_force_full_aligned_map_trim();
+        let fault = crate::os::fault::install(crate::os::fault::Plan::at_pair(
+            crate::os::fault::Point::Unmap,
+            2,
+            crate::os::fault::Point::Unmap,
+            1,
+            crabc_core::Errno::NOMEM,
+        ));
+        let page_map = match PageMap::initialize(config, 0, true) {
+            Ok(page_map) => Box::new(page_map),
+            Err(_) => panic!("the isolated private PageMap initializes before the injected trim"),
+        };
+        let aligned_failure = match Mapping::map_aligned_for_allocator(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Committed,
+        ) {
+            Ok(mut mapping) => {
+                let _ = mapping.unmap();
+                panic!("the forced prefix cleanup must fail")
+            }
+            Err(failure) => failure,
+        };
+        let failure = TestContextInitFailure::cleanup_or_retain(
+            TestContextInitError::ArenaMapping,
+            Some(page_map),
+            aligned_failure.into_mapping(),
+            None,
+        );
+        assert_eq!(failure.reason(), TestContextInitError::ArenaMapping);
+        assert!(
+            failure.has_pending_cleanup(),
+            "the paired cleanup failure keeps both unpublished VM owners explicit"
+        );
+
+        fault.set(crate::os::fault::Plan::disabled());
+        assert!(
+            failure.retry_cleanup().is_ok(),
+            "the retained arena mapping and private PageMap release in reverse order"
+        );
     }
 
     #[test]

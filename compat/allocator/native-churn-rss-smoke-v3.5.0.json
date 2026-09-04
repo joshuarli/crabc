@@ -1,0 +1,225 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-native-churn-rss-smoke",
+  "upstream": {
+    "project": "microsoft/mimalloc",
+    "version": "3.5.0",
+    "tag": "v3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "role": "fixed C allocator oracle; this crabc-authored fixture uses only the selected production shadow C ABI"
+  },
+  "fixture": {
+    "path": "compat/allocator/native-churn-rss-smoke.c",
+    "sha256": "23e7341d7602810edf5d7a38101e018623d1c406d7015320571bf757b4620f53",
+    "license": "crabc-authored C11 evidence fixture"
+  },
+  "execution": {
+    "allocator_feature": "native-mimalloc-shadow",
+    "compiler": "crabc-cc from CRABC_TEST_SYSROOT/bin",
+    "language": "C11",
+    "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
+    "compile_flags": [
+      "-O2",
+      "-DNDEBUG",
+      "-fPIE",
+      "-pie",
+      "-ftls-model=initial-exec",
+      "-pthread"
+    ],
+    "link_flags": [
+      "-Wl,--allow-shlib-undefined"
+    ],
+    "link_libraries": [
+      "-lc"
+    ],
+    "expected_dynamic_dependencies": [
+      "libc.so"
+    ],
+    "fixture_elf_identity": {
+      "class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "UNIX - System V",
+      "abi_version": "0",
+      "type": "DYN",
+      "machine": "AArch64",
+      "pt_interp": "/lib/ld-crabc-aarch64.so.1"
+    },
+    "seed": 1511506142,
+    "cycles": 8,
+    "process_epochs": 4,
+    "thread_fanout": {
+      "initial_threads": 1,
+      "owner_workers_per_fixture_epoch": 1,
+      "post_exit_independent_releasers_per_fixture_epoch": 4,
+      "peak_threads": 5
+    },
+    "post_owner_exit_concurrent_release": {
+      "measurement_classification": "non-promotional-workload-liveness",
+      "performance_qualified": false,
+      "independent_releasers_per_fixture_epoch": 4,
+      "live_blocks_per_fixture_epoch": 85,
+      "release_gate": "all-independent-releasers-ready-before-release",
+      "assignment": "fixed-stride-disjoint-exit-block-indices"
+    },
+    "watchdog_seconds": 30,
+    "rss_threshold_bytes": 16777216
+  },
+  "selected_shadow_artifact_attestation": {
+    "cargo_fingerprint": {
+      "directory": "target/debug/.fingerprint",
+      "package_prefix": "crabc-libc-",
+      "file": "lib-c.json",
+      "exact_features": [
+        "default",
+        "native-mimalloc-shadow"
+      ]
+    },
+    "exported_free_route": {
+      "symbol": "free",
+      "required_callee_suffix": "native_free>",
+      "forbidden_callee_suffix": "mi_free>"
+    },
+    "rust_cleanup_free_route": {
+      "helper_symbol": "__crabc_interposable_free",
+      "required_branch_target": "free@plt>",
+      "required_relocation": "R_AARCH64_JUMP_SLOT"
+    }
+  },
+  "production_shadow_boundary": {
+    "allowed_allocation_apis": [
+      "malloc",
+      "free",
+      "posix_memalign",
+      "malloc_usable_size"
+    ],
+    "forbidden_allocator_identifiers": [
+      "mi_",
+      "libmimalloc",
+      "native_allocate",
+      "native_free",
+      "__crabc_runtime"
+    ],
+    "allocator_private_hooks": false,
+    "c_backend_fallback": false,
+    "ownership_contract": [
+      "Every owner returns normally with the fixed mixed 85-block image from `tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c` still live: eighty direct-small blocks plus non-direct-small, medium, large, arena-singleton, and OS-singleton tails.",
+      "After pthread_join confirms owner exit, four fresh independent releasers wait until all are ready, then validate malloc_usable_size and free fixed-stride disjoint subsets of every surviving C address.",
+      "The fixture joins every independent releaser and rejects a retained or aborted valid free, post-warm release-count growth, and post-warm release-state growth.",
+      "The fixture never transfers an allocator-private pointer, page, heap, route, or metadata capability."
+    ]
+  },
+  "state_observation": {
+    "rss": "sampled-from-/proc/self/status-VmRSS",
+    "workload_liveness": [
+      "requested_bytes_live_high_water",
+      "usable_bytes_live_high_water",
+      "live_blocks_high_water"
+    ],
+    "production_liveness_state_auditor": "production-general-churn",
+    "allocator_state_categories": [
+      "live_owner_registry",
+      "post_exit_registry",
+      "client_ledger",
+      "page_map",
+      "metadata",
+      "arena",
+      "abandoned_page",
+      "tld",
+      "theap"
+    ],
+    "allocator_plateau_observation": "not-exposed-by-production-shadow-c-api",
+    "general_production_state_qualification": "incomplete-when-unavailable",
+    "post_owner_exit_concurrent_release": {
+      "measurement_classification": "non-promotional-workload-liveness",
+      "performance_qualified": false,
+      "scope": "fixture-local-count-and-liveness-only"
+    },
+    "allocator_metadata": "not-exposed-by-production-shadow-c-api",
+    "metadata_high_water_bytes": null,
+    "reason": "This selected C ABI has no allocator-statistics or debug-state API. That is an unmet production-boundary implementation and evidence contract, not an environmental prerequisite. The executable state auditor therefore proves only production-observable workload liveness and exact post-churn quiescence. Registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, and Theap high-water and plateau fields remain null rather than being inferred from RSS, Rust internals, a C fallback, or an unsupported proxy."
+  },
+  "failure_contract": {
+    "kinds": [
+      "harness",
+      "prerequisite",
+      "runtime",
+      "evidence"
+    ],
+    "exit_68_root_failure_required": true,
+    "reason": "A fixture runtime failure, including malformed exit-68 output, remains classified as runtime. Missing owned-environment inputs or inspection tools are prerequisite failures. A selected or executed artifact that violates the production boundary, including unavailable required allocator-state evidence, is an evidence failure. Manifest, parser, build, and report defects are harness failures."
+  },
+  "report": {
+    "path": "compat/reports/allocator/native-churn-rss-smoke-latest.json",
+    "schema": "crabc-mimalloc-native-churn-rss-smoke-report-v3",
+    "required_artifact_attestation": [
+      "production_shadow_boundary.fixture_elf_attestation.fixture.sha256",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.size_bytes",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.class",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.data",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.os_abi",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.abi_version",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.type",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.machine",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.pt_interp",
+      "production_shadow_boundary.fixture_elf_attestation.selected_loader.canonical_path",
+      "production_shadow_boundary.fixture_elf_attestation.selected_loader.canonical_sha256",
+      "production_shadow_boundary.fixture_elf_attestation.selected_loader.runtime_path",
+      "production_shadow_boundary.fixture_elf_attestation.selected_loader.runtime_sha256",
+      "executions[].executed_fixture_elf.sha256",
+      "executions[].executed_fixture_elf.identity",
+      "executions[].executed_fixture_elf.pt_interp"
+    ],
+    "required_non_promotional_measurements": [
+      "post_owner_exit_concurrent_release.measurement_classification",
+      "post_owner_exit_concurrent_release.performance_qualified",
+      "post_owner_exit_concurrent_release.independent_releasers_per_epoch",
+      "post_owner_exit_concurrent_release.completed_epochs",
+      "post_owner_exit_concurrent_release.releasers_completed",
+      "post_owner_exit_concurrent_release.successful_frees",
+      "post_owner_exit_concurrent_release.retained_valid_frees",
+      "post_owner_exit_concurrent_release.aborted_valid_frees",
+      "post_owner_exit_concurrent_release.count_growth_after_warmup",
+      "post_owner_exit_concurrent_release.state_growth_after_warmup"
+    ],
+    "required_high_water": [
+      "rss_bytes",
+      "requested_live_bytes",
+      "usable_live_bytes",
+      "live_blocks",
+      "thread_fanout.peak_threads",
+      "thread_fanout.total_worker_threads",
+      "rss_slopes.within_process_quiescent.minimum_bytes_per_fixture_epoch",
+      "rss_slopes.within_process_quiescent.maximum_bytes_per_fixture_epoch",
+      "rss_slopes.across_process_high_water.bytes_per_epoch",
+      "state_auditor.workload_liveness.snapshot_count",
+      "state_auditor.workload_liveness.plateau_after_warmup",
+      "allocator_state.live_owner_registry.high_water",
+      "allocator_state.live_owner_registry.plateau_after_warmup",
+      "allocator_state.post_exit_registry.high_water",
+      "allocator_state.post_exit_registry.plateau_after_warmup",
+      "allocator_state.client_ledger.high_water",
+      "allocator_state.client_ledger.plateau_after_warmup",
+      "allocator_state.metadata.high_water",
+      "allocator_state.metadata.plateau_after_warmup",
+      "allocator_state.page_map.high_water",
+      "allocator_state.page_map.plateau_after_warmup",
+      "allocator_state.arena.high_water",
+      "allocator_state.arena.plateau_after_warmup",
+      "allocator_state.abandoned_page.high_water",
+      "allocator_state.abandoned_page.plateau_after_warmup",
+      "allocator_state.tld.high_water",
+      "allocator_state.tld.plateau_after_warmup",
+      "allocator_state.theap.high_water",
+      "allocator_state.theap.plateau_after_warmup"
+    ]
+  },
+  "scope": {
+    "classification": "C ABI compatibility machinery and native allocator evidence",
+    "non_claims": [
+      "This bounded smoke is not a completed general owner-exit, allocator registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, Theap, or selected-shadow promotion proof.",
+      "Its post-owner-exit concurrent-release fields are fixture-local workload measurements only; they are not performance, soak, stress, allocator-internal-state, backend-promotion, or public-platform qualification.",
+      "Its executable state auditor covers only production-observable workload liveness. It reports the general-production allocator-state qualification as incomplete and does not infer registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, or Theap high-water or plateau state from RSS or workload liveness.",
+      "It does not replace the separately owned upstream stress, differential, state-auditor, soak, performance, or architecture-ratchet evidence."
+    ]
+  }
+}

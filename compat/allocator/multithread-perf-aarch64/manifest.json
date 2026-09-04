@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "id": "mimalloc-v3.5.0-aarch64-local-multithread-scaling-smoke",
+  "kind": "crabc-mimalloc-aarch64-local-multithread-performance",
+  "platform": {
+    "architecture": "aarch64",
+    "endianness": "little",
+    "kernel_minimum": "5.10",
+    "operating_system": "linux",
+    "requires_native_execution_attestation": true
+  },
+  "workload": {
+    "allocation_bytes": 64,
+    "operation": "thread-local mi_malloc(64), touch, mi_free",
+    "scales": [1, 2, 4, 8]
+  },
+  "lanes": {
+    "pinned_c": {
+      "oracle": "pinned mimalloc v3.5.0 source archive",
+      "status": "implemented"
+    },
+    "rust": {
+      "boundary": "documentation-hidden crabc_mimalloc::__crabc_runtime friend boundary",
+      "evidence_classification": "diagnostic-only",
+      "fixture_protocol": "same --workers/--iterations/--cpus output grammar as fixture.c",
+      "production_scaling_evidence": "rejected: this direct-engine friend boundary is not the production crabc-libc allocator ABI",
+      "status": "implemented_private_engine_smoke"
+    }
+  },
+  "scope": {
+    "early_architecture_smoke": true,
+    "performance_qualification": false,
+    "public_crabc_allocator_integration": false,
+    "public_mi_api": false,
+    "public_support": false
+  },
+  "serialization_signature": {
+    "flat_throughput_maximum_scaling": 1.25,
+    "meaning": "A scale above one worker whose median aggregate throughput is at most 1.25 times the one-worker median is reported as a flat-throughput global-serialization signature. It is a diagnostic, not a promotion decision."
+  }
+}

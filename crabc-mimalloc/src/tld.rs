@@ -247,7 +247,10 @@ impl ThreadLocalDataOwner {
     ///
     /// This has exactly the same current-thread and exclusive-lifecycle
     /// obligations as [`Self::begin`]. `metadata` must remain a unique
-    /// process-lived metadata owner for every allocation it returns.
+    /// process-lived metadata owner for every allocation it returns and must
+    /// already be bound to `subprocess` by
+    /// [`MetaAllocator::prepare_for_main_subprocess`]. This test hook never
+    /// turns a cold allocation request into process initialization.
     #[cfg(test)]
     pub(crate) unsafe fn begin_with_test_metadata(
         subprocess: &'static MainSubprocess,
@@ -262,7 +265,10 @@ impl ThreadLocalDataOwner {
     /// Creates the same later-ticket attached-TLD transition with an explicit
     /// process-main metadata owner. This is the narrow integration seam for
     /// the private dynamic-Theap owner; the selected capability must remain
-    /// the owner of every returned TLD/Theap/backing allocation.
+    /// the owner of every returned TLD/Theap/backing allocation. The pair
+    /// must already have completed
+    /// [`MetaAllocator::prepare_for_main_subprocess`]; this later-ticket path
+    /// may consume a ticket before it reaches metadata demand.
     pub(crate) unsafe fn begin_later_dynamic_attachment_with_metadata(
         subprocess: &'static MainSubprocess,
         metadata: Pin<&'static MetaAllocator>,
@@ -672,7 +678,7 @@ mod tests {
     use crate::compiler_tls::{
         cached_theap, default_theap, dynamic_backing_peek, fast_slot_peek,
     };
-    use crate::os::{PageSize, fault};
+    use crate::os::PageSize;
     use crate::subproc::MainSubprocess;
     use crate::types::MemoryKind;
     use std::sync::{Barrier, mpsc};
@@ -688,7 +694,12 @@ mod tests {
     }
 
     fn fixture() -> (&'static MainSubprocess, Pin<&'static MetaAllocator>) {
-        (MainSubprocess::test_static_owner(), MetaAllocator::test_static_owner())
+        let subprocess = MainSubprocess::test_static_owner();
+        let metadata = MetaAllocator::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source process publishes metadata before TLD demand");
+        (subprocess, metadata)
     }
 
     #[test]
@@ -721,8 +732,8 @@ mod tests {
                 assert!(tld.is_attached_to_main_subprocess(subprocess));
                 assert!(!tld.recursing());
                 assert!(
-                    tld.test_theaps_lock_is_unlocked(),
-                    "the source theap-list lock begins unlocked"
+                    tld.test_theaps_lock_starts_and_restores_unlocked(),
+                    "the source theap-list lock begins and returns unlocked"
                 );
                 assert!(
                     !tld.is_in_threadpool(),
@@ -799,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_allocation_failure_consumes_its_ticket_but_never_leaks_live_count() {
+    fn direct_metadata_allocation_failure_consumes_its_ticket_but_never_leaks_live_count() {
         let (subprocess, metadata) = fixture();
         thread::spawn(move || {
             let mut static_owner = unsafe {
@@ -811,12 +822,20 @@ mod tests {
             }
             .unwrap();
             static_owner.teardown().unwrap();
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "ticket zero uses source-static storage rather than a metadata capability"
+            );
+            assert_eq!(
+                metadata.test_allocation_audit().high_water_capability_count,
+                0,
+                "retiring ticket zero leaves the isolated metadata owner unused"
+            );
 
-            let fault = fault::install(fault::Plan::at(
-                fault::Point::Map,
-                1,
-                crabc_core::Errno::NOMEM,
-            ));
+            metadata
+                .get_ref()
+                .test_fail_next_direct_zeroed_size(size_of::<ThreadLocalData>());
             assert!(matches!(
                 unsafe {
                     ThreadLocalDataOwner::begin_with_test_metadata(
@@ -825,12 +844,21 @@ mod tests {
                         memory_config(),
                     )
                 },
-                Err(ThreadLocalDataError::Metadata(MetaError::InitializationFailed))
+                Err(ThreadLocalDataError::Metadata(MetaError::AllocationUnavailable))
             ));
             assert_eq!(subprocess.total_thread_count(), 2);
             assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "a failed later metadata request has no capability to retain"
+            );
+            assert_eq!(
+                metadata.test_allocation_audit().high_water_capability_count,
+                0,
+                "the failed request does not manufacture a transient metadata capability"
+            );
 
-            fault.set(fault::Plan::disabled());
             let mut retry = unsafe {
                 ThreadLocalDataOwner::begin_with_test_metadata(
                     subprocess,
@@ -839,9 +867,34 @@ mod tests {
                 )
             }
             .expect("a failed metadata ticket stays consumed and later retry is sequence two");
-            assert_eq!(retry.current().unwrap().thread_sequence().get(), 2);
+            let tld = retry.current().unwrap();
+            assert_eq!(tld.thread_sequence().get(), 2);
+            assert_eq!(tld.memory_id().kind(), MemoryKind::Malloc);
+            assert!(tld.is_subprocess_attached_no_theap());
+            assert!(tld.is_attached_to_main_subprocess(subprocess));
+            assert_eq!(subprocess.live_thread_count(), 1);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                1,
+                "the successful later TLD retains exactly its direct Malloc capability"
+            );
+            assert_eq!(
+                metadata.test_allocation_audit().high_water_capability_count,
+                1,
+                "the first successful later TLD establishes one-capability high water"
+            );
             retry.teardown().unwrap();
             assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "TLD teardown releases its exact direct Malloc capability"
+            );
+            assert_eq!(
+                metadata.test_allocation_audit().high_water_capability_count,
+                1,
+                "release returns to baseline without erasing the lifetime high water"
+            );
         })
         .join().unwrap();
     }

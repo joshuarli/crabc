@@ -22,7 +22,30 @@ from typing import Sequence
 
 
 ROOT = Path(__file__).resolve().parents[3]
-REPORT = ROOT / "compat/reports/allocator/tls-codegen-x86_64.json"
+
+
+def default_work_root() -> Path:
+    """Return the checkout-local boundary for generated TLS evidence."""
+
+    configured = os.environ.get("CRABC_WORK_DIR")
+    if not configured:
+        return ROOT / ".work"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+WORK_ROOT = default_work_root()
+TEMP_ROOT = WORK_ROOT / "tmp/allocator"
+REPORT = WORK_ROOT / "reports/allocator/tls-codegen-x86_64.json"
+
+
+def temporary_directory(prefix: str) -> tempfile.TemporaryDirectory:
+    """Create disposable TLS-probe state below the configured work root."""
+
+    TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix=prefix, dir=TEMP_ROOT)
+
+
 TARGET = "x86_64-unknown-linux-musl"
 
 ROOT_NAMES = (
@@ -287,7 +310,7 @@ def main() -> int:
     file_tool = require_tool("file")
     rustc_version = require_native_x86_host(rustc)
 
-    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-tls-x86_64-") as temporary:
+    with temporary_directory(prefix="crabc-mimalloc-tls-x86_64-") as temporary:
         temporary_root = Path(temporary)
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(temporary_root / "target")
@@ -409,7 +432,7 @@ def main() -> int:
         "allocator compiler TLS x86-64: PASS "
         f"({len(ROOT_NAMES)} private roots, {len(WITNESSES)} codegen witnesses)"
     )
-    print(f"report: {REPORT.relative_to(ROOT)}")
+    print(f"report: {REPORT}")
     return 0
 
 

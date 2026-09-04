@@ -4,11 +4,13 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/subproc.c:19-88`
-// (`_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, `_mi_meta_rezalloc`,
-// `_mi_meta_free`, and `_mi_meta_is_meta_page`) with bootstrap ordering from
-// `src/init.c:15-145,184-208`, plus `src/arena.c:674-723,1613-1673` for the
-// typed non-main `mi_arena_pages_t` metadata image. The detached owner uses
+// Source map: pinned mimalloc v3.5.0 `src/subproc.c:19-81`
+// (`_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, `_mi_meta_rezalloc`, the
+// selected Malloc branch of `_mi_meta_free`) with bootstrap ordering from
+// `src/init.c:15-145,184-208`, plus `src/arena.c:1433-1490` for selected
+// regular-OS release and the separate typed `MI_MEM_ARENA` identity-gated
+// release witness in `ArenaSliceClaim`, and `src/arena.c:674-723,1613-1673`
+// for the typed non-main `mi_arena_pages_t` metadata image. The detached owner uses
 // the already-portioned `src/arena.c`/`src/page-map.c`/`src/page.c` ordinary
 // page lifecycle rather than a bespoke metadata allocator.
 
@@ -37,7 +39,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::mem::{MaybeUninit, align_of, size_of};
 use core::pin::Pin;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 use crabc_core::Errno;
 
@@ -50,7 +52,7 @@ use crate::compiler_tls::DynamicThreadLocalBacking;
 use crate::config::{ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MIN_SIZE, MAX_VABITS};
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MapAccess, Mapping, MemoryConfig};
-use crate::page_map::PageMap;
+use crate::page_map::{PageMap, PageMapInitializationError};
 use crate::single_thread::{FreeError, SingleThreadAllocator};
 use crate::size_class;
 use crate::types::{
@@ -60,8 +62,13 @@ use crate::types::{
 use crate::subproc::MainSubprocess;
 
 const COLD: u8 = 0;
-const READY: u8 = 1;
-const FAILED: u8 = 2;
+/// The process-static detached metadata image names one immutable source
+/// subprocess/configuration tuple but has not taken a first backing map.
+const BOUND: u8 = 1;
+/// The detached image has its bounded private backing and may service metadata
+/// allocation/free operations.
+const READY: u8 = 2;
+const FAILED: u8 = 3;
 
 const ALLOCATION_LIVE: u8 = 0;
 const ALLOCATION_MOVING: u8 = 1;
@@ -114,17 +121,28 @@ pub(crate) enum MetaError {
     /// The private futex operation itself failed unexpectedly.
     Lock(Errno),
     /// The supplied immutable OS-memory observations differ from the values
-    /// that created the process-lived metadata arena and page map.
+    /// that bound this process-lived detached metadata image.
     ConfigurationMismatch,
     /// This metadata owner was initialized for a different bounded
     /// process-main identity. One owner may not silently serve two
     /// subprocesses in this slice.
     SubprocessMismatch,
+    /// The source process has not yet published its detached `theap_meta`
+    /// identity. Rust refuses the metadata route before it enters the private
+    /// lock; this is a safety strengthening of the pinned C non-null
+    /// assertion.
+    TheapMetaUnpublished,
+    /// The source process's one-way `theap_meta` identity did not name this
+    /// allocator's exact detached static Theap. Rust refuses to take the
+    /// metadata lock or create backing through an unselected image; this is a
+    /// safety strengthening of the pinned C non-null assertion.
+    TheapMetaMismatch,
     /// A prior initialization cleanup could not release a partially owned
     /// mapping, so retrying would overwrite live process state.
     InitializationRetained,
     /// Direct OS/page-map/arena bootstrap could not complete but left no
-    /// published metadata owner. A later call may retry.
+    /// published private metadata backing. The detached-Theap identity remains
+    /// bound, and a later demand may retry that backing path.
     InitializationFailed,
     /// The source allocation route returned null for this request.
     AllocationUnavailable,
@@ -791,6 +809,117 @@ impl<'owner> MetaAllocation<'owner> {
     }
 }
 
+/// A selected owned branch of source metadata release.
+///
+/// This deliberately covers only the source `MI_MEM_MALLOC` branch and the
+/// regular anonymous-OS release shape reached through `_mi_arenas_free`.  It
+/// is constructed from an already-owned capability, never from a raw pointer
+/// and copied [`MemoryId`]. The regular-OS form is currently a stand-alone
+/// retry witness, not a metadata caller: pinned `_mi_meta_zalloc` forms
+/// `MI_MEM_MALLOC`, while a real `_mi_arenas_free` OS owner needs the broader
+/// memory-ID/subprocess contract that this value intentionally does not hold.
+/// A source `needs_no_free` branch creates no value: it has no release
+/// authority to transfer. This enum deliberately does not carry arena
+/// release: the separate
+/// [`crate::arena::ArenaSliceClaim::release_for_subprocess`] now proves one
+/// typed arena claim and its source registry/subprocess identity gate without
+/// pretending to be a general metadata dispatcher.
+///
+/// Consequently this is not a general `_mi_meta_free` dispatcher.  It proves
+/// only that the two represented owners cannot select a release algorithm by
+/// forging or misinterpreting provenance bits.
+#[must_use = "selected metadata release owners must be released or retained explicitly"]
+pub(crate) enum MetaRelease {
+    Malloc(MetaAllocation<'static>),
+    RegularOs(Mapping),
+}
+
+/// One failed selected metadata release.
+///
+/// An eligible exact-owner Malloc entry-acquisition failure before its live
+/// capability is claimed leaves that capability retryable. This is limited to
+/// [`MetaError::InvalidEntryThread`], [`MetaError::RecursiveEntry`], and
+/// [`MetaError::Lock`]: no local allocator mutation has begun. Once the
+/// capability is claimed, local free may already have changed page or queue
+/// state before it reports [`MetaError::Free`]; that rejected capability is
+/// terminal and remains only for diagnosis. A regular OS mapping, in contrast,
+/// remains live when [`Mapping::unmap`] reports a kernel error, so its exact
+/// owner is returned for an explicit retry.
+pub(crate) enum MetaReleaseFailure {
+    /// Entering the exact owner's backing lock failed before this Malloc
+    /// capability changed state, so the caller may retry this exact value.
+    MallocRetryable {
+        error: MetaError,
+        allocation: MetaAllocation<'static>,
+    },
+    /// The Malloc capability was claimed before its failure and cannot be
+    /// retried, even though it is retained for diagnosis.
+    MallocTerminal {
+        error: MetaError,
+        allocation: MetaAllocation<'static>,
+    },
+    RegularOs {
+        error: Errno,
+        mapping: Mapping,
+    },
+}
+
+impl MetaRelease {
+    /// Releases the exact owner carried by this selected branch.
+    ///
+    /// The Malloc branch recovers only the private, process-lived owner
+    /// recorded when the capability was created; it never lets a caller
+    /// nominate a different metadata allocator. An entry failure before it
+    /// claims the Malloc capability returns that live exact value for retry;
+    /// a failure after the claim is terminal as documented on
+    /// [`MetaReleaseFailure`]. The regular OS branch retains the mapping on a
+    /// failed kernel unmap, so its failure returns that exact mapping for
+    /// explicit retry.
+    pub(crate) fn release(self) -> Result<(), MetaReleaseFailure> {
+        match self {
+            Self::Malloc(mut allocation) => {
+                // SAFETY: `MetaAllocation::new` records only a pinned,
+                // process-lived `MetaAllocator`; its lifetime parameter is
+                // `static` for this release boundary.  The capability keeps
+                // that owner identity exact and does not form a mutable alias.
+                let owner = unsafe { Pin::new_unchecked(allocation.owner.as_ref()) };
+                match owner.release_selected_malloc(&mut allocation) {
+                    Ok(()) => Ok(()),
+                    Err(
+                        error @ (MetaError::InvalidEntryThread
+                        | MetaError::RecursiveEntry
+                        | MetaError::Lock(_)),
+                    ) => {
+                        debug_assert!(
+                            allocation.is_live(),
+                            "an entry failure must preserve its exact Malloc capability"
+                        );
+                        Err(MetaReleaseFailure::MallocRetryable { error, allocation })
+                    }
+                    Err(error) => {
+                        debug_assert!(
+                            !allocation.is_live(),
+                            "only an entry failure may retain a live exact-owner Malloc capability"
+                        );
+                        // `MetaRelease` reconstructs the owner only from this
+                        // capability, so a live non-entry error is unreachable
+                        // without an internal invariant violation. Fail closed
+                        // rather than exposing an unclassified retry token.
+                        if allocation.is_live() {
+                            allocation.reject();
+                        }
+                        Err(MetaReleaseFailure::MallocTerminal { error, allocation })
+                    }
+                }
+            }
+            Self::RegularOs(mut mapping) => match mapping.unmap() {
+                Ok(()) => Ok(()),
+                Err(error) => Err(MetaReleaseFailure::RegularOs { error, mapping }),
+            },
+        }
+    }
+}
+
 /// One statically bootstrappable, process-lived metadata owner.
 ///
 /// `Self` is `!Unpin`: after initialization, `SingleThreadAllocator` contains
@@ -806,31 +935,71 @@ pub(crate) struct MetaAllocator {
     config: UnsafeCell<MaybeUninit<MemoryConfig>>,
     mapping: UnsafeCell<MaybeUninit<Mapping>>,
     page_map: UnsafeCell<MaybeUninit<PageMap>>,
+    /// The exact private PageMap mapping retained if page-map bootstrap's
+    /// cleanup release fails. This is not the later detached arena `mapping`:
+    /// no PageMap or arena was formed on this branch, so it needs its own
+    /// final owner before the metadata allocator enters FAILED.
+    retained_page_map_initialization_mapping: UnsafeCell<MaybeUninit<Mapping>>,
+    has_retained_page_map_initialization_mapping: AtomicBool,
     bootstrap: UnsafeCell<MaybeUninit<ExclusiveTheapBootstrap>>,
     allocator: UnsafeCell<MaybeUninit<SingleThreadAllocator<'static, 'static, 'static>>>,
     subprocess: AtomicPtr<MainSubprocess>,
+    /// The exact detached static Theap address successfully published through
+    /// `subprocess->theap_meta`. This is identity-only: the allocator never
+    /// dereferences it through this slot. Keeping it separate from the
+    /// mutable bootstrap lets a later `_mi_meta_zalloc` precondition compare
+    /// stable atomics before taking the metadata lock.
+    detached_metadata_theap: AtomicPtr<Theap>,
+    /// Each leaked metadata test fixture owns its own source-main identity.
+    /// Production has no alternate default: a null test pointer selects the
+    /// one process-global `MainSubprocess` below.
+    #[cfg(test)]
+    test_default_subprocess: AtomicPtr<MainSubprocess>,
     registry: ArenaRegistry,
     #[cfg(test)]
     fail_next_direct_zeroed_size: AtomicUsize,
     #[cfg(test)]
+    fail_next_rezalloc_size: AtomicUsize,
+    #[cfg(test)]
     fail_next_aligned_zeroed_size: AtomicUsize,
+    #[cfg(test)]
+    test_entry_attempt_count: AtomicUsize,
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    test_live_allocation_count: AtomicUsize,
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    test_allocation_high_water: AtomicUsize,
     _pin: PhantomPinned,
 }
 
-/// An opaque readiness witness for the detached source metadata route.
+/// Read-only test audit of caller-visible metadata capabilities.
+///
+/// This deliberately counts only live [`MetaAllocation`] capabilities, not
+/// the detached allocator's own permanent bootstrap mapping or a raw block
+/// inside its reusable page. It lets lifecycle regressions prove that repeated
+/// TLD/Theap construction returns every explicit metadata capability and that
+/// the maximum concurrent capability count plateaus after warmup.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MetaAllocationAudit {
+    pub(crate) live_capability_count: usize,
+    pub(crate) high_water_capability_count: usize,
+}
+
+/// An opaque binding witness for the detached source metadata route.
 ///
 /// It intentionally exposes neither the metadata PageMap nor its private
 /// arena/registry. `mi_process_theap_meta` is initialized while forming the
-/// source main Heap, but it is not the process-global PageMap or a candidate
+/// source main Heap, before the source process-global PageMap and before any
+/// first metadata allocation. It is not a candidate
 /// `ProcessPageArenaLease` backing.
 #[derive(Clone, Copy)]
-pub(crate) struct MetaAllocatorReady {
+pub(crate) struct MetaAllocatorBound {
     allocator: Pin<&'static MetaAllocator>,
     config: MemoryConfig,
     subprocess: &'static MainSubprocess,
 }
 
-impl MetaAllocatorReady {
+impl MetaAllocatorBound {
     #[inline]
     pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
         self.subprocess
@@ -863,14 +1032,27 @@ impl MetaAllocator {
             config: UnsafeCell::new(MaybeUninit::uninit()),
             mapping: UnsafeCell::new(MaybeUninit::uninit()),
             page_map: UnsafeCell::new(MaybeUninit::uninit()),
+            retained_page_map_initialization_mapping: UnsafeCell::new(MaybeUninit::uninit()),
+            has_retained_page_map_initialization_mapping: AtomicBool::new(false),
             bootstrap: UnsafeCell::new(MaybeUninit::uninit()),
             allocator: UnsafeCell::new(MaybeUninit::uninit()),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
+            detached_metadata_theap: AtomicPtr::new(core::ptr::null_mut()),
+            #[cfg(test)]
+            test_default_subprocess: AtomicPtr::new(core::ptr::null_mut()),
             registry: ArenaRegistry::new(core::ptr::null_mut()),
             #[cfg(test)]
             fail_next_direct_zeroed_size: AtomicUsize::new(0),
             #[cfg(test)]
+            fail_next_rezalloc_size: AtomicUsize::new(0),
+            #[cfg(test)]
             fail_next_aligned_zeroed_size: AtomicUsize::new(0),
+            #[cfg(test)]
+            test_entry_attempt_count: AtomicUsize::new(0),
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
+            test_live_allocation_count: AtomicUsize::new(0),
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
+            test_allocation_high_water: AtomicUsize::new(0),
             _pin: PhantomPinned,
         }
     }
@@ -884,6 +1066,30 @@ impl MetaAllocator {
         unsafe { Pin::new_unchecked(&PROCESS_METADATA_ALLOCATOR) }
     }
 
+    #[cfg(not(test))]
+    #[inline]
+    fn default_subprocess(self: Pin<&'static Self>) -> &'static MainSubprocess {
+        let _ = self;
+        MainSubprocess::global()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn default_subprocess(self: Pin<&'static Self>) -> &'static MainSubprocess {
+        let pointer = self
+            .get_ref()
+            .test_default_subprocess
+            .load(Ordering::Acquire);
+        let Some(pointer) = NonNull::new(pointer) else {
+            return MainSubprocess::global();
+        };
+        // SAFETY: `test_static_owner` stores exactly one separately leaked
+        // subprocess before returning this metadata fixture and never
+        // replaces it. The production singleton retains the null sentinel and
+        // takes the process-global branch above instead.
+        unsafe { pointer.as_ref() }
+    }
+
     /// Builds an isolated process-lifetime owner for tests that must inject a
     /// first-allocation failure without depending on singleton test ordering.
     /// Production lifecycle code must use [`Self::global`] exclusively.
@@ -891,35 +1097,114 @@ impl MetaAllocator {
     pub(crate) fn test_static_owner() -> Pin<&'static Self> {
         let owner: &'static MetaAllocator =
             std::boxed::Box::leak(std::boxed::Box::new(MetaAllocator::new()));
+        let subprocess = MainSubprocess::test_static_owner();
+        owner
+            .test_default_subprocess
+            .store(subprocess.as_ptr(), Ordering::Release);
         // SAFETY: the deliberately leaked test fixture has a process-lifetime
-        // address, matching the static-reference requirement of its detached
-        // page-map/bootstrap/allocator slots.
+        // address, and its test-only default subprocess is separately leaked
+        // before this owner is returned. That matches the static-reference
+        // requirement of its detached page-map/bootstrap/allocator slots
+        // without sharing another fixture's one-way source publication slot.
         unsafe { Pin::new_unchecked(owner) }
     }
 
-    /// Observes only whether this detached metadata owner reached READY for
-    /// one exact process tuple. It deliberately exposes no allocator/map
-    /// capability and is used to prove process-startup ordering in isolated
-    /// regressions.
+    /// Returns this test fixture's isolated source-main identity. It exposes
+    /// no metadata or Theap capability and exists only so an explicit
+    /// test-only caller can keep its allocator/subprocess pair coherent.
     #[cfg(test)]
-    pub(crate) fn test_is_ready_for(
+    #[inline]
+    pub(crate) fn test_default_subprocess(
+        self: Pin<&'static Self>,
+    ) -> &'static MainSubprocess {
+        self.default_subprocess()
+    }
+
+    /// Observes only whether this detached metadata owner bound one exact
+    /// process tuple. It deliberately exposes no allocator/map capability and
+    /// is used to prove process-startup ordering in isolated regressions.
+    #[cfg(test)]
+    pub(crate) fn test_is_bound_for(
         self: Pin<&'static Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> bool {
+        let Ok(entry) = self.enter() else {
+            return false;
+        };
         let this = self.get_ref();
-        if this.status.load(Ordering::Acquire) != READY {
+        if !matches!(entry.status(), BOUND | READY) {
             return false;
         }
-        // SAFETY: READY Release-publishes this immutable final slot before
-        // the Acquire state observation above.
+        // SAFETY: BOUND Release-publishes this immutable final slot before the
+        // held private lock observes it. READY retains that same tuple. The
+        // same lock excludes the mutable detached session from racing this
+        // bootstrap-image observation.
         let stored_config = unsafe { *(*this.config.get()).assume_init_ref() };
         stored_config == config
             && core::ptr::eq(this.subprocess.load(Ordering::Acquire), subprocess.as_ptr())
+            && self
+                .validate_bound_detached_metadata_theap(subprocess)
+                .is_ok()
     }
 
-    /// Returns the final private PageMap slot address after metadata readiness
-    /// without turning it into a usable map reference. This proves the
+    /// Test-only observation of the PageMap bootstrap mapping retained before
+    /// this metadata allocator formed any PageMap or arena owner.
+    #[cfg(test)]
+    pub(crate) fn test_has_retained_page_map_initialization_mapping(
+        self: Pin<&'static Self>,
+    ) -> bool {
+        self.get_ref()
+            .has_retained_page_map_initialization_mapping
+            .load(Ordering::Acquire)
+    }
+
+    /// Releases the exact retained bootstrap mapping after a test removes its
+    /// injected cleanup fault. A failed retry puts the same live owner back.
+    #[cfg(test)]
+    pub(crate) fn test_release_retained_page_map_initialization_mapping(
+        self: Pin<&'static Self>,
+    ) -> Result<(), Errno> {
+        let this = self.get_ref();
+        let guard = this.lock.lock()?;
+        if !this
+            .has_retained_page_map_initialization_mapping
+            .load(Ordering::Acquire)
+        {
+            return match guard.unlock() {
+                Ok(()) => Err(Errno::INVAL),
+                Err(error) => Err(error),
+            };
+        }
+        // SAFETY: this private lock serializes retained-slot access, and the
+        // Acquire flag follows the initialization path's final-slot write.
+        let mut mapping = unsafe {
+            (*this.retained_page_map_initialization_mapping.get()).assume_init_read()
+        };
+        let release = match mapping.unmap() {
+            Ok(()) => {
+                this.has_retained_page_map_initialization_mapping
+                    .store(false, Ordering::Release);
+                Ok(())
+            }
+            Err(error) => {
+                // SAFETY: failed `unmap` preserves this exact Mapping, and
+                // the private lock still excludes another retained owner.
+                unsafe { this.write_retained_page_map_initialization_mapping(mapping) };
+                Err(error)
+            }
+        };
+        let unlock = guard.unlock();
+        match (release, unlock) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Ok(()),
+        }
+    }
+
+    /// Returns the final private PageMap slot address after first metadata
+    /// backing readiness without turning it into a usable map reference. This
+    /// proves process startup did not take that backing and that the
     /// process-global map stays a distinct owner.
     #[cfg(test)]
     pub(crate) fn test_private_page_map_address(self: Pin<&'static Self>) -> Option<usize> {
@@ -928,19 +1213,61 @@ impl MetaAllocator {
             .then(|| this.page_map.get().addr())
     }
 
-    /// Ensures the detached metadata Theap/image is ready for one selected
-    /// source main subprocess without allocating a caller-visible metadata
-    /// block. This is the source `mi_process_theap_meta` ordering seam used
-    /// by process initialization: it remains a separate private map/arena
-    /// owner and never publishes through `ProcessPageMapStorage`.
+    /// Returns the capability-level metadata lifetime audit used by bounded
+    /// worker-churn regressions. The atomics are diagnostic only: they grant
+    /// no dereference, allocation, or release authority.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    #[inline]
+    pub(crate) fn test_allocation_audit(self: Pin<&'static Self>) -> MetaAllocationAudit {
+        let this = self.get_ref();
+        MetaAllocationAudit {
+            live_capability_count: this.test_live_allocation_count.load(Ordering::Acquire),
+            high_water_capability_count: this.test_allocation_high_water.load(Ordering::Acquire),
+        }
+    }
+
+    /// Returns how often a test reached the metadata private-lock entry
+    /// boundary. This exposes no lock capability and lets the source-shaped
+    /// `theap_meta` regression prove rejection occurs before C's lock site.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_entry_attempt_count(self: Pin<&'static Self>) -> usize {
+        self.get_ref().test_entry_attempt_count.load(Ordering::Acquire)
+    }
+
+    /// Runs one test operation while this allocator's backing entry is held.
+    ///
+    /// This keeps the private entry guard unobservable while letting a
+    /// caller-level regression exercise the same-thread rejection that occurs
+    /// before an exact-owner Malloc release can claim its capability. It is
+    /// deliberately test-only: production callers must never receive or
+    /// manufacture a metadata-entry capability.
+    #[cfg(test)]
+    pub(crate) fn test_with_held_backing_entry<R>(
+        self: Pin<&'static Self>,
+        operation: impl FnOnce() -> R,
+    ) -> Result<R, MetaError> {
+        let entry = self.enter()?;
+        let result = operation();
+        drop(entry);
+        Ok(result)
+    }
+
+    /// Binds the detached metadata Theap/image for one selected source main
+    /// subprocess without allocating a caller-visible metadata block or its
+    /// private backing. This is the source `mi_process_theap_meta` ordering
+    /// seam used by process initialization: it remains a separate private
+    /// map/arena owner, never publishes through `ProcessPageMapStorage`, and
+    /// takes its first backing only when a metadata caller actually requests
+    /// one.
     pub(crate) fn prepare_for_main_subprocess(
         self: Pin<&'static Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
-    ) -> Result<MetaAllocatorReady, MetaError> {
+    ) -> Result<MetaAllocatorBound, MetaError> {
         let mut entry = self.enter()?;
-        entry.ensure_ready(config, subprocess)?;
-        Ok(MetaAllocatorReady {
+        entry.ensure_bound(config, subprocess)?;
+        Ok(MetaAllocatorBound {
             allocator: self,
             config,
             subprocess,
@@ -953,7 +1280,7 @@ impl MetaAllocator {
         config: MemoryConfig,
         size: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
-        self.zalloc_for_main_subprocess(config, MainSubprocess::global(), size)
+        self.zalloc_for_main_subprocess(config, self.default_subprocess(), size)
     }
 
     /// Allocates zeroed metadata for one already selected process-main
@@ -966,7 +1293,8 @@ impl MetaAllocator {
         subprocess: &'static MainSubprocess,
         size: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
-        let mut entry = self.enter()?;
+        self.require_published_detached_metadata_theap(subprocess)?;
+        let mut entry = self.enter_for_main_subprocess(subprocess)?;
         entry.ensure_ready(config, subprocess)?;
         #[cfg(test)]
         if size != 0
@@ -981,12 +1309,15 @@ impl MetaAllocator {
             .allocator()
             .allocate_zeroed(size)
             .ok_or(MetaError::AllocationUnavailable)?;
-        Ok(MetaAllocation::new(
+        let allocation = MetaAllocation::new(
             self,
             pointer,
             size,
             MetaAllocationOrigin::DirectZeroed,
-        ))
+        );
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
+        self.get_ref().test_note_allocation_created();
+        Ok(allocation)
     }
 
     /// Makes one test-only direct-zeroed request of exactly `size` fail after
@@ -998,6 +1329,17 @@ impl MetaAllocator {
     pub(crate) fn test_fail_next_direct_zeroed_size(&self, size: usize) {
         assert_ne!(size, 0);
         self.fail_next_direct_zeroed_size.store(size, Ordering::Release);
+    }
+
+    /// Makes one exact `_mi_meta_rezalloc` replacement request fail after its
+    /// old capability has entered the source-shaped moving state. The failure
+    /// path must restore that old capability before it returns; this is a
+    /// narrow test seam, not a production metadata fault policy.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_fail_next_rezalloc_size(&self, size: usize) {
+        assert_ne!(size, 0);
+        self.fail_next_rezalloc_size.store(size, Ordering::Release);
     }
 
     /// Makes one exact aligned-zeroed metadata request fail in an isolated
@@ -1017,12 +1359,7 @@ impl MetaAllocator {
         size: usize,
         alignment: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
-        self.zalloc_aligned_for_main_subprocess(
-            config,
-            MainSubprocess::global(),
-            size,
-            alignment,
-        )
+        self.zalloc_aligned_for_main_subprocess(config, self.default_subprocess(), size, alignment)
     }
 
     /// Allocates zeroed aligned metadata for the selected process-main
@@ -1039,7 +1376,8 @@ impl MetaAllocator {
         if !size_class::alignment_is_valid(alignment) {
             return Err(MetaError::InvalidAlignment);
         }
-        let mut entry = self.enter()?;
+        self.require_published_detached_metadata_theap(subprocess)?;
+        let mut entry = self.enter_for_main_subprocess(subprocess)?;
         entry.ensure_ready(config, subprocess)?;
         #[cfg(test)]
         if size != 0
@@ -1054,12 +1392,15 @@ impl MetaAllocator {
             .allocator()
             .allocate_aligned_zeroed(size, alignment)
             .ok_or(MetaError::AllocationUnavailable)?;
-        Ok(MetaAllocation::new(
+        let allocation = MetaAllocation::new(
             self,
             pointer,
             size,
             MetaAllocationOrigin::AlignedZeroed,
-        ))
+        );
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
+        self.get_ref().test_note_allocation_created();
+        Ok(allocation)
     }
 
     /// Replaces a metadata allocation with a zeroed one.
@@ -1075,7 +1416,7 @@ impl MetaAllocator {
         old: Option<&mut MetaAllocation<'static>>,
         new_size: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
-        self.rezalloc_for_main_subprocess(config, MainSubprocess::global(), old, new_size)
+        self.rezalloc_for_main_subprocess(config, self.default_subprocess(), old, new_size)
     }
 
     /// Replaces one metadata allocation while retaining the already selected
@@ -1096,9 +1437,10 @@ impl MetaAllocator {
         if !old.belongs_to(self) {
             return Err(MetaError::ForeignOwner);
         }
+        self.require_published_detached_metadata_theap(subprocess)?;
 
         let (replacement, copy_size) = {
-            let mut entry = self.enter()?;
+            let mut entry = self.enter_for_main_subprocess(subprocess)?;
             entry.ensure_ready(config, subprocess)?;
             if !old.claim(ALLOCATION_LIVE, ALLOCATION_MOVING)
                 || !old.has_consistent_malloc_provenance()
@@ -1113,19 +1455,29 @@ impl MetaAllocator {
                     return Err(MetaError::ReleasedOrStale);
                 }
             };
+            #[cfg(test)]
+            if new_size != 0
+                && self
+                    .fail_next_rezalloc_size
+                    .compare_exchange(new_size, 0, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                old.restore_live();
+                return Err(MetaError::AllocationUnavailable);
+            }
             let Some(pointer) = entry.allocator().allocate_zeroed(new_size) else {
                 old.restore_live();
                 return Err(MetaError::AllocationUnavailable);
             };
-            (
-                MetaAllocation::new(
-                    self,
-                    pointer,
-                    new_size,
-                    MetaAllocationOrigin::Replacement,
-                ),
-                new_size.min(old_usable),
-            )
+            let replacement = MetaAllocation::new(
+                self,
+                pointer,
+                new_size,
+                MetaAllocationOrigin::Replacement,
+            );
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
+            self.get_ref().test_note_allocation_created();
+            (replacement, new_size.min(old_usable))
         };
 
         // SAFETY: `old` is in MOVING state under its exclusive mutable
@@ -1148,15 +1500,30 @@ impl MetaAllocator {
             // unpublishable allocation; both operations remain serialized.
             let mut replacement = replacement;
             replacement.state.store(ALLOCATION_RELEASING, Ordering::Release);
-            let _cleanup = self.release_claimed(&mut replacement);
+            let cleanup = self.release_claimed(&mut replacement);
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
+            if cleanup.is_ok() {
+                self.get_ref().test_note_allocation_released();
+            }
+            #[cfg(not(any(test, feature = "native-runtime-test-audit")))]
+            let _ = cleanup;
             old.reject();
             return Err(error);
         }
         old.release();
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
+        self.get_ref().test_note_allocation_released();
         Ok(replacement)
     }
 
     /// Releases one metadata allocation under the detached owner lock.
+    ///
+    /// Existing direct lifecycle owners treat an admitted exact-owner failure
+    /// as terminal, so this general route retains its terminal-on-error
+    /// capability contract. A foreign-owner rejection remains non-consuming.
+    /// The selected [`MetaRelease::Malloc`] boundary uses
+    /// [`Self::release_selected_malloc`] when it must explicitly retain a
+    /// pre-entry failure for retry.
     pub(crate) fn free(
         self: Pin<&'static Self>,
         allocation: &mut MetaAllocation<'static>,
@@ -1173,6 +1540,8 @@ impl MetaAllocator {
         match self.release_claimed(allocation) {
             Ok(()) => {
                 allocation.release();
+                #[cfg(any(test, feature = "native-runtime-test-audit"))]
+                self.get_ref().test_note_allocation_released();
                 Ok(())
             }
             Err(error) => {
@@ -1182,26 +1551,102 @@ impl MetaAllocator {
         }
     }
 
-    /// Implements the source `_mi_meta_is_meta_page` identity check.
+    /// Releases one selected exact-owner Malloc capability for
+    /// [`MetaRelease`].
     ///
-    /// Like the source, this is only a raw comparison of the readable
-    /// `page->theap` field against the process-stable metadata-theap address.
-    /// It neither dereferences that target nor proves an abandoned page's
-    /// lifetime; callers retain the normal readable-page precondition.
-    pub(crate) fn is_metadata_page(
+    /// Unlike [`Self::free`], this narrow boundary can return the owned
+    /// capability to its caller. It therefore establishes the Rust backing
+    /// entry before changing LIVE to RELEASING, so an eligible entry failure
+    /// leaves the exact value retryable. Pinned `_mi_meta_free`'s
+    /// `MI_MEM_MALLOC` branch does not take `theap_meta_lock`; Rust serializes
+    /// this selected local free with its separate backing lock only.
+    fn release_selected_malloc(
         self: Pin<&'static Self>,
-        page: &Page,
-    ) -> Result<bool, MetaError> {
-        let entry = self.enter()?;
-        if entry.status() != READY {
-            return Ok(false);
+        allocation: &mut MetaAllocation<'static>,
+    ) -> Result<(), MetaError> {
+        if !allocation.belongs_to(self) {
+            return Err(MetaError::ForeignOwner);
         }
-        Ok(page.theap() == entry.allocator_ref().theap_identity())
+        if !allocation.is_live() || !allocation.has_consistent_malloc_provenance() {
+            allocation.reject();
+            return Err(MetaError::ReleasedOrStale);
+        }
+        let mut entry = self.enter()?;
+        if !allocation.claim(ALLOCATION_LIVE, ALLOCATION_RELEASING) {
+            allocation.reject();
+            return Err(MetaError::ReleasedOrStale);
+        }
+        let result = Self::release_claimed_under_entry(&mut entry, allocation);
+        // Match the general free boundary: release the backing lock and
+        // recursion marker before publishing the capability's final state.
+        drop(entry);
+        match result {
+            Ok(()) => {
+                allocation.release();
+                #[cfg(any(test, feature = "native-runtime-test-audit"))]
+                self.get_ref().test_note_allocation_released();
+                Ok(())
+            }
+            Err(error) => {
+                allocation.reject();
+                Err(error)
+            }
+        }
+    }
+
+    /// Enforces the source `_mi_meta_zalloc` precondition before a metadata
+    /// caller can enter its private lock. A cold owner has no published
+    /// source-static image, so only `prepare_for_main_subprocess` may bind and
+    /// publish it. `MetaEntry::ensure_ready` repeats the exact check before it
+    /// can map a first backing page.
+    fn require_published_detached_metadata_theap(
+        self: Pin<&'static Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        match self.get_ref().status.load(Ordering::Acquire) {
+            COLD => Err(MetaError::TheapMetaUnpublished),
+            BOUND | READY => {
+                if !core::ptr::eq(
+                    self.get_ref().subprocess.load(Ordering::Acquire),
+                    subprocess.as_ptr(),
+                ) {
+                    return Err(MetaError::SubprocessMismatch);
+                }
+                self.validate_bound_detached_metadata_theap(subprocess)
+            }
+            FAILED | _ => Err(MetaError::InitializationRetained),
+        }
+    }
+
+    /// Checks that a BOUND or READY metadata owner is still the exact Theap
+    /// identity published through its selected source subprocess.
+    ///
+    /// The caller observed BOUND or READY with Acquire. Those states
+    /// Release-publish this immutable address after the source subprocess
+    /// publication. This method only compares stable atomics; it never
+    /// reborrows the mutable bootstrap or dereferences the subprocess slot.
+    fn validate_bound_detached_metadata_theap(
+        self: Pin<&'static Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        let this = self.get_ref();
+        let Some(identity) = NonNull::new(
+            this.detached_metadata_theap.load(Ordering::Acquire),
+        ) else {
+            return Err(MetaError::TheapMetaUnpublished);
+        };
+        if subprocess.matches_published_detached_metadata_theap(identity) {
+            Ok(())
+        } else {
+            Err(MetaError::TheapMetaMismatch)
+        }
     }
 
     fn enter(self: Pin<&'static Self>) -> Result<MetaEntry, MetaError> {
         let thread = current_entry_thread()?;
         let this = self.get_ref();
+        #[cfg(test)]
+        this.test_entry_attempt_count.fetch_add(1, Ordering::Relaxed);
         if this.active_entry_thread.load(Ordering::Acquire) == thread {
             return Err(MetaError::RecursiveEntry);
         }
@@ -1214,8 +1659,25 @@ impl MetaAllocator {
         Ok(MetaEntry {
             owner: self,
             entry_thread: thread,
+            theap_meta_guard: None,
             guard: Some(guard),
         })
+    }
+
+    /// Enters the selected direct metadata-allocation phase after the source
+    /// `theap_meta` identity preflight. The Rust backing lock is acquired
+    /// first so its existing same-thread marker covers a wait on the source
+    /// nonrecursive lock; the source guard then nests inside it and is
+    /// released first. Bootstrap and exact-owner free keep using only the
+    /// backing lock because neither is a selected source allocation phase.
+    fn enter_for_main_subprocess(
+        self: Pin<&'static Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<MetaEntry, MetaError> {
+        let mut entry = self.enter()?;
+        let theap_meta_guard = subprocess.lock_metadata_theap().map_err(MetaError::Lock)?;
+        entry.theap_meta_guard = Some(theap_meta_guard);
+        Ok(entry)
     }
 
     fn release_claimed(
@@ -1223,6 +1685,17 @@ impl MetaAllocator {
         allocation: &mut MetaAllocation<'static>,
     ) -> Result<(), MetaError> {
         let mut entry = self.enter()?;
+        Self::release_claimed_under_entry(&mut entry, allocation)
+    }
+
+    /// Runs the selected local free while the caller already owns the backing
+    /// metadata entry. The capability has been claimed by that caller; this
+    /// helper deliberately neither acquires the source `theap_meta` lock nor
+    /// changes the capability state.
+    fn release_claimed_under_entry(
+        entry: &mut MetaEntry,
+        allocation: &mut MetaAllocation<'static>,
+    ) -> Result<(), MetaError> {
         if entry.status() != READY || !allocation.has_consistent_malloc_provenance() {
             return Err(MetaError::ReleasedOrStale);
         }
@@ -1231,22 +1704,139 @@ impl MetaAllocator {
         unsafe { entry.allocator().free(allocation.pointer) }.map_err(MetaError::Free)
     }
 
-    fn initialize(
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    fn test_note_allocation_created(&self) {
+        let live = self
+            .test_live_allocation_count
+            .fetch_add(1, Ordering::AcqRel)
+            .checked_add(1)
+            .expect("the test metadata capability count does not overflow");
+        let mut high_water = self.test_allocation_high_water.load(Ordering::Acquire);
+        while live > high_water {
+            match self.test_allocation_high_water.compare_exchange_weak(
+                high_water,
+                live,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(observed) => high_water = observed,
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    fn test_note_allocation_released(&self) {
+        let previous = self
+            .test_live_allocation_count
+            .fetch_sub(1, Ordering::AcqRel);
+        assert_ne!(
+            previous, 0,
+            "a successful metadata release must own one live test capability"
+        );
+    }
+
+    /// Forms the source-static detached metadata Theap image without mapping a
+    /// private arena or PageMap.
+    ///
+    /// The caller holds `lock`, COLD excludes every projection, and the
+    /// bootstrap slot has never been initialized. Pinned C performs this
+    /// identity setup in `mi_heap_main_init_once`; its first `_mi_meta_zalloc`
+    /// later obtains ordinary backing on demand.
+    fn bind_empty_detached_identity(
+        self: Pin<&'static Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        let this = self.get_ref();
+        debug_assert_eq!(this.status.load(Ordering::Acquire), COLD);
+
+        // SAFETY: COLD and the held private lock make this the one write to
+        // the process-static, pinned bootstrap slot before any session may
+        // borrow its self-referential fields.
+        unsafe { (*this.bootstrap.get()).write(ExclusiveTheapBootstrap::new()) };
+        let mut bootstrap = unsafe {
+            Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut())
+        };
+        if bootstrap
+            .as_mut()
+            .bind_detached_for_main_subprocess(subprocess)
+            .is_err()
+        {
+            // Binding a valid static detached image cannot normally fail. If
+            // a Rust guard nevertheless rejects it, its final slot may have
+            // been touched; retain rather than overwrite that process state.
+            this.status.store(FAILED, Ordering::Release);
+            return Err(MetaError::InitializationRetained);
+        }
+
+        let Some(identity) = bootstrap
+            .as_ref()
+            .detached_metadata_theap_identity(subprocess)
+        else {
+            // A successful detached bind must expose this exact image before
+            // source `subproc->theap_meta` publication. Retain rather than
+            // inventing a later lazy publication from an incomplete image.
+            this.status.store(FAILED, Ordering::Release);
+            return Err(MetaError::TheapMetaMismatch);
+        };
+        // SAFETY: `bootstrap` names this allocator's pinned process-lifetime
+        // final slot. The identity is never dereferenced through the
+        // subprocess, and COLD plus the held private lock ensure that this is
+        // its sole one-way source publication attempt.
+        if !unsafe { subprocess.publish_detached_metadata_theap(identity) } {
+            // Another static detached image already claimed this source
+            // subprocess. Do not overwrite it or make this partially bound
+            // image retryable under a second process identity.
+            this.status.store(FAILED, Ordering::Release);
+            return Err(MetaError::TheapMetaMismatch);
+        }
+
+        // SAFETY: the immutable tuple is written before BOUND's Release
+        // publication and is never replaced on a clean backing retry. The
+        // exact Theap identity was already one-way published through the
+        // selected source subprocess above, so this independent atomic is a
+        // comparison-only mirror for lock-free precondition checks.
+        unsafe { (*this.config.get()).write(config) };
+        this.subprocess.store(subprocess.as_ptr(), Ordering::Release);
+        this.detached_metadata_theap
+            .store(identity.as_ptr(), Ordering::Release);
+        this.status.store(BOUND, Ordering::Release);
+        Ok(())
+    }
+
+    /// Initializes the bounded Rust backing for an already source-bound
+    /// detached metadata image on its first real metadata request.
+    fn initialize_backing(
         self: Pin<&'static Self>,
         entry: &mut MetaEntry,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
+        debug_assert_eq!(this.status.load(Ordering::Acquire), BOUND);
         let page_map = match PageMap::initialize(config, MAX_VABITS, false) {
             Ok(page_map) => page_map,
-            Err(_) => return Err(MetaError::InitializationFailed),
+            Err(PageMapInitializationError::Failed { .. }) => {
+                return Err(MetaError::InitializationFailed);
+            }
+            Err(PageMapInitializationError::Retained { mapping, .. }) => {
+                // SAFETY: `entry` owns the initialization lock, BOUND exposes
+                // no backing projection, and the private PageMap never reached its
+                // final PageMap slot. Preserve the still-live mapping in its
+                // distinct terminal owner before publishing FAILED.
+                unsafe { this.write_retained_page_map_initialization_mapping(mapping) };
+                this.has_retained_page_map_initialization_mapping
+                    .store(true, Ordering::Release);
+                this.status.store(FAILED, Ordering::Release);
+                return Err(MetaError::InitializationRetained);
+            }
         };
-        // SAFETY: `entry` owns the sole initialization lock and COLD prevents
-        // any reader from projecting this final static slot.
+        // SAFETY: `entry` owns the sole initialization lock and BOUND exposes
+        // no private PageMap projection.
         unsafe { (*this.page_map.get()).write(page_map) };
         // SAFETY: `entry` holds the metadata owner's private initialization
-        // lock, and COLD means no arena was written or published. This is the
+        // lock, and BOUND means no arena was written or published. This is the
         // unique pre-publication transition for the process-long registry
         // identity; no concurrent insert can observe or race this count-zero
         // state.
@@ -1254,7 +1844,7 @@ impl MetaAllocator {
             this.registry
                 .bind_subprocess_before_publication(subprocess.as_ptr())
         } {
-            // A COLD metadata owner can reach this only after a prior failed
+            // A BOUND metadata owner can reach this only after a prior failed
             // initialization bound a different process-main identity. Never
             // construct an arena under a second identity; release the private
             // page map if possible and leave a retained failure otherwise.
@@ -1274,9 +1864,23 @@ impl MetaAllocator {
             MapAccess::Committed,
         ) {
             Ok(mapping) => mapping,
-            Err(_) => return self.cleanup_page_map_after_failed_init(),
+            Err(failure) => match failure.into_mapping() {
+                None => return self.cleanup_page_map_after_failed_init(),
+                Some(mapping) => {
+                    // The aligned-map cleanup failed after this metadata
+                    // owner had already formed its private PageMap. Both
+                    // final slots are now the exact terminal owners; never
+                    // destroy the PageMap and then forget the live arena map.
+                    // SAFETY: `entry` owns initialization, BOUND exposes no
+                    // backing reader, and this mapping slot is still
+                    // uninitialized.
+                    unsafe { (*this.mapping.get()).write(mapping) };
+                    this.status.store(FAILED, Ordering::Release);
+                    return Err(MetaError::InitializationRetained);
+                }
+            },
         };
-        // SAFETY: same COLD/lock proof as the page-map slot above.
+        // SAFETY: same BOUND/lock proof as the page-map slot above.
         unsafe { (*this.mapping.get()).write(mapping) };
         // SAFETY: the preceding in-place write initialized this unique mapping
         // owner and the metadata lock excludes all other projection.
@@ -1315,12 +1919,13 @@ impl MetaAllocator {
             }
         };
 
-        // SAFETY: the static slot is the final address used by the detached
-        // theap's self references. It cannot move because callers hold Pin.
-        unsafe { (*this.bootstrap.get()).write(ExclusiveTheapBootstrap::new()) };
+        // SAFETY: BOUND initialized this final pinned slot before it
+        // Release-published the source detached Theap identity. The private
+        // lock excludes a second session while this first backing becomes
+        // ready.
         let bootstrap = unsafe { Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut()) };
         let page_map = unsafe { (&mut *this.page_map.get()).assume_init_mut() };
-        let allocator = match SingleThreadAllocator::activate_detached(
+        let allocator = match SingleThreadAllocator::activate_bound_detached(
             bootstrap,
             subprocess,
             arena,
@@ -1337,18 +1942,29 @@ impl MetaAllocator {
         // SAFETY: every reference captured by `allocator` names one prior
         // final static slot. No operation can observe it before READY.
         unsafe { (*this.allocator.get()).write(allocator) };
-        unsafe { (*this.config.get()).write(config) };
-        this.subprocess.store(subprocess.as_ptr(), Ordering::Release);
         this.status.store(READY, Ordering::Release);
         let _ = entry;
         Ok(())
     }
 
+    /// Writes the exact private PageMap bootstrap mapping into the metadata
+    /// owner's terminal slot.
+    ///
+    /// # Safety
+    ///
+    /// `initialize_backing` still owns the metadata private lock, status is
+    /// BOUND, no private PageMap or arena was published, and this final slot
+    /// is uninitialized.
+    #[inline]
+    unsafe fn write_retained_page_map_initialization_mapping(&self, mapping: Mapping) {
+        unsafe { (*self.retained_page_map_initialization_mapping.get()).write(mapping) };
+    }
+
     fn cleanup_page_map_after_failed_init(self: Pin<&'static Self>) -> Result<(), MetaError> {
         let this = self.get_ref();
-        // SAFETY: the unshared page map was written in COLD state and no root
-        // or allocator can reach it. Successful destroy releases all direct
-        // mappings before a retry may overwrite this inert slot.
+        // SAFETY: the unshared page map was written while BOUND exposed no
+        // backing projection. Successful destroy releases all direct mappings
+        // before the same bound image retries its first backing request.
         match unsafe { (&mut *this.page_map.get()).assume_init_mut().destroy() } {
             Ok(()) => Err(MetaError::InitializationFailed),
             Err(_) => {
@@ -1363,7 +1979,7 @@ impl MetaAllocator {
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
         // SAFETY: failure happened before the arena was registry-published;
-        // the mapping is private to this COLD initialization attempt.
+        // the mapping is private to this BOUND backing attempt.
         let mapping_result = unsafe { (&mut *this.mapping.get()).assume_init_mut().unmap() };
         let page_map_result = unsafe { (&mut *this.page_map.get()).assume_init_mut().destroy() };
         if mapping_result.is_ok() && page_map_result.is_ok() {
@@ -1379,39 +1995,68 @@ impl MetaAllocator {
 struct MetaEntry {
     owner: Pin<&'static MetaAllocator>,
     entry_thread: usize,
+    /// The bounded source-owned lock for direct allocation phases. It is
+    /// nested inside `guard` so the existing recursion marker covers a wait
+    /// on this nonrecursive lock; Drop releases it before the backing lock.
+    theap_meta_guard: Option<PrivateLockGuard<'static>>,
     guard: Option<PrivateLockGuard<'static>>,
 }
 
 impl MetaEntry {
-    fn ensure_ready(
+    /// Ensures the source-static detached metadata image names this exact
+    /// process tuple. BOUND deliberately does not make a backing PageMap,
+    /// arena, or allocator projection available.
+    fn ensure_bound(
         &mut self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         match self.status() {
-            READY => {
-                // SAFETY: READY release-publishes this initialized immutable
-                // configuration before any later lock holder can read it.
-                let stored = unsafe { self.owner.get_ref().config.get().read().assume_init() };
-                if stored == config
-                    && core::ptr::eq(
-                        self.owner
-                            .get_ref()
-                            .subprocess
-                            .load(Ordering::Acquire),
-                        subprocess.as_ptr(),
-                    )
-                {
-                    Ok(())
-                } else if stored == config {
-                    Err(MetaError::SubprocessMismatch)
-                } else {
-                    Err(MetaError::ConfigurationMismatch)
-                }
-            }
-            COLD => self.owner.initialize(self, config, subprocess),
+            COLD => self.owner.bind_empty_detached_identity(config, subprocess),
+            BOUND | READY => self.validate_bound_tuple(config, subprocess),
             FAILED => Err(MetaError::InitializationRetained),
             _ => Err(MetaError::InitializationRetained),
+        }
+    }
+
+    fn ensure_ready(
+        &mut self,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        self.ensure_bound(config, subprocess)?;
+        self.owner
+            .validate_bound_detached_metadata_theap(subprocess)?;
+        match self.status() {
+            READY => Ok(()),
+            BOUND => self.owner.initialize_backing(self, config, subprocess),
+            FAILED => Err(MetaError::InitializationRetained),
+            _ => Err(MetaError::InitializationRetained),
+        }
+    }
+
+    fn validate_bound_tuple(
+        &self,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        // SAFETY: BOUND Release-publishes this immutable tuple before the
+        // current held lock can observe it; READY retains the same tuple.
+        let stored = unsafe { self.owner.get_ref().config.get().read().assume_init() };
+        if stored != config {
+            return Err(MetaError::ConfigurationMismatch);
+        }
+        if !core::ptr::eq(
+            self.owner
+                .get_ref()
+                .subprocess
+                .load(Ordering::Acquire),
+            subprocess.as_ptr(),
+        ) {
+            Err(MetaError::SubprocessMismatch)
+        } else {
+            self.owner
+                .validate_bound_detached_metadata_theap(subprocess)
         }
     }
 
@@ -1437,11 +2082,14 @@ impl MetaEntry {
 
 impl Drop for MetaEntry {
     fn drop(&mut self) {
-        // Unlock before clearing the recursion marker. Clearing first would
-        // let same-thread signal reentry miss the marker and wait forever on
-        // this still-held nonrecursive lock. A different thread may acquire
-        // and replace the marker between these operations, so cleanup uses a
-        // compare-exchange and must not erase that successor's ownership.
+        // Unlock the nested selected source lock, then the Rust backing lock,
+        // before clearing the recursion marker. The first release preserves
+        // source `_mi_meta_rezalloc`'s unlock-before-copy/free order. Clearing
+        // first would let same-thread signal reentry miss the marker and wait
+        // forever on a still-held nonrecursive lock. A different thread may
+        // acquire and replace the marker between these operations, so cleanup
+        // uses a compare-exchange and must not erase that successor's owner.
+        drop(self.theap_meta_guard.take());
         drop(self.guard.take());
         clear_entry_thread_after_unlock(
             &self.owner.get_ref().active_entry_thread,
@@ -1476,8 +2124,9 @@ mod tests {
 
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{mpsc, Arc, Barrier};
     use std::thread;
+    use std::time::{Duration, Instant};
 
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
@@ -1489,12 +2138,31 @@ mod tests {
 
     /// Test-only process lifetime mirrors the production static singleton:
     /// the detached engine stores `'static` references into its final slots.
+    /// This deliberately leaves the source detached-metadata image cold so a
+    /// regression can prove direct demand does not publish it.
+    fn cold_static_allocator() -> Pin<&'static MetaAllocator> {
+        MetaAllocator::test_static_owner()
+    }
+
+    /// Returns an isolated fixture after the production-shaped preparation
+    /// edge has bound and published its own selected main-subprocess image.
     fn static_allocator() -> Pin<&'static MetaAllocator> {
-        let allocator: &'static MetaAllocator =
-            std::boxed::Box::leak(std::boxed::Box::new(MetaAllocator::new()));
-        // SAFETY: `Box::leak` gives this test fixture a true process-lifetime
-        // address, and `MetaAllocator` is never moved after construction.
-        unsafe { Pin::new_unchecked(allocator) }
+        let allocator = cold_static_allocator();
+        allocator
+            .prepare_for_main_subprocess(config(), allocator.test_default_subprocess())
+            .expect("the isolated fixture publishes its detached metadata-Theap before demand");
+        allocator
+    }
+
+    fn wait_for_metadata_theap_lock_contention(subprocess: &MainSubprocess) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !subprocess.test_metadata_theap_lock_is_contended() {
+            assert!(
+                Instant::now() < deadline,
+                "the selected direct metadata caller must reach the subprocess metadata lock"
+            );
+            thread::yield_now();
+        }
     }
 
     #[test]
@@ -1519,9 +2187,109 @@ mod tests {
     }
 
     #[test]
-    fn selected_aligned_main_metadata_projects_only_an_exact_transient_bitmap_image() {
+    fn typed_release_uses_the_metadata_capabilitys_recorded_owner() {
         let allocator = static_allocator();
+        let block = allocator.zalloc(config(), 91).unwrap();
+        assert!(MetaRelease::Malloc(block).release().is_ok());
+    }
+
+    #[test]
+    fn typed_malloc_release_retains_a_terminal_capability_for_diagnosis() {
+        let allocator = static_allocator();
+        let mut block = allocator.zalloc(config(), 91).unwrap();
+        allocator.free(&mut block).unwrap();
+
+        let failure = MetaRelease::Malloc(block)
+            .release()
+            .expect_err("a stale metadata capability must not be released twice");
+        let MetaReleaseFailure::MallocTerminal { error, allocation } = failure else {
+            panic!("typed Malloc release returned the wrong failure branch");
+        };
+        assert_eq!(error, MetaError::ReleasedOrStale);
+        assert!(
+            !allocation.is_live(),
+            "a failed exact-owner free is terminal rather than retryable"
+        );
+    }
+
+    #[test]
+    fn typed_malloc_release_retains_a_live_capability_after_recursive_entry_rejection() {
+        let allocator = static_allocator();
+        let block = allocator.zalloc(config(), 91).unwrap();
+        let pointer = block.pointer();
+        let memory_id = block.memory_id();
+        let live_audit = MetaAllocationAudit {
+            live_capability_count: 1,
+            high_water_capability_count: 1,
+        };
+        assert_eq!(allocator.test_allocation_audit(), live_audit);
+
+        let entry = allocator.enter().unwrap();
+        let failure = MetaRelease::Malloc(block)
+            .release()
+            .expect_err("same-thread Malloc release must reject before claiming its capability");
+        let MetaReleaseFailure::MallocRetryable { error, allocation } = failure else {
+            panic!("same-thread Malloc release returned the wrong failure branch");
+        };
+        assert_eq!(error, MetaError::RecursiveEntry);
+        assert!(
+            allocation.is_live(),
+            "the pre-claim failure retains the exact Malloc capability for retry"
+        );
+        assert_eq!(allocation.pointer(), pointer);
+        assert!(allocation.matches_memory_id(memory_id));
+        assert_eq!(allocator.test_allocation_audit(), live_audit);
+
+        drop(entry);
+        assert!(MetaRelease::Malloc(allocation).release().is_ok());
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn typed_regular_os_release_returns_the_exact_mapping_for_retry() {
+        let mapping = Mapping::map_for_allocator(config(), 4096, MapAccess::Reserved).unwrap();
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+
+        let failure = MetaRelease::RegularOs(mapping)
+            .release()
+            .expect_err("a failed unmap must retain the mapping owner");
+        let MetaReleaseFailure::RegularOs {
+            error,
+            mut mapping,
+        } = failure
+        else {
+            panic!("typed regular-OS release returned the wrong failure branch");
+        };
+        assert_eq!(error, Errno::NOMEM);
+        assert_eq!(mapping.length().unwrap(), 4096);
+
+        fault.set(fault::Plan::disabled());
+        mapping.unmap().unwrap();
+    }
+
+    #[test]
+    fn typed_regular_os_release_closes_a_live_mapping() {
+        let mapping = Mapping::map_for_allocator(config(), 4096, MapAccess::Reserved).unwrap();
+        assert!(MetaRelease::RegularOs(mapping).release().is_ok());
+    }
+
+    #[test]
+    fn selected_aligned_main_metadata_projects_only_an_exact_transient_bitmap_image() {
+        let allocator = cold_static_allocator();
         let subprocess = MainSubprocess::test_static_owner();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image publishes before bitmap demand");
         let layout = BitmapLayout::for_bit_count(1024).unwrap();
         let wrong_layout = BitmapLayout::for_bit_count(512).unwrap();
         let mut image = allocator
@@ -1568,8 +2336,11 @@ mod tests {
 
     #[test]
     fn tls_projection_cannot_be_reinterpreted_as_dynamic_arena_or_bitmap_image() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         let subprocess = MainSubprocess::test_static_owner();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image publishes before TLS-image demand");
         let arena_layout = ArenaPagesLayout::for_slice_count(crate::config::BCHUNK_BITS)
             .expect("the source minimum arena has a dynamic pages layout");
         assert_eq!(arena_layout.byte_size(), 12_416);
@@ -1633,8 +2404,11 @@ mod tests {
 
     #[test]
     fn bitmap_image_lifecycle_rejects_out_of_order_or_duplicate_projection() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         let subprocess = MainSubprocess::test_static_owner();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image publishes before bitmap lifecycle demand");
         let layout = BitmapLayout::for_bit_count(1024).unwrap();
         let mut source = allocator
             .zalloc_aligned_for_main_subprocess(
@@ -1703,14 +2477,15 @@ mod tests {
 
     #[test]
     fn detached_metadata_bootstrap_uses_its_selected_main_subprocess_identity() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         let subprocess = MainSubprocess::test_static_owner();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image publishes before demand");
         let mut block = allocator
             .zalloc_for_main_subprocess(config(), subprocess, 8)
             .expect("the detached metadata owner initializes for this main identity");
-        let bootstrap = unsafe { (&*allocator.get_ref().bootstrap.get()).assume_init_ref() };
-
-        assert!(bootstrap.is_detached_for_main_subprocess(subprocess));
+        assert!(allocator.test_is_bound_for(config(), subprocess));
         assert!(allocator
             .get_ref()
             .registry
@@ -1803,7 +2578,7 @@ mod tests {
 
     #[test]
     fn invalid_alignment_does_not_initialize_or_publish_metadata_state() {
-        let allocator = static_allocator();
+        let allocator = cold_static_allocator();
         assert!(matches!(
             allocator.zalloc_aligned(config(), 8, 3),
             Err(MetaError::InvalidAlignment)
@@ -1812,30 +2587,187 @@ mod tests {
     }
 
     #[test]
-    fn map_and_commit_failure_leave_the_owner_retryable_and_unpublished() {
+    fn cold_direct_metadata_demand_requires_prepared_theap_publication() {
+        let allocator = cold_static_allocator();
+        let subprocess = allocator.test_default_subprocess();
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+
+        assert!(!subprocess.test_has_published_metadata_theap());
+        assert_eq!(allocator.test_entry_attempt_count(), 0);
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            }
+        );
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::TheapMetaUnpublished)
+        ));
+        assert!(matches!(
+            allocator.zalloc_aligned(config(), 8, 8),
+            Err(MetaError::TheapMetaUnpublished)
+        ));
+        assert!(matches!(
+            allocator.rezalloc(config(), None, 8),
+            Err(MetaError::TheapMetaUnpublished)
+        ));
+        assert_eq!(allocator.status.load(Ordering::Acquire), COLD);
+        assert!(!subprocess.test_has_published_metadata_theap());
+        assert_eq!(fault.observed(), 0, "cold demand cannot reach any mapping edge");
+        assert_eq!(
+            allocator.test_entry_attempt_count(),
+            0,
+            "cold demand rejects before the source metadata-lock entry boundary"
+        );
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            }
+        );
+
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("only preparation may bind and publish the detached metadata Theap");
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+        assert!(subprocess.test_has_published_metadata_theap());
+        assert_eq!(fault.observed(), 0, "preparation is identity-only");
+        assert_eq!(allocator.test_entry_attempt_count(), 1);
+
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::InitializationFailed)
+        ));
+        assert_eq!(fault.observed(), 1, "prepared demand may consume the pending map fault");
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+
+        fault.set(fault::Plan::disabled());
+        let mut allocation = allocator
+            .zalloc(config(), 8)
+            .expect("the bound owner retries demand after the map fault");
+        allocator.free(&mut allocation).unwrap();
+    }
+
+    #[test]
+    fn map_and_commit_failure_leave_the_owner_retryable_without_private_backing() {
         let allocator = static_allocator();
         let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
         assert!(matches!(
             allocator.zalloc(config(), 8),
             Err(MetaError::InitializationFailed)
         ));
-        assert_eq!(allocator.status.load(Ordering::Acquire), COLD);
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
         fault.set(fault::Plan::at(fault::Point::Map, 2, Errno::NOMEM));
         assert!(matches!(
             allocator.zalloc(config(), 8),
             Err(MetaError::InitializationFailed)
         ));
         assert_eq!(fault.observed(), 2, "the second map is the metadata arena");
-        assert_eq!(allocator.status.load(Ordering::Acquire), COLD);
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
         fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
         assert!(matches!(
             allocator.zalloc(config(), 8),
             Err(MetaError::InitializationFailed)
         ));
-        assert_eq!(allocator.status.load(Ordering::Acquire), COLD);
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
         fault.set(fault::Plan::disabled());
         let mut retry = allocator.zalloc(config(), 8).unwrap();
         allocator.free(&mut retry).unwrap();
+    }
+
+    #[test]
+    fn bound_metadata_rejects_a_foreign_subprocess_before_first_backing() {
+        let allocator = cold_static_allocator();
+        let selected = MainSubprocess::test_static_owner();
+        let foreign = MainSubprocess::test_static_owner();
+
+        let _binding = allocator
+            .prepare_for_main_subprocess(config(), selected)
+            .expect("the source-static detached image binds without private backing");
+        assert!(allocator.test_is_bound_for(config(), selected));
+        assert!(
+            selected.test_has_published_metadata_theap(),
+            "the selected source subprocess receives its detached metadata-Theap identity before first backing",
+        );
+        assert!(
+            !foreign.test_has_published_metadata_theap(),
+            "an unrelated subprocess cannot inherit the selected metadata-Theap identity"
+        );
+        assert!(allocator.test_private_page_map_address().is_none());
+
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(
+            matches!(
+                allocator.zalloc_for_main_subprocess(config(), foreign, 8),
+                Err(MetaError::SubprocessMismatch)
+            ),
+            "a foreign identity rejects before the deferred backing path can map"
+        );
+        assert_eq!(fault.observed(), 0);
+        assert!(allocator.test_private_page_map_address().is_none());
+
+        assert!(
+            matches!(
+                allocator.zalloc_for_main_subprocess(config(), selected, 8),
+                Err(MetaError::InitializationFailed)
+            ),
+            "the selected first request consumes the still-pending backing failure"
+        );
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+
+        fault.set(fault::Plan::disabled());
+        let mut allocation = allocator
+            .zalloc_for_main_subprocess(config(), selected, 8)
+            .expect("the same bound identity retries its first backing request");
+        allocator.free(&mut allocation).unwrap();
+    }
+
+    #[test]
+    fn detached_metadata_theap_publication_is_one_way_before_first_backing() {
+        let first = cold_static_allocator();
+        let selected = MainSubprocess::test_static_owner();
+        let second = cold_static_allocator();
+
+        let _first_binding = first
+            .prepare_for_main_subprocess(config(), selected)
+            .expect("the first detached metadata image publishes the selected identity");
+        assert!(first.test_is_bound_for(config(), selected));
+        assert!(selected.test_has_published_metadata_theap());
+        assert!(first.test_private_page_map_address().is_none());
+        assert_eq!(
+            first.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            },
+            "publication is identity-only and cannot take metadata backing"
+        );
+
+        assert!(
+            matches!(
+                second.prepare_for_main_subprocess(config(), selected),
+                Err(MetaError::TheapMetaMismatch)
+            ),
+            "a second detached image cannot overwrite the source process's one-way metadata-Theap slot",
+        );
+        assert!(
+            first.test_is_bound_for(config(), selected),
+            "the first source image remains the exact published identity after the rejected collision",
+        );
+        assert!(selected.test_has_published_metadata_theap());
+        assert!(second.test_private_page_map_address().is_none());
+        assert_eq!(
+            second.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            },
+            "the rejected collision cannot create a caller-visible metadata capability"
+        );
     }
 
     #[test]
@@ -1858,6 +2790,71 @@ mod tests {
             allocator.zalloc(config(), 8),
             Err(MetaError::InitializationRetained)
         ));
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn aligned_map_prefix_cleanup_failure_retains_metadata_before_private_backing_publication() {
+        let allocator = cold_static_allocator();
+        let mut selected_config = config();
+        selected_config.test_force_full_aligned_map_trim();
+        allocator
+            .prepare_for_main_subprocess(
+                selected_config,
+                allocator.test_default_subprocess(),
+            )
+            .expect("the isolated fixture publishes before its selected backing configuration");
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            2,
+            Errno::NOMEM,
+        ));
+
+        assert!(matches!(
+            allocator.zalloc(selected_config, 8),
+            Err(MetaError::InitializationRetained)
+        ));
+        assert_eq!(allocator.status.load(Ordering::Acquire), FAILED);
+
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(matches!(
+            allocator.zalloc(selected_config, 8),
+            Err(MetaError::InitializationRetained)
+        ));
+        assert_eq!(
+            fault.observed(),
+            0,
+            "the terminal metadata owner never opens a retry that could overlap its retained map"
+        );
+    }
+
+    #[test]
+    fn paired_page_map_initial_commit_and_cleanup_failure_retains_the_exact_mapping() {
+        let allocator = static_allocator();
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Commit,
+            1,
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::InitializationRetained)
+        ));
+        assert_eq!(allocator.status.load(Ordering::Acquire), FAILED);
+        assert!(allocator.test_has_retained_page_map_initialization_mapping());
+
+        fault.set(fault::Plan::disabled());
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::InitializationRetained)
+        ));
+        allocator
+            .test_release_retained_page_map_initialization_mapping()
+            .expect("the retained PageMap mapping releases after the injected fault is removed");
+        assert!(!allocator.test_has_retained_page_map_initialization_mapping());
     }
 
     #[test]
@@ -1886,19 +2883,372 @@ mod tests {
     }
 
     #[test]
-    fn released_capability_rejects_double_release_and_metadata_page_identity() {
+    fn metadata_capability_audit_tracks_live_and_warm_high_water() {
+        let allocator = static_allocator();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            },
+            "the test fixture begins with no caller-visible metadata capability"
+        );
+
+        let mut first = allocator.zalloc(config(), 32).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 1,
+                high_water_capability_count: 1,
+            },
+            "one direct allocation becomes the first live and high-water capability"
+        );
+        let mut aligned = allocator.zalloc_aligned(config(), 64, 4096).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 2,
+                high_water_capability_count: 2,
+            },
+            "the aligned route contributes one distinct live capability"
+        );
+
+        let mut replacement = allocator.rezalloc(config(), Some(&mut first), 96).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 2,
+                high_water_capability_count: 3,
+            },
+            "rezalloc briefly owns old plus replacement before releasing old"
+        );
+        allocator.free(&mut aligned).unwrap();
+        allocator.free(&mut replacement).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 3,
+            },
+            "releases return the live count to baseline without erasing warm high-water"
+        );
+    }
+
+    #[test]
+    fn released_capability_rejects_double_release() {
         let allocator = static_allocator();
         let mut block = allocator.zalloc(config(), 8).unwrap();
-        let page = {
-            let entry = allocator.enter().unwrap();
-            // SAFETY: the held private lock excludes page-map mutation and
-            // block is a current allocation from this exact metadata owner.
-            unsafe { entry.allocator_ref().page_for_block(block.pointer()) }
-        };
-        let page = unsafe { page.as_ref() }.unwrap();
-        assert!(allocator.is_metadata_page(page).unwrap());
         allocator.free(&mut block).unwrap();
         assert_eq!(allocator.free(&mut block), Err(MetaError::ReleasedOrStale));
+    }
+
+    #[test]
+    fn bound_subprocess_metadata_page_query_is_exact_without_backing() {
+        let selected_allocator = cold_static_allocator();
+        let selected = selected_allocator.test_default_subprocess();
+        let foreign_allocator = cold_static_allocator();
+        let foreign = foreign_allocator.test_default_subprocess();
+        selected_allocator
+            .prepare_for_main_subprocess(config(), selected)
+            .expect("the selected source-static Theap publishes before any private backing");
+        foreign_allocator
+            .prepare_for_main_subprocess(config(), foreign)
+            .expect("the foreign source-static Theap publishes before any private backing");
+
+        for allocator in [selected_allocator, foreign_allocator] {
+            assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+            assert!(
+                allocator.test_private_page_map_address().is_none(),
+                "the query is valid while the detached Theap is bound but has no private backing"
+            );
+            assert_eq!(
+                allocator.test_allocation_audit(),
+                MetaAllocationAudit {
+                    live_capability_count: 0,
+                    high_water_capability_count: 0,
+                },
+                "the query starts before any metadata allocation or detached session"
+            );
+        }
+
+        let selected_identity = NonNull::new(
+            selected_allocator
+                .get_ref()
+                .detached_metadata_theap
+                .load(Ordering::Acquire),
+        )
+        .expect("BOUND Release-publishes the selected detached metadata-Theap identity");
+        let foreign_identity = NonNull::new(
+            foreign_allocator
+                .get_ref()
+                .detached_metadata_theap
+                .load(Ordering::Acquire),
+        )
+        .expect("BOUND Release-publishes the foreign detached metadata-Theap identity");
+        let mut page = Page::remote_free_test_unassociated();
+
+        let selected_entries_before_lock = selected_allocator.test_entry_attempt_count();
+        let foreign_entries = foreign_allocator.test_entry_attempt_count();
+        let _selected_entry = selected_allocator
+            .enter()
+            .expect("the selected metadata owner accepts one held entry");
+        let selected_entries = selected_allocator.test_entry_attempt_count();
+        assert_eq!(selected_entries, selected_entries_before_lock + 1);
+
+        assert!(
+            !selected.is_metadata_page(None),
+            "None represents C's null page pointer"
+        );
+        assert!(
+            !selected.is_metadata_page(Some(&page)),
+            "a readable page with a null Theap field does not match a bound subprocess"
+        );
+        page.abandoned_test_set_theap(foreign_identity.as_ptr());
+        assert!(
+            !selected.is_metadata_page(Some(&page)),
+            "the selected subprocess rejects the foreign published identity"
+        );
+        assert!(
+            foreign.is_metadata_page(Some(&page)),
+            "the foreign subprocess accepts only its exact published identity"
+        );
+        page.abandoned_test_set_theap(selected_identity.as_ptr());
+        assert!(
+            selected.is_metadata_page(Some(&page)),
+            "the selected subprocess accepts its exact published identity without READY"
+        );
+        assert!(
+            !foreign.is_metadata_page(Some(&page)),
+            "the foreign subprocess rejects the selected published identity"
+        );
+
+        assert_eq!(
+            selected_allocator.test_entry_attempt_count(),
+            selected_entries,
+            "the source page query stays outside the selected metadata allocator lock"
+        );
+        assert_eq!(
+            foreign_allocator.test_entry_attempt_count(),
+            foreign_entries,
+            "the source page query stays outside the foreign metadata allocator lock"
+        );
+        for allocator in [selected_allocator, foreign_allocator] {
+            assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+            assert!(
+                allocator.test_private_page_map_address().is_none(),
+                "the read-only comparison does not map metadata backing"
+            );
+            assert_eq!(
+                allocator.test_allocation_audit(),
+                MetaAllocationAudit {
+                    live_capability_count: 0,
+                    high_water_capability_count: 0,
+                },
+                "the read-only comparison does not lend a detached session"
+            );
+        }
+    }
+
+    #[test]
+    fn bound_subprocess_theap_meta_lock_serializes_direct_allocation_phase() {
+        let allocator = cold_static_allocator();
+        let subprocess = allocator.test_default_subprocess();
+        allocator
+            .prepare_for_main_subprocess(config(), subprocess)
+            .expect("the selected detached metadata image binds before direct demand");
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+        assert!(allocator.test_private_page_map_address().is_none());
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            }
+        );
+
+        thread::scope(|scope| {
+            let held = subprocess
+                .test_hold_metadata_theap_lock()
+                .expect("the selected subprocess metadata lock starts unlocked");
+            let (started_sender, started_receiver) = mpsc::channel();
+            let (completed_sender, completed_receiver) = mpsc::channel();
+            let worker = scope.spawn(move || {
+                started_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+                let mut allocation = allocator
+                    .zalloc_for_main_subprocess(config(), subprocess, 64)
+                    .expect("the selected direct allocation resumes after the subprocess lock releases");
+                allocator
+                    .free(&mut allocation)
+                    .expect("the worker returns its selected direct capability");
+                completed_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+            });
+
+            started_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the direct worker starts while the subprocess lock is held");
+            wait_for_metadata_theap_lock_contention(subprocess);
+            assert!(
+                completed_receiver
+                    .recv_timeout(Duration::from_millis(50))
+                    .is_err(),
+                "direct zalloc must not reach backing or create a capability before the selected subprocess lock releases"
+            );
+            assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+            assert!(allocator.test_private_page_map_address().is_none());
+            assert_eq!(
+                allocator.test_allocation_audit(),
+                MetaAllocationAudit {
+                    live_capability_count: 0,
+                    high_water_capability_count: 0,
+                }
+            );
+
+            drop(held);
+            completed_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("direct zalloc completes after the selected subprocess lock releases");
+            worker.join().expect("the direct worker completes");
+        });
+
+        assert_eq!(allocator.status.load(Ordering::Acquire), READY);
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 1,
+            }
+        );
+
+        thread::scope(|scope| {
+            let held = subprocess
+                .test_hold_metadata_theap_lock()
+                .expect("the selected subprocess metadata lock is reusable");
+            let (started_sender, started_receiver) = mpsc::channel();
+            let (completed_sender, completed_receiver) = mpsc::channel();
+            let worker = scope.spawn(move || {
+                started_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+                let mut allocation = allocator
+                    .zalloc_aligned_for_main_subprocess(config(), subprocess, 64, 64)
+                    .expect("the selected aligned direct allocation resumes after the subprocess lock releases");
+                allocator
+                    .free(&mut allocation)
+                    .expect("the worker returns its selected aligned capability");
+                completed_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+            });
+
+            started_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the aligned direct worker starts while the subprocess lock is held");
+            wait_for_metadata_theap_lock_contention(subprocess);
+            assert!(
+                completed_receiver
+                    .recv_timeout(Duration::from_millis(50))
+                    .is_err(),
+                "direct aligned zalloc must wait for the selected subprocess lock"
+            );
+
+            drop(held);
+            completed_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("direct aligned zalloc completes after the selected subprocess lock releases");
+            worker.join().expect("the aligned direct worker completes");
+        });
+
+        let mut old = allocator
+            .zalloc_for_main_subprocess(config(), subprocess, 32)
+            .expect("the selected old capability is live before rezalloc");
+        // SAFETY: `old` is a current exclusive metadata capability.
+        unsafe { core::ptr::write_bytes(old.pointer().as_ptr(), 0xa5, 32) };
+        thread::scope(|scope| {
+            let held = subprocess
+                .test_hold_metadata_theap_lock()
+                .expect("the selected subprocess metadata lock is reusable for rezalloc");
+            let (started_sender, started_receiver) = mpsc::channel();
+            let (completed_sender, completed_receiver) = mpsc::channel();
+            let worker = scope.spawn(move || {
+                started_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+                let mut replacement = allocator
+                    .rezalloc_for_main_subprocess(config(), subprocess, Some(&mut old), 96)
+                    .expect("the selected rezalloc resumes after the subprocess lock releases");
+                // SAFETY: the successful replacement owns the copied source prefix.
+                assert!(unsafe { core::slice::from_raw_parts(replacement.pointer().as_ptr(), 32) }
+                    .iter()
+                    .all(|byte| *byte == 0xa5));
+                allocator
+                    .free(&mut replacement)
+                    .expect("the worker returns the selected replacement capability");
+                completed_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+            });
+
+            started_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the rezalloc worker starts while the subprocess lock is held");
+            wait_for_metadata_theap_lock_contention(subprocess);
+            assert!(
+                completed_receiver
+                    .recv_timeout(Duration::from_millis(50))
+                    .is_err(),
+                "rezalloc must wait for the selected subprocess lock before its replacement allocation"
+            );
+
+            drop(held);
+            completed_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("rezalloc completes after the selected subprocess lock releases");
+            worker.join().expect("the rezalloc worker completes");
+        });
+
+        let block = allocator
+            .zalloc_for_main_subprocess(config(), subprocess, 64)
+            .expect("the selected capability is live before exact-owner free");
+        thread::scope(|scope| {
+            let held = subprocess
+                .test_hold_metadata_theap_lock()
+                .expect("the selected subprocess metadata lock is reusable for free");
+            let (started_sender, started_receiver) = mpsc::channel();
+            let (completed_sender, completed_receiver) = mpsc::channel();
+            let worker = scope.spawn(move || {
+                started_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+                let mut block = block;
+                allocator
+                    .free(&mut block)
+                    .expect("the exact-owner Malloc free stays outside the source allocation lock");
+                completed_sender
+                    .send(())
+                    .expect("the test receiver remains live");
+            });
+
+            started_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the exact-owner free worker starts while the subprocess lock is held");
+            completed_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the exact-owner Malloc free remains outside the source allocation lock");
+            worker.join().expect("the exact-owner free worker completes");
+            drop(held);
+        });
+
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 2,
+            }
+        );
     }
 
     #[test]
@@ -1944,6 +3294,124 @@ mod tests {
             Err(MetaError::RecursiveEntry)
         ));
         drop(entry);
+    }
+
+    #[test]
+    fn recursive_metadata_entry_rejects_real_routes_before_backing_or_capability_mutation() {
+        let allocator = static_allocator();
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        let empty_audit = MetaAllocationAudit {
+            live_capability_count: 0,
+            high_water_capability_count: 0,
+        };
+
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+        assert!(allocator.test_private_page_map_address().is_none());
+        assert_eq!(allocator.test_allocation_audit(), empty_audit);
+        let attempts_before = allocator.test_entry_attempt_count();
+
+        let entry = allocator.enter().unwrap();
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::RecursiveEntry)
+        ));
+        assert!(matches!(
+            allocator.zalloc_aligned(config(), 8, 8),
+            Err(MetaError::RecursiveEntry)
+        ));
+        assert!(matches!(
+            allocator.rezalloc(config(), None, 8),
+            Err(MetaError::RecursiveEntry)
+        ));
+        assert_eq!(
+            allocator.test_entry_attempt_count(),
+            attempts_before + 4,
+            "the held entry plus every direct demand reaches the same-thread guard"
+        );
+        assert_eq!(fault.observed(), 0, "recursive demand cannot reach the map fault");
+        assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+        assert!(allocator.test_private_page_map_address().is_none());
+        assert_eq!(allocator.test_allocation_audit(), empty_audit);
+
+        fault.set(fault::Plan::disabled());
+        drop(entry);
+
+        let mut old = allocator
+            .zalloc(config(), 32)
+            .expect("dropping the recursive entry restores direct metadata demand");
+        // SAFETY: `old` is a current exclusive metadata capability.
+        unsafe { core::ptr::write_bytes(old.pointer().as_ptr(), 0xa5, 32) };
+        let old_pointer = old.pointer();
+        let old_memory_id = old.memory_id();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 1,
+                high_water_capability_count: 1,
+            }
+        );
+
+        let attempts_before_rezalloc = allocator.test_entry_attempt_count();
+        let entry = allocator.enter().unwrap();
+        assert!(matches!(
+            allocator.rezalloc(config(), Some(&mut old), 64),
+            Err(MetaError::RecursiveEntry)
+        ));
+        assert_eq!(
+            allocator.test_entry_attempt_count(),
+            attempts_before_rezalloc + 2,
+            "rezalloc reaches the guard before it can claim the old capability"
+        );
+        assert!(old.is_live());
+        assert_eq!(old.pointer(), old_pointer);
+        assert!(old.matches_memory_id(old_memory_id));
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 1,
+                high_water_capability_count: 1,
+            }
+        );
+
+        drop(entry);
+        let mut replacement = allocator
+            .rezalloc(config(), Some(&mut old), 64)
+            .expect("dropping the recursive entry restores replacement demand");
+        // SAFETY: `replacement` owns its copied 32-byte source prefix.
+        assert!(unsafe { core::slice::from_raw_parts(replacement.pointer().as_ptr(), 32) }
+            .iter()
+            .all(|byte| *byte == 0xa5));
+        assert_eq!(allocator.free(&mut old), Err(MetaError::ReleasedOrStale));
+        allocator.free(&mut replacement).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn recursive_metadata_free_keeps_the_general_lifecycle_contract_terminal() {
+        let allocator = static_allocator();
+        let mut block = allocator
+            .zalloc(config(), 32)
+            .expect("the general lifecycle capability is live before recursive free");
+
+        let entry = allocator.enter().unwrap();
+        assert_eq!(allocator.free(&mut block), Err(MetaError::RecursiveEntry));
+        assert!(
+            !block.is_live(),
+            "the general lifecycle route keeps its existing terminal-on-error contract"
+        );
+
+        drop(entry);
+        assert_eq!(
+            allocator.free(&mut block),
+            Err(MetaError::ReleasedOrStale),
+            "a generic lifecycle caller must not accidentally gain the selected retry path"
+        );
     }
 
     #[test]
@@ -1997,6 +3465,9 @@ mod tests {
         let cached_before = crate::compiler_tls::cached_theap();
 
         let allocator = MetaAllocator::global();
+        allocator
+            .prepare_for_main_subprocess(config(), MainSubprocess::global())
+            .expect("the process metadata image publishes before global demand");
         let mut block = allocator.zalloc(config(), 8).unwrap();
         allocator.free(&mut block).unwrap();
 

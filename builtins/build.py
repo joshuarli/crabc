@@ -282,10 +282,14 @@ def pinned_cargo() -> tuple[str, ...]:
 
 
 def source_files() -> list[pathlib.Path]:
+    # C/assembly fixtures consume the produced archive in separate x86 ABI
+    # tests. They are never compiled into the production helper archive.
+    # Keep native-source rejection intact everywhere outside that test tree.
     files = sorted(
         path
         for path in ROOT.rglob("*")
         if path.is_file() and "__pycache__" not in path.parts and "target" not in path.parts
+        and path.relative_to(ROOT).parts[0] != "fixtures"
     )
     for path in files:
         if path.suffix in FORBIDDEN_SOURCE_SUFFIXES:
@@ -488,6 +492,10 @@ def source_build_environment(stage: pathlib.Path, flags: Sequence[str]) -> dict[
         {
             "CARGO_TARGET_DIR": str(stage / "source-build-target"),
             "CARGO_HOME": str(stage / "cargo-home"),
+            # Cargo and rustc can create short-lived intermediates while
+            # source-building core and compiler_builtins. Keep them inside
+            # this disposable archive stage instead of accepting /tmp.
+            "TMPDIR": str(stage / "source-build-tmp"),
             "CARGO_INCREMENTAL": "0",
             "CARGO_TERM_COLOR": "never",
             "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(flags),
@@ -721,6 +729,7 @@ def source_build_compiler_builtins(
     flags = source_build_rustflags(stage, upstream)
     environment = source_build_environment(stage, flags)
     target_dir = pathlib.Path(environment["CARGO_TARGET_DIR"])
+    pathlib.Path(environment["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     command = [
         *cargo,
         "build",
@@ -1028,7 +1037,9 @@ def main() -> int:
 
     reproducible = None
     if arguments.verify_reproducible:
-        with tempfile.TemporaryDirectory(prefix="crabc-builtins-repro-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="crabc-builtins-repro-", dir=output.parent
+        ) as temporary:
             comparison = pathlib.Path(temporary) / "libcrabc-builtins.a"
             comparison_archive = build_archive(
                 rustc=rustc,

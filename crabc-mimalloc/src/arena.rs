@@ -1,10 +1,12 @@
+// Copyright (c) 2018-2026 Microsoft Research, Daan Leijen
 // Copyright (c) 2019-2026 Microsoft Research, Daan Leijen
 // This is free software; you can redistribute it and/or modify it under the
 // terms of the MIT license. A copy of the license can be found in the file
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/arena.c:32-219` (arena identity,
+// Source map: pinned mimalloc v3.5.0 `src/theap.c:308-334` (the selected
+// requested-arena Theap allocation reservation), `src/arena.c:32-219` (arena identity,
 // suitability, registry indexing, geometry, and arena memory IDs),
 // `src/arena.c:1573-1659` (registry insertion and exact metadata/bitmap
 // sizing), `src/arena.c:674-723` (lazy non-main `heap->arena_pages`
@@ -14,8 +16,8 @@
 // `src/arena.c:832-1037` (aligned page metadata selection, fresh-page prefix
 // commitment, and publication),
 // `src/arena.c:1433-1490` (arena slice release),
-// `src/arena.c:725-778,1304-1409` (mapped abandoned-page bitmap/count
-// publication, claim, and quiescent clear),
+// `src/arena.c:631-671,725-778,1304-1409` (ordinary-page proof plus mapped
+// abandoned-page bitmap/count publication, claim, and quiescent clear),
 // `src/arena.c:2238-2409` (default delayed arena purge scheduling and forced
 // collection), and
 // `src/arena.c:1676-1917` (in-place arena initialization, metadata
@@ -30,6 +32,7 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of};
+use core::num::NonZeroUsize;
 use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicI64, AtomicPtr, Ordering};
 
@@ -44,7 +47,8 @@ use crate::bitmap::{
     BitmapView, BCHUNK_SIZE,
 };
 use crate::config::{
-    ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, ARENA_SLICE_SIZE,
+    ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MAX_SIZE, ARENA_MIN_OBJ_SIZE, ARENA_MIN_OBJ_SLICES,
+    ARENA_MIN_SIZE, ARENA_SLICE_SIZE,
     BCHUNK_BITS, BITMAP_MAX_BIT_COUNT, MAX_ARENAS, PAGE_META_ALIGNED_COUNT,
 };
 use crate::invariants;
@@ -54,7 +58,7 @@ use crate::os::MemoryConfig;
 use crate::subproc::MainSubprocess;
 use crate::types::{
     Arena, ArenaPages, CommitFunction, Heap, HeapArenaPagesError, MemoryId,
-    Page, Subprocess,
+    MemoryKind, Page, Subprocess, Theap, ThreadSequence,
 };
 
 // Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
@@ -64,6 +68,20 @@ const DEFAULT_PURGE_DELAY_MILLISECONDS: i64 = 1_000;
 const DEFAULT_ARENA_PURGE_MULTIPLIER: i64 = 4;
 const DEFAULT_ARENA_PURGE_DELAY_MILLISECONDS: i64 =
     DEFAULT_PURGE_DELAY_MILLISECONDS * DEFAULT_ARENA_PURGE_MULTIPLIER;
+
+// Pinned v3.5.0's complete C `mi_theap_t` rounds to exactly this one source
+// minimum-object slice in `_mi_theap_alloc`'s requested-arena branch. The C
+// layout probe carries the companion complete-C-type assertion; this Rust
+// assertion verifies only the fixed source constant, never a Rust/C Theap
+// layout equality.
+const _: [(); 1] = [(); (ARENA_MIN_OBJ_SLICES == 1) as usize];
+// This is deliberately a Rust-prefix capacity proof, not an assertion about
+// the complete pinned C `mi_theap_t`. The independent C layout probe remains
+// the only proof about that full C type.
+const _: [(); 1] = [(); (size_of::<Theap>() <= ARENA_MIN_OBJ_SIZE) as usize];
+const _: [(); 1] = [(); (align_of::<Theap>() <= ARENA_MIN_OBJ_SIZE) as usize];
+const _: [(); 1] = [(); (ARENA_ALIGNMENT % align_of::<Theap>() == 0) as usize];
+const _: [(); 1] = [(); (ARENA_SLICE_SIZE % align_of::<Theap>() == 0) as usize];
 
 /// Opaque public-source arena identity. Only parent arenas can become IDs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -740,6 +758,12 @@ impl MappedAbandonedPages for DynamicArenaMappedAbandonedPage<'_> {
     #[inline]
     fn is_clear(&self, slice_index: usize) -> bool {
         slice_index == self.slice_index
+            // `mi_page_arena_pages` asserts that the heap-local ordinary
+            // `pages` bit still names this page before the corresponding
+            // abandoned bit is observed. Do not make a stale dynamic bitmap
+            // entry an allocation/reclaim candidate after terminal release
+            // has removed that ordinary ownership record.
+            && self.owner.page_is_set(self.memory)
             && self
                 .owner
                 .with_abandoned(self.bin, |pages| pages.is_clear_range(slice_index, 1))
@@ -748,7 +772,12 @@ impl MappedAbandonedPages for DynamicArenaMappedAbandonedPage<'_> {
 
     #[inline]
     fn publish(&self, slice_index: usize) -> bool {
-        if slice_index != self.slice_index {
+        // The ordinary page image is published before the abandoned image in
+        // `arena.c:_mi_arenas_page_abandon`; terminal release clears it only
+        // after the abandoned path has quiesced. Keeping that relation at
+        // this narrow capability prevents an already released dynamic slice
+        // from being republished by a delayed abandon path.
+        if slice_index != self.slice_index || !self.owner.page_is_set(self.memory) {
             return false;
         }
         let published = self.owner
@@ -769,9 +798,13 @@ impl MappedAbandonedPages for DynamicArenaMappedAbandonedPage<'_> {
             .with_abandoned(self.bin, |pages| {
                 let mut claim = claim;
                 pages.try_find_and_claim_abandoned(thread_sequence, |slice_index| {
-                    if slice_index == self.slice_index {
+                    if slice_index == self.slice_index && self.owner.page_is_set(self.memory) {
                         claim(slice_index)
                     } else {
+                        // A rejected candidate must be returned to the
+                        // bitmap. In particular, never consume a stale
+                        // abandoned bit whose ordinary heap-local `pages`
+                        // authority has already disappeared.
                         AbandonedBitmapClaim::KeepSet
                     }
                 })
@@ -1070,8 +1103,9 @@ pub(crate) unsafe fn manage_external_in_place(
 /// # Safety
 ///
 /// `start..start + size` must remain the exact live regular OS mapping for the
-/// registry lifetime. The commitment and zero observations must describe that
-/// map accurately. When it starts reserved, `commit_hook` must make every
+/// registry lifetime. `memory` must be the exact unpinned `MemoryKind::Os`
+/// provenance for that complete range, including its commitment and zero
+/// observations. When it starts reserved, `commit_hook` must make every
 /// requested metadata prefix writable before returning true. No other thread
 /// may access the region until this function returns.
 pub(crate) unsafe fn manage_os_in_place(
@@ -1079,13 +1113,22 @@ pub(crate) unsafe fn manage_os_in_place(
     start: *mut u8,
     size: usize,
     page_size: PageSize,
-    initially_committed: bool,
-    initially_zero: bool,
+    memory: MemoryId,
     numa_node: i32,
     exclusive: bool,
     commit_hook: Option<CommitHook>,
 ) -> Result<ManagedExternalRegion, ManageArenaError> {
-    let memory = MemoryId::os(start, size, initially_committed, initially_zero, false);
+    let Some(os_memory) = memory.os_memory() else {
+        return Err(ManageArenaError::InvalidRegion);
+    };
+    if memory.kind() != MemoryKind::Os
+        || memory.is_pinned()
+        || os_memory.base != start
+        || os_memory.size != size
+    {
+        return Err(ManageArenaError::InvalidRegion);
+    }
+    let initially_committed = memory.initially_committed();
     unsafe {
         manage_in_place(
             registry,
@@ -1183,10 +1226,12 @@ unsafe fn manage_in_place(
 /// A live, contiguous claim from one initialized external arena.
 ///
 /// The claim has no destructor: its owner transfers the exact source release
-/// obligation either through [`Self::release`] or, when later page lifecycle
-/// code stores the provenance, through [`release_arena_slices`]. Keeping that
-/// transfer explicit prevents an implicit drop from returning slices while a
-/// page still refers to them.
+/// obligation either through [`Self::release`], through
+/// [`Self::release_for_subprocess`] when the source caller carries a
+/// subprocess identity, or, when later page lifecycle code stores the
+/// provenance, through [`release_arena_slices`]. Keeping that transfer
+/// explicit prevents an implicit drop from returning slices while a page still
+/// refers to them.
 pub(crate) struct ArenaSliceClaim<'arena> {
     arena: NonNull<Arena>,
     start: NonNull<u8>,
@@ -1315,6 +1360,203 @@ impl ArenaSliceClaim<'_> {
     #[inline]
     pub(crate) fn release(self) -> bool {
         unsafe { release_arena_slices(self.memory) }
+    }
+
+    /// Returns this exact claim to its source free bitmap for `subprocess`.
+    ///
+    /// This is the selected `MI_MEM_ARENA` identity gate in
+    /// `src/subproc.c:_mi_meta_free` and `src/arena.c:_mi_arenas_free`:
+    /// source requires `arena->subproc == subproc` before it schedules an
+    /// optional purge or returns the span to `slices_free`. A foreign
+    /// subprocess is rejected before either mutation and receives the exact
+    /// unchanged claim back in `Err`. The bounded Rust API makes that source
+    /// assertion an explicit safe refusal; it does not model C diagnostics or
+    /// a general `mi_subproc_t` lifecycle.
+    ///
+    /// `Ok(false)` has the same consumed, non-retryable invalid-ownership
+    /// meaning as [`Self::release`]: this safe claim should normally make the
+    /// source free-bit transition succeed, while a violated underlying source
+    /// invariant may already have scheduled a purge before reporting false.
+    #[inline]
+    pub(crate) fn release_for_subprocess(
+        self,
+        subprocess: &MainSubprocess,
+    ) -> Result<bool, Self> {
+        // SAFETY: `ArenaSliceClaim` is formed only from the live arena behind
+        // its borrowing `ArenaView`; the same source lifetime obligation that
+        // permits `release` makes this identity read valid.
+        let arena = unsafe { self.arena.as_ref() };
+        if !core::ptr::eq(arena.subprocess, subprocess.as_ptr()) {
+            return Err(self);
+        }
+        Ok(unsafe { release_arena_slices(self.memory) })
+    }
+}
+
+/// One private reservation for the requested-arena arm of
+/// `src/theap.c:_mi_theap_alloc`.
+///
+/// Pinned C rounds its complete `mi_theap_t` request to one
+/// `MI_ARENA_MIN_OBJ_SIZE` slice, asks only the already selected parent arena
+/// for committed storage, and records the resulting `MI_MEM_ARENA` identity
+/// before `_mi_theap_init` performs any Theap initialization or publication.
+/// Reservation by itself captures that allocation/provenance boundary only:
+/// it does not construct a Rust [`crate::types::Theap`] prefix, claim a C
+/// `sizeof(mi_theap_t)` equivalence, attach a TLD, publish a heap/TLS/list
+/// root, or implement `_mi_theap_create`. Its consuming
+/// [`Self::materialize_rust_theap_prefix`] transition is the separate bounded
+/// Rust-prefix owner.
+///
+/// The stored subprocess identity makes a release through a foreign process
+/// structurally unavailable. Its explicit consuming [`Self::release`] follows
+/// the existing selected arena release gate; dropping either the reservation
+/// or a later prefix owner deliberately retains the slice rather than
+/// guessing cleanup for a partially completed source lifecycle.
+#[must_use = "an exclusive-arena Theap reservation must be explicitly released or retained"]
+pub(crate) struct ExclusiveArenaTheapReservation<'arena, 'subprocess> {
+    claim: ArenaSliceClaim<'arena>,
+    subprocess: &'subprocess MainSubprocess,
+}
+
+impl<'arena, 'subprocess> ExclusiveArenaTheapReservation<'arena, 'subprocess> {
+    /// Returns the selected source `mi_memid_t` result that a future complete
+    /// Theap owner must store before `_mi_theap_init` copies its empty image.
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        self.claim.memory_id()
+    }
+
+    #[inline]
+    pub(crate) fn slice_index(&self) -> usize {
+        self.claim.slice_index()
+    }
+
+    #[inline]
+    pub(crate) fn slice_count(&self) -> usize {
+        self.claim.slice_count()
+    }
+
+    /// Releases this exact requested-arena reservation through its selected
+    /// subprocess identity.
+    ///
+    /// `Ok(false)` is the underlying consumed, non-retryable arena-free
+    /// invariant result. `Err(Self)` is retained only if an impossible future
+    /// mutation invalidates the arena/subprocess identity before the existing
+    /// source gate; it preserves the exact reservation rather than guessing a
+    /// different release owner.
+    #[inline]
+    pub(crate) fn release(self) -> Result<bool, Self> {
+        let Self { claim, subprocess } = self;
+        match claim.release_for_subprocess(subprocess) {
+            Ok(released) => Ok(released),
+            Err(claim) => Err(Self { claim, subprocess }),
+        }
+    }
+
+    /// Materializes the bounded Rust [`Theap`] prefix in this exact source
+    /// arena slice.
+    ///
+    /// Pinned `_mi_theap_alloc` returns raw aligned storage and writes only
+    /// `theap->memid` before `_mi_theap_init` copies its empty image. Rust
+    /// must first establish a valid value in that raw storage so the later
+    /// source-order prefix initializer can safely preserve and replace it.
+    /// The returned linear owner retains both the raw storage and the
+    /// selected subprocess release capability; it deliberately does not
+    /// expose an untyped allocation address or auto-release on Drop.
+    ///
+    /// # Safety
+    ///
+    /// No live Rust object may already occupy this exact claimed slice. The
+    /// caller must retain the returned owner until it either finishes the
+    /// matching detach/clear/release sequence or is intentionally retained as
+    /// a terminal source-owner failure.
+    #[inline]
+    pub(crate) unsafe fn materialize_rust_theap_prefix(
+        self,
+    ) -> ExclusiveArenaTheapStorage<'arena, 'subprocess> {
+        let prefix = NonNull::new(self.claim.start().cast::<Theap>())
+            .expect("an arena slice claim always has a non-null start");
+        debug_assert_eq!(prefix.as_ptr().addr() % align_of::<Theap>(), 0);
+        // SAFETY: the caller proves this exact raw source slice has no live
+        // Rust object. The static prefix-fit assertions above prove its
+        // placement fits within the one selected source minimum-object slice.
+        unsafe { prefix.as_ptr().write(Theap::empty()) };
+        ExclusiveArenaTheapStorage {
+            reservation: self,
+            prefix,
+        }
+    }
+}
+
+/// One typed Rust Theap-prefix image occupying a selected requested-parent
+/// arena slice.
+///
+/// This is intentionally not a complete C `mi_theap_t` allocation: Rust's
+/// [`Theap`] stops before the unported statistics tail and any conditional C
+/// fields. It owns only the prefix object and its exact arena reservation, so
+/// an arena-specific lifecycle can preserve `_mi_theap_alloc` provenance and
+/// `_mi_theap_init` ordering without claiming C-layout equivalence.
+///
+/// The raw prefix has no destructor-backed owner. Its explicit
+/// [`Self::drop_prefix_then_release`] transition drops the initialized Rust
+/// prefix only after source detachment cleared its live links/refcount, then
+/// returns its now-untyped slice through the selected subprocess. Dropping
+/// this storage otherwise deliberately retains the source slice.
+#[must_use = "an arena-backed Theap prefix must be detached and released or retained terminally"]
+pub(crate) struct ExclusiveArenaTheapStorage<'arena, 'subprocess> {
+    reservation: ExclusiveArenaTheapReservation<'arena, 'subprocess>,
+    prefix: NonNull<Theap>,
+}
+
+impl<'arena, 'subprocess> ExclusiveArenaTheapStorage<'arena, 'subprocess> {
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        self.reservation.memory_id()
+    }
+
+    /// Projects the one initialized Rust prefix while this linear storage
+    /// owner remains live. No raw alias is returned.
+    #[inline]
+    pub(crate) fn prefix_mut(&mut self) -> &mut Theap {
+        // SAFETY: `materialize_rust_theap_prefix` initialized exactly this
+        // object, and the linear owner supplies the only safe mutable route.
+        unsafe { self.prefix.as_mut() }
+    }
+
+    /// Test-only address observation for the typed Rust prefix. It does not
+    /// lend dereference authority or claim any complete C-layout identity.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_prefix_address(&self) -> usize {
+        self.prefix.as_ptr().addr()
+    }
+
+    /// Drops the cleared Rust prefix and then releases its selected arena
+    /// slice.
+    ///
+    /// The Rust `TheapRandomImage` has a real destructor, unlike the C source
+    /// image. It must run before `slices_free` makes these bytes reusable. A
+    /// rejected selected-subprocess gate therefore returns only the exact
+    /// still-retained reservation: the prefix is already destroyed and cannot
+    /// safely be reconstructed or projected again.
+    ///
+    /// # Safety
+    ///
+    /// The caller must have detached both intrusive lists and completed the
+    /// arena Theap's final refcount transition. No raw pointer/reference to
+    /// the prefix may survive this consuming transition.
+    #[inline]
+    pub(crate) unsafe fn drop_prefix_then_release(
+        self,
+    ) -> Result<bool, ExclusiveArenaTheapReservation<'arena, 'subprocess>> {
+        let Self {
+            reservation,
+            prefix,
+        } = self;
+        // SAFETY: forwarded from this method's caller. This drop zeroizes the
+        // Rust random image while its raw slice is still exclusively claimed.
+        unsafe { core::ptr::drop_in_place(prefix.as_ptr()) };
+        reservation.release()
     }
 }
 
@@ -1656,6 +1898,33 @@ impl ArenaAbandonedPages<'_> {
         self.bitmap.is_clear_range(slice_index, 1) == Some(true)
     }
 
+    /// Returns whether the static-main ordinary `pages` image still names
+    /// this slice.
+    ///
+    /// This is the source assertion in `mi_page_arena_pages` that precedes
+    /// every `pages_abandoned[bin]` access. The bit is not an alternate
+    /// PageMap lookup: the caller still supplies the PageMap lifetime proof.
+    /// It only rejects a stale abandoned bitmap entry after the owner has
+    /// cleared the static-main ordinary page record. Rejected candidates must
+    /// remain set so a concurrent source `unabandon` can observe reader
+    /// quiescence instead of losing the only process-visible page owner.
+    #[inline]
+    fn main_page_is_set(&self, slice_index: usize) -> bool {
+        if slice_index >= self.bitmap.max_bits() {
+            return false;
+        }
+        // SAFETY: `ArenaAbandonedPages` borrows this same initialized arena
+        // for its full lifetime. `ArenaView::pages` only attaches to the
+        // immutable-size, in-place source bitmap and performs atomic reads.
+        let Some(arena) = (unsafe { ArenaView::from_ptr(self.arena.as_ptr()) }) else {
+            return false;
+        };
+        let Some(pages) = (unsafe { arena.pages() }) else {
+            return false;
+        };
+        pages.is_set_range(slice_index, 1) == Some(true)
+    }
+
     #[inline]
     pub(crate) const fn bin(&self) -> usize {
         self.bin
@@ -1722,11 +1991,19 @@ impl MappedAbandonedPages for MainArenaMappedAbandonedPage<'_> {
 
     #[inline]
     fn is_clear(&self, slice_index: usize) -> bool {
-        self.bitmap.bitmap_is_clear(slice_index)
+        self.bitmap.main_page_is_set(slice_index)
+            && self.bitmap.bitmap_is_clear(slice_index)
     }
 
     #[inline]
     fn publish(&self, slice_index: usize) -> bool {
+        // Source `mi_page_arena_pages` verifies that this main-Heap image
+        // still owns the ordinary page bit before it publishes the matching
+        // abandoned bit. Without that proof a delayed abandon could create a
+        // reclaimable bitmap entry after PageMap/metadata release.
+        if !self.bitmap.main_page_is_set(slice_index) {
+            return false;
+        }
         if !self.bitmap.publish(slice_index) {
             return false;
         }
@@ -1741,7 +2018,19 @@ impl MappedAbandonedPages for MainArenaMappedAbandonedPage<'_> {
     where
         F: FnMut(usize) -> AbandonedBitmapClaim,
     {
-        let Some(slice_index) = self.bitmap.try_claim(thread_sequence, claim) else {
+        let mut claim = claim;
+        let Some(slice_index) = self.bitmap.try_claim(thread_sequence, |slice_index| {
+            if self.bitmap.main_page_is_set(slice_index) {
+                claim(slice_index)
+            } else {
+                // This is the exact rejected-claim branch of
+                // `mi_arena_try_claim_abandoned`: restore the source bit and
+                // leave its paired count untouched. A caller may retain the
+                // stale owner for failure handling, but may not fabricate an
+                // adopted page from an ordinary-image mismatch.
+                AbandonedBitmapClaim::KeepSet
+            }
+        }) else {
             return MappedAbandonedClaim::None;
         };
         // SAFETY: a successful claim consumes exactly one prior publication
@@ -1815,6 +2104,12 @@ impl<'arena> ArenaView<'arena> {
         let free = unsafe { self.slices_free() }?;
         let committed = unsafe { self.slices_committed() }?;
         let dirty = unsafe { self.slices_dirty() }?;
+        // The source claim has a nonzero slice count bounded by the arena
+        // image, so form the byte span before changing `slices_free`. This
+        // checked length lets the later Linux reuse boundary be infallible:
+        // `_mi_os_reuse` cannot introduce a late allocation-failure edge
+        // after `mi_bbitmap_try_find_and_clearN` succeeds.
+        let size = invariants::size_of_slices(slice_count).and_then(NonZeroUsize::new)?;
         let slice_index = free.try_find_and_claim(thread_sequence, slice_count)?;
         let rollback = || free.set_range(slice_index, slice_count) == Some(true);
 
@@ -1852,16 +2147,12 @@ impl<'arena> ArenaView<'arena> {
                     let _ = rollback();
                     return None;
                 };
-                let Some(size) = invariants::size_of_slices(slice_count) else {
-                    let _ = rollback();
-                    return None;
-                };
                 let mut commit_zero = false;
                 let committed_now = unsafe {
                     commit_function(
                         true,
                         start.as_ptr(),
-                        size,
+                        size.get(),
                         &mut commit_zero,
                         arena.commit_function_argument,
                     )
@@ -1878,6 +2169,17 @@ impl<'arena> ArenaView<'arena> {
                 if committed.set_range(slice_index, slice_count).is_none() {
                     let _ = rollback();
                     return None;
+                }
+            } else {
+                // Pinned `src/arena.c:296-307` calls `_mi_os_reuse` only
+                // after the binned free claim succeeded and the ordinary
+                // bitmap reports this exact span fully committed. The Linux
+                // primitive is a contained-range no-op; retain its caller
+                // ordering before publishing `initially_committed` without
+                // transferring the external mapping owner or adding an
+                // allocation-failure path.
+                match os::reuse_arena_range(start, size) {
+                    crate::os::ReuseOutcome::NoOp => {}
                 }
             }
             memory.initially_committed = true;
@@ -1906,6 +2208,49 @@ impl<'arena> ArenaView<'arena> {
             memory,
             _arena: PhantomData,
         })
+    }
+
+    /// Reserves the one source slice used by the requested-parent-arena arm
+    /// of `_mi_theap_alloc`.
+    ///
+    /// This models a caller-selected direct parent as the source
+    /// `heap->exclusive_arena` value; it neither binds nor inspects a
+    /// [`Heap`]. No registry search, child-arena selection, metadata
+    /// allocation, or OS fallback is admitted here. This is only the first
+    /// requested-parent pass: pinned
+    /// `mi_forall_arenas` visits a non-null requested parent once, and
+    /// `mi_arena_is_suitable` accepts that exact parent before consulting
+    /// `is_exclusive`. A source TLD with a nonnegative NUMA node makes a
+    /// separate second requested-parent pass; this reservation has no NUMA
+    /// input and deliberately does not model it. Therefore this accepts either
+    /// value of `Arena::is_exclusive`, but rejects a subarena and a foreign
+    /// subprocess before any bitmap mutation.
+    ///
+    /// The returned reservation carries only the one-slice arena claim and
+    /// `MemoryId`; source Theap construction, `theap->memid` storage,
+    /// `_mi_theap_init`, and every publication/lifecycle step remain a later
+    /// consuming owner.
+    #[inline]
+    pub(crate) fn try_reserve_exclusive_theap<'subprocess>(
+        &self,
+        subprocess: &'subprocess MainSubprocess,
+        thread_sequence: ThreadSequence,
+    ) -> Option<ExclusiveArenaTheapReservation<'arena, 'subprocess>> {
+        let arena = self.arena();
+        if !arena.parent.is_null() || !core::ptr::eq(arena.subprocess, subprocess.as_ptr()) {
+            return None;
+        }
+        // SAFETY: `ArenaView` proves this exact candidate is live and
+        // registry-published. The preceding parent test makes its source ID
+        // the requested parent form rather than a subarena identity.
+        let requested = unsafe { ArenaId::from_arena(self.arena.as_ptr()) }?;
+        let claim = self.try_claim_suitable_slices(
+            requested,
+            ARENA_MIN_OBJ_SLICES,
+            true,
+            thread_sequence.get(),
+        )?;
+        Some(ExclusiveArenaTheapReservation { claim, subprocess })
     }
 
     /// # Safety
@@ -1967,44 +2312,18 @@ impl<'arena> ArenaView<'arena> {
         // ranges, so a concurrent later release belongs to the next pass.
         // This bounded lifecycle has one thread but preserves that state edge.
         i64_store_release(&arena.purge_expire, 0);
-        let mut slice_index = arena.info_slices;
-        while slice_index < arena.slice_count {
-            let Some(purge) = (unsafe { self.slices_purge() }) else {
-                return false;
-            };
-            let Some(is_scheduled) = purge.is_set_range(slice_index, 1) else {
-                return false;
-            };
-            if !is_scheduled {
-                slice_index += 1;
-                continue;
-            }
-
-            // `_mi_bitmap_forall_setc_rangesn` visits at most one bchunk at a
-            // time. Preserve that grouping before the source fallback tries
-            // individual slices if a concurrent allocation blocks the full run.
-            let remaining_in_chunk = BCHUNK_BITS - (slice_index % BCHUNK_BITS);
-            let maximum = core::cmp::min(remaining_in_chunk, arena.slice_count - slice_index);
-            let mut slice_count = 1usize;
-            while slice_count < maximum {
-                let Some(next_scheduled) = purge.is_set_range(slice_index + slice_count, 1)
-                else {
-                    return false;
-                };
-                if !next_scheduled {
-                    break;
-                }
-                slice_count += 1;
-            }
-            if purge.clear_range(slice_index, slice_count) != Some(true) {
-                return false;
-            }
-            if !self.purge_scheduled_range(page_size, slice_index, slice_count) {
-                return false;
-            }
-            slice_index += slice_count;
-        }
-        true
+        let Some(purge) = (unsafe { self.slices_purge() }) else {
+            return false;
+        };
+        // `_mi_bitmap_forall_setc_rangesn(..., 1, ...)` dispatches to the
+        // generic source visitor: snapshot the conservative map, atomically
+        // exchange a data field, then offer its field-bounded ranges. If this
+        // Rust callback exposes a retryable error, returning false makes the
+        // visitor restore only its not-yet-visited snapshot suffix; the
+        // current range's owner has already rescheduled its own failed work.
+        purge.visit_set_ranges_clear(|slice_index, slice_count| {
+            self.purge_scheduled_range(page_size, slice_index, slice_count)
+        })
     }
 
     /// Attempts the source full-range purge claim, then retries individual
@@ -2104,7 +2423,12 @@ impl<'arena> ArenaView<'arena> {
             }
             None => match unsafe { os::decommit_arena_range(page_size, start, size) } {
                 Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) | Ok(None) => false,
-                Err(_) => return self.restore_failed_purge(slice_index, slice_count),
+                // In the frozen Linux release profile, `_mi_prim_decommit`
+                // sets `needs_recommit = false` after its MADV_DONTNEED
+                // attempt even when that advisory reports an error. The
+                // source reports the error but consumes this purge work, with
+                // the live mapping still accessible and committed.
+                Err(_) => false,
             },
         };
         if (needs_recommit || !all_committed)
@@ -2194,7 +2518,13 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use crate::main_theap::{
+        MainStaticAttachmentStorage, MainStaticTheapAttachment, MainStaticTheapError,
+        RequestedParentArenaTheapBeginFailure, RequestedParentArenaTheapError,
+    };
+    use core::pin::Pin;
     use std::alloc::{alloc_zeroed, dealloc, Layout};
+    use std::boxed::Box;
 
     struct AlignedRegion {
         pointer: NonNull<u8>,
@@ -2251,6 +2581,49 @@ mod tests {
         }
         if !is_zero.is_null() {
             unsafe { is_zero.write(script.allocation_is_zero) };
+        }
+        true
+    }
+
+    /// Records the source callback's decommit request. Returning true from
+    /// the `commit = false` arm is the pinned `_mi_os_purge_ex` contract for
+    /// an external callback which says that its range needs recommit before a
+    /// future committed claim.
+    struct RecommitPurgeScript {
+        false_calls: std::sync::atomic::AtomicUsize,
+        false_start: std::sync::atomic::AtomicUsize,
+        false_size: std::sync::atomic::AtomicUsize,
+    }
+
+    impl RecommitPurgeScript {
+        fn new() -> Self {
+            Self {
+                false_calls: std::sync::atomic::AtomicUsize::new(0),
+                false_start: std::sync::atomic::AtomicUsize::new(0),
+                false_size: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    unsafe extern "C" fn recommit_after_purge(
+        commit: bool,
+        start: *mut u8,
+        size: usize,
+        _is_zero: *mut bool,
+        user_argument: *mut c_void,
+    ) -> bool {
+        let script = unsafe { &*user_argument.cast::<RecommitPurgeScript>() };
+        if !commit {
+            script
+                .false_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            script
+                .false_start
+                .store(start.addr(), std::sync::atomic::Ordering::Relaxed);
+            script
+                .false_size
+                .store(size, std::sync::atomic::Ordering::Relaxed);
+            return true;
         }
         true
     }
@@ -2417,6 +2790,405 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_arena_theap_reservation_uses_only_its_requested_parent_slice() {
+        let selected = MainSubprocess::test_static_owner();
+        let foreign = MainSubprocess::test_static_owner();
+        let sequence = ThreadSequence::from_previous_total_count(11);
+        let registry = ArenaRegistry::new(null_mut());
+        assert!(unsafe { registry.bind_subprocess_before_publication(selected.as_ptr()) });
+
+        let mut selected_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let selected_managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                selected_region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                3,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let mut other_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let other_managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                other_region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+
+        let selected_view = unsafe { ArenaView::from_ptr(selected_managed.arena_id().as_ptr()) }
+            .expect("the selected parent arena is published");
+        let other_view = unsafe { ArenaView::from_ptr(other_managed.arena_id().as_ptr()) }
+            .expect("the unrelated parent arena is published");
+        assert!(
+            !selected_view.arena().is_exclusive,
+            "a heap's requested parent does not require arena::is_exclusive"
+        );
+        let first = selected_view.arena().info_slices;
+        let usable = BCHUNK_BITS - first;
+        let other_first = other_view.arena().info_slices;
+        let other_usable = BCHUNK_BITS - other_first;
+        let selected_free = unsafe { selected_view.slices_free() }.unwrap();
+        let selected_purge = unsafe { selected_view.slices_purge() }.unwrap();
+        let other_free = unsafe { other_view.slices_free() }.unwrap();
+        assert_eq!(selected_free.is_set_range(first, usable), Some(true));
+        assert_eq!(selected_purge.is_clear_range(first, usable), Some(true));
+        assert_eq!(other_free.is_set_range(other_first, other_usable), Some(true));
+
+        assert!(
+            selected_view
+                .try_reserve_exclusive_theap(foreign, sequence)
+                .is_none(),
+            "a foreign subprocess must fail before the source free bitmap changes"
+        );
+        assert_eq!(other_free.is_set_range(other_first, other_usable), Some(true));
+        assert_eq!(selected_free.is_set_range(first, usable), Some(true));
+        assert_eq!(selected_purge.is_clear_range(first, usable), Some(true));
+        assert_eq!(
+            selected_view
+                .arena()
+                .purge_expire
+                .load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+
+        let reservation = selected_view
+            .try_reserve_exclusive_theap(selected, sequence)
+            .expect("the selected requested parent supplies one Theap reservation");
+        assert_eq!(reservation.slice_index(), first);
+        assert_eq!(reservation.slice_count(), ARENA_MIN_OBJ_SLICES);
+        let memory = reservation.memory_id();
+        assert_eq!(memory.kind(), crate::types::MemoryKind::Arena);
+        assert!(memory.initially_committed());
+        assert!(memory.initially_zero());
+        assert!(!memory.is_pinned());
+        let arena_memory = memory.arena_memory().expect("reservation preserves arena provenance");
+        assert_eq!(arena_memory.arena, selected_managed.arena_id().as_ptr());
+        assert_eq!(arena_memory.slice_index as usize, first);
+        assert_eq!(arena_memory.slice_count as usize, ARENA_MIN_OBJ_SLICES);
+        assert_eq!(selected_free.is_clear_range(first, ARENA_MIN_OBJ_SLICES), Some(true));
+        assert_eq!(selected_purge.is_clear_range(first, ARENA_MIN_OBJ_SLICES), Some(true));
+        assert_eq!(
+            selected_view
+                .arena()
+                .purge_expire
+                .load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+        assert_eq!(other_free.is_set_range(other_first, other_usable), Some(true));
+
+        let released = match reservation.release() {
+            Ok(released) => released,
+            Err(_) => panic!("the reservation retains the selected subprocess identity"),
+        };
+        assert!(released);
+        assert_eq!(selected_free.is_set_range(first, ARENA_MIN_OBJ_SLICES), Some(true));
+        assert_eq!(selected_purge.is_set_range(first, ARENA_MIN_OBJ_SLICES), Some(true));
+        assert!(
+            selected_view
+                .arena()
+                .purge_expire
+                .load(core::sync::atomic::Ordering::Acquire)
+                > 0
+        );
+
+        let retry = selected_view
+            .try_reserve_exclusive_theap(selected, sequence)
+            .expect("the same requested parent slice becomes available again");
+        assert_eq!(retry.slice_index(), first);
+        assert!(
+            !retry.memory_id().initially_zero(),
+            "the exact released slice retains its source dirty-bit observation"
+        );
+        assert!(matches!(retry.release(), Ok(true)));
+
+        let blocker = selected_view
+            .try_claim_suitable_slices(selected_managed.arena_id(), usable, true, sequence.get())
+            .expect("the selected parent has one complete usable span");
+        assert!(
+            selected_view
+                .try_reserve_exclusive_theap(selected, sequence)
+                .is_none(),
+            "a requested-parent failure must not search the unrelated arena or fall back to OS memory"
+        );
+        assert_eq!(other_free.is_set_range(other_first, other_usable), Some(true));
+        assert!(
+            matches!(blocker.release_for_subprocess(selected), Ok(true)),
+            "the selected source identity returns the exhausted parent span"
+        );
+    }
+
+    #[test]
+    fn requested_parent_arena_theap_prefix_lifecycle() {
+        std::thread::spawn(|| {
+            let selected = MainSubprocess::test_static_owner();
+            let foreign = MainSubprocess::test_static_owner();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, selected)
+            }
+            .expect("the live default Theap supplies the source caller TLD");
+            let thread_sequence = main
+                .tld()
+                .expect("the default TLD remains current")
+                .thread_sequence();
+            assert_eq!(thread_sequence.get(), 0);
+
+            let registry = ArenaRegistry::new(null_mut());
+            assert!(unsafe { registry.bind_subprocess_before_publication(selected.as_ptr()) });
+            let mut selected_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+            let selected_managed = unsafe {
+                manage_external_in_place(
+                    &registry,
+                    selected_region.as_ptr(),
+                    ARENA_MIN_SIZE,
+                    PageSize::new(4096).unwrap(),
+                    true,
+                    false,
+                    true,
+                    3,
+                    false,
+                    None,
+                )
+            }
+            .expect("the selected parent arena is initialized");
+            let mut other_region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+            let other_managed = unsafe {
+                manage_external_in_place(
+                    &registry,
+                    other_region.as_ptr(),
+                    ARENA_MIN_SIZE,
+                    PageSize::new(4096).unwrap(),
+                    true,
+                    false,
+                    true,
+                    -1,
+                    false,
+                    None,
+                )
+            }
+            .expect("the unrelated parent arena is initialized");
+            let selected_view = unsafe { ArenaView::from_ptr(selected_managed.arena_id().as_ptr()) }
+                .expect("the selected parent remains published");
+            let other_view = unsafe { ArenaView::from_ptr(other_managed.arena_id().as_ptr()) }
+                .expect("the unrelated parent remains published");
+            let first_slice = selected_view.arena().info_slices;
+            let other_first_slice = other_view.arena().info_slices;
+            let selected_free = unsafe { selected_view.slices_free() }.unwrap();
+            let other_free = unsafe { other_view.slices_free() }.unwrap();
+            let expected_start = selected_view
+                .slice_start(first_slice)
+                .expect("the first usable selected slice has an address");
+
+            let mut heap = Box::pin(Heap::bootstrap_empty());
+            // SAFETY: this fixture owns the one fresh pinned Heap for the
+            // exact duration of the exclusive requested-parent attachment.
+            assert!(unsafe {
+                Pin::get_unchecked_mut(heap.as_mut())
+                    .initialize_dynamic_binding_for_requested_arena(
+                        selected,
+                        2,
+                        selected_managed.arena_id().as_ptr(),
+                    )
+            });
+            assert_eq!(selected_free.is_set_range(first_slice, 1), Some(true));
+            assert_eq!(
+                other_free.is_set_range(
+                    other_first_slice,
+                    BCHUNK_BITS - other_first_slice,
+                ),
+                Some(true),
+            );
+            assert!(
+                selected_view
+                    .try_reserve_exclusive_theap(foreign, thread_sequence)
+                    .is_none(),
+                "a foreign subprocess cannot consume the selected parent before prefix construction"
+            );
+            assert_eq!(
+                selected_free.is_set_range(first_slice, 1),
+                Some(true),
+                "foreign refusal leaves the selected parent bitmap untouched"
+            );
+
+            let reservation = selected_view
+                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .expect("only the requested parent supplies the Theap slice");
+            let mut owner = match main.attach_requested_parent_arena_theap(heap.as_mut(), reservation) {
+                Ok(owner) => owner,
+                Err(_) => panic!("the prepared source-shaped prefix attachment succeeds"),
+            };
+
+            assert!(owner.is_attached());
+            assert_eq!(
+                owner.test_theap_prefix_address(),
+                expected_start.addr(),
+                "the Rust prefix occupies the selected arena slice itself"
+            );
+            let memory = owner.memory_id().expect("the live prefix retains a memory ID");
+            assert_eq!(memory.kind(), crate::types::MemoryKind::Arena);
+            assert!(
+                memory.initially_zero(),
+                "the first selected slice preserves the external arena's fresh-zero observation"
+            );
+            let arena_memory = memory
+                .arena_memory()
+                .expect("the live prefix retains exact arena provenance");
+            assert_eq!(arena_memory.arena, selected_managed.arena_id().as_ptr());
+            assert_eq!(arena_memory.slice_index as usize, first_slice);
+            assert_eq!(arena_memory.slice_count as usize, ARENA_MIN_OBJ_SLICES);
+            assert_eq!(selected_free.is_clear_range(first_slice, 1), Some(true));
+            assert_eq!(
+                other_free.is_set_range(
+                    other_first_slice,
+                    BCHUNK_BITS - other_first_slice,
+                ),
+                Some(true),
+                "the attached requested-parent Theap never searches another arena"
+            );
+
+            owner
+                .teardown()
+                .expect("the page-free prefix detaches before returning its exact slice");
+            assert!(owner.is_torn_down());
+            assert_eq!(
+                selected.live_thread_count(),
+                1,
+                "the auxiliary prefix leaves the source default TLD live"
+            );
+            assert_eq!(selected_free.is_set_range(first_slice, 1), Some(true));
+            assert_eq!(
+                other_free.is_set_range(
+                    other_first_slice,
+                    BCHUNK_BITS - other_first_slice,
+                ),
+                Some(true),
+            );
+
+            drop(owner);
+            let mut rejected_heap = Box::pin(Heap::bootstrap_empty());
+            let rejected_reservation = selected_view
+                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .expect("the selected parent provides the unchanged pre-materialization claim");
+            let rejected_slice = rejected_reservation.slice_index();
+            assert_eq!(selected_free.is_clear_range(rejected_slice, 1), Some(true));
+            let rejected_reservation = match main.attach_requested_parent_arena_theap(
+                rejected_heap.as_mut(),
+                rejected_reservation,
+            ) {
+                Err(RequestedParentArenaTheapBeginFailure::Rejected { error, reservation }) => {
+                    assert_eq!(error, RequestedParentArenaTheapError::HeapBinding);
+                    reservation
+                }
+                Err(RequestedParentArenaTheapBeginFailure::Retained { .. }) => {
+                    panic!("an invalid caller Heap rejects before prefix materialization")
+                }
+                Ok(_) => panic!("an unbound caller Heap cannot attach the Arena prefix"),
+            };
+            assert_eq!(rejected_reservation.slice_index(), rejected_slice);
+            let rejected_memory = rejected_reservation.memory_id();
+            assert_eq!(rejected_memory.kind(), crate::types::MemoryKind::Arena);
+            assert_eq!(
+                rejected_memory
+                    .arena_memory()
+                    .expect("the unchanged rejection retains Arena provenance")
+                    .arena,
+                selected_managed.arena_id().as_ptr()
+            );
+            let rejected_released = match rejected_reservation.release() {
+                Ok(released) => released,
+                Err(_) => panic!("the unchanged rejection claim keeps its selected release capability"),
+            };
+            assert!(rejected_released);
+            assert_eq!(selected_free.is_set_range(first_slice, 1), Some(true));
+
+            // SAFETY: the first owner detached its only list member, returned
+            // the selected slice, and retired this caller-pinned Heap image.
+            // The fixture now establishes a fresh source `mi_heap_init`
+            // input against the same live selected parent.
+            assert!(unsafe {
+                Pin::get_unchecked_mut(heap.as_mut())
+                    .initialize_dynamic_binding_for_requested_arena(
+                        selected,
+                        2,
+                        selected_managed.arena_id().as_ptr(),
+                    )
+            });
+            let retry = selected_view
+                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .expect("the exact selected slice is reusable for a second Theap lifecycle");
+            assert_eq!(retry.slice_index(), first_slice);
+            assert!(
+                !retry.memory_id().initially_zero(),
+                "returning the prefix preserves the source dirty observation"
+            );
+            let mut retry_owner = match main.attach_requested_parent_arena_theap(heap.as_mut(), retry) {
+                Ok(owner) => owner,
+                Err(_) => panic!("the dirty selected slice remains valid Rust-prefix storage"),
+            };
+            assert!(retry_owner.is_attached());
+            assert_eq!(retry_owner.test_theap_prefix_address(), expected_start.addr());
+            assert_eq!(selected_free.is_clear_range(first_slice, 1), Some(true));
+            retry_owner
+                .teardown()
+                .expect("the dirty reused prefix also detaches before its exact slice returns");
+            assert!(retry_owner.is_torn_down());
+            assert_eq!(selected.live_thread_count(), 1);
+            assert_eq!(selected_free.is_set_range(first_slice, 1), Some(true));
+            drop(retry_owner);
+
+            // SAFETY: the second owner returned its exact slice and retired
+            // the caller Heap, so this final isolated branch starts a third
+            // source-shaped caller Heap solely to prove that dropping a live
+            // owner preserves its terminal claim and poisons the main owner.
+            assert!(unsafe {
+                Pin::get_unchecked_mut(heap.as_mut())
+                    .initialize_dynamic_binding_for_requested_arena(
+                        selected,
+                        2,
+                        selected_managed.arena_id().as_ptr(),
+                    )
+            });
+            let terminal_reservation = selected_view
+                .try_reserve_exclusive_theap(selected, thread_sequence)
+                .expect("the selected returned slice remains claimable before the terminal-owner check");
+            let terminal_slice = terminal_reservation.slice_index();
+            let mut terminal_owner = match main.attach_requested_parent_arena_theap(
+                heap.as_mut(),
+                terminal_reservation,
+            ) {
+                Ok(owner) => owner,
+                Err(_) => panic!("the terminal-owner check begins from a valid live prefix"),
+            };
+            assert!(terminal_owner.is_attached());
+            drop(terminal_owner);
+            assert_eq!(
+                selected_free.is_clear_range(terminal_slice, 1),
+                Some(true),
+                "dropping a live owner never releases a partially linked source claim"
+            );
+            assert_eq!(main.teardown(), Err(MainStaticTheapError::Poisoned));
+            assert_eq!(selected.live_thread_count(), 1);
+        })
+        .join()
+        .expect("the isolated requested-parent lifecycle assertion thread succeeds");
+    }
+
+    #[test]
     fn suitable_slice_claim_exhausts_and_release_reuses_its_contiguous_span() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
         let registry = ArenaRegistry::new(null_mut());
@@ -2568,6 +3340,51 @@ mod tests {
     }
 
     #[test]
+    fn fully_committed_arena_claim_invokes_linux_reuse_for_its_exact_span() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let slice_index = view.arena().info_slices;
+        let start = view
+            .slice_start(slice_index)
+            .and_then(NonNull::new)
+            .expect("the first usable source arena slice has one non-null start");
+        let slice_count = 2;
+        let size = invariants::size_of_slices(slice_count)
+            .and_then(NonZeroUsize::new)
+            .expect("the exact two-slice source span has a checked nonzero size");
+        let reuse = os::test_install_arena_reuse_witness(start, size);
+
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), slice_count, true, 0)
+            .expect("the precommitted source span is claimable");
+
+        assert_eq!(claim.slice_count(), slice_count);
+        assert!(claim.memory_id().initially_committed());
+        assert!(claim.release());
+        assert_eq!(
+            reuse.calls(),
+            1,
+            "pinned src/arena.c:296-307 reuses the exact already committed claimed span"
+        );
+    }
+
+    #[test]
     fn unpinned_slice_release_schedules_the_default_delayed_decommit_before_reuse() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
         let registry = ArenaRegistry::new(null_mut());
@@ -2599,6 +3416,218 @@ mod tests {
         assert_eq!(purge.is_set_range(slice_index, 1), Some(true));
         assert_eq!(free.is_set_range(slice_index, 1), Some(true));
         assert!(view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire) > 0);
+    }
+
+    #[test]
+    fn external_purge_callback_recommit_clears_committed_bits_for_a_later_uncommitted_claim() {
+        // Pinned `src/arena.c:2254-2282` marks the selected range committed
+        // before `_mi_os_purge_ex`. Its custom callback arm in
+        // `src/os.c:655-680` returns the callback boolean as
+        // `needs_recommit`, so a true `commit = false` result must clear the
+        // exact committed range before the source returns it to `slices_free`.
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let script = RecommitPurgeScript::new();
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                Some(CommitHook::new(
+                    recommit_after_purge,
+                    (&script as *const RecommitPurgeScript).cast_mut().cast(),
+                )),
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let slice_index = view.arena().info_slices;
+        let slice_count = 2;
+        let start = view
+            .slice_start(slice_index)
+            .expect("the first usable external slice has an exact source address");
+        let size = invariants::size_of_slices(slice_count)
+            .expect("the selected source slice span has a checked size");
+
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), slice_count, true, 0)
+            .expect("the initially committed exact external span is claimable");
+        assert!(claim.memory_id().initially_committed());
+        assert!(claim.release());
+
+        let free = unsafe { view.slices_free() }.unwrap();
+        let committed = unsafe { view.slices_committed() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(committed.is_set_range(slice_index, slice_count), Some(true));
+        assert_eq!(purge.is_set_range(slice_index, slice_count), Some(true));
+
+        assert!(view.collect_scheduled_purge(PageSize::new(4096).unwrap(), true));
+        assert_eq!(
+            script
+                .false_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the forced source purge invokes the external callback exactly once"
+        );
+        assert_eq!(
+            script
+                .false_start
+                .load(std::sync::atomic::Ordering::Relaxed),
+            start.addr(),
+            "the callback receives the selected source span start"
+        );
+        assert_eq!(
+            script
+                .false_size
+                .load(std::sync::atomic::Ordering::Relaxed),
+            size,
+            "the callback receives the selected source span size"
+        );
+        assert_eq!(committed.is_clear_range(slice_index, slice_count), Some(true));
+        assert_eq!(free.is_set_range(slice_index, slice_count), Some(true));
+        assert_eq!(purge.is_clear_range(slice_index, slice_count), Some(true));
+        assert_eq!(
+            view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
+            0,
+            "the forced collection consumes its selected purge work"
+        );
+
+        let uncommitted = view
+            .try_claim_suitable_slices(ArenaId::none(), slice_count, false, 0)
+            .expect("the purged external span is returned to the free bitmap");
+        assert!(
+            !uncommitted.memory_id().initially_committed(),
+            "the callback's needs-recommit result clears the later uncommitted observation"
+        );
+        assert!(uncommitted.release());
+    }
+
+    #[test]
+    fn scheduled_purge_splits_a_run_at_each_source_bitmap_field_boundary() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let script = CommitScript::new(false);
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                Some(CommitHook::new(
+                    scripted_commit,
+                    (&script as *const CommitScript).cast_mut().cast(),
+                )),
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        assert_eq!(view.arena().info_slices, 9);
+
+        // Hold the usable prefix so the next exact free claim starts at 63.
+        // Pinned `mi_arena_try_purge` uses the generic
+        // `_mi_bitmap_forall_setc_rangesn(..., 1, ...)` visitor, whose runs
+        // cannot cross a 64-bit `mi_bfield_t` boundary.
+        let prefix = view
+            .try_claim_suitable_slices(ArenaId::none(), 54, true, 0)
+            .expect("the selected 9..63 prefix is usable");
+        assert_eq!(prefix.slice_index(), view.arena().info_slices);
+        assert_eq!(prefix.slice_count(), crate::bitmap::BFIELD_BITS - 10);
+
+        let boundary = view
+            .try_claim_suitable_slices(ArenaId::none(), 2, true, 0)
+            .expect("the selected 63..65 boundary span is usable");
+        assert_eq!(boundary.slice_index(), crate::bitmap::BFIELD_BITS - 1);
+        assert_eq!(boundary.slice_count(), 2);
+        assert!(boundary.release());
+
+        let calls_before = script.calls.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(view.collect_scheduled_purge(PageSize::new(4096).unwrap(), true));
+        assert_eq!(
+            script.calls.load(std::sync::atomic::Ordering::Relaxed),
+            calls_before + 2,
+            "the source visitor invokes the default decommit callback once per 64-bit field"
+        );
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(free.is_set_range(crate::bitmap::BFIELD_BITS - 1, 2), Some(true));
+        assert_eq!(purge.is_clear_range(crate::bitmap::BFIELD_BITS - 1, 2), Some(true));
+
+        assert!(prefix.release());
+    }
+
+    #[test]
+    fn scheduled_purge_retries_the_free_sibling_after_partial_allocation_reclaim() {
+        // Pinned `mi_arena_try_purge_visitor` first claims a whole scheduled
+        // run. When an allocation has reclaimed one slice, its failed whole
+        // claim retries each slice: the allocation-won slice stays unavailable
+        // while a free sibling is still purged. Keep the reclaim live through
+        // collection so this observes that source fallback rather than an
+        // ordinary two-slice purge.
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let script = CommitScript::new(false);
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                Some(CommitHook::new(
+                    scripted_commit,
+                    (&script as *const CommitScript).cast_mut().cast(),
+                )),
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let first_usable_slice = view.arena().info_slices;
+        assert_eq!(first_usable_slice, 9);
+
+        let scheduled = view
+            .try_claim_suitable_slices(ArenaId::none(), 2, true, 0)
+            .expect("the selected external arena has a two-slice free run");
+        assert_eq!(scheduled.slice_index(), first_usable_slice);
+        assert!(scheduled.release());
+
+        let reclaimed = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .expect("the low slice is reclaimed before forced purge collection");
+        assert_eq!(reclaimed.slice_index(), first_usable_slice);
+
+        let calls_before = script.calls.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(view.collect_scheduled_purge(PageSize::new(4096).unwrap(), true));
+        assert_eq!(
+            script.calls.load(std::sync::atomic::Ordering::Relaxed),
+            calls_before + 1,
+            "only the still-free sibling reaches the external decommit callback"
+        );
+
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(free.is_clear_range(first_usable_slice, 1), Some(true));
+        assert_eq!(
+            free.is_set_range(first_usable_slice + 1, 1),
+            Some(true),
+        );
+        assert_eq!(purge.is_clear_range(first_usable_slice, 2), Some(true));
+
+        assert!(reclaimed.release());
     }
 
     #[test]
@@ -2676,6 +3705,223 @@ mod tests {
             view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
             0,
         );
+    }
+
+    #[test]
+    fn arena_release_rejects_foreign_subprocess_before_purge_or_free_then_releases_selected_claim() {
+        // `src/subproc.c:_mi_meta_free` routes non-Malloc metadata through
+        // `_mi_arenas_free(subproc, ...)`; its `MI_MEM_ARENA` branch asserts
+        // this exact arena/subprocess identity before it schedules purge or
+        // returns a free bitmap span. Keep this fixture unpinned: an incorrect
+        // release that schedules purge before checking identity would change
+        // observable purge state. A rejected foreign caller must leave both
+        // purge and free-bitmap state unchanged.
+        let selected = MainSubprocess::test_static_owner();
+        let foreign = MainSubprocess::test_static_owner();
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(selected.as_ptr());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .expect("the selected arena has one usable slice claim");
+        let slice_index = claim.slice_index();
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(free.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(purge.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(
+            view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+
+        let claim = claim
+            .release_for_subprocess(foreign)
+            .expect_err("a foreign subprocess must be rejected before Rust purge/free state changes");
+        assert_eq!(free.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(purge.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(
+            view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+
+        let released = match claim.release_for_subprocess(selected) {
+            Ok(released) => released,
+            Err(_) => panic!("the selected subprocess may return its exact arena claim"),
+        };
+        assert!(released);
+        assert_eq!(free.is_set_range(slice_index, 1), Some(true));
+
+        let retry = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .expect("the selected release restores the exact free bitmap bit");
+        assert_eq!(retry.slice_index(), slice_index);
+        let released_retry = match retry.release_for_subprocess(selected) {
+            Ok(released) => released,
+            Err(_) => panic!("the selected retry owns the same arena/subprocess pair"),
+        };
+        assert!(released_retry);
+    }
+
+    #[test]
+    fn abandoned_reclaim_main_map_rejects_an_orphan_bit_without_consuming_it() {
+        // This deliberately injects the impossible-after-publication image
+        // that source assertions exclude: a `pages_abandoned` bit exists but
+        // the matching ordinary `pages` bit does not. The reclaim primitive
+        // must preserve that bit and its count for the terminal owner rather
+        // than hand out a page whose PageMap/metadata lifetime is no longer
+        // represented by the main Heap image.
+        let subprocess = MainSubprocess::test_static_owner();
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                false,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let bin = 1;
+        let slice_index = view.arena().info_slices;
+
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(subprocess, MemoryId::static_kind_only());
+        heap.install_main_arena_pages(
+            subprocess,
+            view.arena().arena_index,
+            NonNull::from(&view.arena().pages_main),
+        )
+        .unwrap();
+        let map = view
+            .main_heap_abandoned_page(NonNull::from(&heap), bin)
+            .expect("the static main Heap owns this arena's in-place image");
+
+        // Test-only raw setup models a fault after an abandoned-bit
+        // publication but before the ordinary image can prove page lifetime.
+        let raw = view.abandoned_pages(bin).unwrap();
+        assert!(raw.publish(slice_index));
+        heap.increment_abandoned_count(bin);
+
+        let mut ownership_attempts = 0;
+        assert_eq!(
+            map.try_claim(0, |_| {
+                ownership_attempts += 1;
+                AbandonedBitmapClaim::Claimed
+            }),
+            MappedAbandonedClaim::None,
+        );
+        assert_eq!(ownership_attempts, 0);
+        assert!(raw.is_published(slice_index));
+        assert_eq!(heap.abandoned_count(bin), Some(1));
+    }
+
+    #[test]
+    fn abandoned_reclaim_main_map_retains_rejected_boundary_candidate_count() {
+        // This is the valid source order across adjacent atomic bitmap words:
+        // the main Heap records ordinary page ownership first, then
+        // abandonment publishes matching bits and counts. A rejected low-word
+        // ownership claim restores its bit and leaves both counts intact;
+        // only the later source unabandon/claim transitions consume them.
+        let subprocess = MainSubprocess::test_static_owner();
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                false,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let bin = 1;
+        let rejected = crate::bitmap::BFIELD_BITS - 1;
+        let later_word = crate::bitmap::BFIELD_BITS;
+        let pages = unsafe { view.pages() }.unwrap();
+        assert!(pages.set_range(rejected, 2).is_some());
+
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(subprocess, MemoryId::static_kind_only());
+        heap.install_main_arena_pages(
+            subprocess,
+            view.arena().arena_index,
+            NonNull::from(&view.arena().pages_main),
+        )
+        .unwrap();
+        let map = view
+            .main_heap_abandoned_page(NonNull::from(&heap), bin)
+            .expect("the static main Heap owns this arena's in-place image");
+
+        assert!(map.is_clear(rejected));
+        assert!(map.is_clear(later_word));
+        assert!(map.publish(rejected));
+        assert!(map.publish(later_word));
+        assert_eq!(heap.abandoned_count(bin), Some(2));
+
+        let mut ownership_attempts = 0;
+        assert_eq!(
+            map.try_claim(0, |candidate| {
+                ownership_attempts += 1;
+                assert_eq!(candidate, rejected);
+                AbandonedBitmapClaim::KeepSet
+            }),
+            MappedAbandonedClaim::None,
+        );
+        assert_eq!(ownership_attempts, 1);
+        let raw = view.abandoned_pages(bin).unwrap();
+        assert!(raw.is_published(rejected));
+        assert!(raw.is_published(later_word));
+        assert_eq!(heap.abandoned_count(bin), Some(2));
+
+        // `_mi_arenas_page_unabandon` waits for the rejected reader before it
+        // clears its exact bit, clears the mapped identity, and only then
+        // consumes the paired Heap count. A fresh source search can now reach
+        // the next-word candidate.
+        assert!(map.clear_once_set(rejected));
+        assert!(map.decrement_after_identity_clear());
+        assert_eq!(heap.abandoned_count(bin), Some(1));
+        assert_eq!(
+            map.try_claim(0, |candidate| {
+                ownership_attempts += 1;
+                assert_eq!(candidate, later_word);
+                AbandonedBitmapClaim::Claimed
+            }),
+            MappedAbandonedClaim::Claimed(later_word),
+        );
+        assert_eq!(ownership_attempts, 2);
+        assert!(map.is_clear(rejected));
+        assert!(!raw.is_published(later_word));
+        assert_eq!(heap.abandoned_count(bin), Some(0));
     }
 
     #[test]

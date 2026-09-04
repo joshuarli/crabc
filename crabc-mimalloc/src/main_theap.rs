@@ -4,8 +4,9 @@
 // `LICENSE` at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/init.c:151-157,305-360,377-421`
-// (including `mi_thread_theaps_done`) and `src/init.c:448-481`
+// Source map: pinned mimalloc v3.5.0 `src/init.c:151-157,184-198,305-360,377-421`
+// (including the `mi_process_heap_main.memid` -> Release `heap_main` ->
+// `_mi_heap_init` ordering and `mi_thread_theaps_done`) and `src/init.c:448-481`
 // (`_mi_thread_done` root/teardown call order), `src/theap.c:228-306,414-449`
 // (including `_mi_tld_detach_theaps`), `src/heap.c:37-42,103-126`,
 // `src/threadlocal.c:205-214`, and `include/mimalloc/types.h:560-639,690-701`.
@@ -25,10 +26,11 @@ extern crate std;
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::size_of;
+use core::pin::Pin;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-use crate::arena::ArenaView;
+use crate::arena::{ArenaView, ExclusiveArenaTheapReservation, ExclusiveArenaTheapStorage};
 use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
 use crate::compiler_tls::{
     cached_theap, clear_main_static_attachment_roots, current_thread_identity,
@@ -37,19 +39,35 @@ use crate::compiler_tls::{
     roots_are_pristine_for_main_static_attachment, set_default_theap,
     set_fast_slot,
 };
+#[cfg(test)]
+use crate::compiler_tls::{set_cached_theap};
+#[cfg(test)]
+use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
+#[cfg(test)]
+use crate::owned_tls_key_registry::{
+    OwnedThreadLocalKeyError, OwnedThreadLocalKeyLease, OwnedThreadLocalKeyRegistry,
+};
 use crate::subproc::{
-    MainStaticBootstrapSelection, MainStaticBootstrapSelectionError,
-    MainStaticTldError, MainStaticThreadLocalData, MainSubprocess,
-    ThreadRegistrationLease,
+    MainHeapPublicationError, MainStaticBootstrapSelection,
+    MainStaticBootstrapSelectionError, MainStaticTldError,
+    MainStaticThreadLocalData, MainSubprocess, ThreadRegistrationLease,
 };
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
 use crate::types::{
     Heap, MemoryId, Page, PageQueue, Theap, TheapMainStaticInitError, TheapOwner,
-    ThreadLocalData,
+    TheapDynamicInitError, ThreadLocalData,
     ThreadLocalDataQuiesceError, ThreadLocalTheapListError,
 };
+#[cfg(test)]
+use crate::types::page_queue::{
+    M1PageFreeCollectError, test_m1_collect_abandon_page_free,
+};
+#[cfg(test)]
+use crate::types::StaticFirstTldCreateTrace;
+#[cfg(test)]
+use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner};
 
 const COLD: u8 = 0;
 const HEAP_INITIALIZING: u8 = 1;
@@ -99,11 +117,16 @@ impl MainStaticTheapSlot {
 /// Address-stable state for the one process-static main heap/theap pair.
 ///
 /// Its two independently cache-aligned image fields are slots within this one
-/// Rust process-static owner, rather than separate Rust/source statics. The
-/// atomic state first publishes the static Heap alone, then admits the unique
-/// non-Send ticket-zero thread attachment. This preserves the source order in
-/// which `mi_heap_main_init_once` precedes `_mi_page_map_init` and only then
-/// `_mi_thread_init_with_heap` projects the static TLD/Theap images.
+/// Rust process-static owner, rather than separate Rust/source statics. During
+/// its private `HEAP_INITIALIZING` phase, the matching `MainSubprocess` first
+/// reserves a Rust-only unpublished state that privately binds this Heap,
+/// then the Heap records kind-only static provenance, then the subprocess
+/// Release-publishes only the canonical Heap identity. After the remaining
+/// Heap fields initialize, both
+/// owners reach their ready states before this storage admits the unique
+/// non-Send ticket-zero thread attachment. This preserves the source
+/// `src/init.c:196` -> `197` -> `198` order before `_mi_page_map_init` and
+/// only then `_mi_thread_init_with_heap` projects the static TLD/Theap images.
 pub(crate) struct MainStaticAttachmentStorage {
     state: AtomicU8,
     heap: MainStaticHeapSlot,
@@ -181,6 +204,25 @@ impl MainStaticAttachmentStorage {
             })
     }
 
+    /// Reopens the storage only when the subprocess refused the main-Heap
+    /// reservation before this claim changed its Heap image. A stale source
+    /// identity admission is therefore a non-mutating pre-foundation result
+    /// rather than a reason to retain a fresh static slot in
+    /// `HEAP_INITIALIZING`.
+    #[inline]
+    fn release_unstarted_heap_foundation_claim(&self) {
+        let released = self
+            .state
+            .compare_exchange(
+                HEAP_INITIALIZING,
+                COLD,
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .is_ok();
+        debug_assert!(released, "only an untouched foundation claim may reopen COLD");
+    }
+
     #[inline]
     fn claim_ready_heap_for_initial_thread(&self) -> Result<(), MainStaticTheapError> {
         self.state
@@ -214,6 +256,21 @@ impl MainStaticAttachmentStorage {
     #[inline]
     fn state_is_heap_ready(&self) -> bool {
         self.state.load(Ordering::Acquire) == HEAP_READY
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_state_is_cold(&self) -> bool {
+        self.state.load(Ordering::Acquire) == COLD
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_heap_memory_id(&self) -> MemoryId {
+        // SAFETY: focused tests call this only while the static slot is COLD
+        // or while their one foundation owner serializes the image; it creates
+        // no mutable Heap projection.
+        unsafe { (&*self.heap.image.get()).test_main_static_fields().memid }
     }
 
     #[inline]
@@ -277,7 +334,7 @@ impl MainStaticAttachmentStorage {
         self.theap.image.get().addr()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn test_shared_later_theap_count(&self) -> usize {
         self.shared_later_theap_count.load(Ordering::Acquire)
@@ -305,6 +362,13 @@ impl MainStaticAttachmentStorage {
 pub(crate) enum MainStaticHeapFoundationError {
     /// The selected static bootstrap belongs to another subprocess identity.
     SubprocessMismatch,
+    /// The selected static slot was not the untouched bootstrap image needed
+    /// for the bounded source `memid_static` preparation or remaining
+    /// `_mi_heap_init` fields.
+    HeapPreparation,
+    /// The canonical source `subproc->heap_main` identity could not enter its
+    /// bounded absent -> reserved -> publishing -> ready transition.
+    MainHeapPublication(MainHeapPublicationError),
     Initializing,
     AlreadyInitialized,
     TornDown,
@@ -329,6 +393,35 @@ impl MainStaticHeapFoundation {
         subprocess: &'static MainSubprocess,
         selection: &mut MainStaticBootstrapSelection,
     ) -> Result<Self, MainStaticHeapFoundationError> {
+        Self::initialize_with_publishing_observer(storage, subprocess, selection, |_| {})
+    }
+
+    /// Test-only observation of the source-order interval after the canonical
+    /// static Heap receives its kind-only `memid` and `subproc->heap_main` is
+    /// Release-published, but before `_mi_heap_init` initializes its remaining
+    /// fields.
+    #[cfg(test)]
+    fn initialize_with_test_publishing_observer<F>(
+        storage: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        selection: &mut MainStaticBootstrapSelection,
+        observer: F,
+    ) -> Result<Self, MainStaticHeapFoundationError>
+    where
+        F: FnOnce(&Heap),
+    {
+        Self::initialize_with_publishing_observer(storage, subprocess, selection, observer)
+    }
+
+    fn initialize_with_publishing_observer<F>(
+        storage: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        selection: &mut MainStaticBootstrapSelection,
+        observer: F,
+    ) -> Result<Self, MainStaticHeapFoundationError>
+    where
+        F: FnOnce(&Heap),
+    {
         if !core::ptr::eq(selection.subprocess().as_ptr(), subprocess.as_ptr()) {
             return Err(MainStaticHeapFoundationError::SubprocessMismatch);
         }
@@ -336,10 +429,53 @@ impl MainStaticHeapFoundation {
         // SAFETY: the successful state transition grants the sole mutable
         // projection of the final static Heap before any root or TLD exists.
         let heap = unsafe { storage.heap_mut_for_foundation() };
-        // `mi_heap_main_init_once` uses `_mi_memid_create(MI_MEM_STATIC)`,
-        // not `_mi_memid_create_static`: source heap provenance is kind-only
-        // with a zero union/flags.
-        heap.initialize_main_static(subprocess, MemoryId::static_kind_only());
+        // Reserve the one-way subprocess state before touching `heap`: a
+        // rejected stale identity must leave this fresh static slot unchanged
+        // so it can return to COLD. The subprocess atomic still stores no
+        // pointer, while the private token binds this exact candidate and
+        // keeps the source selector terminal on every later error.
+        let heap_identity = NonNull::from(&mut *heap);
+        let reservation = match unsafe { subprocess.begin_main_heap_publication(heap_identity) } {
+            Ok(publication) => publication,
+            Err(error) => {
+                storage.release_unstarted_heap_foundation_claim();
+                return Err(MainStaticHeapFoundationError::MainHeapPublication(error));
+            }
+        };
+        if !heap.prepare_main_static_kind_only_memid() {
+            selection.retain_after_main_heap_reservation();
+            storage.mark_poisoned();
+            return Err(MainStaticHeapFoundationError::HeapPreparation);
+        }
+        // SAFETY: `storage` owns this final process-static Heap slot, which
+        // now has exactly `src/init.c:196`'s kind-only static memory ID. The
+        // matching selected bootstrap keeps this subprocess's source-main
+        // branch exclusive until it either completes or retains.
+        let mut publication = match unsafe { subprocess.publish_main_heap_identity(reservation) } {
+            Ok(publication) => publication,
+            Err(error) => {
+                selection.retain_after_main_heap_reservation();
+                storage.mark_poisoned();
+                return Err(MainStaticHeapFoundationError::MainHeapPublication(error));
+            }
+        };
+        // This is deliberately after kind-only memid preparation but before
+        // the remaining Heap initialization: it mirrors `src/init.c:196-198`
+        // while the opaque subprocess lookup still reports only Publishing.
+        observer(&*heap);
+        if !heap.initialize_main_static_after_kind_only_memid(subprocess) {
+            selection.retain_after_main_heap_reservation();
+            storage.mark_poisoned();
+            return Err(MainStaticHeapFoundationError::HeapPreparation);
+        }
+        // SAFETY: the exact process-static slot above is now fully
+        // initialized and remains address-stable for the process lifetime.
+        // The ready transition returns only an opaque comparison identity.
+        if let Err(error) = unsafe { subprocess.finish_main_heap_publication(&mut publication) } {
+            selection.retain_after_main_heap_reservation();
+            storage.mark_poisoned();
+            return Err(MainStaticHeapFoundationError::MainHeapPublication(error));
+        }
         storage.mark_heap_ready();
         selection.commit_heap_foundation();
         Ok(Self { storage, subprocess })
@@ -414,6 +550,15 @@ impl<'main> MainStaticHeapLease<'main> {
     #[inline]
     pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
         self.subprocess
+    }
+
+    /// Returns scalar-only shared-Theap accounting for the default-off native
+    /// lifecycle audit. It exposes neither the Heap projection nor a list
+    /// mutation capability.
+    #[cfg(feature = "native-runtime-test-audit")]
+    #[inline]
+    pub(crate) fn test_shared_later_theap_count(self) -> usize {
+        self.storage.test_shared_later_theap_count()
     }
 
     /// Acquires the Rust aliasing guard for one short source heap operation.
@@ -586,8 +731,6 @@ impl MainStaticTheapAttachment {
         if !roots_are_pristine_for_main_static_attachment() {
             return Err(MainStaticTheapError::RootsNotPristine);
         }
-        i32::try_from(crate::os::numa_node())
-            .map_err(|_| MainStaticTheapError::InvalidCurrentThread)?;
         Ok(())
     }
 
@@ -629,7 +772,81 @@ impl MainStaticTheapAttachment {
     /// aliases to the static images.
     pub(crate) unsafe fn begin_after_heap_foundation(
         foundation: MainStaticHeapFoundation,
+        selection: MainStaticBootstrapSelection,
+    ) -> Result<Self, MainStaticTheapError> {
+        // SAFETY: this forwards the unchanged caller-owned source foundation
+        // and ticket-zero selector to the shared attachment transition.
+        unsafe {
+            Self::begin_after_heap_foundation_with_numa_source(
+                foundation,
+                selection,
+                |_| {
+                    let numa_node = crate::os::os_numa_node();
+                    // The fixed `_mi_os_numa_node` wrapper returns strictly
+                    // below `INT_MAX`: a cached one-node result is zero, and
+                    // every multi-node result is reduced below its accepted
+                    // `INT_MAX` count. Preserve that source invariant rather
+                    // than introducing a post-ticket fallible Rust path.
+                    debug_assert!(numa_node < i32::MAX as usize);
+                    numa_node as i32
+                },
+            )
+        }
+    }
+
+    /// Shares the selected static attachment with a synchronous private NUMA
+    /// source. It carries the source into `MainSubprocess` unchanged so that
+    /// static `MemoryId` formation precedes the observation; it never stores
+    /// a callback or creates a configurable allocator policy.
+    unsafe fn begin_after_heap_foundation_with_numa_source(
+        foundation: MainStaticHeapFoundation,
+        selection: MainStaticBootstrapSelection,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
+    ) -> Result<Self, MainStaticTheapError> {
+        // SAFETY: this preserves the private caller-owned foundation and
+        // selector transition; production has no trace state.
+        unsafe {
+            Self::begin_after_heap_foundation_with_numa_source_impl(
+                foundation,
+                selection,
+                numa_node_source,
+                #[cfg(test)]
+                None,
+            )
+        }
+    }
+
+    /// Test-only trace entry around the same selected static attachment.
+    ///
+    /// The trace is borrowed from the test stack only for this call. The
+    /// returned owner remains the ordinary `MainStaticTheapAttachment`, so a
+    /// caller cannot observe a pending TLD/lease or retain instrumentation
+    /// beyond its source-shaped teardown ownership.
+    #[cfg(test)]
+    unsafe fn begin_after_heap_foundation_with_numa_source_and_static_first_trace(
+        foundation: MainStaticHeapFoundation,
+        selection: MainStaticBootstrapSelection,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
+        trace: &mut StaticFirstTldCreateTrace,
+    ) -> Result<Self, MainStaticTheapError> {
+        // SAFETY: as above, this only adds scalar recording to the owned
+        // selected attachment transition.
+        unsafe {
+            Self::begin_after_heap_foundation_with_numa_source_impl(
+                foundation,
+                selection,
+                numa_node_source,
+                Some(trace),
+            )
+        }
+    }
+
+    #[inline]
+    unsafe fn begin_after_heap_foundation_with_numa_source_impl(
+        foundation: MainStaticHeapFoundation,
         mut selection: MainStaticBootstrapSelection,
+        numa_node_source: impl FnOnce(MemoryId) -> i32,
+        #[cfg(test)] mut trace: Option<&mut StaticFirstTldCreateTrace>,
     ) -> Result<Self, MainStaticTheapError> {
         if !foundation.matches_selection(&selection) {
             return Err(MainStaticTheapError::BootstrapSelection(
@@ -640,11 +857,16 @@ impl MainStaticTheapAttachment {
         let storage = foundation.storage();
         let subprocess = foundation.subprocess();
         let thread = current_thread_identity().ok_or(MainStaticTheapError::InvalidCurrentThread)?;
-        let numa = i32::try_from(crate::os::numa_node())
-            .map_err(|_| MainStaticTheapError::InvalidCurrentThread)?;
         storage.claim_ready_heap_for_initial_thread()?;
 
-        let ticket = selection.issue_first_ticket().map_err(|error| {
+        #[cfg(test)]
+        let ticket_result = match trace.as_deref_mut() {
+            Some(trace) => selection.test_issue_first_ticket_with_static_first_trace(trace),
+            None => selection.issue_first_ticket(),
+        };
+        #[cfg(not(test))]
+        let ticket_result = selection.issue_first_ticket();
+        let ticket = ticket_result.map_err(|error| {
             storage.mark_poisoned();
             match error {
                 MainStaticBootstrapSelectionError::FirstTicketAlreadyIssued => {
@@ -653,12 +875,36 @@ impl MainStaticTheapAttachment {
                 other => MainStaticTheapError::BootstrapSelection(other),
             }
         })?;
-        let (mut tld, registration) = ticket
-            .initialize_and_activate_first_main_tld(thread, numa)
-            .map_err(|error| {
-                storage.mark_poisoned();
-                MainStaticTheapError::MainStaticTld(error)
-            })?;
+        #[cfg(test)]
+        let tld_result = match trace.as_deref_mut() {
+            Some(trace) => ticket
+                .test_initialize_and_activate_first_main_tld_with_static_first_trace(
+                    thread,
+                    numa_node_source,
+                    trace,
+                ),
+            None => ticket.initialize_and_activate_first_main_tld_with_numa_source(
+                thread,
+                numa_node_source,
+            ),
+        };
+        #[cfg(not(test))]
+        let tld_result = ticket.initialize_and_activate_first_main_tld_with_numa_source(
+            thread,
+            numa_node_source,
+        );
+        let (mut tld, registration) = tld_result.map_err(|error| {
+            storage.mark_poisoned();
+            MainStaticTheapError::MainStaticTld(error)
+        })?;
+
+        #[cfg(test)]
+        if let Some(trace) = trace.as_deref_mut() {
+            // The static TLD is already Release-published here, but no Theap
+            // has attached yet. Capture its source-slice poststate without
+            // exposing a raw TLD capability to the test.
+            trace.record_static_tld_poststate(tld.current_mut(), subprocess, thread);
+        }
 
         #[cfg(test)]
         if storage.take_test_busy_tld_list_before_initial_attachment() {
@@ -738,6 +984,98 @@ impl MainStaticTheapAttachment {
             .ok_or(MainStaticTheapError::Poisoned)?
             .current_mut();
         Ok(tld)
+    }
+
+    /// Creates one bounded requested-parent Arena Theap on this exact live
+    /// default TLD.
+    ///
+    /// This is a synthetic adaptation of the source
+    /// `heap.c:mi_heap_init_theap` inner creation call:
+    /// `_mi_theap_create(heap, mi_theap_get_default()->tld)`. It starts only
+    /// after the source thread-init and regular-slot get/null decision have
+    /// been supplied by its bounded caller, and deliberately stops before the
+    /// later regular TLS-slot store and cached-root update in `heap.c`. The
+    /// returned owner borrows this main attachment mutably, making main
+    /// teardown or a page session structurally unavailable while the
+    /// auxiliary Theap is linked.
+    pub(crate) fn attach_requested_parent_arena_theap<'main, 'heap, 'arena>(
+        &'main mut self,
+        heap: Pin<&'heap mut Heap>,
+        reservation: ExclusiveArenaTheapReservation<'arena, 'static>,
+    ) -> Result<
+        RequestedParentArenaTheap<'main, 'heap, 'arena>,
+        RequestedParentArenaTheapBeginFailure<'main, 'heap, 'arena>,
+    > {
+        let memory = reservation.memory_id();
+        let Some(arena_memory) = memory.arena_memory() else {
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::ArenaMemory,
+                reservation,
+            });
+        };
+        if memory.kind() != crate::types::MemoryKind::Arena
+            || !memory.initially_committed()
+            || arena_memory.arena.is_null()
+            || !heap
+                .as_ref()
+                .get_ref()
+                .matches_dynamic_binding_for_requested_arena(self.subprocess, arena_memory.arena)
+        {
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::HeapBinding,
+                reservation,
+            });
+        }
+        if let Err(error) = self.ensure_current() {
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::Main(error),
+                reservation,
+            });
+        }
+        if !self.tld_matches_subprocess() {
+            self.poison();
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::RootOwnership,
+                reservation,
+            });
+        }
+
+        let main_default = self.storage.theap.image.get();
+        let roots_match = core::ptr::eq(default_theap().as_ptr(), main_default)
+            && fast_slot_peek().is_some_and(|fast| fast.as_ptr().cast::<Theap>() == main_default)
+            && core::ptr::eq(cached_theap().as_ptr(), crate::bootstrap::empty_default_theap_ptr())
+            && matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing));
+        if !roots_match {
+            self.poison();
+            return Err(RequestedParentArenaTheapBeginFailure::Rejected {
+                error: RequestedParentArenaTheapError::RootOwnership,
+                reservation,
+            });
+        }
+
+        // SAFETY: the reservation has exclusive source ownership of this
+        // exact raw arena slice. The returned owner retains both it and the
+        // address-stable main/default and caller-heap lifetimes.
+        let storage = unsafe { reservation.materialize_rust_theap_prefix() };
+        let mut owner = RequestedParentArenaTheap {
+            main: self,
+            heap,
+            storage: Some(storage),
+            release_retained: None,
+            main_default,
+            state: RequestedParentArenaTheapState::Preparing,
+            _not_send_or_sync: PhantomData,
+        };
+        match owner.initialize() {
+            Ok(()) => {
+                owner.state = RequestedParentArenaTheapState::Attached;
+                Ok(owner)
+            }
+            Err(error) => {
+                owner.poison();
+                Err(RequestedParentArenaTheapBeginFailure::Retained { error, owner })
+            }
+        }
     }
 
     /// Returns the selected process-main identity while the ticket-zero
@@ -1069,6 +1407,1070 @@ impl MainStaticTheapAttachment {
     #[cfg(test)]
     fn test_inject_busy_heap_before_detach(&mut self) {
         self.inject_busy_heap_before_detach = true;
+    }
+}
+
+/// Terminal state for one requested-parent Arena Theap prefix attached to the
+/// process-main default TLD.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RequestedParentArenaTheapState {
+    Preparing,
+    Attached,
+    TornDown,
+    /// A post-publication source boundary failed. The retained owner must
+    /// remain live; it never reconstructs a list, prefix, or arena claim.
+    Poisoned,
+}
+
+/// One failure at the bounded requested-parent Arena Theap boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RequestedParentArenaTheapError {
+    Main(MainStaticTheapError),
+    RootOwnership,
+    HeapBinding,
+    ArenaMemory,
+    PrefixMemoryId,
+    TheapInit(TheapDynamicInitError),
+    PageCountNonZero,
+    TheapList(ThreadLocalTheapListError),
+    PrefixClear,
+    ArenaRelease,
+    HeapRetire,
+    TornDown,
+    Poisoned,
+}
+
+/// A requested-parent begin either refuses before it writes the claimed raw
+/// slice, or retains the complete source owner after prefix materialization.
+///
+/// In the rejection form the caller receives the unchanged one-slice claim
+/// and may explicitly return it through its selected subprocess. In the
+/// retained form no automatic cleanup is safe: TLD/Heap list mutation may
+/// already have occurred, so the owner keeps the main attachment borrow,
+/// caller Heap, prefix storage, and any post-drop release reservation.
+#[must_use = "a requested-parent Arena Theap failure retains its exact source ownership"]
+pub(crate) enum RequestedParentArenaTheapBeginFailure<'main, 'heap, 'arena> {
+    Rejected {
+        error: RequestedParentArenaTheapError,
+        reservation: ExclusiveArenaTheapReservation<'arena, 'static>,
+    },
+    Retained {
+        error: RequestedParentArenaTheapError,
+        owner: RequestedParentArenaTheap<'main, 'heap, 'arena>,
+    },
+}
+
+/// One page-free Arena-backed Rust Theap prefix owned by a caller-pinned Heap
+/// and attached to the already-live source default TLD.
+///
+/// This maps a selected `_mi_theap_create` prefix inside
+/// `heap.c:mi_heap_init_theap`: source-selected Arena storage, preserved
+/// `MI_MEM_ARENA` provenance, `_mi_theap_init` prefix publication, and a
+/// bounded heap-delete composition. It does **not** model the enclosing
+/// caller's thread initialization, regular TLS get/null decision or slot,
+/// cached root/refcount, heap/subprocess list insertion, page routing, C
+/// subproc Theap statistics increment/decrement/merge, stats tail, or general
+/// multi-Theap lifecycle. Rust's [`Theap`] remains a prefix through `memid`,
+/// never a complete C-layout claim.
+#[must_use = "a requested-parent Arena Theap must detach/release or remain terminally retained"]
+pub(crate) struct RequestedParentArenaTheap<'main, 'heap, 'arena> {
+    // This mutable borrow is the lifetime proof for the live default TLD and
+    // makes main teardown/page-session entry unavailable while the auxiliary
+    // source list member exists.
+    main: &'main mut MainStaticTheapAttachment,
+    // The source auxiliary Heap outlives both intrusive list memberships.
+    heap: Pin<&'heap mut Heap>,
+    storage: Option<ExclusiveArenaTheapStorage<'arena, 'static>>,
+    // Rust drops the prefix (and zeroizes its random image) before returning
+    // the slice. A theoretically rejected selected-subprocess gate therefore
+    // retains only this post-drop source reservation.
+    release_retained: Option<ExclusiveArenaTheapReservation<'arena, 'static>>,
+    main_default: *mut Theap,
+    state: RequestedParentArenaTheapState,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl RequestedParentArenaTheap<'_, '_, '_> {
+    fn initialize(&mut self) -> Result<(), RequestedParentArenaTheapError> {
+        if !self.roots_still_match() || !self.main.tld_matches_subprocess() {
+            return Err(RequestedParentArenaTheapError::RootOwnership);
+        }
+        let (memory, theap_pointer) = {
+            let storage = self
+                .storage
+                .as_mut()
+                .ok_or(RequestedParentArenaTheapError::Poisoned)?;
+            let memory = storage.memory_id();
+            let theap = storage.prefix_mut();
+            if !theap.set_requested_arena_metadata_memid(memory) {
+                return Err(RequestedParentArenaTheapError::PrefixMemoryId);
+            }
+            (memory, core::ptr::from_mut(theap))
+        };
+        let arena_memory = memory
+            .arena_memory()
+            .ok_or(RequestedParentArenaTheapError::ArenaMemory)?;
+        if !self
+            .heap
+            .as_ref()
+            .get_ref()
+            .matches_dynamic_binding_for_requested_arena(self.main.subprocess, arena_memory.arena)
+        {
+            return Err(RequestedParentArenaTheapError::HeapBinding);
+        }
+
+        // SAFETY: this owner holds the only pinned mutable Heap projection
+        // for the complete pair of intrusive-list memberships.
+        let heap = unsafe { Pin::get_unchecked_mut(self.heap.as_mut()) };
+        let tld = self
+            .main
+            .tld
+            .as_mut()
+            .ok_or(RequestedParentArenaTheapError::Poisoned)?
+            .current_mut();
+        let initialized = {
+            let theap = self
+                .storage
+                .as_mut()
+                .ok_or(RequestedParentArenaTheapError::Poisoned)?
+                .prefix_mut();
+            // SAFETY: the owning main attachment proves the current live
+            // default TLD; the selected storage/Heap remain address-stable
+            // until this owner's explicit detach/release sequence.
+            unsafe { theap.initialize_requested_arena_on_main_tld(heap, tld, self.main_default) }
+        };
+        initialized.map_err(RequestedParentArenaTheapError::TheapInit)?;
+        // SAFETY: this owner retains the exact live prefix and its pinned
+        // caller Heap is exclusive for the complete bounded attachment.
+        debug_assert!(unsafe {
+            self.heap
+                .as_ref()
+                .get_ref()
+                .has_exact_theap_member(theap_pointer)
+        });
+        Ok(())
+    }
+
+    /// Validates the exact live source shape before local observation or
+    /// teardown. This consumes no TLS slot/cached root because those belong
+    /// to the enclosing `heap.c` caller, not `_mi_theap_create`.
+    pub(crate) fn is_attached(&mut self) -> bool {
+        if self.state != RequestedParentArenaTheapState::Attached
+            || self.release_retained.is_some()
+            || !self.roots_still_match()
+        {
+            return false;
+        }
+        let (theap_pointer, memory, theap_is_live, refcount, subproc_matches) = {
+            let Some(storage) = self.storage.as_mut() else {
+                return false;
+            };
+            let theap = storage.prefix_mut();
+            (
+                core::ptr::from_mut(theap),
+                theap.memory_id(),
+                theap.is_initialized(),
+                theap.refcount(),
+                theap.is_bound_to_main_subprocess(self.main.subprocess),
+            )
+        };
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if memory.kind() != crate::types::MemoryKind::Arena
+            || !memory.initially_committed()
+            || !theap_is_live
+            || refcount != 1
+            || !subproc_matches
+            || !self
+                .heap
+                .as_ref()
+                .get_ref()
+                .matches_dynamic_binding_for_requested_arena(
+                    self.main.subprocess,
+                    arena_memory.arena,
+                )
+            // SAFETY: this owner retains the exact live prefix and excludes
+            // a competing mutation of its caller Heap list.
+            || !unsafe {
+                self.heap
+                    .as_ref()
+                    .get_ref()
+                    .has_exact_theap_member(theap_pointer)
+            }
+        {
+            return false;
+        }
+        let tld = match self.main.tld.as_mut() {
+            Some(tld) => tld.current_mut(),
+            None => return false,
+        };
+        let tld_pointer = core::ptr::from_mut(tld);
+        // SAFETY: the main default's process-static slot remains live while
+        // this owner holds its mutable main attachment borrow.
+        let default_matches = unsafe {
+            !self.main_default.is_null()
+                && (*self.main_default).matches_tld_pointer(tld_pointer)
+                && (*self.main_default).is_initialized()
+        };
+        default_matches
+            // SAFETY: this owner retains both address-stable typed images and
+            // its mutable main-attachment borrow excludes concurrent TLD-list
+            // mutation for their entire linked lifetime.
+            && unsafe { tld.has_exact_auxiliary_and_default_pair(theap_pointer, self.main_default) }
+    }
+
+    /// Returns the selected source allocation provenance while the prefix is
+    /// still materialized. This is an observation only, not a release token.
+    #[inline]
+    pub(crate) fn memory_id(&self) -> Option<MemoryId> {
+        self.storage.as_ref().map(ExclusiveArenaTheapStorage::memory_id)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_theap_prefix_address(&self) -> usize {
+        self.storage
+            .as_ref()
+            .map_or(0, ExclusiveArenaTheapStorage::test_prefix_address)
+    }
+
+    #[inline]
+    pub(crate) fn is_torn_down(&self) -> bool {
+        self.state == RequestedParentArenaTheapState::TornDown
+    }
+
+    /// Detaches this one page-free auxiliary Theap and returns its exact
+    /// requested-parent Arena slice. The default Theap and all enclosing
+    /// TLS/cached-root state remain live for their separate owner.
+    pub(crate) fn teardown(&mut self) -> Result<(), RequestedParentArenaTheapError> {
+        match self.state {
+            RequestedParentArenaTheapState::Attached => {}
+            RequestedParentArenaTheapState::TornDown => {
+                return Err(RequestedParentArenaTheapError::TornDown);
+            }
+            RequestedParentArenaTheapState::Preparing | RequestedParentArenaTheapState::Poisoned => {
+                return Err(RequestedParentArenaTheapError::Poisoned);
+            }
+        }
+        if !self.is_attached() {
+            return Err(self.poison_with(RequestedParentArenaTheapError::RootOwnership));
+        }
+        let theap_pointer = {
+            let theap = self
+                .storage
+                .as_mut()
+                .ok_or(RequestedParentArenaTheapError::Poisoned)?
+                .prefix_mut();
+            if theap.page_count() != 0 {
+                return Err(self.poison_with(RequestedParentArenaTheapError::PageCountNonZero));
+            }
+            core::ptr::from_mut(theap)
+        };
+
+        let list_detach = {
+            // SAFETY: the owner retains the only pinned mutable caller Heap
+            // projection, the exact A -> D TLD shape, and no page/session
+            // owner can overlap it. This selects the source heap-delete
+            // order: detach A from the TLD before its sole Heap-list member.
+            let heap = unsafe { Pin::get_unchecked_mut(self.heap.as_mut()) };
+            let tld = self
+                .main
+                .tld
+                .as_mut()
+                .ok_or(RequestedParentArenaTheapError::Poisoned)?
+                .current_mut();
+            unsafe {
+                tld.detach_one_auxiliary_theap_for_heap_delete(
+                    heap,
+                    theap_pointer,
+                    self.main_default,
+                )
+            }
+        };
+        if let Err(error) = list_detach {
+            return Err(self.poison_with(RequestedParentArenaTheapError::TheapList(error)));
+        }
+        let cleared = self
+            .storage
+            .as_mut()
+            .is_some_and(|storage| storage.prefix_mut().clear_requested_arena_after_detach());
+        if !cleared {
+            return Err(self.poison_with(RequestedParentArenaTheapError::PrefixClear));
+        }
+
+        let storage = self
+            .storage
+            .take()
+            .ok_or(RequestedParentArenaTheapError::Poisoned)?;
+        // SAFETY: the preceding exact list detachment and clear proved the
+        // source final-refcount state, and this owner exposes no raw alias.
+        match unsafe { storage.drop_prefix_then_release() } {
+            Ok(true) => {}
+            Ok(false) => return Err(self.poison_with(RequestedParentArenaTheapError::ArenaRelease)),
+            Err(reservation) => {
+                self.release_retained = Some(reservation);
+                return Err(self.poison_with(RequestedParentArenaTheapError::ArenaRelease));
+            }
+        }
+        // SAFETY: the auxiliary list member is gone and the Arena prefix was
+        // dropped/released. This caller-owned Heap has no remaining pages or
+        // arena-page images in this bounded no-page lifecycle.
+        if !unsafe { Pin::get_unchecked_mut(self.heap.as_mut()).retire_dynamic_binding_after_detach() }
+        {
+            return Err(self.poison_with(RequestedParentArenaTheapError::HeapRetire));
+        }
+        self.state = RequestedParentArenaTheapState::TornDown;
+        Ok(())
+    }
+
+    #[inline]
+    fn roots_still_match(&self) -> bool {
+        core::ptr::eq(default_theap().as_ptr(), self.main_default)
+            && fast_slot_peek().is_some_and(|fast| {
+                fast.as_ptr().cast::<Theap>() == self.main_default
+            })
+            && core::ptr::eq(cached_theap().as_ptr(), crate::bootstrap::empty_default_theap_ptr())
+            && matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing))
+    }
+
+    #[inline]
+    fn poison_with(&mut self, error: RequestedParentArenaTheapError) -> RequestedParentArenaTheapError {
+        self.poison();
+        error
+    }
+
+    #[inline]
+    fn poison(&mut self) {
+        if self.state != RequestedParentArenaTheapState::TornDown {
+            self.state = RequestedParentArenaTheapState::Poisoned;
+            self.main.poison();
+        }
+    }
+}
+
+impl Drop for RequestedParentArenaTheap<'_, '_, '_> {
+    fn drop(&mut self) {
+        if self.state != RequestedParentArenaTheapState::TornDown {
+            // This owner deliberately has no automatic cleanup: a live
+            // intrusive member or a partially consumed arena release cannot
+            // be reconstructed safely during Drop. Poison the borrowed main
+            // owner so neither a page session nor static teardown can mistake
+            // the retained source state for a clean singleton default TLD.
+            self.poison();
+        }
+    }
+}
+
+/// One test-only failure while constructing or completing the finite M1
+/// same-TLD terminal fixture.  This is deliberately separate from the normal
+/// main/static and later/dynamic lifecycle errors: a failure after publication
+/// is retained by the fixture rather than treated as a general recovery path.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum M1SameTldTerminalError {
+    Main(MainStaticTheapError),
+    RootOwnership,
+    Backing(ThreadLocalBackingError),
+    Key(OwnedThreadLocalKeyError),
+    AuxiliaryHeapBinding,
+    TheapMetadata(MetaError),
+    TheapProjection,
+    TheapInit(TheapDynamicInitError),
+    CachedReference,
+    PageFreeCollect(M1PageFreeCollectError),
+    SlotOwnership,
+    PageCountNonZero,
+    TheapList(ThreadLocalTheapListError),
+    TheapClear,
+    TldQuiesce(ThreadLocalDataQuiesceError),
+    HeapRetire,
+    TornDown,
+    Poisoned,
+}
+
+/// The regular-key portion of the one page-free auxiliary Heap in the M1
+/// same-TLD terminal fixture.  It is intentionally not the production
+/// `DynamicHeapBinding`: the fixture has no independent dynamic TLD owner and
+/// releases this key only as Rust test cleanup after the source trace ends.
+#[cfg(test)]
+struct M1SameTldAuxiliaryBinding {
+    lease: OwnedThreadLocalKeyLease,
+    slot_bound: bool,
+}
+
+#[cfg(test)]
+impl M1SameTldAuxiliaryBinding {
+    #[inline]
+    const fn key(&self) -> crate::thread_local::ThreadLocalKey {
+        self.lease.key()
+    }
+
+    #[inline]
+    fn clear_slot_bound(&mut self) -> bool {
+        if !self.slot_bound {
+            return false;
+        }
+        self.slot_bound = false;
+        true
+    }
+}
+
+/// Address-free observations from the page-free two-Theap source terminal
+/// sequence. They are captured before Rust-only metadata/key/image cleanup,
+/// so the C/Rust differential contains only selected pinned
+/// `mi_thread_theaps_done` relations. It deliberately excludes the outer
+/// `_mi_thread_done` lifecycle.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct M1SameTldTerminalTrace {
+    entry_default_is_main: bool,
+    entry_cached_is_aux: bool,
+    entry_same_tld: bool,
+    entry_member_count: usize,
+    entry_main_heap_contains_default: bool,
+    entry_aux_heap_contains_aux: bool,
+    entry_aux_refcount: usize,
+    collect_call_count: usize,
+    collect_aux_first: bool,
+    collect_main_second: bool,
+    collect_after_default_page_count: usize,
+    collect_after_aux_page_count: usize,
+    default_ordinal: usize,
+    default_is_empty: bool,
+    default_cached_is_aux: bool,
+    default_member_count: usize,
+    default_aux_refcount: usize,
+    cached_ordinal: usize,
+    cached_default_is_empty: bool,
+    cached_is_empty: bool,
+    cached_member_count: usize,
+    cached_aux_refcount: usize,
+    detach_ordinal: usize,
+    detach_default_and_cached_empty: bool,
+    detach_default_heap_is_null: bool,
+    detach_aux_heap_is_null: bool,
+    detach_main_default_detached: bool,
+    detach_aux_heap_list_empty: bool,
+    detach_member_count: usize,
+    final_dynamic_ordinal: usize,
+    final_static_ordinal: usize,
+    final_dynamic_refcount: usize,
+    final_dynamic_tld_is_null: bool,
+    final_dynamic_links_null: bool,
+    final_dynamic_subproc_nonnull: bool,
+    final_tld_list_empty: bool,
+    final_static_tld_is_null: bool,
+    final_static_links_null: bool,
+    return_default_is_empty: bool,
+    return_cached_is_empty: bool,
+}
+
+/// The narrowly source-shaped M1 terminal composite: one static default
+/// Theap and one Malloc-backed cached auxiliary Theap share the exact
+/// ticket-zero TLD.  The mutable borrow of the main attachment is its linear
+/// proof that no singleton teardown/page session can overlap the two-member
+/// list.  This exists only for differential evidence; it is not a public
+/// first-class heap or multi-Theap API.
+#[cfg(test)]
+struct M1SameTldTerminalFixture<'main, 'heap> {
+    main: &'main mut MainStaticTheapAttachment,
+    auxiliary_heap: Pin<&'heap mut Heap>,
+    metadata: Pin<&'static MetaAllocator>,
+    binding: Option<M1SameTldAuxiliaryBinding>,
+    backing: Option<ThreadLocalBackingOwner>,
+    auxiliary_theap: Option<MetaAllocation<'static>>,
+    cached_root_bound: bool,
+    page_free_collect_calls: usize,
+    torn_down: bool,
+}
+
+#[cfg(test)]
+impl<'main, 'heap> M1SameTldTerminalFixture<'main, 'heap> {
+    /// Constructs only the selected page-free source shape used by the C
+    /// oracle: the live static default/fast roots remain on `D`, then an
+    /// auxiliary regular-key Heap installs its Malloc Theap `A` at the head
+    /// of D's TLD list and cached root.  No second registration, ticket, or
+    /// TLD is issued.
+    fn begin(
+        main: &'main mut MainStaticTheapAttachment,
+        mut auxiliary_heap: Pin<&'heap mut Heap>,
+        metadata: Pin<&'static MetaAllocator>,
+        registry: &'static OwnedThreadLocalKeyRegistry,
+        config: MemoryConfig,
+    ) -> Result<Self, M1SameTldTerminalError> {
+        main.ensure_current().map_err(M1SameTldTerminalError::Main)?;
+        if !main.tld_matches_subprocess() {
+            main.poison();
+            return Err(M1SameTldTerminalError::RootOwnership);
+        }
+        let main_default = main.storage.theap.image.get();
+        let roots_match = core::ptr::eq(default_theap().as_ptr(), main_default)
+            && fast_slot_peek().is_some_and(|fast| fast.as_ptr().cast::<Theap>() == main_default)
+            && core::ptr::eq(cached_theap().as_ptr(), crate::bootstrap::empty_default_theap_ptr())
+            && matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing));
+        let tld_matches = main.tld.as_mut().is_some_and(|owner| {
+            let tld = owner.current_mut();
+            tld.test_theap_head_is(main_default)
+                && unsafe { (&*main_default).matches_tld_pointer(core::ptr::from_mut(tld)) }
+        });
+        if !roots_match || !tld_matches {
+            main.poison();
+            return Err(M1SameTldTerminalError::RootOwnership);
+        }
+
+        // SAFETY: the fixture receives the only pinned mutable projection of
+        // a fresh caller-owned auxiliary Heap and retains it through the
+        // matching two-list detach below.
+        let auxiliary_heap_ref = unsafe { Pin::get_unchecked_mut(auxiliary_heap.as_mut()) };
+        let backing = unsafe {
+            ThreadLocalBackingOwner::begin_with_metadata(metadata, main.subprocess, config)
+        }
+        .map_err(M1SameTldTerminalError::Backing)?;
+        let lease = registry
+            .claim_for_main_subprocess(config, main.subprocess, metadata)
+            .map_err(M1SameTldTerminalError::Key)?;
+        let key = lease.key();
+        // SAFETY: the just-created fixture is the unique owner of this fresh,
+        // pinned caller Heap. Its regular key is neither the null nor fixed
+        // fast slot and remains leased until post-trace cleanup.
+        if !unsafe { auxiliary_heap_ref.initialize_dynamic_binding(main.subprocess, key.raw() as usize) } {
+            return Err(M1SameTldTerminalError::AuxiliaryHeapBinding);
+        }
+        let mut auxiliary_theap = metadata
+            .zalloc_for_main_subprocess(config, main.subprocess, size_of::<Theap>())
+            .map_err(M1SameTldTerminalError::TheapMetadata)?;
+        let auxiliary_pointer = {
+            let auxiliary = auxiliary_theap
+                .initialize_dynamic_theap_metadata()
+                .ok_or(M1SameTldTerminalError::TheapProjection)?;
+            let tld = main
+                .tld
+                .as_mut()
+                .ok_or(M1SameTldTerminalError::Poisoned)?
+                .current_mut();
+            // SAFETY: `main` is exclusively borrowed for this fixture. The
+            // checked static tail, the pinned auxiliary Heap, current TLD,
+            // and metadata allocation all stay live until terminal cleanup.
+            unsafe {
+                auxiliary
+                    .initialize_m1_cached_aux_on_main_tld(auxiliary_heap_ref, tld, main_default)
+            }
+            .map_err(M1SameTldTerminalError::TheapInit)?;
+            core::ptr::from_mut(auxiliary)
+        };
+        let mut binding = M1SameTldAuxiliaryBinding {
+            lease,
+            slot_bound: false,
+        };
+        let mut backing = backing;
+        backing
+            .set(key, auxiliary_pointer.cast())
+            .map_err(M1SameTldTerminalError::Backing)?;
+        binding.slot_bound = true;
+        let auxiliary = auxiliary_theap
+            .dynamic_theap_mut()
+            .ok_or(M1SameTldTerminalError::TheapProjection)?;
+        let cached = NonNull::new(auxiliary_pointer).ok_or(M1SameTldTerminalError::TheapProjection)?;
+        // `mi_heap_theap` stores A in cached TLS and then takes A's paired
+        // owner reference. The static empty predecessor needs no ref update.
+        set_cached_theap(cached);
+        if !auxiliary.acquire_dynamic_cached_reference() {
+            return Err(M1SameTldTerminalError::CachedReference);
+        }
+
+        Ok(Self {
+            main,
+            auxiliary_heap,
+            metadata,
+            binding: Some(binding),
+            backing: Some(backing),
+            auxiliary_theap: Some(auxiliary_theap),
+            cached_root_bound: true,
+            page_free_collect_calls: 0,
+            torn_down: false,
+        })
+    }
+
+    #[inline]
+    fn auxiliary_pointer(&mut self) -> Result<*mut Theap, M1SameTldTerminalError> {
+        self.auxiliary_theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .map(core::ptr::from_mut)
+            .ok_or(M1SameTldTerminalError::TheapProjection)
+    }
+
+    /// Exercises the generic queue-half coordinator for exactly one selected
+    /// page-free M1 Theap. The counter advances only after its empty branch
+    /// and ordered empty-prepass witnesses complete; it cannot be satisfied
+    /// by a descriptive trace ordinal alone.
+    #[inline]
+    fn collect_page_free_theap(
+        &mut self,
+        theap: *mut Theap,
+    ) -> Result<(), M1SameTldTerminalError> {
+        // SAFETY: the fixture retains the selected static or Malloc Theap,
+        // holds the only mutable main attachment borrow, and has already
+        // excluded a page session. The generic helper validates the complete
+        // page-free queue/direct-cache image before it enters the coordinator.
+        let theap = unsafe { theap.as_mut() }
+            .ok_or(M1SameTldTerminalError::PageFreeCollect(
+                M1PageFreeCollectError::InvalidPageFreeImage,
+            ))?;
+        test_m1_collect_abandon_page_free(theap)
+            .map_err(M1SameTldTerminalError::PageFreeCollect)?;
+        self.page_free_collect_calls = self
+            .page_free_collect_calls
+            .checked_add(1)
+            .ok_or(M1SameTldTerminalError::PageFreeCollect(
+                M1PageFreeCollectError::Postcondition,
+            ))?;
+        Ok(())
+    }
+
+    /// Executes the Rust counterpart of the selected source terminal tail.
+    ///
+    /// Its matching C fixture uses the pinned internal `_mi_heap_init` plus
+    /// `_mi_heap_theap_get_or_init` setup to form a page-free D/A input; it
+    /// intentionally does not claim public `mi_heap_new` or page-bearing
+    /// collection lifecycle parity. The trace still records the source's two
+    /// no-page collect calls before it binds default/cached reset, Heap
+    /// detaches, TLD final loop, and final-reference observations.
+    fn trace_and_teardown(&mut self) -> Result<M1SameTldTerminalTrace, M1SameTldTerminalError> {
+        if self.torn_down {
+            return Err(M1SameTldTerminalError::TornDown);
+        }
+        self.main
+            .ensure_current()
+            .map_err(M1SameTldTerminalError::Main)?;
+        if !self.main.tld_matches_subprocess() {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::RootOwnership);
+        }
+        let main_default = self.main.storage.theap.image.get();
+        let auxiliary = self.auxiliary_pointer()?;
+        let key = self
+            .binding
+            .as_ref()
+            .ok_or(M1SameTldTerminalError::Poisoned)?
+            .key();
+        let entry = {
+            let tld = self
+                .main
+                .tld
+                .as_mut()
+                .ok_or(M1SameTldTerminalError::Poisoned)?
+                .current_mut();
+            let tld_pointer = core::ptr::from_mut(tld);
+            let main = unsafe { &*main_default };
+            let auxiliary_ref = unsafe { &*auxiliary };
+            let auxiliary_heap = self.auxiliary_heap.as_ref().get_ref();
+            // The Rust static Heap representation contains only D in this
+            // fixture. The C source fixture separately bounds its metadata-D
+            // list at two members; both traces prove actual D membership,
+            // rather than reducing this field to the D.heap pointer alone.
+            let main_heap = unsafe { &*self.main.storage.heap.image.get() };
+            let main_heap_contains_default =
+                main_heap.test_m1_has_bounded_theap_member(main_default, 1, true);
+            let default_is_main = core::ptr::eq(default_theap().as_ptr(), main_default);
+            let fast_is_main = fast_slot_peek().is_some_and(|fast| {
+                fast.as_ptr().cast::<Theap>() == main_default
+            });
+            let cached_is_aux = core::ptr::eq(cached_theap().as_ptr(), auxiliary);
+            let roots = default_is_main && fast_is_main && cached_is_aux && self.cached_root_bound;
+            let list = tld.test_m1_cached_aux_and_main_pair(auxiliary, main_default)
+                && main.matches_tld_pointer(tld_pointer)
+                && auxiliary_ref.matches_tld_pointer(tld_pointer);
+            // SAFETY: the fixture retains the auxiliary typed allocation and
+            // owns its one-member private Heap list for this observation.
+            let heap_lists = main_heap_contains_default
+                && unsafe { auxiliary_heap.has_exact_theap_member(auxiliary) };
+            let slot = self
+                .backing
+                .as_mut()
+                .ok_or(M1SameTldTerminalError::Poisoned)?
+                .get(key)
+                .map_err(M1SameTldTerminalError::Backing)?;
+            if !roots
+                || !list
+                || !heap_lists
+                || slot != auxiliary.cast()
+                || !self
+                    .binding
+                    .as_ref()
+                    .is_some_and(|binding| binding.slot_bound)
+                || main.page_count() != 0
+                || auxiliary_ref.page_count() != 0
+                || auxiliary_ref.refcount() != 2
+            {
+                self.main.poison();
+                return Err(M1SameTldTerminalError::RootOwnership);
+            }
+            (
+                default_is_main,
+                cached_is_aux,
+                list,
+                tld.test_m1_theap_count(),
+                main_heap_contains_default,
+                // SAFETY: the fixture retains the auxiliary typed allocation
+                // and owns its one-member private Heap list here.
+                unsafe { auxiliary_heap.has_exact_theap_member(auxiliary) },
+                auxiliary_ref.refcount(),
+            )
+        };
+
+        // The source C fixture records each wrapped call's ordinal. Keep the
+        // Rust counterpart as an actual local transition counter rather than
+        // assigning descriptive constants after the fact.
+        let mut ordinal = 0usize;
+
+        // The selected internal C fixture and this Rust fixture both require
+        // D/A page count zero. Exercise the generic queue-half coordinator's
+        // selected empty branch for A then D; page-bearing collection and the
+        // production deferred/retired prepasses remain outside this M1 proof.
+        let (collect_default_pages, collect_aux_pages) = {
+            let tld = self
+                .main
+                .tld
+                .as_mut()
+                .ok_or(M1SameTldTerminalError::Poisoned)?
+                .current_mut();
+            let pair = tld.test_m1_cached_aux_and_main_pair(auxiliary, main_default);
+            let pages = unsafe { ((&*main_default).page_count(), (&*auxiliary).page_count()) };
+            if !pair || pages.1 != 0 || pages.0 != 0 {
+                self.main.poison();
+                return Err(M1SameTldTerminalError::PageCountNonZero);
+            }
+            (pages.0, pages.1)
+        };
+        // `_mi_theap_collect_abandon` follows the TLD's A -> D order. Each
+        // ordinal is assigned only after the shared generic coordinator has
+        // returned successfully on that actual page-free image.
+        self.collect_page_free_theap(auxiliary)?;
+        ordinal += 1;
+        let collect_aux_first = ordinal == 1;
+        self.collect_page_free_theap(main_default)?;
+        ordinal += 1;
+        let collect_main_second = ordinal == 2;
+        if collect_default_pages != 0
+            || collect_aux_pages != 0
+            || self.page_free_collect_calls != 2
+        {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::PageCountNonZero);
+        }
+
+        let empty = NonNull::new(crate::bootstrap::empty_default_theap_ptr())
+            .ok_or(M1SameTldTerminalError::Poisoned)?;
+        // `mi_thread_theaps_done` resets default before cached. The default
+        // root has no reference transition.
+        set_default_theap(empty);
+        ordinal += 1;
+        let default_ordinal = ordinal;
+        let default_stage = {
+            let tld = self
+                .main
+                .tld
+                .as_mut()
+                .ok_or(M1SameTldTerminalError::Poisoned)?
+                .current_mut();
+            (
+                core::ptr::eq(default_theap().as_ptr(), empty.as_ptr()),
+                core::ptr::eq(cached_theap().as_ptr(), auxiliary),
+                tld.test_m1_theap_count(),
+                unsafe { (&*auxiliary).refcount() },
+            )
+        };
+        if !default_stage.0
+            || !default_stage.1
+            || default_stage.2 != 2
+            || default_stage.3 != 2
+        {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::RootOwnership);
+        }
+
+        if !self.cached_root_bound || !core::ptr::eq(cached_theap().as_ptr(), auxiliary) {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::RootOwnership);
+        }
+        // The C cached setter stores E before it drops A's paired cached
+        // reference. The static empty successor has source no-free
+        // provenance, so no companion increment occurs.
+        set_cached_theap(empty);
+        self.cached_root_bound = false;
+        if !unsafe { (&*auxiliary).release_dynamic_cached_reference() } {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::CachedReference);
+        }
+        ordinal += 1;
+        let cached_ordinal = ordinal;
+        let cached_stage = {
+            let tld = self
+                .main
+                .tld
+                .as_mut()
+                .ok_or(M1SameTldTerminalError::Poisoned)?
+                .current_mut();
+            (
+                core::ptr::eq(default_theap().as_ptr(), empty.as_ptr()),
+                core::ptr::eq(cached_theap().as_ptr(), empty.as_ptr()),
+                tld.test_m1_theap_count(),
+                unsafe { (&*auxiliary).refcount() },
+            )
+        };
+        if !cached_stage.0
+            || !cached_stage.1
+            || cached_stage.2 != 2
+            || cached_stage.3 != 1
+        {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::CachedReference);
+        }
+
+        let detach_stage = {
+            let M1SameTldTerminalFixture {
+                main,
+                auxiliary_heap,
+                ..
+            } = self;
+            // SAFETY: this fixture owns the only mutable projection of the
+            // auxiliary caller Heap through its retained Pin.
+            let auxiliary_heap = unsafe { Pin::get_unchecked_mut(auxiliary_heap.as_mut()) };
+            // SAFETY: the fixture's exclusive main borrow prevents any page
+            // session or singleton teardown while these static images are
+            // projected for the source two-list pass.
+            let (main_heap, _) = unsafe { main.storage.images_mut() };
+            let tld = main
+                .tld
+                .as_mut()
+                .ok_or(M1SameTldTerminalError::Poisoned)?
+                .current_mut();
+            tld.m1_detach_cached_aux_and_main_from_heaps(
+                auxiliary,
+                auxiliary_heap,
+                main_default,
+                main_heap,
+            )
+            .map_err(M1SameTldTerminalError::TheapList)?;
+            ordinal += 1;
+            let detach_ordinal = ordinal;
+            // See the entry observation: the port's selected static image
+            // has no separate metadata Theap, so exact empty membership here
+            // is the Rust counterpart of C's bounded D-absence check.
+            let main_default_detached =
+                main_heap.test_m1_has_bounded_theap_member(main_default, 0, false);
+            (
+                core::ptr::eq(default_theap().as_ptr(), empty.as_ptr())
+                    && core::ptr::eq(cached_theap().as_ptr(), empty.as_ptr()),
+                unsafe { (&*main_default).heap().is_null() },
+                unsafe { (&*auxiliary).heap().is_null() },
+                main_default_detached,
+                auxiliary_heap.test_main_static_fields().theaps_empty,
+                tld.test_m1_theap_count(),
+                detach_ordinal,
+            )
+        };
+        if !detach_stage.0
+            || !detach_stage.1
+            || !detach_stage.2
+            || !detach_stage.3
+            || !detach_stage.4
+            || detach_stage.5 != 2
+        {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::TheapList(
+                ThreadLocalTheapListError::Membership,
+            ));
+        }
+
+        // Both callbacks execute inside one source-shaped list pass. `Cell`
+        // preserves the actual A-then-D observation order without asking two
+        // `FnOnce` closures to borrow the same mutable local simultaneously.
+        let final_dynamic = core::cell::Cell::new(None);
+        let final_static = core::cell::Cell::new(None);
+        let final_dynamic_ordinal = core::cell::Cell::new(0usize);
+        let final_static_ordinal = core::cell::Cell::new(0usize);
+        let final_ordinal = core::cell::Cell::new(ordinal);
+        let (dynamic_cleared, static_cleared) = {
+            let tld = self
+                .main
+                .tld
+                .as_mut()
+                .ok_or(M1SameTldTerminalError::Poisoned)?
+                .current_mut();
+            tld.m1_finish_cached_aux_and_main_tld(
+                auxiliary,
+                main_default,
+                |theap| {
+                    let next = final_ordinal.get() + 1;
+                    final_ordinal.set(next);
+                    final_dynamic_ordinal.set(next);
+                    final_dynamic.set(Some(theap.test_m1_terminal_fields()));
+                },
+                |theap| {
+                    let next = final_ordinal.get() + 1;
+                    final_ordinal.set(next);
+                    final_static_ordinal.set(next);
+                    final_static.set(Some(theap.test_m1_terminal_fields()));
+                },
+            )
+            .map_err(M1SameTldTerminalError::TheapList)?
+        };
+        let terminal_final_ordinal = final_ordinal.get();
+        let final_dynamic = final_dynamic
+            .get()
+            .ok_or(M1SameTldTerminalError::TheapProjection)?;
+        let final_static = final_static
+            .get()
+            .ok_or(M1SameTldTerminalError::TheapProjection)?;
+        let final_tld_list_empty = self
+            .main
+            .tld
+            .as_mut()
+            .ok_or(M1SameTldTerminalError::Poisoned)?
+            .current_mut()
+            .test_m1_theap_count()
+            == 0;
+        if !dynamic_cleared || !static_cleared || terminal_final_ordinal != 7 {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::TheapClear);
+        }
+
+        // Metadata/key/Heap retirement below is explicitly Rust fixture
+        // cleanup after the source-observed `mi_thread_theaps_done` body. It
+        // is not included in the C/Rust comparator: the C direct-call fixture
+        // exits after its trace with the regular backing/fast root intentionally
+        // still live, while this test must not retain a stale A pointer.
+        let mut auxiliary_allocation = self
+            .auxiliary_theap
+            .take()
+            .ok_or(M1SameTldTerminalError::Poisoned)?;
+        self.metadata
+            .free(&mut auxiliary_allocation)
+            .map_err(M1SameTldTerminalError::TheapMetadata)?;
+        // The direct source-body probe intentionally does not execute
+        // `_mi_thread_locals_thread_done`. Free the regular backing and clear
+        // fast only as post-trace Rust fixture hygiene; neither operation is a
+        // same-TLD terminal-trace field. `ThreadLocalBackingOwner::teardown`
+        // frees its backing image without dereferencing the now-released slot
+        // value, then its linear key proof can be retired.
+        self.backing
+            .as_mut()
+            .ok_or(M1SameTldTerminalError::Poisoned)?
+            .teardown()
+            .map_err(M1SameTldTerminalError::Backing)?;
+        self.backing = None;
+        if !self
+            .binding
+            .as_mut()
+            .ok_or(M1SameTldTerminalError::Poisoned)?
+            .clear_slot_bound()
+        {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::SlotOwnership);
+        }
+        set_fast_slot(None);
+        let auxiliary_heap_retired = {
+            // SAFETY: both source intrusive lists are detached and this
+            // fixture still has the only pinned mutable caller-Heap borrow.
+            unsafe {
+                Pin::get_unchecked_mut(self.auxiliary_heap.as_mut())
+                    .retire_dynamic_binding_after_detach()
+            }
+        };
+        if !auxiliary_heap_retired {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::HeapRetire);
+        }
+        let mut binding = self
+            .binding
+            .take()
+            .ok_or(M1SameTldTerminalError::Poisoned)?;
+        binding
+            .lease
+            .release()
+            .map_err(M1SameTldTerminalError::Key)?;
+
+        let quiesce = {
+            let tld = self
+                .main
+                .tld
+                .as_mut()
+                .ok_or(M1SameTldTerminalError::Poisoned)?
+                .current_mut();
+            tld.invalidate_attached_theap_for_teardown();
+            tld.quiesce_theap_list_lock_for_teardown()
+        };
+        if let Err(error) = quiesce {
+            self.main.poison();
+            return Err(M1SameTldTerminalError::TldQuiesce(error));
+        }
+        let registration = self
+            .main
+            .registration
+            .take()
+            .ok_or(M1SameTldTerminalError::Poisoned)?;
+        registration.release();
+        let tld = self
+            .main
+            .tld
+            .take()
+            .ok_or(M1SameTldTerminalError::Poisoned)?;
+        tld.retire();
+        self.main.state = AttachmentState::TornDown;
+        self.main.storage.mark_torn_down();
+        self.torn_down = true;
+
+        Ok(M1SameTldTerminalTrace {
+            entry_default_is_main: entry.0,
+            entry_cached_is_aux: entry.1,
+            entry_same_tld: entry.2,
+            entry_member_count: entry.3,
+            entry_main_heap_contains_default: entry.4,
+            entry_aux_heap_contains_aux: entry.5,
+            entry_aux_refcount: entry.6,
+            collect_call_count: self.page_free_collect_calls,
+            collect_aux_first,
+            collect_main_second,
+            collect_after_default_page_count: collect_default_pages,
+            collect_after_aux_page_count: collect_aux_pages,
+            default_ordinal,
+            default_is_empty: default_stage.0,
+            default_cached_is_aux: default_stage.1,
+            default_member_count: default_stage.2,
+            default_aux_refcount: default_stage.3,
+            cached_ordinal,
+            cached_default_is_empty: cached_stage.0,
+            cached_is_empty: cached_stage.1,
+            cached_member_count: cached_stage.2,
+            cached_aux_refcount: cached_stage.3,
+            detach_ordinal: detach_stage.6,
+            detach_default_and_cached_empty: detach_stage.0,
+            detach_default_heap_is_null: detach_stage.1,
+            detach_aux_heap_is_null: detach_stage.2,
+            detach_main_default_detached: detach_stage.3,
+            detach_aux_heap_list_empty: detach_stage.4,
+            detach_member_count: detach_stage.5,
+            final_dynamic_ordinal: final_dynamic_ordinal.get(),
+            final_static_ordinal: final_static_ordinal.get(),
+            final_dynamic_refcount: final_dynamic.refcount,
+            final_dynamic_tld_is_null: final_dynamic.tld_is_null,
+            final_dynamic_links_null: final_dynamic.tnext_is_null
+                && final_dynamic.tprev_is_null
+                && final_dynamic.hnext_is_null
+                && final_dynamic.hprev_is_null,
+            final_dynamic_subproc_nonnull: final_dynamic.subproc_is_nonnull,
+            final_tld_list_empty,
+            final_static_tld_is_null: final_static.tld_is_null,
+            final_static_links_null: final_static.tnext_is_null
+                && final_static.tprev_is_null
+                && final_static.hnext_is_null
+                && final_static.hprev_is_null,
+            return_default_is_empty: core::ptr::eq(default_theap().as_ptr(), empty.as_ptr()),
+            return_cached_is_empty: core::ptr::eq(cached_theap().as_ptr(), empty.as_ptr()),
+        })
     }
 }
 
@@ -1710,9 +3112,14 @@ mod tests {
         set_cached_theap, set_default_theap,
     };
     use crate::meta::MetaAllocator;
-    use crate::os::{MemoryConfig, PageSize, fault, numa_node};
+    use crate::owned_tls_key_registry::OwnedThreadLocalKeyRegistry;
+    use crate::os::{MemoryConfig, PageSize, fault};
     use crate::tld::ThreadLocalDataOwner;
     use crate::types::{HeapTheapListError, MemoryKind};
+    use core::mem::size_of;
+    use core::pin::Pin;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use std::boxed::Box;
     use std::thread;
 
     fn fixture() -> (&'static MainStaticAttachmentStorage, &'static MainSubprocess) {
@@ -1729,6 +3136,132 @@ mod tests {
             false,
             false,
         )
+    }
+
+    /// Emits the address-free M1 same-TLD terminal trace compared with the
+    /// pinned C fixture's internal page-free `D -> A` setup. The fixture uses
+    /// a Rust caller heap only to represent the selected source auxiliary
+    /// Heap image; it does not claim public `mi_heap_new` lifecycle parity.
+    #[test]
+    fn emit_m1_same_tld_terminal_c_rust_trace() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let registry = OwnedThreadLocalKeyRegistry::test_static_owner();
+            metadata
+                .prepare_for_main_subprocess(memory_config(), subprocess)
+                .expect("the selected source process publishes metadata before same-TLD demand");
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("the selected ticket-zero static attachment succeeds");
+            let auxiliary_heap: &'static mut Heap = Box::leak(Box::new(Heap::bootstrap_empty()));
+            // SAFETY: this isolated fixture owns the leaked caller Heap for
+            // the complete source-shaped auxiliary Theap lifecycle.
+            let auxiliary_heap = unsafe { Pin::new_unchecked(auxiliary_heap) };
+            let mut fixture = M1SameTldTerminalFixture::begin(
+                &mut main,
+                auxiliary_heap,
+                metadata,
+                registry,
+                memory_config(),
+            )
+            .expect("the exact static-default/dynamic-cached pair attaches to one TLD");
+            let trace = fixture
+                .trace_and_teardown()
+                .expect("the selected same-TLD terminal sequence completes");
+
+            assert!(trace.entry_default_is_main);
+            assert!(trace.entry_cached_is_aux);
+            assert!(trace.entry_same_tld);
+            assert_eq!(trace.entry_member_count, 2);
+            assert!(trace.entry_main_heap_contains_default);
+            assert!(trace.entry_aux_heap_contains_aux);
+            assert_eq!(trace.entry_aux_refcount, 2);
+            assert_eq!(trace.collect_call_count, 2);
+            assert!(trace.collect_aux_first);
+            assert!(trace.collect_main_second);
+            assert_eq!(trace.collect_after_default_page_count, 0);
+            assert_eq!(trace.collect_after_aux_page_count, 0);
+            assert_eq!(trace.default_ordinal, 3);
+            assert!(trace.default_is_empty);
+            assert!(trace.default_cached_is_aux);
+            assert_eq!(trace.default_member_count, 2);
+            assert_eq!(trace.default_aux_refcount, 2);
+            assert_eq!(trace.cached_ordinal, 4);
+            assert!(trace.cached_default_is_empty);
+            assert!(trace.cached_is_empty);
+            assert_eq!(trace.cached_member_count, 2);
+            assert_eq!(trace.cached_aux_refcount, 1);
+            assert_eq!(trace.detach_ordinal, 5);
+            assert!(trace.detach_default_and_cached_empty);
+            assert!(trace.detach_default_heap_is_null);
+            assert!(trace.detach_aux_heap_is_null);
+            assert!(trace.detach_main_default_detached);
+            assert!(trace.detach_aux_heap_list_empty);
+            assert_eq!(trace.detach_member_count, 2);
+            assert_eq!(trace.final_dynamic_ordinal, 6);
+            assert_eq!(trace.final_static_ordinal, 7);
+            assert_eq!(trace.final_dynamic_refcount, 1);
+            assert!(trace.final_dynamic_tld_is_null);
+            assert!(trace.final_dynamic_links_null);
+            assert!(trace.final_dynamic_subproc_nonnull);
+            assert!(trace.final_tld_list_empty);
+            assert!(trace.final_static_tld_is_null);
+            assert!(trace.final_static_links_null);
+            assert!(trace.return_default_is_empty);
+            assert!(trace.return_cached_is_empty);
+
+            macro_rules! emit {
+                ($name:literal, $value:expr) => {
+                    std::println!("{}={}", $name, $value as usize);
+                };
+            }
+            std::println!("CRABC_MI_M1_TLS_SAME_TLD_TRACE_BEGIN");
+            emit!("m1.tls.same_tld.entry.default_is_main", trace.entry_default_is_main);
+            emit!("m1.tls.same_tld.entry.cached_is_aux", trace.entry_cached_is_aux);
+            emit!("m1.tls.same_tld.entry.same_tld", trace.entry_same_tld);
+            emit!("m1.tls.same_tld.entry.member_count", trace.entry_member_count);
+            emit!("m1.tls.same_tld.entry.main_heap_contains_default", trace.entry_main_heap_contains_default);
+            emit!("m1.tls.same_tld.entry.aux_heap_contains_aux", trace.entry_aux_heap_contains_aux);
+            emit!("m1.tls.same_tld.entry.aux_refcount", trace.entry_aux_refcount);
+            emit!("m1.tls.same_tld.collect.call_count", trace.collect_call_count);
+            emit!("m1.tls.same_tld.collect.aux_first", trace.collect_aux_first);
+            emit!("m1.tls.same_tld.collect.main_second", trace.collect_main_second);
+            emit!("m1.tls.same_tld.collect.after.default_page_count", trace.collect_after_default_page_count);
+            emit!("m1.tls.same_tld.collect.after.aux_page_count", trace.collect_after_aux_page_count);
+            emit!("m1.tls.same_tld.default.ordinal", trace.default_ordinal);
+            emit!("m1.tls.same_tld.default.default_is_empty", trace.default_is_empty);
+            emit!("m1.tls.same_tld.default.cached_is_aux", trace.default_cached_is_aux);
+            emit!("m1.tls.same_tld.default.member_count", trace.default_member_count);
+            emit!("m1.tls.same_tld.default.aux_refcount", trace.default_aux_refcount);
+            emit!("m1.tls.same_tld.cached.ordinal", trace.cached_ordinal);
+            emit!("m1.tls.same_tld.cached.default_is_empty", trace.cached_default_is_empty);
+            emit!("m1.tls.same_tld.cached.cached_is_empty", trace.cached_is_empty);
+            emit!("m1.tls.same_tld.cached.member_count", trace.cached_member_count);
+            emit!("m1.tls.same_tld.cached.aux_refcount", trace.cached_aux_refcount);
+            emit!("m1.tls.same_tld.detach.ordinal", trace.detach_ordinal);
+            emit!("m1.tls.same_tld.detach.default_and_cached_empty", trace.detach_default_and_cached_empty);
+            emit!("m1.tls.same_tld.detach.default_heap_is_null", trace.detach_default_heap_is_null);
+            emit!("m1.tls.same_tld.detach.aux_heap_is_null", trace.detach_aux_heap_is_null);
+            emit!("m1.tls.same_tld.detach.main_default_detached", trace.detach_main_default_detached);
+            emit!("m1.tls.same_tld.detach.aux_heap_list_empty", trace.detach_aux_heap_list_empty);
+            emit!("m1.tls.same_tld.detach.member_count", trace.detach_member_count);
+            emit!("m1.tls.same_tld.final.dynamic_ordinal", trace.final_dynamic_ordinal);
+            emit!("m1.tls.same_tld.final.static_ordinal", trace.final_static_ordinal);
+            emit!("m1.tls.same_tld.final.dynamic_refcount", trace.final_dynamic_refcount);
+            emit!("m1.tls.same_tld.final.dynamic_tld_is_null", trace.final_dynamic_tld_is_null);
+            emit!("m1.tls.same_tld.final.dynamic_links_null", trace.final_dynamic_links_null);
+            emit!("m1.tls.same_tld.final.dynamic_subproc_nonnull", trace.final_dynamic_subproc_nonnull);
+            emit!("m1.tls.same_tld.final.tld_list_empty", trace.final_tld_list_empty);
+            emit!("m1.tls.same_tld.final.static_tld_is_null", trace.final_static_tld_is_null);
+            emit!("m1.tls.same_tld.final.static_links_null", trace.final_static_links_null);
+            emit!("m1.tls.same_tld.return.default_is_empty", trace.return_default_is_empty);
+            emit!("m1.tls.same_tld.return.cached_is_empty", trace.return_cached_is_empty);
+            std::println!("CRABC_MI_M1_TLS_SAME_TLD_TRACE_END");
+        })
+        .join()
+        .expect("the current-thread same-TLD terminal trace completes");
     }
 
     #[test]
@@ -1764,6 +3297,396 @@ mod tests {
         .expect("heap-foundation test thread completes");
     }
 
+    /// Emits the bounded C/Rust record for pinned `mi_tld_create`'s selected
+    /// source-static first-TLD arm (`src/init.c:253-272`). The Rust half uses
+    /// the existing ticket-zero static attachment path, so its selector and
+    /// Heap foundation deliberately precede ticket issue; that earlier Rust
+    /// ownership preparation is not a claim of C caller-order parity. Once
+    /// ticket zero issues, this trace witnesses concrete static provenance,
+    /// the shared normal body, its live registration, and the actual Release
+    /// publication before the larger Theap/TLS/root attachment continues.
+    #[test]
+    fn emit_m2_static_first_tld_create_c_rust_trace() {
+        thread::spawn(|| {
+            macro_rules! record {
+                ($name:literal, $value:expr) => {
+                    std::println!("{}={}", $name, $value as usize);
+                };
+            }
+
+            let (storage, subprocess) = fixture();
+            // `MainStaticTldSlot` is Rust `MaybeUninit`, not C's static-zero
+            // storage. These two scalar states prove only fresh semantic slot
+            // ownership before the private helper materializes its valid
+            // zero-shaped image.
+            let pre_static_slot_fresh = storage.test_state_is_cold()
+                && subprocess.test_main_tld_is_cold();
+            let pre_total_thread_count_zero = subprocess.total_thread_count() == 0;
+            let pre_live_thread_count_zero = subprocess.live_thread_count() == 0;
+            assert!(pre_static_slot_fresh);
+            assert!(pre_total_thread_count_zero);
+            assert!(pre_live_thread_count_zero);
+
+            let mut selection = subprocess
+                .reserve_static_bootstrap()
+                .expect("the fresh test subprocess selects ticket zero");
+            let pre_main_subprocess_selected = core::ptr::eq(selection.subprocess(), subprocess);
+            assert!(pre_main_subprocess_selected);
+            let foundation = MainStaticHeapFoundation::initialize(storage, subprocess, &mut selection)
+                .expect("the Rust static Heap foundation precedes its ticket-zero attachment");
+
+            let mut trace = StaticFirstTldCreateTrace::new();
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_after_heap_foundation_with_numa_source_and_static_first_trace(
+                    foundation,
+                    selection,
+                    |memid| {
+                        // This is the source-position NUMA observation: the
+                        // shared normal writer has already installed concrete
+                        // static provenance but has not reached thread-ID,
+                        // pool, live registration, or Release publication.
+                        assert_eq!(memid.kind(), MemoryKind::Static);
+                        let static_memory = memid
+                            .static_memory()
+                            .expect("the selected Rust static slot has concrete provenance");
+                        assert!(!static_memory.base.is_null());
+                        assert_eq!(static_memory.size, size_of::<ThreadLocalData>());
+                        assert!(memid.is_pinned());
+                        assert!(memid.initially_committed());
+                        assert!(!memid.initially_zero());
+                        assert!(subprocess.test_main_tld_is_claimed());
+                        assert_eq!(subprocess.total_thread_count(), 1);
+                        assert_eq!(subprocess.live_thread_count(), 0);
+                        3
+                    },
+                    &mut trace,
+                )
+            }
+            .expect("the selected ticket-zero static attachment succeeds");
+
+            let post = trace
+                .poststate()
+                .expect("the trace snapshots the published TLD before Theap attachment");
+            let post_total_thread_count_one = subprocess.total_thread_count() == 1;
+            let post_total_thread_count_incremented =
+                pre_total_thread_count_zero && post_total_thread_count_one;
+            let post_live_thread_count_one = subprocess.live_thread_count() == 1;
+            let post_live_thread_count_incremented =
+                pre_live_thread_count_zero && post_live_thread_count_one;
+            // C returns from `mi_tld_create` after live registration. Rust
+            // reaches this owner result only after its distinct
+            // `MAIN_TLD_LIVE` Release store; this is a labeled semantic
+            // correspondence, not a claim of the same primitive.
+            let post_result_visibility_after_live_registration =
+                trace.live_registration_precedes_release_publication()
+                    && subprocess.test_main_tld_is_live();
+            let normal_body_ordered = trace.modeled_normal_body_is_ordered();
+            let ticket_zero_before_static_memid = trace.ticket_zero_precedes_static_memid();
+            let static_memid_before_normal_lock = trace.static_memid_precedes_normal_lock();
+            let threadpool_before_live_increment = trace.threadpool_precedes_live_registration();
+            let total_increment_before_live_increment = trace.total_ticket_precedes_live_registration();
+            let live_increment_before_result_visibility =
+                trace.live_registration_precedes_release_publication();
+            let selected_create_effects_ordered = trace.has_selected_create_effect_order();
+
+            assert!(post.static_branch_selected);
+            assert!(post.static_slot_identity_preserved);
+            assert!(post.subprocess_matches_input);
+            assert!(post.theap_head_null);
+            assert!(post.lock_roundtrip);
+            assert!(post.numa_node_injected_three);
+            assert!(post.thread_id_matches_input);
+            assert!(post.thread_id_live);
+            assert!(post.threadpool_false);
+            assert!(post.thread_sequence_zero);
+            assert!(post.recurse_false);
+            assert!(post.memid_static_kind);
+            assert!(post.memid_base_is_static_slot);
+            assert!(post.memid_size_is_own_tld_size);
+            assert!(post.memid_pinned);
+            assert!(post.memid_initially_committed);
+            assert!(post.memid_initially_zero_false);
+            assert!(post.metadata_allocation_bypassed);
+            assert!(post_total_thread_count_one);
+            assert!(post_total_thread_count_incremented);
+            assert!(post_live_thread_count_one);
+            assert!(post_live_thread_count_incremented);
+            assert!(post_result_visibility_after_live_registration);
+            assert!(ticket_zero_before_static_memid);
+            assert!(static_memid_before_normal_lock);
+            assert!(normal_body_ordered);
+            assert!(threadpool_before_live_increment);
+            assert!(total_increment_before_live_increment);
+            assert!(live_increment_before_result_visibility);
+            assert!(selected_create_effects_ordered);
+
+            std::println!("CRABC_MI_M2_STATIC_FIRST_TLD_CREATE_TRACE_BEGIN");
+            record!(
+                "m2.initialization.static_first_tld.pre.main_subprocess_selected",
+                pre_main_subprocess_selected
+            );
+            record!(
+                "m2.initialization.static_first_tld.pre.static_slot_fresh",
+                pre_static_slot_fresh
+            );
+            record!(
+                "m2.initialization.static_first_tld.pre.total_thread_count_zero",
+                pre_total_thread_count_zero
+            );
+            record!(
+                "m2.initialization.static_first_tld.pre.live_thread_count_zero",
+                pre_live_thread_count_zero
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.static_branch_selected",
+                post.static_branch_selected
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.static_slot_identity_preserved",
+                post.static_slot_identity_preserved
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.subprocess_matches_input",
+                post.subprocess_matches_input
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.theap_head_null",
+                post.theap_head_null
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.lock_roundtrip",
+                post.lock_roundtrip
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.numa_node_injected_three",
+                post.numa_node_injected_three
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.thread_id_matches_input",
+                post.thread_id_matches_input
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.thread_id_live",
+                post.thread_id_live
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.threadpool_false",
+                post.threadpool_false
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.thread_sequence_zero",
+                post.thread_sequence_zero
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.recurse_false",
+                post.recurse_false
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_static_kind",
+                post.memid_static_kind
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_base_is_static_slot",
+                post.memid_base_is_static_slot
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_size_is_own_tld_size",
+                post.memid_size_is_own_tld_size
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_pinned",
+                post.memid_pinned
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_initially_committed",
+                post.memid_initially_committed
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.memid_initially_zero_false",
+                post.memid_initially_zero_false
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.metadata_allocation_bypassed",
+                post.metadata_allocation_bypassed
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.total_thread_count_one",
+                post_total_thread_count_one
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.total_thread_count_incremented",
+                post_total_thread_count_incremented
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.live_thread_count_one",
+                post_live_thread_count_one
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.live_thread_count_incremented",
+                post_live_thread_count_incremented
+            );
+            record!(
+                "m2.initialization.static_first_tld.post.result_visibility_after_live_registration",
+                post_result_visibility_after_live_registration
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.ticket_zero_before_static_memid",
+                ticket_zero_before_static_memid
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.static_memid_before_normal_lock",
+                static_memid_before_normal_lock
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.lock_before_numa",
+                normal_body_ordered
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.numa_before_thread_id",
+                normal_body_ordered
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.thread_id_before_threadpool",
+                normal_body_ordered
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.threadpool_before_live_increment",
+                threadpool_before_live_increment
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.total_increment_before_live_increment",
+                total_increment_before_live_increment
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.live_increment_before_result_visibility",
+                live_increment_before_result_visibility
+            );
+            record!(
+                "m2.initialization.static_first_tld.order.selected_create_effects_ordered",
+                selected_create_effects_ordered
+            );
+            std::println!("CRABC_MI_M2_STATIC_FIRST_TLD_CREATE_TRACE_END");
+
+            owner
+                .teardown()
+                .expect("the traced static attachment tears down exactly once");
+            assert_eq!(subprocess.live_thread_count(), 0);
+        })
+        .join()
+        .expect("the static-first TLD trace thread completes");
+    }
+
+    #[test]
+    fn static_heap_foundation_makes_the_canonical_main_heap_identity_ready_last() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let foreign = MainSubprocess::test_static_owner();
+            let mut selection = subprocess
+                .reserve_static_bootstrap()
+                .expect("the cold subprocess selects the static source branch");
+
+            assert_eq!(
+                subprocess.main_heap_publication_state(),
+                crate::subproc::MainHeapPublicationState::Absent
+            );
+            assert!(
+                matches!(
+                    MainStaticHeapFoundation::initialize(storage, foreign, &mut selection),
+                    Err(MainStaticHeapFoundationError::SubprocessMismatch)
+                ),
+                "a foreign subprocess fails before the static slot or selected branch changes"
+            );
+            assert!(storage.test_state_is_cold());
+            assert_eq!(
+                subprocess.ready_main_heap_identity(),
+                Err(crate::subproc::MainHeapReadyLookupError::Absent)
+            );
+            assert_eq!(
+                foreign.ready_main_heap_identity(),
+                Err(crate::subproc::MainHeapReadyLookupError::Absent)
+            );
+            let foundation = MainStaticHeapFoundation::initialize_with_test_publishing_observer(
+                storage,
+                subprocess,
+                &mut selection,
+                |heap| {
+                    assert_eq!(
+                        subprocess.main_heap_publication_state(),
+                        crate::subproc::MainHeapPublicationState::Publishing,
+                        "the source pointer is visible only as an unusable publishing identity"
+                    );
+                    assert_eq!(
+                        subprocess.ready_main_heap_identity(),
+                        Err(crate::subproc::MainHeapReadyLookupError::Publishing)
+                    );
+                    let fields = heap.test_main_static_fields();
+                    assert_eq!(
+                        fields.memid.kind(),
+                        MemoryKind::Static,
+                        "the source assigns kind-only static provenance before publishing heap_main"
+                    );
+                    let static_memory = fields
+                        .memid
+                        .static_memory()
+                        .expect("kind-only source provenance selects the static union");
+                    assert!(static_memory.base.is_null());
+                    assert_eq!(static_memory.size, 0);
+                    assert!(!fields.memid.is_pinned());
+                    assert!(!fields.memid.initially_committed());
+                    assert!(!fields.memid.initially_zero());
+                    assert_eq!(fields.heap_seq, 0);
+                    assert_eq!(fields.theap_slot, 0);
+                    assert_eq!(fields.numa_node, 0);
+                    assert!(fields.theaps_empty);
+                    assert_eq!(subprocess.total_thread_count(), 0);
+                    assert_eq!(subprocess.live_thread_count(), 0);
+                },
+            )
+            .expect("the final static Heap slot publishes for this exact subprocess");
+
+            assert!(foundation.test_heap_is_initialized());
+            let canonical_heap = NonNull::new(storage.heap.image.get())
+                .expect("the process-static Heap slot has a fixed address");
+            let ready = subprocess
+                .ready_main_heap_identity()
+                .expect("the canonical main Heap identity becomes ready after initialization");
+            assert!(ready.matches(canonical_heap));
+            assert!(subprocess.matches_ready_main_heap(canonical_heap));
+            assert_eq!(
+                subprocess.ready_main_heap_identity(),
+                Ok(ready),
+                "repeated ready lookup is the same opaque exact identity"
+            );
+
+            let stale_storage = MainStaticAttachmentStorage::test_static_owner();
+            assert!(
+                matches!(
+                    MainStaticHeapFoundation::initialize(
+                        stale_storage,
+                        subprocess,
+                        &mut selection,
+                    ),
+                    Err(MainStaticHeapFoundationError::MainHeapPublication(
+                        crate::subproc::MainHeapPublicationError::AlreadyReady
+                    ))
+                ),
+                "a stale second static slot cannot replace the canonical identity"
+            );
+            assert!(
+                stale_storage.test_state_is_cold(),
+                "the rejected stale slot remains reusable rather than retaining initialization"
+            );
+            assert_eq!(
+                stale_storage.test_heap_memory_id().kind(),
+                MemoryKind::None,
+                "a rejected stale admission returns COLD without changing its Heap memid"
+            );
+            assert!(subprocess.matches_ready_main_heap(canonical_heap));
+        })
+        .join()
+        .expect("main-heap publication test thread completes");
+    }
+
     #[test]
     fn ticket_zero_static_attachment_keeps_source_images_lists_roots_and_release_witness() {
         thread::spawn(|| {
@@ -1782,7 +3705,10 @@ mod tests {
                 let tld = owner.tld().expect("main TLD remains current");
                 assert_eq!(tld.thread_id(), identity.get());
                 assert_eq!(tld.thread_sequence().get(), 0);
-                assert_eq!(tld.numa_node(), i32::try_from(numa_node()).unwrap());
+                assert!(
+                    (0..i32::MAX).contains(&tld.numa_node()),
+                    "the fixed OS NUMA wrapper supplies a source-range node",
+                );
                 assert_eq!(tld.memory_id().kind(), MemoryKind::Static);
                 assert!(tld.memory_id().is_pinned());
             }
@@ -1845,6 +3771,124 @@ mod tests {
     }
 
     #[test]
+    fn ticket_zero_static_tld_uses_fixed_numa_wrapper_after_static_memid() {
+        fn attach_with_raw_numa(raw_count: usize, expected_numa: i32) {
+            thread::spawn(move || {
+                let (storage, subprocess) = fixture();
+                let mut selection = subprocess
+                    .reserve_static_bootstrap()
+                    .expect("the cold subprocess selects the static source branch");
+                let foundation = MainStaticHeapFoundation::initialize(
+                    storage,
+                    subprocess,
+                    &mut selection,
+                )
+                .expect("the static Heap foundation precedes the selected TLD");
+                let cache = AtomicUsize::new(0);
+                let raw_count_calls = AtomicUsize::new(0);
+                let raw_current_calls = AtomicUsize::new(0);
+                let fault = fault::install(fault::Plan::at(
+                    fault::Point::Cpu,
+                    1,
+                    crabc_core::Errno::NOMEM,
+                ));
+
+                let mut owner = unsafe {
+                    MainStaticTheapAttachment::begin_after_heap_foundation_with_numa_source(
+                        foundation,
+                        selection,
+                        |memid| {
+                            assert_eq!(memid.kind(), MemoryKind::Static);
+                            assert!(memid.is_pinned());
+                            assert!(memid.initially_committed());
+                            assert!(!memid.initially_zero());
+                            let static_memory = memid
+                                .static_memory()
+                                .expect("the selected TLD source forms static provenance first");
+                            assert!(!static_memory.base.is_null());
+                            assert_eq!(static_memory.size, size_of::<ThreadLocalData>());
+                            assert!(
+                                subprocess.test_main_tld_is_claimed(),
+                                "the static slot remains unobservable until its complete image publishes",
+                            );
+                            assert_eq!(
+                                subprocess.total_thread_count(),
+                                1,
+                                "the source ticket is issued before the NUMA observation",
+                            );
+                            assert_eq!(
+                                subprocess.live_thread_count(),
+                                0,
+                                "the complete TLD image is not published while NUMA is observed",
+                            );
+                            assert!(
+                                roots_are_pristine_for_main_static_attachment(),
+                                "the source observation precedes default and fast-root publication",
+                            );
+                            crate::os::test_os_numa_node_with_raw(
+                                &cache,
+                                || {
+                                    raw_count_calls.fetch_add(1, Ordering::Relaxed);
+                                    raw_count
+                                },
+                                || {
+                                    raw_current_calls.fetch_add(1, Ordering::Relaxed);
+                                    if raw_count == 3 {
+                                        8
+                                    } else {
+                                        panic!("a normalized single-node count must not probe the current node")
+                                    }
+                                },
+                            ) as i32
+                        },
+                    )
+                }
+                .expect("the selected static attachment accepts the fixed NUMA result");
+
+                assert!(
+                    subprocess.test_main_tld_registered_while_claimed(),
+                    "the normal arm increments its live count while the static slot remains CLAIMED",
+                );
+                assert!(
+                    subprocess.test_main_tld_is_live(),
+                    "only the registered static TLD is Release-published before Theap/root attachment",
+                );
+
+                assert_eq!(
+                    owner.tld().expect("the static TLD remains current").numa_node(),
+                    expected_numa,
+                );
+                assert_eq!(raw_count_calls.load(Ordering::Relaxed), 1);
+                assert_eq!(
+                    raw_current_calls.load(Ordering::Relaxed),
+                    if raw_count == 3 { 1 } else { 0 },
+                );
+                assert_eq!(
+                    cache.load(Ordering::Acquire),
+                    if raw_count == 3 { 3 } else { 1 },
+                );
+                assert_eq!(subprocess.total_thread_count(), 1);
+                assert_eq!(subprocess.live_thread_count(), 1);
+                owner
+                    .teardown()
+                    .expect("the isolated static attachment tears down normally");
+                assert!(roots_are_pristine_for_main_static_attachment());
+                assert_eq!(
+                    fault.observed(),
+                    0,
+                    "the injected local wrapper leaves no raw CPU probe outside its closures",
+                );
+            })
+            .join()
+            .expect("the isolated static NUMA attachment test completes");
+        }
+
+        attach_with_raw_numa(3, 2);
+        attach_with_raw_numa(0, 0);
+        attach_with_raw_numa(i32::MAX as usize + 1, 0);
+    }
+
+    #[test]
     fn wrong_roots_reject_before_ticket_and_repeat_observes_published_roots() {
         thread::spawn(|| {
             let (wrong_storage, wrong_subprocess) = fixture();
@@ -1884,6 +3928,9 @@ mod tests {
         thread::spawn(|| {
             let (storage, subprocess) = fixture();
             let metadata = MetaAllocator::test_static_owner();
+            metadata
+                .prepare_for_main_subprocess(memory_config(), subprocess)
+                .expect("the isolated source process publishes metadata before generic TLD admission");
             let mut generic = unsafe {
                 ThreadLocalDataOwner::begin_with_test_metadata(
                     subprocess,

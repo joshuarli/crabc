@@ -1,0 +1,169 @@
+{
+  "checks": [
+    {
+      "expected_passed_test_count": 1,
+      "id": "mixed-detached-runtime-route",
+      "kind": "integration-test",
+      "scenarios": [
+        "a-exits-b-frees",
+        "mixed-departing-theap",
+        "multiple-bins-and-page-kinds",
+        "multiple-live-pages",
+        "terminal-admission-order",
+        "terminal-ownership-release"
+      ],
+      "target": "native_post_exit_lifecycle"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "joined-source-publication-before-exit",
+      "kind": "integration-test",
+      "scenarios": [
+        "remote-free-before-exit"
+      ],
+      "target": "native_source_published_live_owner_exit"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "post-exit-same-page-remote-producers",
+      "kind": "integration-test",
+      "scenarios": [
+        "remote-free-after-exit"
+      ],
+      "target": "native_post_exit_claimed_remote_producers"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "source-selected-medium-after-retired-large-prepass",
+      "kind": "integration-test",
+      "scenarios": [
+        "live-page-abandonment"
+      ],
+      "target": "native_source_selected_medium_owner_exit"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "post-exit-claim-page-map-lifetime",
+      "kind": "integration-test",
+      "scenarios": [
+        "post-exit-claim-page-map-lifetime"
+      ],
+      "target": "native_post_exit_claim_page_map_lifetime"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "aggregate-final-member-reclamation",
+      "kind": "integration-test",
+      "scenarios": [
+        "source-permitted-adoption"
+      ],
+      "target": "native_aggregate_post_exit_reclaim"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "failed-os-terminal-release",
+      "kind": "integration-test",
+      "scenarios": [
+        "failed-os-terminal-release"
+      ],
+      "target": "native_post_exit_failed_os_release"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "split-terminal-releaser-finish",
+      "kind": "integration-test",
+      "scenarios": [
+        "terminal-admission-order"
+      ],
+      "target": "native_post_exit_split_releaser_lifecycle"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "multiple-terminal-completions-one-b-finish",
+      "kind": "integration-test",
+      "scenarios": [
+        "completed-route-local-session-continuation",
+        "terminal-admission-order",
+        "terminal-ownership-release"
+      ],
+      "target": "native_multiple_post_exit_completions"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "post-exit-page-map-and-live-remote",
+      "kind": "integration-test",
+      "scenarios": [
+        "post-exit-page-map-and-live-remote",
+        "terminal-admission-order",
+        "terminal-ownership-release"
+      ],
+      "target": "native_terminal_completion_live_remote_free"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "source-full-pages-before-live-abandonment",
+      "kind": "unit-test-filter",
+      "scenarios": [
+        "empty-during-exit-collection",
+        "general-production-traversal",
+        "live-page-abandonment"
+      ],
+      "target": "main_heap_page::tests::later_thread_exit_collects_later_full_pages_before_retaining_an_earlier_live_page"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "source-mixed-full-medium-large-traversal",
+      "kind": "unit-test-filter",
+      "scenarios": [
+        "general-production-traversal",
+        "multiple-bins-and-page-kinds",
+        "multiple-live-pages"
+      ],
+      "target": "main_heap_page::tests::later_thread_exit_mixed_full_medium_or_large_pages_route_releases_both_spans"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "source-regular-and-singleton-terminal-tails",
+      "kind": "unit-test-filter",
+      "scenarios": [
+        "general-production-traversal",
+        "terminal-ownership-release"
+      ],
+      "target": "main_heap_page::tests::later_thread_exit_full_singleton_or_regular_pages_route_releases_each_source_tail"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "source-generic-route-with-live-medium-and-singleton",
+      "kind": "unit-test-filter",
+      "scenarios": [
+        "general-production-traversal",
+        "old-theap-teardown"
+      ],
+      "target": "main_heap_page::tests::later_thread_exit_generic_route_releases_mixed_live_medium_and_singleton"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "source-mapped-medium-adoption",
+      "kind": "unit-test-filter",
+      "scenarios": [
+        "source-permitted-adoption"
+      ],
+      "target": "main_heap_page::tests::later_thread_exit_mapped_medium_route_adopts_into_a_fresh_later_owner"
+    }
+  ],
+  "execution": {
+    "features": [
+      "native-runtime-test-audit",
+      "native-runtime-test-fault"
+    ],
+    "package": "crabc-mimalloc",
+    "test_threads": 1,
+    "timeout_seconds": 300
+  },
+  "format": 1,
+  "schema": "crabc-mimalloc-native-owner-exit-lifecycle",
+  "upstream": {
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

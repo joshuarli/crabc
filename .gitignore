@@ -1,5 +1,7 @@
 /target
 /dist/
+# Local development worktrees, scratch files, and isolated build outputs.
+/.work/
 # Isolated output directory for the Rust-native performance fixture.
 /compat/perf/native/target/
 Cargo.lock

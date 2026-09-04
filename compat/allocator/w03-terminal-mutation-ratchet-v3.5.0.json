@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "page_map": {
+    "helper": "begin_blocking_exact_post_owner_exit_mutation",
+    "ordinary_method": "begin_page_lifecycle",
+    "regression_test": "exact_post_owner_exit_mutation_waits_without_changing_normal_lifecycle_rejection",
+    "source": "crabc-mimalloc/src/process_page_map.rs"
+  },
+  "schema": "crabc-mimalloc-w03-terminal-mutation-ratchet",
+  "scope": {
+    "non_promotional": true,
+    "same_page_concurrency": "The source remote-head CAS decides the one same-page claimant before any structural PageMap mutation. A short structural-gate conflict is not a terminal-release failure.",
+    "terminal_busy_policy": "A valid W03 terminal callback waits or retries for the exact short mutation boundary; it must not return Retained solely because ordinary begin_page_lifecycle would report LifecycleBusy."
+  },
+  "upstream": {
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "w03": {
+    "legacy_nonblocking_method": "begin_page_lifecycle",
+    "pointer_dispatch": "continue_post_owner_exit_live_allocation_with_terminal_marker",
+    "post_cas_continuation": "continue_post_owner_exit_remote_claim_with_process_page_facts",
+    "remote_publication": "remote_free::push_post_owner_exit_live_allocation",
+    "source": "crabc-mimalloc/src/single_thread.rs",
+    "terminal_branch_count": 2,
+    "terminal_mutation_method": "begin_blocking_exact_post_owner_exit_mutation",
+    "terminal_mutation_owner": "process"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "architecture": "aarch64",
+  "architecture_smoke": {
+    "minimum_rust_over_pinned_c_throughput_ratio": 0.25,
+    "purpose": "architecture blocker only for every local worker scale; this is not a final promotion band"
+  },
+  "fixture": {
+    "boundary": "one source-shared C fixture with opaque pinned-C or selected native-shadow C-ABI malloc/free shims",
+    "local_worker_scales": [1, 2, 4, 8],
+    "selected_artifact_attestation": {
+      "backend_identity": "rust-native-shadow-selected-c-abi-v1",
+      "cargo_feature": "native-mimalloc-shadow",
+      "free_route": "free",
+      "rejected_c_free_route": "mi_free"
+    },
+    "single_thread_only": false,
+    "thread_lifecycle": "ordinary pthread workers allocate and free only their own blocks, return normally, and are joined before backend shutdown",
+    "timer": "one CLOCK_MONOTONIC pair around each ready/start/finish worker batch"
+  },
+  "kind": "crabc-mimalloc-aarch64-local-allocation-performance-smoke",
+  "lanes": {
+    "pinned_c": "pinned mimalloc v3.5.0 source through a fixture-private direct malloc/free shim",
+    "rust_native_shadow": "compile-time-selected native-mimalloc-shadow crabc-libc.so through a fixture-private C-ABI malloc/free shim"
+  },
+  "measurement_boundary": {
+    "final_promotion_qualification_eligible": false,
+    "kind": "selected-native-shadow-c-abi",
+    "production_libc_measurement": false,
+    "reason": "The Rust lane links one compile-time-selected nondefault shadow libc.so. It does not measure the default production allocator selection or a qualified final-promotion environment."
+  },
+  "mode": {
+    "samples_per_lane_and_workload_and_worker_scale": 5,
+    "warmup_processes_per_lane_and_workload_and_worker_scale": 2
+  },
+  "profile": "linux-aarch64-local-selected-native-shadow",
+  "scope": {
+    "final_promotion_qualification": false,
+    "public_crabc_allocator_integration": false,
+    "public_mi_api": false,
+    "statement": "A Linux/AArch64 development smoke, including Apple-Silicon Docker, is not final performance qualification."
+  },
+  "schema": 2,
+  "upstream": {
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "workloads": [
+    {
+      "batches_per_process": 32,
+      "iterations_per_batch": 20000,
+      "name": "alloc_free_64",
+      "request_bytes": 64
+    },
+    {
+      "batches_per_process": 32,
+      "iterations_per_batch": 5000,
+      "name": "alloc_free_4096",
+      "request_bytes": 4096
+    }
+  ]
+}

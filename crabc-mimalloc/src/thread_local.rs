@@ -17,8 +17,9 @@
 
 //! Dynamic versioned-thread-local slot and global-key substrate.
 
-use core::cell::UnsafeCell;
-use core::marker::PhantomData;
+use core::cell::{Cell, UnsafeCell};
+use core::marker::{PhantomData, PhantomPinned};
+use core::mem::MaybeUninit;
 use core::pin::Pin;
 use core::ptr::NonNull;
 
@@ -27,9 +28,12 @@ use crabc_core::Result as CoreResult;
 use crate::compiler_tls::{
     DynamicThreadLocalBacking, clear_dynamic_backing, current_thread_identity,
     dynamic_backing_peek, install_dynamic_backing, is_empty_dynamic_backing,
+    PersistentCompilerTlsOwnerState,
 };
 use crate::lock::PrivateLock;
-use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
+use crate::meta::{
+    MetaAllocation, MetaAllocator, MetaError, MetaRelease, MetaReleaseFailure,
+};
 use crate::os::MemoryConfig;
 use crate::subproc::MainSubprocess;
 use crate::types::LiveThreadId;
@@ -432,6 +436,15 @@ impl ThreadLocalSlot {
         version: 0,
         value: core::ptr::null_mut(),
     };
+
+    /// Returns the source `(version, value-is-null)` image only for the
+    /// finite M1 compiler-TLS differential. Production callers must use the
+    /// typed key lookup rather than inspect a raw slot image.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn m1_compiler_tls_image_fields(&self) -> (usize, bool) {
+        (self.version as usize, self.value.is_null())
+    }
 }
 
 /// A caller-owned per-thread view of dynamic TLS slot storage.
@@ -512,6 +525,375 @@ impl ThreadLocalSlots<'_> {
     }
 }
 
+/// A current-thread compiler-TLS owner transition could not preserve the
+/// source-shaped persistent allocator lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PersistentCompilerTlsOwnerError {
+    /// The direct target TLS register did not encode a live source thread identity.
+    InvalidCurrentThread,
+    /// This typed owner was used from a different native thread.
+    WrongThread,
+    /// The compiler-TLS owner cell has no installed owner.
+    NotAttached,
+    /// The current native thread already published a complete persistent owner.
+    AlreadyActive,
+    /// The inline payload is pinned but its source initialization is incomplete.
+    Initializing,
+    /// A local owner borrow is already active on this native thread.
+    Reentrant,
+    /// Source owner exit owns the only in-place payload projection.
+    Exiting,
+    /// Failed or unwinding initialization, local work, or exit retained the payload.
+    Retained,
+    /// The owner completed its one-way compiler-TLS teardown transition.
+    TornDown,
+}
+
+/// Failure to install and initialize one inline compiler-TLS owner payload.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum PersistentCompilerTlsOwnerInitializeError<T, E> {
+    /// The cell rejected installation before consuming the offered payload.
+    State {
+        error: PersistentCompilerTlsOwnerError,
+        owner: T,
+    },
+    /// Initialization failed after the payload became pinned in the cell.
+    ///
+    /// The cell retains that exact payload and rejects ordinary local work.
+    Owner(E),
+}
+
+/// Failure of one source-ordered consuming owner teardown.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PersistentCompilerTlsOwnerTeardownError<E> {
+    /// The cell could not begin teardown from its current lifecycle state.
+    State(PersistentCompilerTlsOwnerError),
+    /// The source teardown refused or failed while retaining the exact payload.
+    Owner(E),
+}
+
+/// Inline pinned storage for one persistent compiler-TLS allocator owner.
+///
+/// Pinned `_mi_thread_init_with_heap` creates a TLD/Theap once and leaves it
+/// installed for arbitrary local operations. This cell gives Rust the same
+/// persistent shape without moving the owner out for each operation: the
+/// runtime embeds the cell directly in its compiler-TLS record, and
+/// [`Self::with_owner`] temporarily projects its one exclusive pinned borrow.
+/// A nested projection is rejected before it can create a second `&mut`
+/// reference.
+///
+/// This generic cell is not itself a concrete ELF-TLS owner, scheduler,
+/// process registry, page owner, or generic TLS-key mechanism. The integrating
+/// runtime must embed it in a concrete compiler-TLS record, initialize the
+/// complete co-located attachment and allocator state inside `T`, drive page
+/// exit, and supply its consuming source teardown closure. `MaybeUninit`
+/// deliberately has no implicit drop path: an active or retained payload must
+/// stay mechanically owned by this cell instead of being destroyed at ELF TLS
+/// reclamation without source teardown. The runtime must therefore resolve a
+/// retained payload through teardown before the native thread returns; this
+/// generic cell cannot make thread return safe by itself.
+#[must_use = "a persistent compiler-TLS owner cell must complete source teardown or retain its exact payload"]
+pub(crate) struct PersistentCompilerTlsOwnerCell<T> {
+    state: Cell<PersistentCompilerTlsOwnerState>,
+    thread: Cell<Option<LiveThreadId>>,
+    owner: UnsafeCell<MaybeUninit<T>>,
+    #[cfg(test)]
+    completed_operation_count: Cell<usize>,
+    _pinned: PhantomPinned,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+/// Publishes the conservative state if a transition closure unwinds.
+struct PersistentCompilerTlsOwnerTransition<'cell, T> {
+    cell: &'cell PersistentCompilerTlsOwnerCell<T>,
+    unwind_state: PersistentCompilerTlsOwnerState,
+    armed: bool,
+}
+
+impl<T> PersistentCompilerTlsOwnerCell<T> {
+    /// Creates one vacant inline owner cell for a runtime compiler-TLS record.
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self {
+            state: Cell::new(PersistentCompilerTlsOwnerState::Vacant),
+            thread: Cell::new(None),
+            owner: UnsafeCell::new(MaybeUninit::uninit()),
+            #[cfg(test)]
+            completed_operation_count: Cell::new(0),
+            _pinned: PhantomPinned,
+            _not_send_sync: PhantomData,
+        }
+    }
+
+    /// Installs and initializes one owner directly in this pinned cell.
+    ///
+    /// The cell records `Initializing` before invoking `initialize` and
+    /// publishes `Active` only after that closure succeeds. A failed or
+    /// unwinding initializer retains the exact payload in place; it never
+    /// returns a possibly source-mutated owner or resets the cell to vacant.
+    ///
+    /// The runtime must pin the containing compiler-TLS record before calling
+    /// this method and keep it pinned for the native thread's complete
+    /// allocator lifetime. The cell is `!Send`, `!Sync`, and `!Unpin`; every
+    /// later operation also verifies the captured direct TLS identity.
+    pub(crate) fn initialize<E>(
+        self: Pin<&Self>,
+        owner: T,
+        initialize: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> Result<(), E>,
+    ) -> Result<(), PersistentCompilerTlsOwnerInitializeError<T, E>> {
+        let cell = self.get_ref();
+        if cell.state.get() != PersistentCompilerTlsOwnerState::Vacant {
+            return Err(PersistentCompilerTlsOwnerInitializeError::State {
+                error: cell.state_error_for_initialization(),
+                owner,
+            });
+        }
+        let Some(thread) = current_thread_identity() else {
+            return Err(PersistentCompilerTlsOwnerInitializeError::State {
+                error: PersistentCompilerTlsOwnerError::InvalidCurrentThread,
+                owner,
+            });
+        };
+
+        cell.thread.set(Some(thread));
+        // SAFETY: `Vacant` proves no initialized payload exists. `self` is
+        // pinned before this write, and the cell never moves or exposes this
+        // payload except through the scoped pinned projections below.
+        unsafe { (&mut *cell.owner.get()).write(owner) };
+        cell.state
+            .set(PersistentCompilerTlsOwnerState::Initializing);
+        let mut transition = PersistentCompilerTlsOwnerTransition::new(
+            cell,
+            PersistentCompilerTlsOwnerState::Retained,
+        );
+        // SAFETY: the just-written payload remains initialized and pinned.
+        // `Initializing` rejects every recursive projection before it can
+        // dereference this address.
+        let result = initialize(unsafe { Pin::new_unchecked(&mut *cell.owner_pointer()) });
+        match result {
+            Ok(()) => {
+                cell.state.set(PersistentCompilerTlsOwnerState::Active);
+                transition.disarm();
+                Ok(())
+            }
+            Err(error) => {
+                cell.state.set(PersistentCompilerTlsOwnerState::Retained);
+                transition.disarm();
+                Err(PersistentCompilerTlsOwnerInitializeError::Owner(error))
+            }
+        }
+    }
+
+    /// Runs one direct local operation through the same in-place owner.
+    ///
+    /// The closure is synchronous. On normal return, the temporary exclusive
+    /// borrow ends and the compiler-TLS owner becomes active again, so later
+    /// operations observe the same TLD/Theap image and never park, resume, or
+    /// move it. If the closure unwinds after a one-way source mutation, the
+    /// guard conservatively retains the exact payload and refuses ordinary
+    /// reentry; only source teardown may inspect it again.
+    pub(crate) fn with_owner<R>(
+        self: Pin<&Self>,
+        operation: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> R,
+    ) -> Result<R, PersistentCompilerTlsOwnerError> {
+        let cell = self.get_ref();
+        match cell.state.get() {
+            PersistentCompilerTlsOwnerState::Active => {}
+            state => return Err(Self::access_error_for_state(state)),
+        }
+        cell.ensure_current_thread()?;
+        cell.state.set(PersistentCompilerTlsOwnerState::Borrowed);
+        let mut transition = PersistentCompilerTlsOwnerTransition::new(
+            cell,
+            PersistentCompilerTlsOwnerState::Retained,
+        );
+        // SAFETY: `Active -> Borrowed` grants this closure the only mutable
+        // projection. Recursive access sees `Borrowed` and returns before
+        // dereferencing the payload, and the higher-ranked closure result
+        // cannot retain the projection lifetime.
+        let result = operation(unsafe { Pin::new_unchecked(&mut *cell.owner_pointer()) });
+        #[cfg(test)]
+        cell.completed_operation_count
+            .set(cell.completed_operation_count.get().wrapping_add(1));
+        cell.state.set(PersistentCompilerTlsOwnerState::Active);
+        transition.disarm();
+        Ok(result)
+    }
+
+    /// Runs source-ordered consuming teardown and terminalizes the cell.
+    ///
+    /// `teardown` receives the same pinned payload after every ordinary
+    /// operation has ended. It must release or transfer every page authority,
+    /// detach the source Theap/TLD in source order, and return success only
+    /// when dropping the now-torn-down shell is valid. Success first publishes
+    /// `TornDown` and then drops `T` in place. Failure or unwind publishes
+    /// `Retained`, keeps the exact payload pinned, and permits only a later
+    /// teardown retry—not ordinary allocator work.
+    pub(crate) fn teardown<E>(
+        self: Pin<&Self>,
+        teardown: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> Result<(), E>,
+    ) -> Result<(), PersistentCompilerTlsOwnerTeardownError<E>> {
+        let cell = self.get_ref();
+        match cell.state.get() {
+            PersistentCompilerTlsOwnerState::Active
+            | PersistentCompilerTlsOwnerState::Retained => {}
+            state => {
+                return Err(PersistentCompilerTlsOwnerTeardownError::State(
+                    Self::access_error_for_state(state),
+                ));
+            }
+        }
+        cell.ensure_current_thread()
+            .map_err(PersistentCompilerTlsOwnerTeardownError::State)?;
+        cell.state.set(PersistentCompilerTlsOwnerState::Exiting);
+        let mut transition = PersistentCompilerTlsOwnerTransition::new(
+            cell,
+            PersistentCompilerTlsOwnerState::Retained,
+        );
+        // SAFETY: `Exiting` rejects ordinary, initialization, and recursive
+        // teardown entry before dereferencing the initialized payload. The
+        // closure result cannot retain this projection lifetime.
+        match teardown(unsafe { Pin::new_unchecked(&mut *cell.owner_pointer()) }) {
+            Ok(()) => {
+                // Publish the terminal state before Drop so a destructor that
+                // reenters this cell cannot project the payload being dropped.
+                cell.state.set(PersistentCompilerTlsOwnerState::TornDown);
+                cell.thread.set(None);
+                transition.disarm();
+                // SAFETY: successful source teardown guarantees the pinned
+                // payload may now be destroyed. It is dropped at its stable
+                // address exactly once; `TornDown` forbids every later access.
+                unsafe { core::ptr::drop_in_place(cell.owner_pointer()) };
+                Ok(())
+            }
+            Err(error) => {
+                cell.state.set(PersistentCompilerTlsOwnerState::Retained);
+                transition.disarm();
+                Err(PersistentCompilerTlsOwnerTeardownError::Owner(error))
+            }
+        }
+    }
+
+    #[inline]
+    fn ensure_current_thread(&self) -> Result<(), PersistentCompilerTlsOwnerError> {
+        match (self.thread.get(), current_thread_identity()) {
+            (Some(expected), Some(thread)) if thread == expected => Ok(()),
+            (None, _) => Err(PersistentCompilerTlsOwnerError::NotAttached),
+            (Some(_), Some(_)) => Err(PersistentCompilerTlsOwnerError::WrongThread),
+            (_, None) => Err(PersistentCompilerTlsOwnerError::InvalidCurrentThread),
+        }
+    }
+
+    #[inline]
+    fn state_error_for_initialization(&self) -> PersistentCompilerTlsOwnerError {
+        match self.state.get() {
+            PersistentCompilerTlsOwnerState::Vacant => {
+                PersistentCompilerTlsOwnerError::NotAttached
+            }
+            PersistentCompilerTlsOwnerState::Initializing => {
+                PersistentCompilerTlsOwnerError::Initializing
+            }
+            PersistentCompilerTlsOwnerState::Active => {
+                PersistentCompilerTlsOwnerError::AlreadyActive
+            }
+            PersistentCompilerTlsOwnerState::Borrowed => {
+                PersistentCompilerTlsOwnerError::Reentrant
+            }
+            PersistentCompilerTlsOwnerState::Exiting => {
+                PersistentCompilerTlsOwnerError::Exiting
+            }
+            PersistentCompilerTlsOwnerState::Retained => {
+                PersistentCompilerTlsOwnerError::Retained
+            }
+            PersistentCompilerTlsOwnerState::TornDown => {
+                PersistentCompilerTlsOwnerError::TornDown
+            }
+        }
+    }
+
+    #[inline]
+    fn access_error_for_state(
+        state: PersistentCompilerTlsOwnerState,
+    ) -> PersistentCompilerTlsOwnerError {
+        match state {
+            PersistentCompilerTlsOwnerState::Vacant => {
+                PersistentCompilerTlsOwnerError::NotAttached
+            }
+            PersistentCompilerTlsOwnerState::Initializing => {
+                PersistentCompilerTlsOwnerError::Initializing
+            }
+            PersistentCompilerTlsOwnerState::Active => {
+                PersistentCompilerTlsOwnerError::AlreadyActive
+            }
+            PersistentCompilerTlsOwnerState::Borrowed => {
+                PersistentCompilerTlsOwnerError::Reentrant
+            }
+            PersistentCompilerTlsOwnerState::Exiting => {
+                PersistentCompilerTlsOwnerError::Exiting
+            }
+            PersistentCompilerTlsOwnerState::Retained => {
+                PersistentCompilerTlsOwnerError::Retained
+            }
+            PersistentCompilerTlsOwnerState::TornDown => {
+                PersistentCompilerTlsOwnerError::TornDown
+            }
+        }
+    }
+
+    /// Returns the initialized payload address after a state transition has
+    /// granted one exclusive projection.
+    ///
+    /// # Safety
+    ///
+    /// The state must be `Initializing`, `Borrowed`, or `Exiting`, and the
+    /// caller must own that transition's unique projection capability.
+    #[inline(always)]
+    unsafe fn owner_pointer(&self) -> *mut T {
+        // SAFETY: the caller's transition proof gives exclusive access to the
+        // initialized `MaybeUninit<T>` payload for this synchronous scope.
+        unsafe { (&mut *self.owner.get()).as_mut_ptr() }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn completed_operation_count_for_test(&self) -> usize {
+        self.completed_operation_count.get()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn state_for_test(&self) -> PersistentCompilerTlsOwnerState {
+        self.state.get()
+    }
+}
+
+impl<'cell, T> PersistentCompilerTlsOwnerTransition<'cell, T> {
+    #[inline]
+    fn new(
+        cell: &'cell PersistentCompilerTlsOwnerCell<T>,
+        unwind_state: PersistentCompilerTlsOwnerState,
+    ) -> Self {
+        Self {
+            cell,
+            unwind_state,
+            armed: true,
+        }
+    }
+
+    #[inline]
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl<T> Drop for PersistentCompilerTlsOwnerTransition<'_, T> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.cell.state.set(self.unwind_state);
+        }
+    }
+}
+
 /// The regular current-thread compiler-TLS backing cannot service this
 /// operation without violating its source lifecycle contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -536,8 +918,37 @@ pub(crate) enum ThreadLocalBackingError {
     AllocationSizeOverflow,
     /// The one allowed typed projection no longer matched its allocation.
     BackingProjection,
+    /// A selected Malloc teardown reported a non-Malloc release owner.
+    ///
+    /// `MetaRelease::Malloc` cannot normally produce this outcome. Retaining
+    /// a distinct terminal error keeps that impossible owner mismatch from
+    /// becoming a false retry capability at the current-thread boundary.
+    ReleaseOwnerMismatch,
     /// The process metadata owner rejected or could not complete the request.
     Metadata(MetaError),
+}
+
+/// One classified dynamic-backing teardown failure.
+///
+/// A caller that has already cleared a source regular slot needs to know
+/// whether it may resume only the backing release. The retryable branch is
+/// deliberately limited to [`MetaReleaseFailure::MallocRetryable`], where the
+/// exact capability is still live and the compiler-TLS root remains intact.
+/// Every other error stays terminal for that outer lifecycle, even when an
+/// individual local precondition happened before a mutation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadLocalBackingTeardownFailure {
+    Retryable(ThreadLocalBackingError),
+    Terminal(ThreadLocalBackingError),
+}
+
+impl ThreadLocalBackingTeardownFailure {
+    #[inline]
+    pub(crate) const fn into_error(self) -> ThreadLocalBackingError {
+        match self {
+            Self::Retryable(error) | Self::Terminal(error) => error,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -585,6 +996,8 @@ impl ThreadLocalBackingOwner {
     /// exist for this thread, and no other code may mutate the dynamic root
     /// until this owner tears it down. The caller must eventually call
     /// [`Self::teardown`] while still on this exact direct TLS identity.
+    /// Process initialization must already have bound and published the
+    /// process metadata image; this entry does not establish that edge.
     pub(crate) unsafe fn begin(config: MemoryConfig) -> Result<Self, ThreadLocalBackingError> {
         // SAFETY: forwarded unchanged to the common constructor; production
         // always binds the committed process-static metadata owner.
@@ -605,6 +1018,9 @@ impl ThreadLocalBackingOwner {
     ///
     /// Identical to [`Self::begin`], plus `metadata`/`subprocess` must be the
     /// selected process-lived pair that releases every returned allocation.
+    /// That pair must already have completed
+    /// [`MetaAllocator::prepare_for_main_subprocess`]; this constructor does
+    /// not convert a cold backing request into process initialization.
     pub(crate) unsafe fn begin_with_metadata(
         metadata: Pin<&'static MetaAllocator>,
         subprocess: &'static MainSubprocess,
@@ -679,20 +1095,40 @@ impl ThreadLocalBackingOwner {
     /// Releases a live dynamic backing, then makes only its compiler-TLS root
     /// null. This is the source order in `_mi_thread_locals_thread_done`.
     ///
-    /// `SingleThreadAllocator::free` can report `Lifecycle` after it already
-    /// linked the block locally or attempted terminal cleanup. The current
-    /// metadata capability cannot distinguish that post-consumption error from
-    /// a pre-consumption error, so this bounded port does not offer a false
-    /// retry path. It always clears the root after the free attempt and marks
-    /// the owner poisoned on failure; a later full metadata-free result type
-    /// can refine this only when it proves retained ownership.
+    /// This direct [`ThreadLocalBackingOwner`] boundary retains its exact
+    /// Malloc capability when `MetaRelease` proves the failure occurred before
+    /// the metadata entry claimed it. In that one case the root, count, and
+    /// active state remain unchanged for a direct caller retry. A terminal
+    /// failure remains conservative: the root is cleared and the owner is
+    /// poisoned because local release may already have mutated the backing.
+    /// This unclassified direct result does not by itself authorize an
+    /// enclosing attachment retry. The one dynamic attachment that clears its
+    /// regular slot first uses [`Self::teardown_classified`] to retain only a
+    /// proven pre-claim Malloc capability.
     pub(crate) fn teardown(&mut self) -> Result<(), ThreadLocalBackingError> {
-        self.ensure_active_current()?;
+        self.teardown_classified()
+            .map_err(ThreadLocalBackingTeardownFailure::into_error)
+    }
+
+    /// Releases one live backing while preserving the sole source-proven
+    /// pre-claim retry classification for an outer lifecycle owner.
+    ///
+    /// Direct callers normally use [`Self::teardown`], which deliberately
+    /// presents the established unclassified error surface. An enclosing
+    /// owner may use this internal form only after it has made its regular
+    /// slot unreachable and needs to distinguish an untouched exact Malloc
+    /// capability from a terminal release failure.
+    pub(crate) fn teardown_classified(
+        &mut self,
+    ) -> Result<(), ThreadLocalBackingTeardownFailure> {
+        self.ensure_active_current()
+            .map_err(ThreadLocalBackingTeardownFailure::Terminal)?;
         if self.count == 0 {
             // The source keeps the shared empty image installed because it
             // owns no allocation to release. Still verify no foreign root was
             // installed through an unsafe lifecycle violation.
-            self.ensure_current_root()?;
+            self.ensure_current_root()
+                .map_err(ThreadLocalBackingTeardownFailure::Terminal)?;
             self.state = ThreadLocalBackingState::TornDown;
             return Ok(());
         }
@@ -700,29 +1136,58 @@ impl ThreadLocalBackingOwner {
         // Check identity before taking the capability. A foreign root must
         // not be cleared or freed through this owner.
         let _ = self
-            .current_backing_mut()?
-            .ok_or(ThreadLocalBackingError::BackingProjection)?;
-        let mut allocation = self
+            .current_backing_mut()
+            .map_err(ThreadLocalBackingTeardownFailure::Terminal)?
+            .ok_or(ThreadLocalBackingTeardownFailure::Terminal(
+                ThreadLocalBackingError::BackingProjection,
+            ))?;
+        let allocation = self
             .allocation
             .take()
-            .ok_or(ThreadLocalBackingError::BackingProjection)?;
-        let result = self.metadata.free(&mut allocation);
+            .ok_or(ThreadLocalBackingTeardownFailure::Terminal(
+                ThreadLocalBackingError::BackingProjection,
+            ))?;
 
-        // The source clears the root only after `_mi_meta_free`. On an engine
-        // error, conservatively clear it anyway: keeping a pointer whose free
-        // may already have linked or released its block is less safe than the
-        // source's normal null-after-free state. Dropping this non-Drop
-        // capability intentionally retains no retryable raw projection.
-        clear_dynamic_backing();
-        self.count = 0;
-        match result {
+        match MetaRelease::Malloc(allocation).release() {
             Ok(()) => {
+                clear_dynamic_backing();
+                self.count = 0;
                 self.state = ThreadLocalBackingState::TornDown;
                 Ok(())
             }
-            Err(error) => {
+            Err(MetaReleaseFailure::MallocRetryable { error, allocation }) => {
+                // This error occurred before `release_selected_malloc` claimed
+                // the exact Malloc capability. Preserve the source root and
+                // flexible-image count alongside that live value so this
+                // direct owner can retry the same release later.
+                self.allocation = Some(allocation);
+                Err(ThreadLocalBackingTeardownFailure::Retryable(
+                    ThreadLocalBackingError::Metadata(error),
+                ))
+            }
+            Err(MetaReleaseFailure::MallocTerminal {
+                error,
+                allocation: _,
+            }) => {
+                // Once the exact Malloc capability has been claimed, local
+                // free may already have changed its queues or page state.
+                // Keep the old conservative terminal transition rather than
+                // exposing a false retry path.
+                clear_dynamic_backing();
+                self.count = 0;
                 self.state = ThreadLocalBackingState::Poisoned;
-                Err(ThreadLocalBackingError::Metadata(error))
+                Err(ThreadLocalBackingTeardownFailure::Terminal(
+                    ThreadLocalBackingError::Metadata(error),
+                ))
+            }
+            Err(MetaReleaseFailure::RegularOs { .. }) => {
+                // A `MetaRelease::Malloc` value cannot select this branch.
+                // Do not preserve the live root or manufacture a retry if a
+                // future internal representation violates that invariant.
+                self.poison_root();
+                Err(ThreadLocalBackingTeardownFailure::Terminal(
+                    ThreadLocalBackingError::ReleaseOwnerMismatch,
+                ))
             }
         }
     }
@@ -900,7 +1365,9 @@ mod tests {
     use super::*;
     use crate::os::{PageSize, fault};
     use crate::types::MemoryKind;
-    use std::sync::{mpsc, Barrier};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier, mpsc};
     use std::thread;
 
     fn memory_config() -> MemoryConfig {
@@ -918,6 +1385,24 @@ mod tests {
             version,
         )
         .expect("the test version is source-valid")
+    }
+
+    /// Builds a test-only current-thread backing owner after the exact
+    /// isolated process pair has completed the identity-only metadata
+    /// preparation edge. Production must prepare its global pair during
+    /// process startup before it uses [`ThreadLocalBackingOwner::begin`].
+    unsafe fn begin_with_prepared_test_metadata(
+    ) -> Result<ThreadLocalBackingOwner, ThreadLocalBackingError> {
+        let metadata = MetaAllocator::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .map_err(ThreadLocalBackingError::Metadata)?;
+        // SAFETY: the test caller owns this current thread's isolated backing
+        // lifecycle and tears it down before the thread exits.
+        unsafe {
+            ThreadLocalBackingOwner::begin_with_metadata(metadata, subprocess, memory_config())
+        }
     }
 
     #[test]
@@ -1247,7 +1732,7 @@ mod tests {
             let fast_before = crate::compiler_tls::fast_slot_peek();
             let default_before = crate::compiler_tls::default_theap();
             let cached_before = crate::compiler_tls::cached_theap();
-            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }
+            let mut owner = unsafe { begin_with_prepared_test_metadata() }
                 .expect("the fresh child root is the immutable empty image");
             let mut payload = 0x41usize;
             let value = (&mut payload as *mut usize).cast();
@@ -1290,6 +1775,84 @@ mod tests {
     }
 
     #[test]
+    fn current_thread_backing_teardown_retains_the_live_malloc_capability_before_root_clear_on_recursive_entry() {
+        let metadata = MetaAllocator::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source pair publishes metadata before TLS teardown");
+
+        thread::spawn(move || {
+            let mut owner = unsafe {
+                ThreadLocalBackingOwner::begin_with_metadata(
+                    metadata,
+                    subprocess,
+                    memory_config(),
+                )
+            }
+            .expect("the isolated child begins at the immutable empty root");
+            let live_key = key(15, 1);
+            let mut payload = 0x5ausize;
+            let value = (&mut payload as *mut usize).cast();
+            owner
+                .set(live_key, value)
+                .expect("the source first expansion publishes one 16-slot Malloc image");
+
+            let root_before = dynamic_backing_peek().expect("the live image is installed");
+            // SAFETY: `owner` retains the exact live metadata capability and
+            // the test has not begun a successful teardown.
+            let memory_before = unsafe { root_before.as_ref() }.memory_id();
+            let audit_before = metadata.test_allocation_audit();
+            assert_eq!(audit_before.live_capability_count, 1);
+            assert_eq!(audit_before.high_water_capability_count, 1);
+
+            // This intentionally witnesses the direct owner boundary only.
+            // An enclosing dynamic-Theap attachment has already changed its
+            // own binding state before it delegates teardown and is outside
+            // this retry contract.
+            assert_eq!(
+                metadata.test_with_held_backing_entry(|| owner.teardown()),
+                Ok(Err(ThreadLocalBackingError::Metadata(MetaError::RecursiveEntry))),
+                "the direct owner sees a selected Malloc rejection before it can consume the TLS capability"
+            );
+            assert_eq!(
+                dynamic_backing_peek(),
+                Some(root_before),
+                "the direct owner cannot clear the regular TLS root before a retryable free succeeds"
+            );
+            assert_eq!(owner.count, 16, "the failed pre-claim free retains the image count");
+            assert_eq!(owner.state, ThreadLocalBackingState::Active);
+            assert!(
+                owner
+                    .allocation
+                    .as_ref()
+                    .is_some_and(|allocation| allocation.matches_memory_id(memory_before)),
+                "the owner retains the exact Malloc capability returned by the pre-claim boundary"
+            );
+            assert_eq!(owner.get(live_key), Ok(value));
+            assert_eq!(
+                metadata.test_allocation_audit(),
+                audit_before,
+                "same-thread rejection leaves the live capability audit unchanged"
+            );
+
+            owner
+                .teardown()
+                .expect("the exact retained TLS capability releases after the backing entry drops");
+            assert!(dynamic_backing_peek().is_none());
+            assert_eq!(owner.count, 0);
+            assert_eq!(owner.state, ThreadLocalBackingState::TornDown);
+            assert_eq!(
+                metadata.test_allocation_audit().live_capability_count,
+                0,
+                "the successful retry consumes the retained Malloc capability exactly once"
+            );
+        })
+        .join()
+        .expect("the selected recursive teardown/retry lifecycle completes");
+    }
+
+    #[test]
     fn current_thread_backing_preserves_slots_across_exact_source_growth_edges() {
         thread::spawn(|| {
             assert_eq!(
@@ -1301,7 +1864,7 @@ mod tests {
                 "the flexible source request includes the declared slots[1] prefix"
             );
             assert_eq!(DynamicThreadLocalBacking::allocation_size(0), None);
-            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+            let mut owner = unsafe { begin_with_prepared_test_metadata() }.unwrap();
             let mut first_payload = 0x11usize;
             let mut second_payload = 0x22usize;
             let mut third_payload = 0x33usize;
@@ -1339,10 +1902,97 @@ mod tests {
         .expect("the isolated growth lifecycle completes");
     }
 
+    /// Covers the real `mi_thread_locals_expand` replacement route: after a
+    /// live 16-slot image, a non-null index 16 set must retain the old Malloc
+    /// capability on allocation failure, then copy that image and consume the
+    /// old capability only after a successful 16-to-32 replacement.
+    #[test]
+    fn current_thread_backing_rezalloc_failure_preserves_the_old_malloc_capability_then_retries() {
+        let metadata = MetaAllocator::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source pair publishes metadata before resize demand");
+        thread::spawn(move || {
+            let mut owner = unsafe {
+                ThreadLocalBackingOwner::begin_with_metadata(
+                    metadata,
+                    subprocess,
+                    memory_config(),
+                )
+            }
+            .expect("the isolated child begins at the immutable empty root");
+            let original_key = key(15, 1);
+            let growth_key = key(16, 1);
+            let mut original_payload = 0x51usize;
+            let mut grown_payload = 0x52usize;
+            let original_value = (&mut original_payload as *mut usize).cast();
+            let grown_value = (&mut grown_payload as *mut usize).cast();
+
+            owner
+                .set(original_key, original_value)
+                .expect("the source starts with one 16-slot Malloc image");
+            let root_before = dynamic_backing_peek().expect("the first image is published");
+            // SAFETY: the live current-thread owner still retains the exact
+            // first metadata capability and has just verified its TLS root.
+            let backing_before = unsafe { root_before.as_ref() };
+            assert_eq!(backing_before.memory_id().kind(), MemoryKind::Malloc);
+            assert_eq!(backing_before.count(), 16);
+            let before_failure = metadata.test_allocation_audit();
+            assert_eq!(before_failure.live_capability_count, 1);
+            assert_eq!(before_failure.high_water_capability_count, 1);
+            let replacement_size = DynamicThreadLocalBacking::allocation_size(32)
+                .expect("the exact source 16-to-32 request is representable");
+            metadata
+                .get_ref()
+                .test_fail_next_rezalloc_size(replacement_size);
+
+            assert_eq!(
+                owner.set(growth_key, grown_value),
+                Err(ThreadLocalBackingError::Metadata(MetaError::AllocationUnavailable))
+            );
+            assert_eq!(owner.count, 16);
+            assert_eq!(dynamic_backing_peek(), Some(root_before));
+            assert_eq!(owner.get(original_key).unwrap(), original_value);
+            assert_eq!(owner.get(growth_key).unwrap(), core::ptr::null_mut());
+            assert!(owner.allocation.is_some(), "the old capability remains live on failure");
+            let after_failure = metadata.test_allocation_audit();
+            assert_eq!(after_failure.live_capability_count, 1);
+            assert_eq!(after_failure.high_water_capability_count, 1);
+
+            owner
+                .set(growth_key, grown_value)
+                .expect("the next source replacement retries the exact old image");
+            let root_after = dynamic_backing_peek().expect("the replacement is published");
+            assert_ne!(root_after, root_before, "the live old image cannot alias its replacement");
+            assert_eq!(owner.count, 32);
+            // SAFETY: the current-thread owner retains the exact replacement
+            // capability and verifies the compiler-TLS root before access.
+            let backing = unsafe { root_after.as_ref() };
+            assert_eq!(backing.memory_id().kind(), MemoryKind::Malloc);
+            assert_eq!(backing.count(), 32);
+            assert_eq!(owner.get(original_key).unwrap(), original_value);
+            assert_eq!(owner.get(growth_key).unwrap(), grown_value);
+            let after_retry = metadata.test_allocation_audit();
+            assert_eq!(after_retry.live_capability_count, 1);
+            assert_eq!(after_retry.high_water_capability_count, 2);
+
+            owner
+                .teardown()
+                .expect("the replacement capability releases through source teardown");
+            assert!(dynamic_backing_peek().is_none());
+            let after_teardown = metadata.test_allocation_audit();
+            assert_eq!(after_teardown.live_capability_count, 0);
+            assert_eq!(after_teardown.high_water_capability_count, 2);
+        })
+        .join()
+        .expect("the exact resize failure/retry lifecycle completes");
+    }
+
     #[test]
     fn current_thread_backing_rejects_stale_generation_and_null_out_of_range_needs_no_growth() {
         thread::spawn(|| {
-            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+            let mut owner = unsafe { begin_with_prepared_test_metadata() }.unwrap();
             let stale = key(4, 1);
             let replacement = key(4, 2);
             let missing = key(512, 1);
@@ -1376,7 +2026,7 @@ mod tests {
     #[test]
     fn current_thread_backing_rejects_the_source_count_above_the_16_bit_ceiling() {
         thread::spawn(|| {
-            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+            let mut owner = unsafe { begin_with_prepared_test_metadata() }.unwrap();
             let mut payload = 0x99usize;
             let value = (&mut payload as *mut usize).cast();
             assert_eq!(expanded_slot_count(0, 65_534), Ok(65_535));
@@ -1401,12 +2051,16 @@ mod tests {
     #[test]
     fn current_thread_backing_allocation_failure_keeps_the_empty_root_and_retries() {
         let metadata = MetaAllocator::test_static_owner();
+        let subprocess = metadata.test_default_subprocess();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source pair publishes metadata before faulted backing demand");
         thread::spawn(move || {
             let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, crabc_core::Errno::NOMEM));
             let mut owner = unsafe {
                 ThreadLocalBackingOwner::begin_with_metadata(
                     metadata,
-                    MainSubprocess::global(),
+                    subprocess,
                     memory_config(),
                 )
             }
@@ -1440,11 +2094,15 @@ mod tests {
         const MAX_TAIL_FILLERS: usize = 8192;
 
         let metadata = MetaAllocator::test_static_owner();
+        let subprocess = metadata.test_default_subprocess();
+        metadata
+            .prepare_for_main_subprocess(memory_config(), subprocess)
+            .expect("the isolated source pair publishes metadata before growth demand");
         thread::spawn(move || {
             let mut owner = unsafe {
                 ThreadLocalBackingOwner::begin_with_metadata(
                     metadata,
-                    MainSubprocess::global(),
+                    subprocess,
                     memory_config(),
                 )
             }
@@ -1521,7 +2179,7 @@ mod tests {
             let worker_start = std::sync::Arc::clone(&start);
             let worker_sender = sender.clone();
             workers.push(thread::spawn(move || {
-                let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+                let mut owner = unsafe { begin_with_prepared_test_metadata() }.unwrap();
                 let identity = current_thread_identity().expect("the worker has a native TLS identity");
                 let fast_before = crate::compiler_tls::fast_slot_peek();
                 let default_before = crate::compiler_tls::default_theap();
@@ -1568,5 +2226,294 @@ mod tests {
             assert_eq!(result.6, result.7, "regular backing leaves default-theap alone");
             assert_eq!(result.8, result.9, "regular backing leaves cached-theap alone");
         }
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_keeps_one_inline_owner_pinned_across_local_borrows() {
+        struct Owner {
+            operations: usize,
+            torn_down: bool,
+            drops: Arc<AtomicUsize>,
+            _pinned: core::marker::PhantomPinned,
+        }
+
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                assert!(self.torn_down, "the owner drops only after source teardown");
+                self.drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        thread::spawn(|| {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let expected_address = core::cell::Cell::new(0);
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+            assert!(cell
+                .initialize(
+                    Owner {
+                        operations: 0,
+                        torn_down: false,
+                        drops: Arc::clone(&drops),
+                        _pinned: core::marker::PhantomPinned,
+                    },
+                    |owner| {
+                        expected_address.set(owner.as_ref().get_ref() as *const Owner as usize);
+                        assert_eq!(
+                            cell.with_owner(|_| ()),
+                            Err(PersistentCompilerTlsOwnerError::Initializing),
+                            "the owner is not published active during in-place initialization"
+                        );
+                        Ok::<(), ()>(())
+                    },
+                )
+                .is_ok());
+
+            let first_address = cell
+                .with_owner(|owner| {
+                    let address = owner.as_ref().get_ref() as *const Owner as usize;
+                    // SAFETY: the TLS cell lends this pinned owner exclusively
+                    // for the closure and this mutation does not move it.
+                    unsafe { owner.get_unchecked_mut() }.operations += 1;
+                    address
+                })
+                .expect("the attached owner permits its first local borrow");
+            let second_address = cell
+                .with_owner(|owner| {
+                    let address = owner.as_ref().get_ref() as *const Owner as usize;
+                    // SAFETY: as above, only a field changes in place.
+                    unsafe { owner.get_unchecked_mut() }.operations += 1;
+                    address
+                })
+                .expect("the same attached owner permits another local borrow");
+
+            assert_eq!(first_address, expected_address.get());
+            assert_eq!(second_address, expected_address.get());
+            assert_eq!(cell.completed_operation_count_for_test(), 2);
+
+            assert!(cell
+                .teardown(|owner| {
+                    assert_eq!(owner.as_ref().get_ref().operations, 2);
+                    // SAFETY: source teardown mutates the pinned owner in
+                    // place and consumes no address-stability invariant.
+                    unsafe { owner.get_unchecked_mut() }.torn_down = true;
+                    Ok::<(), ()>(())
+                })
+                .is_ok());
+            assert_eq!(drops.load(Ordering::Relaxed), 1);
+            assert_eq!(
+                cell.with_owner(|_| ()),
+                Err(PersistentCompilerTlsOwnerError::TornDown)
+            );
+        })
+        .join()
+        .expect("the persistent compiler-TLS owner test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_refuses_reentry_before_projecting_a_second_borrow() {
+        struct Owner;
+
+        thread::spawn(|| {
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+            assert!(cell.initialize(Owner, |_| Ok::<(), ()>(())).is_ok());
+            cell.with_owner(|_| {
+                assert_eq!(
+                    cell.with_owner(|_| ()),
+                    Err(PersistentCompilerTlsOwnerError::Reentrant),
+                    "a nested local operation must not form a second mutable owner borrow"
+                );
+            })
+            .expect("the original local borrow remains valid after the rejected recursion");
+            assert!(matches!(
+                cell.initialize(Owner, |_| Ok::<(), ()>(())),
+                Err(PersistentCompilerTlsOwnerInitializeError::State {
+                    error: PersistentCompilerTlsOwnerError::AlreadyActive,
+                    owner: Owner,
+                })
+            ));
+            assert!(cell.teardown(|_| Ok::<(), ()>(())).is_ok());
+        })
+        .join()
+        .expect("the compiler-TLS recursion test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_retains_one_way_operation_mutation_after_unwind() {
+        struct Owner {
+            one_way_source_mutation: bool,
+            torn_down: bool,
+            drops: Arc<AtomicUsize>,
+            _pinned: core::marker::PhantomPinned,
+        }
+
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                assert!(self.torn_down, "the retained owner drops only after teardown");
+                self.drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        thread::spawn(|| {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let operation_address = core::cell::Cell::new(0);
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+            assert!(cell
+                .initialize(
+                    Owner {
+                        one_way_source_mutation: false,
+                        torn_down: false,
+                        drops: Arc::clone(&drops),
+                        _pinned: core::marker::PhantomPinned,
+                    },
+                    |_| Ok::<(), ()>(()),
+                )
+                .is_ok());
+
+            let unwind = catch_unwind(AssertUnwindSafe(|| {
+                let _: Result<(), PersistentCompilerTlsOwnerError> = cell.with_owner(|owner| {
+                    operation_address
+                        .set(owner.as_ref().get_ref() as *const Owner as usize);
+                    // SAFETY: the cell grants this closure the only pinned
+                    // mutable projection; the mutation does not move `Owner`.
+                    unsafe { owner.get_unchecked_mut() }.one_way_source_mutation = true;
+                    panic!("operation unwinds after mutating source state");
+                });
+            }));
+            assert!(unwind.is_err());
+            assert_eq!(cell.completed_operation_count_for_test(), 0);
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::Retained);
+            assert_eq!(
+                cell.with_owner(|_| ()),
+                Err(PersistentCompilerTlsOwnerError::Retained),
+                "an unwinding operation must not republish one-way source state as active"
+            );
+            assert_eq!(drops.load(Ordering::Relaxed), 0);
+
+            assert!(cell
+                .teardown(|owner| {
+                    assert_eq!(
+                        owner.as_ref().get_ref() as *const Owner as usize,
+                        operation_address.get(),
+                        "teardown receives the exact payload retained after unwind"
+                    );
+                    assert!(owner.as_ref().get_ref().one_way_source_mutation);
+                    // SAFETY: teardown mutates the retained pinned shell in
+                    // place before authorizing its terminal drop.
+                    unsafe { owner.get_unchecked_mut() }.torn_down = true;
+                    Ok::<(), ()>(())
+                })
+                .is_ok());
+            assert_eq!(drops.load(Ordering::Relaxed), 1);
+        })
+        .join()
+        .expect("the compiler-TLS operation-unwind test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_retains_failed_exit_for_one_source_ordered_retry() {
+        struct Owner {
+            drops: Arc<AtomicUsize>,
+        }
+
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                self.drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        thread::spawn(|| {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+            assert!(cell
+                .initialize(
+                    Owner {
+                        drops: Arc::clone(&drops),
+                    },
+                    |_| Ok::<(), ()>(()),
+                )
+                .is_ok());
+            let address = core::cell::Cell::new(0);
+            assert_eq!(
+                cell.teardown(|owner| {
+                    address.set(owner.as_ref().get_ref() as *const Owner as usize);
+                    Err("pages remain live")
+                }),
+                Err(PersistentCompilerTlsOwnerTeardownError::Owner(
+                    "pages remain live"
+                ))
+            );
+            assert_eq!(drops.load(Ordering::Relaxed), 0);
+            assert_eq!(
+                cell.with_owner(|_| ()),
+                Err(PersistentCompilerTlsOwnerError::Retained),
+                "ordinary work cannot reenter an owner retained during exit"
+            );
+            assert!(cell
+                .teardown(|owner| {
+                    assert_eq!(
+                        owner.as_ref().get_ref() as *const Owner as usize,
+                        address.get(),
+                        "retry receives the exact retained pinned payload"
+                    );
+                    Ok::<(), &str>(())
+                })
+                .is_ok());
+            assert_eq!(drops.load(Ordering::Relaxed), 1);
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::TornDown);
+        })
+        .join()
+        .expect("the retained-exit compiler-TLS owner test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_retains_an_initialization_failure_in_place() {
+        struct Owner {
+            drops: Arc<AtomicUsize>,
+        }
+
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                self.drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        thread::spawn(|| {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let address = core::cell::Cell::new(0);
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+            assert!(matches!(
+                cell.initialize(
+                    Owner {
+                        drops: Arc::clone(&drops),
+                    },
+                    |owner| {
+                        address.set(owner.as_ref().get_ref() as *const Owner as usize);
+                        Err("attachment retained source state")
+                    },
+                ),
+                Err(PersistentCompilerTlsOwnerInitializeError::Owner(
+                    "attachment retained source state"
+                ))
+            ));
+            assert_eq!(drops.load(Ordering::Relaxed), 0);
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::Retained);
+            assert!(cell
+                .teardown(|owner| {
+                    assert_eq!(
+                        owner.as_ref().get_ref() as *const Owner as usize,
+                        address.get()
+                    );
+                    Ok::<(), ()>(())
+                })
+                .is_ok());
+            assert_eq!(drops.load(Ordering::Relaxed), 1);
+        })
+        .join()
+        .expect("the retained-initialization compiler-TLS owner test completes");
     }
 }

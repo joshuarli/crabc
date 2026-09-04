@@ -6,16 +6,21 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:99-173`
 // (`_mi_theap_empty`, the detached TLD relationship, and empty-theap
-// predicate), `src/init.c:305-360` (main default-theap wiring order),
+// predicate), `src/init.c:184-205` (the kind-only static provenance and
+// detached-metadata special case in `mi_heap_main_init_once`),
+// `src/init.c:305-360` (main default-theap wiring order),
 // `src/theap.c:228-306` (`_mi_theap_init`'s initialized-predicate publication
-// order), and `include/mimalloc/internal.h:626-664` (theap initialized and
+// order and option image), `src/options.c:161-162` (frozen normal defaults),
+// and `include/mimalloc/internal.h:626-664` (theap initialized and
 // thread-identity predicates).
 //
 // This is deliberately only an allocation-free, exclusive single-thread
 // bootstrap. It has no compiler TLS slot, pthread key, first-class heap,
-// random, remote-free, teardown, or concurrent-init lifecycle. Its detached
-// metadata image now records the bounded main-subprocess identity only; this
-// remains distinct from a live TLD/theap attachment or subprocess lifecycle.
+// general random reinitialization/split, remote-free, teardown, or
+// concurrent-init lifecycle. Its detached metadata image records one bounded
+// first-head random/cookie initialization and main-subprocess identity only;
+// this remains distinct from a live TLD/theap attachment or subprocess
+// lifecycle.
 
 use core::marker::{PhantomData, PhantomPinned};
 use core::pin::Pin;
@@ -24,6 +29,10 @@ use core::ptr::NonNull;
 use crate::arena::ArenaView;
 use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
+use crate::single_thread::{
+    OwnerLocalMappedAbandonedClaimSource,
+    OwnerLocalMappedAbandonedClaimSourceHookOutcome,
+};
 use crate::types::{
     Heap, LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapOwner,
     ThreadLocalData,
@@ -88,7 +97,14 @@ pub(crate) struct ExclusiveTheapBootstrap {
     heap: Heap,
     tld: ThreadLocalData,
     theap: Theap,
-    active_owner: Option<TheapOwner>,
+    /// The one owner whose source image has been initialized in this pinned
+    /// storage. A detached metadata image may be bound during process startup
+    /// before it has an arena/PageMap backing or an allocator session.
+    bound_owner: Option<TheapOwner>,
+    /// A source image may lend exactly one mutable allocator session. Binding
+    /// the detached static image is deliberately separate from issuing that
+    /// session so `mi_heap_main_init_once` can precede first metadata demand.
+    session_issued: bool,
     // Raw-pointer marker prevents accidental Send/Sync claims for this
     // exclusive mutable state; `PhantomPinned` makes pointer wiring durable.
     _not_send_or_sync: PhantomData<*mut ()>,
@@ -107,15 +123,15 @@ impl ExclusiveTheapBootstrap {
             heap: Heap::bootstrap_empty(),
             tld: ThreadLocalData::detached(),
             theap: Theap::empty(),
-            active_owner: None,
+            bound_owner: None,
+            session_issued: false,
             _not_send_or_sync: PhantomData,
             _pin: PhantomPinned,
         }
     }
 
-    /// Test-only proof that every detached bootstrap image names one selected
-    /// bounded process-main subprocess identity.
-    #[cfg(test)]
+    /// Checks that a detached bootstrap image names one selected bounded
+    /// process-main subprocess identity.
     pub(crate) fn is_detached_for_main_subprocess(
         &self,
         subprocess: &MainSubprocess,
@@ -126,6 +142,25 @@ impl ExclusiveTheapBootstrap {
             && self.theap.is_bound_to_main_subprocess(subprocess)
     }
 
+    /// Returns the exact pinned detached metadata-Theap identity after its
+    /// bounded detached-metadata image is initialized.
+    ///
+    /// This returns an identity only: it cannot start a session, expose the
+    /// Theap, or mutate it. `MetaAllocator` uses it to make the source
+    /// `subproc->theap_meta = &mi_process_theap_meta` assignment one-way after
+    /// `mi_theap_init` has completed the represented detached fields. It does
+    /// not claim the actual source main-Heap linkage or metadata lock.
+    #[inline]
+    pub(crate) fn detached_metadata_theap_identity(
+        self: Pin<&Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Option<NonNull<Theap>> {
+        let state = self.get_ref();
+        (state.bound_owner == Some(TheapOwner::Detached)
+            && state.is_detached_for_main_subprocess(subprocess))
+            .then(|| NonNull::from(&state.theap))
+    }
+
     /// Attaches and publishes a live-thread theap after this image is pinned.
     ///
     /// This is the bounded source order from `_mi_thread_init_with_heap` and
@@ -133,10 +168,11 @@ impl ExclusiveTheapBootstrap {
     /// ordinary theap fields, then publish the heap pointer last. The returned
     /// session is the sole local owner; it neither installs nor reads TLS.
     pub(crate) fn activate_live(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         thread_id: LiveThreadId,
     ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
-        self.activate_owner(TheapOwner::Live(thread_id), None)
+        self.as_mut().bind_owner(TheapOwner::Live(thread_id), None)?;
+        self.begin_bound_session(TheapOwner::Live(thread_id))
     }
 
     /// Activates the source detached metadata-theap form.
@@ -155,31 +191,74 @@ impl ExclusiveTheapBootstrap {
     /// detached allocator state, so its heap, TLD, and theap agree on the
     /// same bounded source `subproc` pointer.
     pub(crate) fn activate_detached_for_main_subprocess(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         subprocess: &'static MainSubprocess,
     ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
-        self.activate_owner(TheapOwner::Detached, Some(subprocess))
+        self.as_mut().bind_detached_for_main_subprocess(subprocess)?;
+        self.begin_bound_detached_session(subprocess)
     }
 
-    fn activate_owner(
+    /// Initializes the process-static detached metadata image without issuing
+    /// an allocator session or allocating backing storage.
+    ///
+    /// This is the bounded source `mi_process_theap_meta` portion of
+    /// `mi_heap_main_init_once`: the represented Heap/TLD/Theap fields name
+    /// the selected main subprocess. `MetaAllocator` later publishes this
+    /// fully formed image identity; the first `_mi_meta_zalloc` remains
+    /// responsible for acquiring a page.
+    pub(crate) fn bind_detached_for_main_subprocess(
+        self: Pin<&mut Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), BootstrapError> {
+        self.bind_owner(TheapOwner::Detached, Some(subprocess))
+    }
+
+    /// Lends the one mutable session for an already bound detached metadata
+    /// image.
+    ///
+    /// The caller must name the same source main subprocess used at binding.
+    /// This is intentionally unavailable for an unbound image and cannot
+    /// reissue a session after an earlier caller retained it.
+    pub(crate) fn begin_bound_detached_session(
+        mut self: Pin<&mut Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+        let state = self.as_ref().get_ref();
+        if state.bound_owner != Some(TheapOwner::Detached)
+            || !state.is_detached_for_main_subprocess(subprocess)
+        {
+            return Err(BootstrapError::InvalidThreadState);
+        }
+        self.begin_bound_session(TheapOwner::Detached)
+    }
+
+    fn bind_owner(
         self: Pin<&mut Self>,
         owner: TheapOwner,
         detached_subprocess: Option<&'static MainSubprocess>,
-    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+    ) -> Result<(), BootstrapError> {
         // SAFETY: `Self` is !Unpin and this method never moves a field. The
         // newly stored self-referential raw pointers target the pinned `heap`
-        // and `tld` fields and remain valid while the returned session borrows
-        // this Pin.
+        // and `tld` fields and remain valid while this pinned image exists.
         let state = unsafe { self.get_unchecked_mut() };
-        if state.active_owner.is_some() {
+        if state.bound_owner.is_some() {
             return Err(BootstrapError::AlreadyInitialized);
         }
 
         if let TheapOwner::Live(thread_id) = owner {
             state.tld.attach_bootstrap_exclusive(thread_id);
         } else if let Some(subprocess) = detached_subprocess {
+            // Preserve src/init.c:184-193's detached-TLD sequence: form
+            // only its kind-only static memid predecessor, then run the
+            // detached mi_tld_init fields before binding the later Heap.
+            // Neither TLD step registers a live thread or changes either
+            // subprocess counter.
+            if !state.tld.prepare_detached_static_memid()
+                || !state.tld.initialize_detached_after_static_memid(subprocess)
+            {
+                return Err(BootstrapError::InvalidThreadState);
+            }
             state.heap.bind_main_subprocess(subprocess);
-            state.tld.attach_detached_main_subprocess(subprocess);
         }
         let bound = match owner {
             TheapOwner::Live(_) => state
@@ -192,8 +271,22 @@ impl ExclusiveTheapBootstrap {
         if !bound {
             return Err(BootstrapError::InvalidThreadState);
         }
-        state.active_owner = Some(owner);
+        state.bound_owner = Some(owner);
+        Ok(())
+    }
 
+    fn begin_bound_session(
+        self: Pin<&mut Self>,
+        owner: TheapOwner,
+    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+        let state = unsafe { self.get_unchecked_mut() };
+        if state.bound_owner != Some(owner) {
+            return Err(BootstrapError::InvalidThreadState);
+        }
+        if state.session_issued {
+            return Err(BootstrapError::AlreadyInitialized);
+        }
+        state.session_issued = true;
         Ok(ExclusiveTheapSession {
             // SAFETY: `state` came from the pinned receiver and remains in
             // place for the session lifetime. Reborrowing it restores the
@@ -205,7 +298,7 @@ impl ExclusiveTheapBootstrap {
 
     #[inline]
     pub(crate) const fn active_thread(&self) -> Option<LiveThreadId> {
-        match self.active_owner {
+        match self.bound_owner {
             Some(TheapOwner::Live(thread_id)) => Some(thread_id),
             Some(TheapOwner::Detached) | None => None,
         }
@@ -239,15 +332,24 @@ pub(crate) mod theap_page_session_sealed {
 ///
 /// An implementation must retain one stable initialized Theap, Heap, and TLD;
 /// prove the exact live owner/thread identity for every published page; keep
-/// page metadata/block mappings and the source queue/direct state exclusive;
-/// select the exact main or heap-local arena-pages bitmap for fresh, rollback,
-/// and release transitions; and prevent attachment/metadata/list teardown
-/// while the engine or a scoped producer may hold raw page state.
+/// ordinary page fields, queue links, and source queue/direct state under the
+/// one owner while clients use only distinct current blocks and atomic Page
+/// projections; select the exact main or heap-local arena-pages bitmap for
+/// fresh, rollback, and release transitions; and prevent
+/// attachment/metadata/list teardown while the engine or a scoped producer
+/// may hold raw page state.
 /// `publish_fresh_page` must wire only that
 /// exact stable Theap/Heap pair.
 pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     fn theap(&self) -> &Theap;
     fn thread_id(&self) -> Option<LiveThreadId>;
+    /// Reports whether this session still authorizes ordinary page-engine
+    /// operations. A typed teardown continuation can retain the backing page
+    /// image solely to resume its own source boundary; it must not thereby
+    /// re-enable allocation, free, collection, or remote-producer entry.
+    /// Static and completed drain sessions remain ordinary engine owners.
+    #[inline]
+    fn permits_ordinary_page_operations(&self) -> bool { true }
     fn queue(&self, bin: usize) -> Option<&PageQueue>;
     fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue>;
     fn direct_page(&self, index: usize) -> Option<*mut Page>;
@@ -275,6 +377,13 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
         free_is_zero: bool,
         memid: MemoryId,
     ) -> Option<NonNull<Page>>;
+    /// Performs the terminal whole-page reset.
+    ///
+    /// The caller must first prove the source `used == 0` no-live-client
+    /// condition and remove every queue, direct-cache, PageMap, bitmap, and
+    /// aligned alias that could retain or reach this metadata. Fresh rollback
+    /// may call this before any client or producer projection is published.
+    /// Only those two states permit manufacturing the supplied `&mut Page`.
     fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId>;
     fn retired_bounds(&self) -> (usize, usize);
     fn note_retired_bin(&mut self, bin: usize) -> bool;
@@ -290,6 +399,32 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// Static bootstrap sessions are inert; dynamic sessions poison their
     /// retained attachment so later teardown/re-entry cannot lie.
     fn latch_unfinished_page_engine(&mut self);
+
+    /// Runs the selected owner-local mapped-abandoned source only while its
+    /// persistent later-main selector is synchronously bound to this session.
+    ///
+    /// The higher-ranked callback makes the non-Copy source unrepresentable
+    /// in `R`: a caller cannot retain the pair, static-Heap lease, or scoped
+    /// PageMap claim capability after this bound session ends. The sealed
+    /// default is deliberately unavailable and accepts no linear token, so a
+    /// generic session cannot accidentally consume/forget one.
+    #[inline]
+    unsafe fn with_owner_local_mapped_abandoned_claim_source<R>(
+        _session: NonNull<Self>,
+        _operation: impl for<'source> FnOnce(OwnerLocalMappedAbandonedClaimSource<'source>) -> R,
+    ) -> OwnerLocalMappedAbandonedClaimSourceHookOutcome<R>
+    where
+        Self: Sized,
+    {
+        OwnerLocalMappedAbandonedClaimSourceHookOutcome::Unavailable
+    }
+
+    /// Reports the persistent selected-source terminal latch without exposing
+    /// any source capability. Allocation entry gates include this predicate so
+    /// a second allocation in one bound user callback cannot bypass a first
+    /// medium claim failure through an unrelated size class.
+    #[inline]
+    fn is_owner_local_mapped_abandoned_claim_terminal(&self) -> bool { false }
 }
 
 impl ExclusiveTheapSession<'_> {
@@ -670,6 +805,71 @@ mod tests {
         drop(session);
         assert!(matches!(
             bootstrap.as_mut().activate_detached(),
+            Err(BootstrapError::AlreadyInitialized)
+        ));
+    }
+
+    #[test]
+    fn detached_binding_initializes_the_static_image_before_issuing_its_one_session() {
+        let bootstrap = ExclusiveTheapBootstrap::new();
+        let mut bootstrap = core::pin::pin!(bootstrap);
+        let subprocess = MainSubprocess::test_static_owner();
+        let foreign = MainSubprocess::test_static_owner();
+
+        bootstrap
+            .as_mut()
+            .bind_detached_for_main_subprocess(subprocess)
+            .expect("the static detached image binds without an allocator session");
+        {
+            let state = bootstrap.as_ref().get_ref();
+            assert!(state.is_detached_for_main_subprocess(subprocess));
+            assert!(state.theap.is_initialized());
+            assert_eq!(state.active_thread(), None);
+            assert!(
+                state.theap.allows_page_reclaim(),
+                "the frozen source page-reclaim default is present before first metadata demand"
+            );
+            let fields = state.theap.test_main_static_fields();
+            assert_eq!(fields.memid.kind(), MemoryKind::Static);
+            assert!(
+                fields.random_initialized,
+                "the detached metadata Theap initializes its first-head random image before demand"
+            );
+            assert!(
+                fields.cookie_is_odd,
+                "the detached metadata Theap derives its source cookie before publication"
+            );
+            let static_memory = fields
+                .memid
+                .static_memory()
+                .expect("the static source image projects its zero union");
+            assert!(
+                !fields.memid.is_pinned()
+                    && !fields.memid.initially_committed()
+                    && !fields.memid.initially_zero(),
+                "the detached metadata Theap preserves init.c's kind-only \
+                 _mi_memid_create(MI_MEM_STATIC) provenance before first demand"
+            );
+            assert!(
+                static_memory.base.is_null() && static_memory.size == 0,
+                "the detached metadata Theap preserves _mi_memid_create's zero union"
+            );
+            assert!(!state.session_issued);
+        }
+        assert!(matches!(
+            bootstrap.as_mut().begin_bound_detached_session(foreign),
+            Err(BootstrapError::InvalidThreadState)
+        ));
+
+        let session = bootstrap
+            .as_mut()
+            .begin_bound_detached_session(subprocess)
+            .expect("the first demand lends the one already bound detached session");
+        assert_eq!(session.thread_id(), None);
+        drop(session);
+
+        assert!(matches!(
+            bootstrap.as_mut().begin_bound_detached_session(subprocess),
             Err(BootstrapError::AlreadyInitialized)
         ));
     }

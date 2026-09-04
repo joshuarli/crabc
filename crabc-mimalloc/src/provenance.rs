@@ -6,7 +6,8 @@
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/types.h`:
 // `mi_memkind_is_os`, `mi_memkind_needs_no_free`, and `mi_memid_*`; plus
-// `include/mimalloc/internal.h:_mi_memid_create*` and `_mi_memid_size`.
+// `include/mimalloc/internal.h:_mi_memid_create*`, `_mi_memid_size`, and
+// `_mi_is_aligned`.
 // `Address` is a Rust language-boundary value type: it retains only an address
 // number and never reconstructs a pointer, so a future pointer-bearing path
 // must retain an appropriate provenance-bearing pointer separately.
@@ -44,6 +45,12 @@ impl Address {
 
     #[inline]
     pub(crate) const fn is_aligned_to(self, alignment: usize) -> bool {
+        // `_mi_is_aligned` treats zero as an unconstrained alignment. Keep
+        // that predicate separate from `align_down`, whose division contract
+        // deliberately rejects zero.
+        if alignment == 0 {
+            return true;
+        }
         match invariants::align_down(self.0, alignment) {
             Some(aligned) => aligned == self.0,
             None => false,
@@ -157,17 +164,25 @@ mod tests {
         assert!(MemoryKind::External.needs_no_free());
         assert!(MemoryKind::Static.needs_no_free());
         assert!(!MemoryKind::Os.needs_no_free());
+        assert!(!MemoryKind::OsHuge.needs_no_free());
+        assert!(!MemoryKind::OsRemap.needs_no_free());
+        assert!(!MemoryKind::Arena.needs_no_free());
+        assert!(!MemoryKind::Malloc.needs_no_free());
     }
 
     #[test]
     fn address_alignment_keeps_provenance_out_of_integer_operations() {
         let address = Address::new(0x1234_5678);
+        // Pinned `internal.h:_mi_is_aligned` treats a zero alignment as no
+        // constraint. This is distinct from the alignment-producing helpers,
+        // which reject zero before division.
+        assert!(address.is_aligned_to(0));
         assert!(address.is_aligned_to(8));
         assert!(!address.is_aligned_to(16));
         assert_eq!(address.checked_add(8), Some(Address::new(0x1234_5680)));
         assert_eq!(Address::new(usize::MAX).checked_add(1), None);
         assert_eq!(address.align_down(64), Some(Address::new(0x1234_5640)));
-        assert_eq!(address.align_down(48), None);
+        assert_eq!(address.align_down(48), Some(Address::new(0x1234_5660)));
     }
 
     #[test]
@@ -203,5 +218,53 @@ mod tests {
         assert_eq!(os_id.os_base(), Some(Address::from_ptr(bytes.as_ptr())));
         assert!(!os_id.initially_committed());
         assert!(os_id.initially_zero());
+    }
+
+    #[test]
+    fn memory_id_constructors_keep_the_pinned_union_and_size_rules() {
+        let mut byte = 0_u8;
+        let pointer = core::ptr::from_mut(&mut byte);
+
+        let none = MemoryId::none();
+        assert_eq!(none.kind(), MemoryKind::None);
+        assert!(!none.is_pinned());
+        assert!(!none.initially_committed());
+        assert!(!none.initially_zero());
+        assert_eq!(none.size(), Some(0));
+
+        let static_kind_only = MemoryId::static_kind_only();
+        let static_memory = static_kind_only.static_memory().unwrap();
+        assert_eq!(static_memory.base, core::ptr::null_mut());
+        assert_eq!(static_memory.size, 0);
+        assert_eq!(static_kind_only.size(), Some(0));
+
+        let static_allocation = MemoryId::static_allocation(pointer, 37);
+        let static_memory = static_allocation.static_memory().unwrap();
+        assert_eq!(static_memory.base, pointer);
+        assert_eq!(static_memory.size, 37);
+        assert!(static_allocation.is_pinned());
+        assert!(static_allocation.initially_committed());
+        assert!(!static_allocation.initially_zero());
+        assert_eq!(static_allocation.size(), Some(0));
+
+        let malloc = MemoryId::malloc(pointer, 41, true);
+        let malloc_memory = malloc.malloc_memory().unwrap();
+        assert_eq!(malloc.kind(), MemoryKind::Malloc);
+        assert_eq!(malloc_memory.base, pointer);
+        assert_eq!(malloc_memory.size, 41);
+        assert!(malloc.is_pinned());
+        assert!(malloc.initially_committed());
+        assert!(malloc.initially_zero());
+        assert_eq!(malloc.size(), Some(41));
+
+        let os = MemoryId::os(pointer, 43, false, true, true);
+        let os_memory = os.os_memory().unwrap();
+        assert_eq!(os.kind(), MemoryKind::Os);
+        assert_eq!(os_memory.base, pointer);
+        assert_eq!(os_memory.size, 43);
+        assert!(os.is_pinned());
+        assert!(!os.initially_committed());
+        assert!(os.initially_zero());
+        assert_eq!(os.size(), Some(43));
     }
 }

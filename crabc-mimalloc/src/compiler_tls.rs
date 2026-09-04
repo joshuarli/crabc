@@ -9,7 +9,11 @@
 // `src/prim/prim-tls.c:15-34,211-252`, and `src/threadlocal.c:23-214`.
 // This bounded slice supplies source-shaped compiler-TLS roots, the regular
 // dynamic flexible header, and allocation-free root access. `thread_local`
-// owns the current-thread regular backing allocation, growth, and teardown;
+// owns the current-thread regular backing allocation, growth, teardown, and
+// one Rust-only persistent-owner cell embedded beside the source pointer roots
+// in the runtime's compiler-TLS record.
+// That cell makes an exclusive in-place Rust borrow explicit; it neither
+// changes the source TLS layout nor introduces a scheduler or owner registry.
 // `main_theap` alone uses default/fast publication for ticket zero, while
 // `dynamic_theap` owns one canonical-empty cached-root store/refcount pair.
 // General cached switching, process initialization, libc/pthread hooks, and
@@ -184,6 +188,34 @@ static mut CACHED_THEAP_ROOT: *mut Theap = empty_default_theap_ptr();
 #[thread_local]
 static mut THREAD_ID_HELPER_ROOT: *mut () = core::ptr::null_mut();
 
+/// Rust-side state of one inline persistent allocator owner in compiler TLS.
+///
+/// Pinned mimalloc stores its source Theap roots directly in compiler TLS and
+/// relies on the source lifecycle to avoid overlapping local operations. The
+/// Rust owner cell in `thread_local` additionally records its temporary
+/// projection states: this prevents recursive entry from forming two mutable
+/// references to the same TLD/Theap. The payload itself remains inline in its
+/// runtime-owned compiler-TLS record; no state here is a pointer, scheduler,
+/// process registry, page owner, or per-allocation ledger.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PersistentCompilerTlsOwnerState {
+    /// No owner payload has ever been installed in this native-thread cell.
+    Vacant,
+    /// The payload is pinned in place but its source roots are not published.
+    Initializing,
+    /// The complete payload is installed and available for local operations.
+    Active,
+    /// One synchronous local-operation closure owns the only mutable projection.
+    Borrowed,
+    /// Source-ordered consuming teardown owns the only mutable projection.
+    Exiting,
+    /// Initialization, local work, or teardown unwound/failed with the payload pinned.
+    Retained,
+    /// Teardown succeeded, the payload was dropped in place, and reuse is forbidden.
+    TornDown,
+}
+
 /// Peeks at the regular dynamically allocated TLS image.
 ///
 /// A fresh thread sees the immutable count-zero image. Thread teardown sets
@@ -289,9 +321,9 @@ pub(crate) fn roots_are_pristine_for_main_static_attachment() -> bool {
 /// This preserves the source split between `mi_thread_theaps_done` and
 /// `_mi_thread_locals_thread_done`: fast is cleared, default and cached are
 /// restored to the immutable empty theap, while the untouched count-zero
-/// dynamic backing remains installed. Do not replace this with
-/// [`reset_for_thread_teardown`], which would incorrectly turn that empty
-/// dynamic source image into null.
+/// dynamic backing remains installed. [`reset_for_thread_teardown`] recognizes
+/// that image too, but this narrower operation makes the static attachment's
+/// root ownership explicit and leaves the helper root untouched.
 #[inline(always)]
 pub(crate) fn clear_main_static_attachment_roots() {
     set_fast_slot(None);
@@ -325,19 +357,96 @@ fn thread_id_helper_address() -> Option<LiveThreadId> {
     LiveThreadId::new(core::ptr::addr_of_mut!(THREAD_ID_HELPER_ROOT) as usize)
 }
 
-/// Resets all roots at the allocation-free thread-teardown boundary.
+/// Returns the finite constructor-image facts consumed by the M1 C/Rust
+/// compiler-TLS differential. This is deliberately test-only: it exposes no
+/// pointer value or lifecycle authority, only the selected source relations
+/// from `threadlocal.c`, `prim-tls.c`, and `prim-tls.h`.
+#[cfg(test)]
+pub(crate) fn m1_compiler_tls_image_trace_fields() -> [usize; 17] {
+    let dynamic = dynamic_backing_peek().expect("fresh compiler TLS has its source empty root");
+    // SAFETY: the caller uses this only on a fresh native test thread, where
+    // the immutable process-static image is the installed root and cannot be
+    // modified or freed.
+    let dynamic = unsafe { dynamic.as_ref() };
+    let identity = current_thread_identity().expect("selected direct identity is live");
+    let helper = thread_id_helper_address().expect("source helper TLS address is live");
+    let empty = crate::bootstrap::empty_default_theap();
+
+    [
+        is_empty_dynamic_backing(NonNull::from(dynamic)) as usize,
+        dynamic.count,
+        unsafe { dynamic.memid.info.os.base.is_null() } as usize,
+        unsafe { dynamic.memid.info.os.size },
+        dynamic.memid.kind as usize,
+        dynamic.memid.is_pinned as usize,
+        dynamic.memid.initially_committed as usize,
+        dynamic.memid.initially_zero as usize,
+        dynamic.slots[0].m1_compiler_tls_image_fields().0,
+        dynamic.slots[0].m1_compiler_tls_image_fields().1 as usize,
+        fast_slot_peek().is_none() as usize,
+        core::ptr::eq(default_theap().as_ptr(), empty_default_theap_ptr()) as usize,
+        core::ptr::eq(cached_theap().as_ptr(), empty_default_theap_ptr()) as usize,
+        unsafe { THREAD_ID_HELPER_ROOT.is_null() } as usize,
+        (identity.get() != 0) as usize,
+        (identity != helper) as usize,
+        empty.refcount(),
+    ]
+}
+
+/// Reads the source-declared first regular slot only under its typed backing
+/// owner's current-thread test proof. Production code has no raw slot-image
+/// projection API.
 ///
-/// The dynamic backing becomes null only after its lifecycle owner has freed
-/// any nonempty image. The fast slot is cleared, while default and cached
-/// theaps return to the immutable empty image. This function performs no
-/// metadata reclamation, theap decref, page abandonment, or pthread work.
+/// # Safety
+///
+/// `backing` must be the live current-thread allocation retained by the
+/// matching `ThreadLocalBackingOwner`, and that owner must retain exclusive
+/// access for the duration of this observation. The helper does not extend
+/// the backing lifetime or validate a stale compiler-TLS root.
+#[cfg(test)]
+pub(crate) unsafe fn m1_compiler_tls_first_regular_slot_fields(
+    backing: NonNull<DynamicThreadLocalBacking>,
+) -> (usize, bool) {
+    // SAFETY: forwarded from the caller, which retains the exact live backing
+    // owner and its exclusive current-thread access through this observation.
+    let backing = unsafe { backing.as_ref() };
+    let (version, value_is_null) = backing.slots[0].m1_compiler_tls_image_fields();
+    (version, !value_is_null)
+}
+
+/// Resets all source pointer roots at the allocation-free thread-teardown boundary.
+///
+/// As in pinned `_mi_thread_locals_thread_done`, the dynamic backing becomes
+/// null only for a live image whose source `count` is nonzero; the immutable
+/// count-zero process image stays installed. The allocation/lifecycle owner
+/// must keep a nonempty root live through this check and performs its own
+/// metadata release separately. The fast slot is cleared, while default and
+/// cached theaps return to the immutable empty image. This function performs
+/// no metadata reclamation, theap decref, page abandonment, or pthread work.
+/// It deliberately cannot reset a `thread_local::PersistentCompilerTlsOwnerCell`
+/// embedded in a runtime compiler-TLS record. The runtime must first complete
+/// that owner's explicit source teardown transition, so resetting source
+/// roots cannot make a live page-bearing owner look vacant.
 #[inline(always)]
 pub(crate) fn reset_for_thread_teardown() {
-    // SAFETY: each calling thread alone writes all five compiler-TLS roots,
+    let dynamic_root_is_nonempty = match dynamic_backing_peek() {
+        Some(backing) => {
+            // SAFETY: a non-null root is either the immutable process image
+            // or an installed live dynamic backing. The install contract
+            // retains that image through its root reset, and this thread is
+            // its sole compiler-TLS reader.
+            unsafe { backing.as_ref() }.count() > 0
+        }
+        None => false,
+    };
+    if dynamic_root_is_nonempty {
+        clear_dynamic_backing();
+    }
+
+    // SAFETY: each calling thread alone writes all five source pointer roots,
     // including the otherwise-unused helper root. The immutable process image
     // remains live forever.
     unsafe {
-        DYNAMIC_BACKING_ROOT = core::ptr::null_mut();
         FAST_SLOT_ROOT = core::ptr::null_mut();
         DEFAULT_THEAP_ROOT = empty_default_theap_ptr();
         CACHED_THEAP_ROOT = empty_default_theap_ptr();
@@ -458,6 +567,28 @@ mod tests {
         })
         .join()
         .expect("the native install/reset check completes");
+    }
+
+    #[test]
+    fn thread_teardown_preserves_the_source_count_zero_dynamic_root() {
+        thread::spawn(|| {
+            let empty_backing = dynamic_backing_peek()
+                .expect("a fresh thread starts at the source count-zero image");
+            assert!(is_empty_dynamic_backing(empty_backing));
+            // SAFETY: this exact pointer names the immutable process-lifetime
+            // source image, so observing its count cannot race or outlive it.
+            assert_eq!(unsafe { empty_backing.as_ref() }.count(), 0);
+
+            reset_for_thread_teardown();
+
+            assert_eq!(
+                dynamic_backing_peek(),
+                Some(empty_backing),
+                "pinned _mi_thread_locals_thread_done clears only a nonempty dynamic image"
+            );
+        })
+        .join()
+        .expect("the count-zero root teardown check completes");
     }
 
     #[test]

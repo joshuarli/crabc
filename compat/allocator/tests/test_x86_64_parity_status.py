@@ -385,19 +385,19 @@ class X86_64ParityStatusTests(unittest.TestCase):
             self.assertTrue(gate["command"].startswith("./compat/allocator/run-x86_64.sh "))
         self.assertEqual(
             gates["native-c-oracle"]["report"],
-            "compat/reports/allocator/x86_64/latest.json",
+            ".work/reports/allocator/x86_64/latest.json",
         )
         self.assertEqual(
             gates["native-tls-codegen"]["report"],
-            "compat/reports/allocator/tls-codegen-x86_64.json",
+            ".work/reports/allocator/tls-codegen-x86_64.json",
         )
         self.assertEqual(
             gates["native-private-test-adapter"]["report"],
-            "compat/reports/allocator/x86_64/latest.json",
+            ".work/reports/allocator/x86_64/latest.json",
         )
         self.assertEqual(
             gates["native-normal-engine-build-boundary"]["report"],
-            "compat/reports/allocator/x86_64/latest.json",
+            ".work/reports/allocator/x86_64/latest.json",
         )
         self.assertEqual(
             gates["native-private-adapter-performance"]["report"],

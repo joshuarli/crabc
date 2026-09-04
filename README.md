@@ -49,6 +49,20 @@ The supported development loop is Apple Silicon macOS → Docker → Linux/AArch
 The image and compatibility oracles are pinned in
 [`compat/upstreams.toml`](compat/upstreams.toml).
 
+Install Docker Desktop (with Linux containers enabled), then build the pinned
+development image from the repository root:
+
+```bash
+make docker
+```
+
+After that, use `./scripts/dev.sh` for builds, tests, compatibility checks, and
+an interactive container shell. The first build downloads the pinned Rust,
+musl, and test-tool sources and may take several minutes.
+
+Use the repository-local `.work/` directory for disposable development
+artifacts; it is excluded from both Git and Docker build contexts.
+
 ```bash
 ./scripts/dev.sh image       # build the Linux/AArch64 development image
 ./scripts/dev.sh build

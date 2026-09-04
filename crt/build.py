@@ -577,14 +577,20 @@ def portable_rustc_command(command: Sequence[str], source: Path, destination: Pa
     return portable
 
 
-def deterministic_environment() -> dict[str, str]:
+def deterministic_environment(temporary_directory: Path) -> dict[str, str]:
     # Direct rustc invocation does not use Cargo's linker configuration. Keep
     # only process discovery state and establish reproducible diagnostic/time
     # inputs explicitly; no ambient target include/library path is consulted.
+    temporary_directory = temporary_directory.expanduser().resolve()
+    temporary_directory.mkdir(parents=True, exist_ok=True)
     environment = {
         "PATH": os.environ.get("PATH", ""),
         "SOURCE_DATE_EPOCH": "0",
         "LC_ALL": "C",
+        # Rustc may use a temporary directory for intermediates. This builder
+        # owns its output parent, so retain that state beside the generated
+        # objects rather than allowing the platform default such as /tmp.
+        "TMPDIR": str(temporary_directory),
         "TZ": "UTC",
     }
     for key in ("RUSTUP_HOME", "CARGO_HOME"):
@@ -597,7 +603,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     output = output_directory(args.out_dir)
     rustc = default_rustc_command()
     objdump = require_tool(args.llvm_objdump)
-    environment = deterministic_environment()
+    environment = deterministic_environment(output.parent / ".crabc-crt-tmp")
     records: list[dict[str, Any]] = []
     commands_path = output / "commands.json"
 

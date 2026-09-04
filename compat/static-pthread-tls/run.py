@@ -27,9 +27,22 @@ from typing import Any
 
 MUSL_VERSION = "1.2.6"
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def default_work_dir() -> Path:
+    """Return the checkout-local boundary for generated runner evidence."""
+
+    configured = os.environ.get("CRABC_WORK_DIR")
+    if not configured:
+        return ROOT / ".work"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+WORK_DIR = default_work_dir()
 SOURCE = ROOT / "tests/fixtures/static_pthread_tls_test.c"
 SYSROOT_TOOL = ROOT / "scripts/crabc_sysroot.py"
-DEFAULT_REPORT = ROOT / "compat/reports/static-pthread-tls/latest.json"
+DEFAULT_REPORT = WORK_DIR / "reports/static-pthread-tls/latest.json"
 EXPECTED_STDOUT = b"static pthread tls ok\n"
 DEFAULT_TIMEOUT = 10.0
 MAX_TIMEOUT = 300.0
@@ -232,7 +245,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "timeout_seconds": args.timeout,
         },
     }
-    with tempfile.TemporaryDirectory(prefix="crabc-static-pthread-tls-") as work_name:
+    fixture_root = WORK_DIR / "tmp"
+    fixture_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="crabc-static-pthread-tls-", dir=fixture_root
+    ) as work_name:
         work = Path(work_name)
         object_file = work / "fixture.o"
         compile_cmd = compile_source(compiler_parts, source, root / "include", object_file)

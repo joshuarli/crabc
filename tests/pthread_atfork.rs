@@ -4,7 +4,7 @@ mod test_support;
 use std::process::Command;
 
 #[test]
-fn pthread_atfork_handlers_fire_in_order() {
+fn pthread_atfork_handlers_preserve_a_quiescent_allocator_fork() {
     let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");
