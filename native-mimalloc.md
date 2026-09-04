@@ -65,10 +65,10 @@ compatibility engineering, not allocator research.
    accepted work merely because this document records an older audited commit.
 3. Reproduce the first currently failing legal-C scenario before proposing a
    fix.
-4. Use test-first development for every bug fix, behavior change, and
-   refactor: write or preserve a failing test, observe the expected failure,
-   implement the smallest source-faithful change, then rerun the focused and
-   relevant aggregate gates.
+4. For bugs, preserve a reproducing regression and observe its failure before
+   fixing the pinned-source behavior. Use focused checks during development;
+   batch expensive suites at integration and milestone checkpoints as defined
+   by `plan.md`. Do not invent a new failing test for a behavior-neutral change.
 5. Follow the current user and repository agent-routing instructions. Use
    independent workers when useful, with explicit ownership and isolated
    worktrees for implementation. Do not use Terra or Sol unless the user
@@ -1211,22 +1211,16 @@ malloc/free calls.
 
 # 9. Test-first and debugging workflow
 
-For every behavior slice:
+For a bug, identify the pinned upstream behavior, reduce the failure, preserve
+an existing or new regression, observe the expected failure, then fix the root
+cause and rerun focused evidence. Specify missing behavior before implementing
+it where practical. Extend existing matrices instead of inventing a new
+harness or planning cycle for each case.
 
-1. identify the exact pinned upstream control flow;
-2. reduce the current failure or missing capability;
-3. add a minimal test that fails for the expected reason;
-4. run it and preserve the failing output;
-5. implement the smallest source-faithful behavior;
-6. run the focused test;
-7. run neighboring allocator tests;
-8. run the state auditor;
-9. run relevant Loom/Miri/differential tests;
-10. run an early performance smoke if a hot path changed;
-11. update machine-readable status;
-12. commit.
-
-Do not write production code first and then add a test that already passes.
+Use `plan.md`'s batch-validation policy: neighboring tests, state auditing,
+models, differentials, and hot-path smoke belong at the relevant integration
+checkpoint, not mechanically after every local edit. Update state only when
+its facts change, then commit coherent slices. Final acceptance is unchanged.
 
 When a stress workload fails:
 
@@ -1980,9 +1974,10 @@ The runner currently rejects x86 M1/M2 mode selection; implementing
 architecture-qualified milestone manifests and executable gates is required
 work, not a passing or waived prerequisite.
 
-First bring the allocator launcher under the same checked `.work/` boundary
-as the runtime launcher; its legacy named Docker volumes are not the new
-work-storage contract. Thereafter add native x86 equivalents of the command
+The allocator launcher uses the checked `.work/allocator-x86_64/` boundary,
+separate from runtime build/cache state. Its optional
+`CRABC_ALLOCATOR_X86_64_WORK_DIR` override must remain a physical descendant;
+do not restore named external Docker volumes. Add native x86 equivalents of the command
 capabilities below. Their `scripts/dev.sh` spellings describe the retained
 AArch64 interface, which is paused. Do not run those AArch64 workloads on
 this host or describe an unimplemented x86 equivalent as available.
@@ -2288,18 +2283,13 @@ Bad commit subjects include:
 - `fix tests`
 - `more owner exit cases`
 
-Before each production commit:
-
-1. identify the pinned source region;
-2. identify the invariant or objective gate;
-3. observe the failing scenario;
-4. implement the general source behavior;
-5. run focused tests;
-6. run relevant model/differential tests;
-7. run the state auditor;
-8. run performance smoke when the hot path changes;
-9. update machine-readable status;
-10. commit with a clean worktree.
+Each production slice must identify its pinned source behavior and invariant,
+implement the general behavior, and pass focused checks. Keep the failing
+regression for a bug. Run relevant model/differential tests, the state auditor,
+and hot-path performance smoke at meaningful integrated batch checkpoints;
+do not make every edit repeat the full protocol. Update machine-readable state
+when its facts change, and commit coherent slices promptly. Milestone and final
+promotion gates remain mandatory.
 
 Do not weaken a test in the same commit as a production fix unless the commit
 is explicitly correcting the test contract with pinned-oracle evidence.
@@ -2449,10 +2439,11 @@ AArch64 M0/M1/M2 qualification.
 
 The next integrated wave must:
 
-1. Bring `compat/allocator/run-x86_64.sh` under the checked repository-local
-   `.work/` boundary before executing it. It currently uses named Docker
-   target/cache volumes. Cover temporary files, extracted sources, worktrees,
-   reports, caches, and symlink/override escape rejection as well.
+1. Preserve the executable containment contract in
+   `compat/allocator/tests/test_x86_64_runner.py`: the launcher keeps target,
+   Cargo, source-cache, report, and temporary state below
+   `.work/allocator-x86_64/`, rejecting escaping overrides and symlinks before
+   Docker starts. This prerequisite does not close an allocator milestone.
 2. Revalidate the pinned x86 inventory, layouts, configuration, and C oracle
    with the existing native quick/check surface. Record exact commands,
    architecture, source revision, and source cleanliness. This is the M0

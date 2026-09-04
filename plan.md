@@ -19,6 +19,26 @@ This is an execution goal, not a request for another planning exercise.
 The two linked plans remain the detailed acceptance contracts; this file
 coordinates their scheduling and joint finish without weakening either one.
 
+## Throughput and process budget
+
+Prefer larger, dependency-ready component or family batches over isolated
+leaf tasks. The user authorizes revising task boundaries and planning process
+to accelerate delivery; no approval is needed merely to widen a coherent
+in-scope batch. This does not authorize new product scope or weaker final gates.
+
+Use focused tests during development and run expensive aggregate, model, corpus,
+or performance suites at meaningful integration or milestone checkpoints.
+Do not rerun unchanged suites for every local edit or documentation commit.
+Keep a reproducing regression for bugs and verify changed unsafe/interface
+boundaries, but do not manufacture a failing test for prose or a behavior-neutral
+mechanical change. Reuse existing harnesses and matrices.
+
+Record a result once with its owning contract or report. Update planning/status
+only when priorities, prerequisites, or completion state materially change;
+do not require a new report, handoff essay, or every-document update per slice.
+Commit coherent validated slices promptly. Final qualification still requires
+all acceptance predicates against the same final committed source revision.
+
 ## Scope and authority
 
 Read `AGENTS.md`, `SCOPE.md`, `COMPATIBILITY-PROFILE.md`, `STATUS.md`, both
@@ -61,8 +81,8 @@ independent syscall, ABI, CRT, loader, facade, or sysroot work.
 ### Native x86-64 mimalloc
 
 Follow the active x86 handoff in §26 of `native-mimalloc.md`, its full milestone
-definitions, source map, API/mode inventories, and gate manifests. First
-contain the allocator launcher under `.work/`, then establish target-qualified
+definitions, source map, API/mode inventories, and gate manifests. Preserve the
+allocator launcher's checked `.work/` containment, then establish target-qualified
 baseline and milestone gates. Imported AArch64 M0/M1 closure and partial M2
 records are preserved evidence, not x86 completion.
 
@@ -132,8 +152,8 @@ blocker; that requires separate future AArch64 promotion and evidence.
 5. Commit completed slices promptly using `feat`, `fix`, `test`, `refactor`,
    `perf`, `build`, or `docs` subjects with a meaningful scope. Do not bundle
    unrelated work, invoke hooks, or push. Run required clean-revision gates
-   after committing; qualify a later code change again rather than inheriting
-   a previous revision's pass.
+   at milestone/integration checkpoints; rerun affected evidence after later
+   code changes rather than inheriting an unrelated revision's pass.
 6. Update concise architecture-qualified handoffs and machine-readable state
    with exact remaining conditions, commands, revision, report paths, and
    results. Do not inflate status files with per-leaf histories or count stale
