@@ -79,6 +79,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   link-header-source-form  verify x86 <link.h> pinned-musl include topology
   reboot-header-source-form  verify x86 <sys/reboot.h> pinned-musl macro form
   mount-header-source-form  verify x86 <sys/mount.h> pinned-musl source form
+  klog-header-source-form  verify x86 <sys/klog.h> pinned-musl macro surface
   fcntl-event-header-topology  verify x86 fcntl/event direct-header topology
   math-tgmath-source-form  verify x86 math/tgmath source forms and frozen AArch64 arm
   sys-io-header-abi  verify x86 sys/io.h inline port-I/O C/C++ ABI and object code
@@ -2702,6 +2703,10 @@ run_math_tgmath_source_form() {
 
 run_mount_header_source_form() {
     run_in_container bash /workspace/compat/x86_64/run_mount_header_source_form.sh
+}
+
+run_klog_header_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_klog_header_source_form.sh
 }
 
 run_fcntl_event_header_topology() {
@@ -5402,6 +5407,7 @@ case "$command" in
     stdio-header-source-form) ;;
     math-tgmath-source-form) ;;
     mount-header-source-form) ;;
+    klog-header-source-form) ;;
     fcntl-event-header-topology) ;;
 
     *)
@@ -5566,6 +5572,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "mount-header-source-form takes no arguments"
         ensure_image
         run_mount_header_source_form
+        ;;
+    klog-header-source-form)
+        [ "$#" -eq 0 ] || fail "klog-header-source-form takes no arguments"
+        ensure_image
+        run_klog_header_source_form
         ;;
     fcntl-event-header-topology)
         [ "$#" -eq 0 ] || fail "fcntl-event-header-topology takes no arguments"

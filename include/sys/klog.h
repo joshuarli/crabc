@@ -1,3 +1,19 @@
+#if defined(__x86_64__)
+#ifndef	_SYS_KLOG_H
+#define	_SYS_KLOG_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int klogctl (int, char *, int);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+#else
 #ifndef _SYS_KLOG_H
 #define _SYS_KLOG_H
 
@@ -23,4 +39,5 @@ int klogctl(int, char *, int);
 }
 #endif
 
+#endif
 #endif
