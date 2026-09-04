@@ -127,10 +127,16 @@ pub(crate) enum VmOption {
     PurgeDelay = 4,
     UseNumaNodes = 5,
     AllowThp = 6,
+    ArenaEagerCommit = 7,
+    ArenaReserve = 8,
+    ArenaMaxObjectSize = 9,
+    DisallowArenaAlloc = 10,
+    DisallowOsAlloc = 11,
+    PageCommitOnDemand = 12,
 }
 
 impl VmOption {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::PurgeDecommits,
         Self::AllowLargeOsPages,
         Self::ReserveHugeOsPages,
@@ -138,6 +144,12 @@ impl VmOption {
         Self::PurgeDelay,
         Self::UseNumaNodes,
         Self::AllowThp,
+        Self::ArenaEagerCommit,
+        Self::ArenaReserve,
+        Self::ArenaMaxObjectSize,
+        Self::DisallowArenaAlloc,
+        Self::DisallowOsAlloc,
+        Self::PageCommitOnDemand,
     ];
 
     #[inline]
@@ -156,7 +168,21 @@ impl VmOption {
             Self::UseNumaNodes => 0,
             // `MI_DEFAULT_ALLOW_THP` on non-Android Linux.
             Self::AllowThp => 1,
+            // `MI_DEFAULT_ARENA_EAGER_COMMIT` in `src/options.c:46-48`.
+            Self::ArenaEagerCommit => 2,
+            // `MI_DEFAULT_ARENA_RESERVE` is expressed in KiB.
+            Self::ArenaReserve => 1024 * 1024,
+            // `MI_SIZE_BITS * MI_ARENA_MAX_CHUNK_OBJ_SIZE / MI_KiB`:
+            // `(64 * 32 MiB) / KiB == 2 GiB`, stored in KiB.
+            Self::ArenaMaxObjectSize => 2 * 1024 * 1024,
+            // `src/options.c:143,151,168`.
+            Self::DisallowArenaAlloc | Self::DisallowOsAlloc | Self::PageCommitOnDemand => 0,
         }
+    }
+
+    #[inline]
+    const fn has_size_in_kib(self) -> bool {
+        matches!(self, Self::ArenaReserve | Self::ArenaMaxObjectSize)
     }
 }
 
@@ -209,7 +235,7 @@ impl VmOptionSlot {
 /// copy from silently changing process policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct VmOptions {
-    slots: [VmOptionSlot; 7],
+    slots: [VmOptionSlot; 13],
 }
 
 impl VmOptions {
@@ -225,6 +251,12 @@ impl VmOptions {
                 VmOptionSlot::new(VmOption::PurgeDelay.default_value()),
                 VmOptionSlot::new(VmOption::UseNumaNodes.default_value()),
                 VmOptionSlot::new(VmOption::AllowThp.default_value()),
+                VmOptionSlot::new(VmOption::ArenaEagerCommit.default_value()),
+                VmOptionSlot::new(VmOption::ArenaReserve.default_value()),
+                VmOptionSlot::new(VmOption::ArenaMaxObjectSize.default_value()),
+                VmOptionSlot::new(VmOption::DisallowArenaAlloc.default_value()),
+                VmOptionSlot::new(VmOption::DisallowOsAlloc.default_value()),
+                VmOptionSlot::new(VmOption::PageCommitOnDemand.default_value()),
             ],
         }
     }
@@ -252,7 +284,7 @@ impl VmOptions {
         match environment {
             VmOptionEnvironment::Unavailable => {}
             VmOptionEnvironment::Absent => slot.state = VmOptionState::Defaulted,
-            VmOptionEnvironment::Value(value) => match parse_source_option_value(value) {
+            VmOptionEnvironment::Value(value) => match parse_source_option_value(option, value) {
                 Some(value) => {
                     slot.value = value;
                     slot.state = VmOptionState::Initialized;
@@ -310,22 +342,86 @@ impl VmOptions {
     }
 }
 
-/// Parses the value grammar used by `src/options.c:636-674` for these
-/// non-size VM options. The C path uppercases its bounded temporary buffer,
-/// treats an empty value as enabled, accepts the four boolean spellings, and
-/// otherwise accepts an entire base-ten `strtol` result.
-fn parse_source_option_value(value: &[u8]) -> Option<i64> {
-    if value.is_empty() || ascii_eq_ignore_case(value, b"1") || ascii_eq_ignore_case(value, b"TRUE")
-        || ascii_eq_ignore_case(value, b"YES") || ascii_eq_ignore_case(value, b"ON")
+/// Parses the value grammar used by `src/options.c:636-674` for the selected
+/// VM and arena options. The C path uppercases its bounded temporary buffer,
+/// treats an empty value as enabled, accepts four boolean spellings, and then
+/// applies its `strtol` and (for named size options) KiB/suffix conversion.
+fn parse_source_option_value(option: VmOption, input: &[u8]) -> Option<i64> {
+    if input.is_empty() || ascii_eq_ignore_case(input, b"1") || ascii_eq_ignore_case(input, b"TRUE")
+        || ascii_eq_ignore_case(input, b"YES") || ascii_eq_ignore_case(input, b"ON")
     {
         return Some(1);
     }
-    if ascii_eq_ignore_case(value, b"0") || ascii_eq_ignore_case(value, b"FALSE")
-        || ascii_eq_ignore_case(value, b"NO") || ascii_eq_ignore_case(value, b"OFF")
+    if ascii_eq_ignore_case(input, b"0") || ascii_eq_ignore_case(input, b"FALSE")
+        || ascii_eq_ignore_case(input, b"NO") || ascii_eq_ignore_case(input, b"OFF")
     {
         return Some(0);
     }
 
+    let (parsed, mut index) = parse_source_decimal(input)?;
+    if !option.has_size_in_kib() {
+        return (index == input.len()).then_some(parsed);
+    }
+
+    // `mi_option_get_size` options first parse their signed source `long`,
+    // then turn a negative input into zero before applying K/M/G/T suffixes.
+    // A suffix-free number names bytes and rounds up to KiB; boolean spelling
+    // above intentionally bypasses this conversion just as the C source does.
+    let limit = MAX_ALLOC_SIZE / KIB;
+    let mut size = if parsed < 0 { 0usize } else { usize::try_from(parsed).ok()? };
+    let mut overflow = false;
+    // `mi_option_get` uppercases its bounded source buffer before this size
+    // conversion. Keep boolean and suffix parsing equally case-insensitive.
+    let suffix = input
+        .get(index)
+        .copied()
+        .map(|suffix| suffix.to_ascii_uppercase());
+    match suffix {
+        Some(b'K') => index += 1,
+        Some(b'M') => {
+            match size.checked_mul(KIB) {
+                Some(product) => size = product,
+                None => overflow = true,
+            }
+            index += 1;
+        }
+        Some(b'G') => {
+            match size.checked_mul(MIB) {
+                Some(product) => size = product,
+                None => overflow = true,
+            }
+            index += 1;
+        }
+        Some(b'T') => {
+            match size.checked_mul(GIB) {
+                Some(product) => size = product,
+                None => overflow = true,
+            }
+            index += 1;
+        }
+        _ => size = size.checked_add(KIB - 1)? / KIB,
+    }
+    if input
+        .get(index..)
+        .and_then(|tail| tail.get(..2))
+        .is_some_and(|suffix| ascii_eq_ignore_case(suffix, b"IB"))
+    {
+        index += 2;
+    } else if input
+        .get(index)
+        .copied()
+        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(&b'B'))
+    {
+        index += 1;
+    }
+    if index != input.len() {
+        return None;
+    }
+    let size = if overflow || size > limit { limit } else { size };
+    i64::try_from(size).ok()
+}
+
+fn parse_source_decimal(value: &[u8]) -> Option<(i64, usize)> {
     let mut index = 0;
     while index < value.len() && matches!(value[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') {
         index += 1;
@@ -350,10 +446,10 @@ fn parse_source_option_value(value: &[u8]) -> Option<i64> {
         magnitude = magnitude.checked_mul(10)?.checked_add(u64::from(digit))?;
         index += 1;
     }
-    if index == digits_start || index != value.len() {
+    if index == digits_start {
         return None;
     }
-    if negative {
+    let parsed = if negative {
         let minimum_magnitude = (i64::MAX as u64) + 1;
         if magnitude == minimum_magnitude {
             Some(i64::MIN)
@@ -362,7 +458,8 @@ fn parse_source_option_value(value: &[u8]) -> Option<i64> {
         }
     } else {
         i64::try_from(magnitude).ok()
-    }
+    }?;
+    Some((parsed, index))
 }
 
 #[inline]
@@ -503,14 +600,46 @@ mod tests {
 
     #[test]
     fn vm_option_parser_matches_the_non_size_source_grammar() {
-        assert_eq!(parse_source_option_value(b""), Some(1));
-        assert_eq!(parse_source_option_value(b"YeS"), Some(1));
-        assert_eq!(parse_source_option_value(b"OFF"), Some(0));
-        assert_eq!(parse_source_option_value(b" \t-42"), Some(-42));
-        assert_eq!(parse_source_option_value(b"+9223372036854775807"), Some(i64::MAX));
-        assert_eq!(parse_source_option_value(b"-9223372036854775808"), Some(i64::MIN));
-        assert_eq!(parse_source_option_value(b"9223372036854775808"), None);
-        assert_eq!(parse_source_option_value(b"12x"), None);
-        assert_eq!(parse_source_option_value(b" + "), None);
+        assert_eq!(parse_source_option_value(VmOption::AllowThp, b""), Some(1));
+        assert_eq!(parse_source_option_value(VmOption::AllowThp, b"YeS"), Some(1));
+        assert_eq!(parse_source_option_value(VmOption::AllowThp, b"OFF"), Some(0));
+        assert_eq!(parse_source_option_value(VmOption::AllowThp, b" \t-42"), Some(-42));
+        assert_eq!(
+            parse_source_option_value(VmOption::AllowThp, b"+9223372036854775807"),
+            Some(i64::MAX)
+        );
+        assert_eq!(
+            parse_source_option_value(VmOption::AllowThp, b"-9223372036854775808"),
+            Some(i64::MIN)
+        );
+        assert_eq!(parse_source_option_value(VmOption::AllowThp, b"9223372036854775808"), None);
+        assert_eq!(parse_source_option_value(VmOption::AllowThp, b"12x"), None);
+        assert_eq!(parse_source_option_value(VmOption::AllowThp, b" + "), None);
+    }
+
+    #[test]
+    fn vm_size_options_preserve_the_source_kib_suffix_rules() {
+        assert_eq!(
+            parse_source_option_value(VmOption::ArenaReserve, b"2"),
+            Some(1),
+            "a suffix-free source size is bytes rounded to KiB"
+        );
+        assert_eq!(parse_source_option_value(VmOption::ArenaReserve, b"2K"), Some(2));
+        assert_eq!(parse_source_option_value(VmOption::ArenaReserve, b"2MiB"), Some(2 * 1024));
+        assert_eq!(
+            parse_source_option_value(VmOption::ArenaReserve, b"2GIB"),
+            Some(2 * 1024 * 1024)
+        );
+        assert_eq!(parse_source_option_value(VmOption::ArenaReserve, b"-7M"), Some(0));
+        assert_eq!(
+            parse_source_option_value(VmOption::ArenaReserve, b"9223372036854775807T"),
+            Some((MAX_ALLOC_SIZE / KIB) as i64),
+            "a valid source long that overflows a suffix conversion saturates"
+        );
+        assert_eq!(
+            parse_source_option_value(VmOption::ArenaReserve, b"999999999999999999999T"),
+            None,
+            "strtol overflow rejects the source value before size saturation"
+        );
     }
 }

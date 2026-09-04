@@ -89,6 +89,7 @@ mod remote_free;
 mod runtime_lifecycle;
 mod size_class;
 mod single_thread;
+mod statistics;
 mod subproc;
 mod support;
 #[cfg(feature = "test-adapter")]

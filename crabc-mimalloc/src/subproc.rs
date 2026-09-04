@@ -24,8 +24,10 @@
 //! relaxed current-thread count. It is not a Rust layout claim for
 //! `mi_subproc_t`: `theap_meta` and `theap_meta_lock` are one-way
 //! identity/private-futex capabilities, not C byte-layout or normal C backing
-//! routes. It supplies no subprocess list, heap projection, arena, statistics,
-//! or public subprocess API. Its main-Heap slot retains only the canonical
+//! routes. It supplies no subprocess list, heap projection, arena, general
+//! `mi_stats_t` layout, or public subprocess API. It does own the bounded VM
+//! and bitmap statistic fields that its staged source paths actually mutate.
+//! Its main-Heap slot retains only the canonical
 //! static identity publication from `mi_subproc_t::heap_main`; it is never a
 //! Rust heap accessor.
 //!
@@ -107,6 +109,9 @@ impl MainStaticTldSlot {
 /// the actual source-shaped `mi_process_tld_main` branch selected only by
 /// sequence zero; it is not a metadata allocation cache or a reusable TLD.
 pub(crate) struct MainSubprocess {
+    /// Source VM events are unconditional at `MI_STAT=0`. This is the exact
+    /// OS-path subset, not a public `mi_stats_t` layout or a generic sink.
+    vm_statistics: crate::statistics::VmStatistics,
     /// Source bitmap events are unconditional even when optional statistics
     /// are disabled. This is a typed subset, not the full `mi_stats_t` ABI.
     bitmap_statistics: crate::bitmap::BitmapStatistics,
@@ -263,6 +268,7 @@ pub(crate) struct MainHeapPublication<'subprocess> {
 impl MainSubprocess {
     pub(crate) const fn new() -> Self {
         Self {
+            vm_statistics: crate::statistics::VmStatistics::new(),
             bitmap_statistics: crate::bitmap::BitmapStatistics::new(),
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
@@ -290,6 +296,11 @@ impl MainSubprocess {
 
     pub(crate) fn bitmap_statistics(&self) -> &crate::bitmap::BitmapStatistics {
         &self.bitmap_statistics
+    }
+
+    #[inline]
+    pub(crate) fn vm_statistics(&self) -> &crate::statistics::VmStatistics {
+        &self.vm_statistics
     }
 
     /// Reserves the unique source-static ticket-zero path for a process

@@ -50,6 +50,7 @@ use crate::atomic::{
 };
 use crate::bits::{bsf, bsr, clz, ctz, popcount};
 use crate::config::BCHUNK_BITS;
+use crate::statistics::StatCount;
 
 #[cfg(test)]
 #[path = "bitmap_native_tests.rs"]
@@ -63,38 +64,14 @@ mod native_tests;
 /// `stats.c::mi_stat_update_mt` updates current, then peak, then positive
 /// total with relaxed signed 64-bit atomics; observations are not snapshots.
 pub(crate) struct BitmapStatistics {
-    chunk_bins: [BitmapStatCount; 5],
+    chunk_bins: [StatCount; 5],
     pages_unabandon_busy_wait: crate::atomic::AtomicI64Value,
-}
-
-struct BitmapStatCount {
-    total: crate::atomic::AtomicI64Value,
-    peak: crate::atomic::AtomicI64Value,
-    current: crate::atomic::AtomicI64Value,
-}
-
-impl BitmapStatCount {
-    const fn new() -> Self {
-        Self {
-            total: crate::atomic::AtomicI64Value::new(0),
-            peak: crate::atomic::AtomicI64Value::new(0),
-            current: crate::atomic::AtomicI64Value::new(0),
-        }
-    }
-
-    fn update(&self, amount: i64) {
-        let previous = crate::atomic::i64_add_relaxed(&self.current, amount);
-        crate::atomic::i64_max_relaxed(&self.peak, previous.wrapping_add(amount));
-        if amount > 0 {
-            crate::atomic::i64_add_relaxed(&self.total, amount);
-        }
-    }
 }
 
 impl BitmapStatistics {
     pub(crate) const fn new() -> Self {
         Self {
-            chunk_bins: [const { BitmapStatCount::new() }; 5],
+            chunk_bins: [const { StatCount::new() }; 5],
             pages_unabandon_busy_wait: crate::atomic::AtomicI64Value::new(0),
         }
     }

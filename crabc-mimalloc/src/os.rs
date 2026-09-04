@@ -15,14 +15,21 @@
 //! Private, allocation-free Linux virtual-memory primitives for the allocator
 //! engine.
 //!
-//! This boundary now includes the pinned immutable OS-memory configuration and
+//! This boundary includes the pinned immutable OS-memory configuration and
 //! ordinary mmap policy needed by the live page map: Linux overcommit/THP and
 //! physical-memory observation, regular and guaranteed-aligned mappings,
 //! commit/uncommit transitions, reset/purge, protection, and explicit release.
-//! It does not select huge pages, mutate process THP policy, create randomized
-//! aligned hints, parse allocator options, or create mimalloc random state.
-//! Those upstream paths require state owned by later slices and are absent
-//! rather than represented by a successful placeholder.
+//! It also has a resolved, borrowed [`VmProcess`] boundary for source VM
+//! options, randomized aligned hints, the process-local THP transition, and
+//! the exact VM statistic fields that a source map/release mutates.
+//!
+//! That borrowed boundary deliberately does not create ambient environment or
+//! random-state ownership. A process initializer must still retain the
+//! resolved [`VmPolicy`], supply the real [`TheapRandomImage`] to the source
+//! callers that consume it, and bind arena/metadata backing before those
+//! callers can claim full process VM integration. One-GiB huge-page progress,
+//! timeout, and release ownership remain unqualified until that owner exists;
+//! this module never represents those missing paths as a successful fallback.
 //!
 //! `StartupInput` is supplied by a future runtime owner. In particular, this
 //! module deliberately does not read `/proc/self/environ` or autonomously
@@ -375,6 +382,36 @@ pub(crate) struct VmPolicy {
     numa_node_count: AtomicUsize,
 }
 
+/// One borrowed source subprocess and its resolved VM policy.
+///
+/// This pair is deliberately non-owning: process initialization retains both
+/// address-stable owners, while map/commit/free callers must present the same
+/// pair for every accounting edge. It prevents an allocation path from
+/// selecting options from one process image and statistics from another.
+#[derive(Clone, Copy)]
+pub(crate) struct VmProcess<'a> {
+    policy: &'a VmPolicy,
+    subprocess: &'a crate::subproc::MainSubprocess,
+}
+
+impl<'a> VmProcess<'a> {
+    #[inline]
+    pub(crate) const fn new(
+        policy: &'a VmPolicy,
+        subprocess: &'a crate::subproc::MainSubprocess,
+    ) -> Self {
+        Self { policy, subprocess }
+    }
+
+    #[inline]
+    pub(crate) const fn policy(self) -> &'a VmPolicy { self.policy }
+
+    #[inline]
+    pub(crate) const fn subprocess(self) -> &'a crate::subproc::MainSubprocess {
+        self.subprocess
+    }
+}
+
 impl VmPolicy {
     /// Admits only source options whose lazy environment phase has completed.
     pub(crate) fn new(options: VmOptions) -> core::result::Result<Self, VmPolicyConfigurationError> {
@@ -546,7 +583,12 @@ impl VmPolicy {
     }
 
     #[inline]
-    fn allow_large_os_pages(&self) -> bool {
+    /// Returns the resolved `mi_option_allow_large_os_pages` setting.
+    ///
+    /// This is intentionally distinct from a caller's `allow_large` request:
+    /// source arena eager-commit policy consults the process option before it
+    /// decides which primitive call may request large pages.
+    pub(crate) fn allow_large_os_pages(&self) -> bool {
         self.option_enabled(VmOption::AllowLargeOsPages)
     }
 
@@ -569,6 +611,46 @@ impl VmPolicy {
 
     #[inline]
     fn configured_numa_nodes(&self) -> i64 { self.option_value(VmOption::UseNumaNodes) }
+
+    /// The source `mi_option_get_size` view for the two arena size options.
+    #[inline]
+    fn option_size_bytes(&self, option: VmOption) -> usize {
+        let kibibytes = self.option_value(option).max(0) as u64;
+        usize::try_from(kibibytes)
+            .ok()
+            .and_then(|kibibytes| kibibytes.checked_mul(1024))
+            .unwrap_or(crate::config::MAX_ALLOC_SIZE)
+    }
+
+    #[inline]
+    pub(crate) fn arena_eager_commit(&self) -> i64 {
+        self.option_value(VmOption::ArenaEagerCommit)
+    }
+
+    #[inline]
+    pub(crate) fn arena_reserve_bytes(&self) -> usize {
+        self.option_size_bytes(VmOption::ArenaReserve)
+    }
+
+    #[inline]
+    pub(crate) fn arena_max_object_size_bytes(&self) -> usize {
+        self.option_size_bytes(VmOption::ArenaMaxObjectSize)
+    }
+
+    #[inline]
+    pub(crate) fn disallow_arena_alloc(&self) -> bool {
+        self.option_enabled(VmOption::DisallowArenaAlloc)
+    }
+
+    #[inline]
+    pub(crate) fn disallow_os_alloc(&self) -> bool {
+        self.option_enabled(VmOption::DisallowOsAlloc)
+    }
+
+    #[inline]
+    pub(crate) fn page_commit_on_demand(&self) -> i64 {
+        self.option_value(VmOption::PageCommitOnDemand)
+    }
 }
 
 fn detected_physical_memory_in_kib() -> Option<usize> {
@@ -1033,6 +1115,39 @@ impl Mapping {
         )
     }
 
+    /// Executes `mi_os_prim_alloc_at`'s VM/statistics effects through one
+    /// source subprocess. The mmap-call counter advances even on primitive
+    /// failure; reservation and initial commitment advance only after a
+    /// successful map, matching `src/os.c:303-338`.
+    pub(crate) fn map_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        length: usize,
+        try_alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        default_random: Option<&mut TheapRandomImage>,
+    ) -> Result<Self> {
+        let mapping = Self::map_for_allocator_with_policy(
+            process.policy,
+            config,
+            length,
+            try_alignment,
+            access,
+            allow_large,
+            default_random,
+        );
+        let stats = process.subprocess.vm_statistics();
+        stats.mmap_call();
+        if mapping.is_ok() {
+            stats.reserve_increase(length);
+            if matches!(access, MapAccess::Committed) {
+                stats.committed_increase(length);
+            }
+        }
+        mapping
+    }
+
     /// Attempts the exact one-GiB source huge-page primitive at a claimed
     /// high-address hint. There is no regular mmap fallback on this path.
     fn map_huge_page_at(policy: &VmPolicy, config: MemoryConfig, hint: usize) -> Result<Self> {
@@ -1429,6 +1544,36 @@ impl Mapping {
         Ok(Some(CommitOutcome::NotKnownZero))
     }
 
+    /// Runs `_mi_os_commit_ex` under the process owner that also owns this
+    /// mapping's reservation accounting.
+    ///
+    /// `stat_already_committed` is deliberately an input rather than inferred
+    /// from page protection: upstream accounts the caller's source span, not
+    /// the page-rounded primitive span, and permits the latter to cover
+    /// already committed bytes.
+    pub(crate) fn commit_for_process(
+        &self,
+        process: VmProcess<'_>,
+        offset: usize,
+        length: usize,
+        stat_already_committed: usize,
+    ) -> Result<Option<CommitOutcome>> {
+        if stat_already_committed > length {
+            return Err(Errno::INVAL);
+        }
+        // `commit_calls` precedes source page normalization, including the
+        // successful empty-range branch.
+        process.subprocess.vm_statistics().commit_call();
+        let outcome = self.commit(offset, length)?;
+        if outcome.is_some() {
+            process
+                .subprocess
+                .vm_statistics()
+                .committed_increase(length - stat_already_committed);
+        }
+        Ok(outcome)
+    }
+
     /// Releases physical contents for complete pages inside the requested range.
     ///
     /// This follows the conservative `mi_os_page_align_area_conservative`
@@ -1453,6 +1598,23 @@ impl Mapping {
         Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
     }
 
+    /// Runs `mi_os_decommit_ex` with its explicit source statistic span.
+    ///
+    /// The frozen Linux primitive returns `DoesNotNeedRecommit`, so it does
+    /// not lower committed statistics. A profile with a different primitive
+    /// needs a separate qualified source boundary; this native x86 contract
+    /// must not manufacture that outcome from a generic boolean.
+    pub(crate) fn decommit_for_process(
+        &self,
+        _process: VmProcess<'_>,
+        offset: usize,
+        length: usize,
+        _stat_size: usize,
+    ) -> Result<Option<DecommitOutcome>> {
+        let outcome = self.decommit(offset, length)?;
+        Ok(outcome)
+    }
+
     /// Purges complete pages inside the requested range using the Unix reset path.
     ///
     /// This is `_mi_prim_reset` under the pinned default Linux profile. It
@@ -1474,6 +1636,56 @@ impl Mapping {
             unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) }
         })
         .map(|()| true)
+    }
+
+    /// Runs `_mi_os_reset` and its unconditional-for-a-nonempty-range source
+    /// counters. The counters advance before the Unix advisory reports its
+    /// result, exactly as `src/os.c:620-632` does.
+    pub(crate) fn reset_for_process(
+        &self,
+        process: VmProcess<'_>,
+        offset: usize,
+        length: usize,
+    ) -> Result<bool> {
+        let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
+            return Ok(true);
+        };
+        process.subprocess.vm_statistics().reset(range.length);
+        reset_with_advice(&RESET_ADVICE, |advice| {
+            fault_before(FaultPoint::Purge)?;
+            // SAFETY: `range` is a complete-page subrange of this live
+            // mapping. The advisory does not create aliases or change the
+            // mapping's release owner.
+            unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) }
+        })
+        .map(|()| true)
+    }
+
+    /// Runs the no-callback `_mi_os_purge_ex` branch for one paired process
+    /// owner. The callback form remains unavailable until its arena caller can
+    /// supply a source-owned typed commit capability; silently treating it as
+    /// reset/decommit would erase its failure ownership.
+    pub(crate) fn purge_for_process(
+        &self,
+        process: VmProcess<'_>,
+        offset: usize,
+        length: usize,
+        allow_reset: bool,
+        stat_size: usize,
+    ) -> Result<bool> {
+        if process.policy.purge_delay_milliseconds() < 0 {
+            return Ok(false);
+        }
+        process.subprocess.vm_statistics().purge(length);
+        if process.policy.purge_decommits() {
+            return self
+                .decommit_for_process(process, offset, length, stat_size)
+                .map(|_| false);
+        }
+        if allow_reset {
+            let _ = self.reset_for_process(process, offset, length)?;
+        }
+        Ok(false)
     }
 
     /// Accepts a complete contained range for `_mi_os_reuse`.
@@ -1527,6 +1739,50 @@ impl Mapping {
         unsafe { crabc_core::mm::munmap_raw(self.address, self.length) }?;
         self.is_mapped = false;
         Ok(())
+    }
+
+    /// Executes `_mi_os_prim_free` through the same process pair that mapped
+    /// this range. `commit_size` is the source caller's still-committed extent
+    /// and `adjust` selects its partial-overmap accounting repair path.
+    ///
+    /// Source statistics move even when `munmap` reports an error; the error
+    /// keeps this explicit owner live for retry, so a Rust caller cannot lose
+    /// the mapping while still observing the pinned accounting sequence.
+    pub(crate) fn unmap_for_process(
+        &mut self,
+        process: VmProcess<'_>,
+        commit_size: usize,
+        adjust: bool,
+    ) -> Result<()> {
+        self.active()?;
+        if commit_size > self.length {
+            return Err(Errno::INVAL);
+        }
+        // SAFETY: this is the exact current owner range; no method has
+        // produced a reference into it. On error the owner remains live.
+        // Keep the test fault in the same position as a failed primitive:
+        // `_mi_os_prim_free` accounts after its primitive returns, whether
+        // that primitive succeeded or failed.
+        let result = match fault_before(FaultPoint::Unmap) {
+            Ok(()) => unsafe { crabc_core::mm::munmap_raw(self.address, self.length) },
+            Err(error) => Err(error),
+        };
+        let stats = process.subprocess.vm_statistics();
+        if adjust {
+            if commit_size != 0 {
+                stats.committed_adjust_decrease(commit_size);
+            }
+            stats.reserved_adjust_decrease(self.length);
+        } else {
+            if commit_size != 0 {
+                stats.committed_decrease(commit_size);
+            }
+            stats.reserve_decrease(self.length);
+        }
+        if result.is_ok() {
+            self.is_mapped = false;
+        }
+        result
     }
 
     /// Releases a nonempty page-aligned prefix while retaining the exact
