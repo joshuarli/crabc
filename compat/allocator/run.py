@@ -10577,7 +10577,7 @@ def validate_adapted_test_contract(
     for key, expected in expected_upstream.items():
         if upstream.get(key) != expected:
             raise HarnessError(f"adapted allocator upstream identity mismatch: {key}")
-    if upstream.get("project") != "microsoft/mimalloc" or upstream.get("archive_path") != relative(archive_path(pin)):
+    if upstream.get("project") != "microsoft/mimalloc" or upstream.get("archive_path") != reviewed_archive_path(pin):
         raise HarnessError("adapted allocator upstream project/archive path changed")
 
     source_hashes = contract.get("source_hashes")
@@ -10906,7 +10906,7 @@ def validate_adapted_stress_test_contract(
             raise HarnessError(f"adapted allocator stress upstream identity mismatch: {key}")
     if (
         upstream.get("project") != "microsoft/mimalloc"
-        or upstream.get("archive_path") != relative(archive_path(pin))
+        or upstream.get("archive_path") != reviewed_archive_path(pin)
     ):
         raise HarnessError("adapted allocator stress project/archive path changed")
 
@@ -11147,7 +11147,7 @@ def validate_native_shadow_stress_contract(
             raise HarnessError(f"native-shadow stress upstream identity mismatch: {key}")
     if (
         upstream.get("project") != "microsoft/mimalloc"
-        or upstream.get("archive_path") != relative(archive_path(pin))
+        or upstream.get("archive_path") != reviewed_archive_path(pin)
     ):
         raise HarnessError("native-shadow stress project/archive path changed")
 
@@ -11540,6 +11540,17 @@ def apply_and_verify_native_shadow_stress_patch(
         "compile_defines": list(contract["execution"]["compile_defines"]),
         "excluded_upstream_mode_count": len(contract["excluded_upstream_modes"]),
     }
+
+
+def reviewed_archive_path(pin: Mapping[str, str]) -> str:
+    """Keep the reviewed manifest's cache spelling independent of local storage.
+
+    These source contracts record the original checkout-relative archive path.
+    CRABC_WORK_DIR relocates execution artifacts, not reviewed provenance; the
+    actual archive is still verified against the immutable pin's SHA-256.
+    """
+
+    return f".work/allocator-cache/mimalloc-{pin['version']}.tar.gz"
 
 
 def archive_path(pin: Mapping[str, str]) -> Path:

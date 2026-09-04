@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,6 +13,111 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/allocator/run-x86_64.sh"
 ROOT_DISPATCHER = ROOT / "scripts/dev.sh"
+
+
+class X86AllocatorWorkspaceTests(unittest.TestCase):
+    """Execute the real launcher with inert Docker in a disposable checkout."""
+
+    def setUp(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(self.temporary.cleanup)
+        self.fixture = Path(self.temporary.name)
+        self.checkout = self.fixture / "checkout"
+        self.launcher = self.checkout / "compat/allocator/run-x86_64.sh"
+        self.launcher.parent.mkdir(parents=True)
+        self.launcher.write_text(RUNNER.read_text())
+        self.boundary = self.checkout / ".work/allocator-x86_64"
+        self.capture = self.fixture / "docker-args"
+        self.bin = self.fixture / "bin"
+        self.bin.mkdir()
+        docker = self.bin / "docker"
+        docker.write_text('''#!/usr/bin/env bash
+set -eu
+printf '%s\\n' "$1" >> "$DOCKER_CAPTURE.calls"
+if [ "$1" = image ]; then
+    if [ "${3:-}" = --format ]; then printf 'linux/amd64\\n'; fi
+elif [ "$1" = run ]; then
+    printf '%s\\0' "$@" > "$DOCKER_CAPTURE"
+fi
+''')
+        docker.chmod(0o755)
+        uname = self.bin / "uname"
+        uname.write_text("#!/bin/sh\nprintf 'x86_64\\n'\n")
+        uname.chmod(0o755)
+
+    def launch(self, *arguments: str, work: str | None = None):
+        env = os.environ.copy()
+        env.pop("CRABC_ALLOCATOR_X86_64_WORK_DIR", None)
+        if work is not None:
+            env["CRABC_ALLOCATOR_X86_64_WORK_DIR"] = work
+        env.update(PATH=f"{self.bin}:{env['PATH']}", DOCKER_CAPTURE=str(self.capture))
+        return subprocess.run(
+            ["bash", str(self.launcher), *arguments], cwd=self.checkout,
+            env=env, text=True, capture_output=True,
+        )
+
+    def test_native_commands_bind_all_mutable_state_to_the_checkout(self):
+        for command in (("allocator", "--quick"), ("allocator-unit",),
+                        ("allocator-release-evidence",), ("allocator-perf", "--smoke")):
+            with self.subTest(command=command):
+                result = self.launch(*command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = self.capture.read_bytes().split(b"\0")
+                for source, target in (
+                    ("", "/workspace/.work/allocator-x86_64"),
+                    ("target", "/workspace/target"),
+                    ("reports", "/workspace/compat/reports"),
+                    ("allocator-cache", "/workspace/compat/allocator/.cache"),
+                    ("tmp", "/tmp"),
+                ):
+                    self.assertIn(f"{self.boundary / source}:{target}".encode(), args)
+                for name, suffix in (("CARGO_HOME", "/cargo"), ("TMPDIR", "/tmp"),
+                                     ("CRABC_WORK_DIR", "")):
+                    self.assertIn(f"{name}=/workspace/.work/allocator-x86_64{suffix}".encode(), args)
+                self.assertNotIn(b"CARGO_HOME=/opt/cargo", args)
+                self.assertFalse(any(arg.endswith(b":/opt/cargo") for arg in args))
+
+    def test_accepts_a_physical_descendant_override(self):
+        work = self.boundary / "worker with spaces"
+        result = self.launch("allocator", "--quick", work=str(work))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"{work}:/workspace/.work/allocator-x86_64".encode(),
+                      self.capture.read_bytes().split(b"\0"))
+
+    def test_rejects_external_named_traversal_and_mount_syntax_before_docker(self):
+        for work in (str(self.fixture / "outside"), "named-volume", "../outside",
+                     str(self.boundary / "../escape"), str(self.boundary) + ":/override"):
+            with self.subTest(work=work):
+                result = self.launch("allocator", "--quick", work=work)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(self.capture.with_suffix(".calls").exists())
+
+    def test_rejects_symlink_escapes_before_docker_or_directory_creation(self):
+        outside = self.fixture / "outside"
+        outside.mkdir()
+        for suffix in (".work", ".work/allocator-x86_64",
+                       ".work/allocator-x86_64/target", ".work/allocator-x86_64/cargo",
+                       ".work/allocator-x86_64/tmp", ".work/allocator-x86_64/reports",
+                       ".work/allocator-x86_64/allocator-cache"):
+            with self.subTest(suffix=suffix):
+                link = self.checkout / suffix
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(outside, target_is_directory=True)
+                result = self.launch("allocator", "--quick")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(self.capture.with_suffix(".calls").exists())
+                self.assertEqual(list(outside.iterdir()), [])
+                link.unlink()
+
+    def test_help_and_invalid_commands_create_no_workspace_or_docker_state(self):
+        for args, expected in ((("--help",), 0), (("shell",), 2),
+                               (("allocator", "--full"), 2)):
+            result = self.launch(*args)
+            self.assertEqual(result.returncode, expected, result.stderr)
+        self.assertFalse((self.checkout / ".work").exists())
+        self.assertFalse(self.capture.with_suffix(".calls").exists())
 
 
 class X86_64RunnerBoundaryTests(unittest.TestCase):

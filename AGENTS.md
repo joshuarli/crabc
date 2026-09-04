@@ -94,8 +94,8 @@ relevant pinned environment. Start with the campaign surface:
 ./scripts/dev-x86_64.sh campaign-all
 ```
 
-The allocator lane uses `compat/allocator/run-x86_64.sh` only after the `.work/`
-containment prerequisite in `native-mimalloc.md` is complete. Its standalone
+The allocator lane uses `compat/allocator/run-x86_64.sh` with its separate
+`.work/allocator-x86_64/` state. Its standalone
 evidence cannot replace runtime integration. `scripts/dev.sh` and the pinned
 Apple Silicon → Linux/AArch64 workflow are paused reference paths, not commands
 to execute for this goal. Do not emulate AArch64.

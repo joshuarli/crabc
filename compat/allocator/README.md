@@ -6,6 +6,16 @@
 > closure. AArch64 milestone records remain tied to their original target and
 > revision; neither target's reports promote the other.
 
+The native x86 launcher keeps mutable state under `.work/allocator-x86_64/`:
+Cargo home/targets, source archives, temporary files, and reports. Set
+`CRABC_ALLOCATOR_X86_64_WORK_DIR` only to a physical descendant for an isolated
+run; escaping paths and symlinks are rejected before Docker starts. Legacy
+container `target`, `compat/reports`, allocator-cache, and `/tmp` paths are
+bind-mounted onto that same local state. The pinned `/opt` toolchain is not
+hidden by a Cargo-cache mount. Reviewed source manifests retain their original
+archive-path spelling; execution-path relocation does not change upstream
+identity or archive hash verification.
+
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
 Linux/x86-64 little-endian development is active alongside runtime parity;
@@ -920,8 +930,8 @@ and is never reported as a Miri pass.
 ## Recorded AArch64 reproduction commands (paused)
 
 These are preserved AArch64 reproduction commands, not the active work queue.
-For native x86, follow §20 and §26 of `native-mimalloc.md`, including containment
-of the allocator launcher under `.work/` before executing it.
+For native x86, follow §20 and §26 of `native-mimalloc.md` using the contained
+allocator launcher described above.
 The historical AArch64 harness uses the pinned Linux/AArch64 development image:
 
 ```sh

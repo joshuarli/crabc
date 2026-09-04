@@ -31,9 +31,12 @@ planning checkpoints, not runtime or allocator completion.
 1. Runtime: verify the frozen 223-capability/26-family baseline, reconcile
    generated evidence, and choose dependency-ready family/product blockers
    from the campaign contracts. Do not restart the one-export-at-a-time queue.
-2. Allocator: contain `compat/allocator/run-x86_64.sh` under `.work/` before
-   executing it, then establish native x86 M0/M1/M2 qualification. Imported
+2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
+   then establish native x86 M0/M1/M2 qualification. Imported
    AArch64 milestone passes do not count as x86 passes.
+   The first contained native quick run reaches Rust tests but exposes two
+   PageMap trace assertions that assume 48 virtual-address bits on x86's
+   configured 47-bit profile; qualify those controls against the pinned oracle.
 3. Integration: agree on bootstrap, errno, TLS/TCB, pthread exit, fork, and
    loader ownership. Continue independent runtime work with the accepted C
    backend; requalify installed x86 products after native allocator promotion.

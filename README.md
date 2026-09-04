@@ -45,7 +45,7 @@ fallback.
 
 The active native route is `./scripts/dev-x86_64.sh`, following [`plan.md`](plan.md),
 [`x86-64.md`](x86-64.md), and [`native-mimalloc.md`](native-mimalloc.md). The
-allocator work first requires launcher containment under `.work/` as specified
+allocator launcher uses separate `.work/allocator-x86_64/` state as specified
 by the native mimalloc plan. The AArch64 route below is a paused reference for
 preserving its contracts and frozen evidence.
 

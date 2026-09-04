@@ -6,16 +6,19 @@
 # It exists solely to run the allocator evidence named in the x86 ledger.
 set -euo pipefail
 
-readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly PLATFORM="linux/amd64"
 readonly IMAGE="crabc-allocator-evidence:x86_64"
-readonly TARGET_VOLUME="crabc-allocator-evidence-target-x86_64"
-readonly CARGO_VOLUME="crabc-allocator-evidence-cargo-x86_64"
 readonly DOCKERFILE="$ROOT_DIR/compat/allocator/Dockerfile.x86_64"
+readonly WORK_BOUNDARY="$ROOT_DIR/.work/allocator-x86_64"
 
 usage() {
     cat <<'EOF'
 Usage: ./compat/allocator/run-x86_64.sh <command> [arguments]
+
+Mutable evidence, Cargo state, sources, and scratch stay under
+.work/allocator-x86_64. CRABC_ALLOCATOR_X86_64_WORK_DIR may select a physical
+descendant of that directory; external paths and named volumes are rejected.
 
 Private native Linux/x86-64 mimalloc evidence commands:
   image
@@ -66,6 +69,128 @@ fail() {
     exit 2
 }
 
+normalize_absolute_path() {
+    local path="${1#/}"
+    local component
+    local last_index
+    local normalized=""
+    local -a components=()
+
+    while [ -n "$path" ]; do
+        if [[ "$path" == */* ]]; then
+            component="${path%%/*}"
+            path="${path#*/}"
+        else
+            component="$path"
+            path=""
+        fi
+        case "$component" in
+            ""|.)
+                ;;
+            ..)
+                if [ "${#components[@]}" -gt 0 ]; then
+                    last_index=$((${#components[@]} - 1))
+                    unset "components[$last_index]"
+                fi
+                ;;
+            *)
+                components+=("$component")
+                ;;
+        esac
+    done
+
+    for component in "${components[@]}"; do
+        normalized="$normalized/$component"
+    done
+    printf '%s\n' "${normalized:-/}"
+}
+
+resolve_existing_directory() {
+    local candidate="$1"
+    local existing="$candidate"
+    local missing_component
+    local missing_suffix=""
+    local physical_existing
+
+    # Resolve every existing prefix physically before making the missing tail.
+    # This catches a symlink below .work before `mkdir -p` could follow it.
+    while [ ! -e "$existing" ] && [ ! -L "$existing" ]; do
+        missing_component="${existing##*/}"
+        missing_suffix="/$missing_component$missing_suffix"
+        existing="${existing%/*}"
+        if [ -z "$existing" ]; then
+            existing="/"
+        fi
+    done
+    if ! physical_existing="$(cd -P "$existing" 2>/dev/null && pwd)"; then
+        return 1
+    fi
+    if [ -z "$missing_suffix" ]; then
+        printf '%s\n' "$physical_existing"
+    elif [ "$physical_existing" = "/" ]; then
+        printf '%s\n' "$missing_suffix"
+    else
+        printf '%s%s\n' "$physical_existing" "$missing_suffix"
+    fi
+}
+
+path_is_within_work_boundary() {
+    [ "$1" = "$WORK_BOUNDARY" ] || [[ "$1" == "$WORK_BOUNDARY/"* ]]
+}
+
+configuration_error() {
+    printf 'ERROR: %s\n' "$*" >&2
+    return 1
+}
+
+resolve_bounded_directory() {
+    local name="$1"
+    local configured_path="$2"
+    local relative_base="$3"
+    local candidate
+    local resolved
+
+    if [[ "/$configured_path/" == */../* ]]; then
+        configuration_error "$name must not contain '..' path components: $configured_path"
+        return 1
+    fi
+    if [[ "$configured_path" == *:* ]]; then
+        configuration_error "$name must be a host directory path, not Docker mount syntax: $configured_path"
+        return 1
+    fi
+    if [[ "$configured_path" = /* ]]; then
+        candidate="$configured_path"
+    else
+        candidate="$relative_base/$configured_path"
+    fi
+    candidate="$(normalize_absolute_path "$candidate")"
+    if ! resolved="$(resolve_existing_directory "$candidate")"; then
+        configuration_error "$name must name a directory: $candidate"
+        return 1
+    fi
+    if ! path_is_within_work_boundary "$resolved"; then
+        configuration_error "$name must resolve below $WORK_BOUNDARY: $resolved"
+        return 1
+    fi
+    printf '%s\n' "$resolved"
+}
+
+configure_work_dir() {
+    local physical_boundary
+    local directory
+    if ! physical_boundary="$(resolve_existing_directory "$WORK_BOUNDARY")" ||
+        [ "$physical_boundary" != "$WORK_BOUNDARY" ]; then
+        fail "allocator work boundary must be a physical checkout directory"
+    fi
+    WORK_DIR="$(resolve_bounded_directory CRABC_ALLOCATOR_X86_64_WORK_DIR \
+        "${CRABC_ALLOCATOR_X86_64_WORK_DIR:-$WORK_BOUNDARY}" "$ROOT_DIR")" || exit 2
+    # Validate all fixed runner roots before Docker or mkdir can follow them.
+    for directory in target cargo tmp reports allocator-cache; do
+        resolve_bounded_directory "$directory" "$WORK_DIR/$directory" "$WORK_DIR" \
+            >/dev/null || exit 2
+    done
+}
+
 require_native_x86_64_host() {
     case "$(uname -m)" in
         x86_64|amd64) ;;
@@ -74,6 +199,7 @@ require_native_x86_64_host() {
 }
 
 build_image() {
+    configure_work_dir
     docker build \
         --platform "$PLATFORM" \
         --tag "$IMAGE" \
@@ -82,6 +208,7 @@ build_image() {
 }
 
 ensure_image() {
+    configure_work_dir
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
         build_image
     fi
@@ -93,18 +220,32 @@ ensure_image() {
 }
 
 run_in_container() {
+    # Contain old runner spellings as well as the CRABC_WORK_DIR-aware paths.
+    # Keep /opt/cargo/bin from the pinned image visible; only Cargo's mutable
+    # home moves into the checkout.
+    mkdir -p "$WORK_DIR/target" "$WORK_DIR/cargo" "$WORK_DIR/tmp" \
+        "$WORK_DIR/reports" "$WORK_DIR/allocator-cache"
     docker run --rm --init \
         --platform "$PLATFORM" \
         --workdir /workspace \
-        --env CARGO_HOME=/opt/cargo \
+        --env CARGO_HOME=/workspace/.work/allocator-x86_64/cargo \
+        --env CARGO_TARGET_DIR=/workspace/.work/allocator-x86_64/target \
+        --env CRABC_WORK_DIR=/workspace/.work/allocator-x86_64 \
+        --env TMPDIR=/workspace/.work/allocator-x86_64/tmp \
         --env CRABC_ALLOCATOR_EVIDENCE_ARCH=x86_64 \
         --env CRABC_EXECUTION_MODE=native \
         --env CRABC_HOST_ARCH=x86_64 \
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace" \
-        --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/opt/cargo" \
+        --volume "$WORK_DIR:/workspace/.work/allocator-x86_64" \
+        --volume "$WORK_DIR/target:/workspace/target" \
+        --volume "$WORK_DIR/reports:/workspace/compat/reports" \
+        --volume "$WORK_DIR/allocator-cache:/workspace/compat/allocator/.cache" \
+        --volume "$WORK_DIR/tmp:/tmp" \
         "$IMAGE" "$@"
 }
 

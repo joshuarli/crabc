@@ -208,6 +208,25 @@ M1_REPRESENTATION_EXCLUSION_IDS = {
 
 
 class WorkRootTests(unittest.TestCase):
+    def test_relocating_cache_preserves_reviewed_source_contract_identity(self) -> None:
+        pin = RUNNER.load_pin()
+        header = RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
+        validators = (
+            (RUNNER.ADAPTED_TEST_CONTRACT, lambda c: RUNNER.validate_adapted_test_contract(c, pin, header)),
+            (RUNNER.ADAPTED_STRESS_TEST_CONTRACT, lambda c: RUNNER.validate_adapted_stress_test_contract(c, pin, header)),
+            (RUNNER.NATIVE_SHADOW_STRESS_CONTRACT, lambda c: RUNNER.validate_native_shadow_stress_contract(c, pin)),
+        )
+        relocated = RUNNER.ROOT / ".work/allocator-x86_64/allocator-cache"
+        with mock.patch.object(RUNNER, "CACHE", relocated):
+            self.assertEqual(RUNNER.archive_path(pin).parent, relocated)
+            for path, validate in validators:
+                with self.subTest(contract=path.name):
+                    contract = RUNNER.read_json(path)
+                    validate(contract)
+                    contract["upstream"]["archive_path"] = ".work/allocator-cache/unreviewed.tar.gz"
+                    with self.assertRaisesRegex(RUNNER.HarnessError, "archive path changed"):
+                        validate(contract)
+
     def test_work_root_routes_all_runner_owned_outputs(self) -> None:
         work_root = RUNNER.default_work_root()
         self.assertEqual(RUNNER.WORK_ROOT, work_root)
