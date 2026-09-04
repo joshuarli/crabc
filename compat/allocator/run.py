@@ -315,6 +315,11 @@ M2_MEMORY_SUBSTRATE_EXCLUSION_DISPOSITIONS = frozenset(
 )
 M2_X86_64_MEMORY_SUBSTRATE_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M2_X86_64_SOURCE_MAP_REQUIRED_STATUSES = frozenset({"implemented", "partial"})
+M2_X86_64_BITMAP_FRAGMENT = ALLOCATOR_ROOT / "m2-bitmaps-x86_64-v3.5.0.fragment.json"
+# Pin the semantic inventory once instead of copying its source/failure/check
+# rows into both the aggregate manifest and Python. Source bytes are verified
+# separately against the upstream archive before any native check executes.
+M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -339,8 +344,8 @@ M2_X86_64_SOURCE_MAP_REFERENCES: Mapping[str, tuple[dict[str, str], ...]] = {
         {"unit_id": "atomic-operation-facade", "required_status": "partial"},
     ),
     "bitmaps": (
-        {"unit_id": "bitmap-algorithms", "required_status": "partial"},
-        {"unit_id": "bitmap-layout", "required_status": "partial"},
+        {"unit_id": "bitmap-algorithms", "required_status": "implemented"},
+        {"unit_id": "bitmap-layout", "required_status": "implemented"},
         {"unit_id": "x86-64-width-and-bit-operations", "required_status": "implemented"},
     ),
     "page-map": (
@@ -11587,12 +11592,12 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
 
 
 def _m2_x86_64_bounded_source_definitions(
-    raw_definitions: object, checks: Sequence[Mapping[str, Any]]
+    raw_definitions: object, checks: Sequence[Mapping[str, Any]], *, component_id: str = "page-map"
 ) -> list[dict[str, Any]]:
-    """Validate PageMap's narrow pinned-C definitions without whole-unit claims."""
+    """Validate pinned-C definitions for a closed native component."""
 
     if not isinstance(raw_definitions, list) or not raw_definitions:
-        raise HarnessError("native x86 M2 PageMap lacks bounded source definitions")
+        raise HarnessError("native x86 M2 lacks bounded source definitions")
     check_ids = {str(check["id"]) for check in checks}
     definitions: list[dict[str, Any]] = []
     for raw_definition in raw_definitions:
@@ -11602,7 +11607,7 @@ def _m2_x86_64_bounded_source_definitions(
             "required_definitions",
             "source_anchor",
         }:
-            raise HarnessError("native x86 M2 PageMap bounded source definition changed")
+            raise HarnessError("native x86 M2 bounded source definition changed")
         definition_id = raw_definition.get("id")
         required_definitions = raw_definition.get("required_definitions")
         evidence_check_ids = raw_definition.get("evidence_check_ids")
@@ -11621,7 +11626,7 @@ def _m2_x86_64_bounded_source_definitions(
             or not isinstance(anchor, Mapping)
             or set(anchor) != {"end_line", "member", "sha256", "start_line"}
         ):
-            raise HarnessError("native x86 M2 PageMap bounded source definition is invalid")
+            raise HarnessError("native x86 M2 bounded source definition is invalid")
         member = anchor.get("member")
         start_line = anchor.get("start_line")
         end_line = anchor.get("end_line")
@@ -11640,7 +11645,7 @@ def _m2_x86_64_bounded_source_definitions(
             or not isinstance(digest, str)
             or re.fullmatch(r"[0-9a-f]{64}", digest) is None
         ):
-            raise HarnessError("native x86 M2 PageMap bounded source anchor is invalid")
+            raise HarnessError("native x86 M2 bounded source anchor is invalid")
         definitions.append(
             {
                 "evidence_check_ids": list(evidence_check_ids),
@@ -11649,20 +11654,22 @@ def _m2_x86_64_bounded_source_definitions(
                 "source_anchor": dict(anchor),
             }
         )
-    if [definition["id"] for definition in definitions] != list(
+    if len({definition["id"] for definition in definitions}) != len(definitions):
+        raise HarnessError("native x86 M2 duplicate bounded source identity")
+    if component_id == "page-map" and [definition["id"] for definition in definitions] != list(
         M2_X86_64_PAGE_MAP_BOUNDED_SOURCE_DEFINITION_IDS
     ):
-        raise HarnessError("native x86 M2 PageMap bounded source inventory changed")
+        raise HarnessError("native x86 M2 bounded source inventory changed")
     return definitions
 
 
-def _m2_x86_64_page_map_failure_matrix(
-    raw_matrix: object, checks: Sequence[Mapping[str, Any]]
+def _m2_x86_64_failure_matrix(
+    raw_matrix: object, checks: Sequence[Mapping[str, Any]], *, component_id: str = "page-map"
 ) -> list[dict[str, Any]]:
-    """Require every native PageMap test to close one named failure boundary."""
+    """Require every native component check to cover a named source/failure boundary."""
 
     if not isinstance(raw_matrix, list) or not raw_matrix:
-        raise HarnessError("native x86 M2 PageMap lacks its failure matrix")
+        raise HarnessError("native x86 M2 lacks its failure matrix")
     check_ids = {str(check["id"]) for check in checks}
     matrix: list[dict[str, Any]] = []
     covered_check_ids: set[str] = set()
@@ -11672,7 +11679,7 @@ def _m2_x86_64_page_map_failure_matrix(
             "id",
             "source_scope",
         }:
-            raise HarnessError("native x86 M2 PageMap failure-matrix row changed")
+            raise HarnessError("native x86 M2 failure-matrix row changed")
         row_id = raw_row.get("id")
         source_scope = raw_row.get("source_scope")
         evidence_check_ids = raw_row.get("evidence_check_ids")
@@ -11686,7 +11693,7 @@ def _m2_x86_64_page_map_failure_matrix(
             or not all(isinstance(check_id, str) and check_id in check_ids for check_id in evidence_check_ids)
             or len(set(evidence_check_ids)) != len(evidence_check_ids)
         ):
-            raise HarnessError("native x86 M2 PageMap failure-matrix row is invalid")
+            raise HarnessError("native x86 M2 failure-matrix row is invalid")
         covered_check_ids.update(evidence_check_ids)
         matrix.append(
             {
@@ -11695,10 +11702,12 @@ def _m2_x86_64_page_map_failure_matrix(
                 "source_scope": source_scope,
             }
         )
-    if [row["id"] for row in matrix] != list(M2_X86_64_PAGE_MAP_FAILURE_MATRIX_IDS):
-        raise HarnessError("native x86 M2 PageMap failure-matrix inventory changed")
+    if len({row["id"] for row in matrix}) != len(matrix):
+        raise HarnessError("native x86 M2 duplicate failure-matrix identity")
+    if component_id == "page-map" and [row["id"] for row in matrix] != list(M2_X86_64_PAGE_MAP_FAILURE_MATRIX_IDS):
+        raise HarnessError("native x86 M2 failure-matrix inventory changed")
     if covered_check_ids != check_ids:
-        raise HarnessError("native x86 M2 PageMap failure matrix does not cover every check")
+        raise HarnessError("native x86 M2 failure matrix does not cover every check")
     return matrix
 
 
@@ -11748,6 +11757,40 @@ def _m2_x86_64_partial_failure_matrix(raw_matrix: object, component_id: str) -> 
     return rows
 
 
+def _m2_x86_64_bitmap_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
+    """Resolve one immutable, target-local component fragment without status inheritance."""
+
+    reference = {
+        "path": relative(M2_X86_64_BITMAP_FRAGMENT),
+        "inventory_sha256": M2_X86_64_BITMAP_FRAGMENT_DIGEST,
+    }
+    if dict(raw_component) != {"id": "bitmaps", "evidence_fragment": reference}:
+        raise HarnessError("native x86 M2 bitmap fragment reference changed")
+    fragment = read_json(M2_X86_64_BITMAP_FRAGMENT)
+    # Reuse only the canonical JSON hashing helper, never any M1/AArch64
+    # status or report. This pins schemas, predicates, all anchors and the
+    # complete failure/check inventories without another 295-line copy.
+    if _m1_inventory_digest(fragment) != M2_X86_64_BITMAP_FRAGMENT_DIGEST:
+        raise HarnessError("native x86 M2 bitmap fragment inventory changed")
+    if (
+        fragment.get("schema") != "crabc-mimalloc-x86_64-m2-component-evidence"
+        or fragment.get("format") != 1
+        or fragment.get("upstream") != {
+            "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"]
+        }
+        or fragment.get("target", {}).get("rust_target") != X86_64_RUST_TARGET
+    ):
+        raise HarnessError("native x86 M2 bitmap fragment schema or provenance changed")
+    component = dict(fragment["component"])
+    component["native_status"] = component.pop("completion_status")
+    component["source_map_records"] = [*component["source_map_records"],
+        {"unit_id": "x86-64-width-and-bit-operations", "required_status": "implemented"}]
+    component["source_units"] = list(dict.fromkeys(
+        definition["source_anchor"]["member"] for definition in component["bounded_source_definitions"]
+    ))
+    return component
+
+
 def validate_x86_64_m2_memory_substrate_contract(
     contract: Mapping[str, Any], pin: Mapping[str, str]
 ) -> dict[str, Any]:
@@ -11767,6 +11810,7 @@ def validate_x86_64_m2_memory_substrate_contract(
     }
     if (
         set(contract) != expected_keys
+        or type(contract.get("format")) is not int
         or contract.get("format") != 1
         or contract.get("schema") != "crabc-mimalloc-x86_64-m2-memory-substrate"
     ):
@@ -11799,9 +11843,10 @@ def validate_x86_64_m2_memory_substrate_contract(
         raise HarnessError("native x86 M2 memory-substrate execution contract changed")
     if contract.get("global_evidence") != [
         "x86-64-source-contract-inventories",
-        "x86-64-bounded-page-map-source-definitions",
+        "x86-64-bounded-component-source-definitions",
         "x86-64-page-map-c-rust-differentials",
         "x86-64-page-map-focused-source-test-batch",
+        "x86-64-bitmap-source-and-native-evidence",
     ]:
         raise HarnessError("native x86 M2 global evidence inventory changed")
     expected_source_contracts = [
@@ -11856,7 +11901,11 @@ def validate_x86_64_m2_memory_substrate_contract(
         component_id = raw_component.get("id")
         if component_id != M2_MEMORY_SUBSTRATE_COMPONENT_IDS[index]:
             raise HarnessError("native x86 M2 component order or identity changed")
-        complete = component_id == "page-map"
+        fragment_reference = None
+        if component_id == "bitmaps":
+            fragment_reference = raw_component.get("evidence_fragment")
+            raw_component = _m2_x86_64_bitmap_component(raw_component, pin)
+        complete = component_id in {"bitmaps", "page-map"}
         expected_component_keys = {
             "checks",
             "id",
@@ -11909,10 +11958,10 @@ def validate_x86_64_m2_memory_substrate_contract(
         raw_checks = raw_component.get("checks")
         if not isinstance(raw_checks, list):
             raise HarnessError(f"native x86 M2 component {component_id} has invalid checks")
-        if complete:
+        if component_id == "page-map":
             if raw_checks != list(M2_X86_64_PAGE_MAP_CHECKS):
                 raise HarnessError("native x86 M2 PageMap check inventory changed")
-        elif raw_checks:
+        elif not complete and raw_checks:
             raise HarnessError(
                 f"native x86 M2 incomplete component {component_id} cannot record unqualified checks"
             )
@@ -11933,14 +11982,17 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-page-map-success-differential",
                     "c-rust-page-map-lazy-commit-failure-differential",
                     "c-rust-page-map-cold-init-differential",
+                    "c-rust-native-bitmaps",
                 }
                 or not isinstance(raw_check.get("target"), str)
-                or raw_check.get("expected_passed_test_count") != 1
+                or type(raw_check.get("expected_passed_test_count")) is not int
+                or raw_check.get("expected_passed_test_count") != (41 if component_id == "bitmaps" else 1)
             ):
                 raise HarnessError(f"native x86 M2 component {component_id} has an invalid check")
-            _m2_memory_substrate_source_test_exists(
-                str(raw_check["target"]), str(raw_check["id"])
-            )
+            if component_id != "bitmaps":
+                _m2_memory_substrate_source_test_exists(
+                    str(raw_check["target"]), str(raw_check["id"])
+                )
             checks.append(dict(raw_check))
         component: dict[str, Any] = {
             "checks": checks,
@@ -11952,15 +12004,17 @@ def validate_x86_64_m2_memory_substrate_contract(
         }
         if complete:
             component["bounded_source_definitions"] = _m2_x86_64_bounded_source_definitions(
-                raw_component.get("bounded_source_definitions"), checks
+                raw_component.get("bounded_source_definitions"), checks, component_id=component_id
             )
-            component["failure_matrix"] = _m2_x86_64_page_map_failure_matrix(
-                raw_component.get("failure_matrix"), checks
+            component["failure_matrix"] = _m2_x86_64_failure_matrix(
+                raw_component.get("failure_matrix"), checks, component_id=component_id
             )
         else:
             component["unqualified_failure_matrix"] = _m2_x86_64_partial_failure_matrix(
                 raw_component.get("unqualified_failure_matrix"), component_id
             )
+        if fragment_reference is not None:
+            component["evidence_fragment"] = dict(fragment_reference)
         components.append(component)
     if [check["id"] for check in components[3]["checks"]] != list(M2_X86_64_PAGE_MAP_CHECK_IDS):
         raise HarnessError("native x86 M2 PageMap check identity inventory changed")
@@ -12022,16 +12076,18 @@ def validate_x86_64_m2_memory_substrate_contract(
 def _m2_x86_64_bounded_source_evidence(
     summary: Mapping[str, Any], pin: Mapping[str, str], *, offline: bool
 ) -> dict[str, Any]:
-    """Re-read every x86 PageMap source anchor from the verified pinned archive."""
+    """Re-read every complete component's source anchors from the pinned archive."""
 
-    page_map = next(
-        component for component in summary["components"] if component["id"] == "page-map"
-    )
+    definitions = [
+        (component["id"], definition)
+        for component in summary["components"]
+        for definition in component.get("bounded_source_definitions", [])
+    ]
     archive = fetch_archive(pin, offline)
     records: list[dict[str, Any]] = []
     try:
         with tarfile.open(archive, mode="r:gz") as stream:
-            for definition in page_map["bounded_source_definitions"]:
+            for component_id, definition in definitions:
                 anchor = definition["source_anchor"]
                 member_name = f"{pin['archive_root']}/{anchor['member']}"
                 member = next(
@@ -12040,7 +12096,7 @@ def _m2_x86_64_bounded_source_evidence(
                 )
                 if member is None or not member.isfile():
                     raise HarnessError(
-                        "native x86 M2 PageMap bounded source anchor is absent: " + anchor["member"]
+                        "native x86 M2 bounded source anchor is absent: " + anchor["member"]
                     )
                 extracted = stream.extractfile(member)
                 if extracted is None:
@@ -12052,12 +12108,12 @@ def _m2_x86_64_bounded_source_evidence(
                 start = anchor["start_line"]
                 end = anchor["end_line"]
                 if end > len(lines):
-                    raise HarnessError("native x86 M2 PageMap bounded source anchor exceeds member")
+                    raise HarnessError("native x86 M2 bounded source anchor exceeds member")
                 payload = b"".join(lines[start - 1 : end])
                 digest = hashlib.sha256(payload).hexdigest()
                 if digest != anchor["sha256"]:
                     raise HarnessError(
-                        "native x86 M2 PageMap bounded source anchor digest changed: "
+                        "native x86 M2 bounded source anchor digest changed: "
                         + definition["id"]
                     )
                 missing = [
@@ -12067,13 +12123,14 @@ def _m2_x86_64_bounded_source_evidence(
                 ]
                 if missing:
                     raise HarnessError(
-                        "native x86 M2 PageMap bounded source anchor lacks definitions for "
+                        "native x86 M2 bounded source anchor lacks definitions for "
                         + definition["id"]
                         + ": "
                         + ", ".join(missing)
                     )
                 records.append(
                     {
+                        "component": component_id,
                         "evidence_check_ids": list(definition["evidence_check_ids"]),
                         "id": definition["id"],
                         "source_anchor": {
@@ -12090,7 +12147,7 @@ def _m2_x86_64_bounded_source_evidence(
     return {
         "record_count": len(records),
         "records": records,
-        "scope": "bounded pinned-C PageMap definitions linked to the native PageMap failure matrix",
+        "scope": "bounded pinned-C definitions linked to complete native M2 component failure matrices",
         "status": "passed",
     }
 
@@ -12136,6 +12193,70 @@ def _m2_x86_64_differential_check_record(
     }
 
 
+def _run_m2_x86_64_bitmap_evidence(*, offline: bool, test_program: Mapping[str, Any]) -> dict[str, Any]:
+    """Use the aggregate's one build for the complete bitmap producer."""
+
+    path = ALLOCATOR_ROOT / "m2_bitmaps_x86_64.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_native_bitmaps", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 bitmap producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer.run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program,
+        contract_fragment=read_json(M2_X86_64_BITMAP_FRAGMENT),
+    )
+
+
+def _m2_x86_64_bitmap_check_records(
+    summary: Mapping[str, Any], evidence: object
+) -> list[dict[str, Any]]:
+    """Validate one actual producer execution before sharing its two evidence rows."""
+
+    component = next(item for item in summary["components"] if item["id"] == "bitmaps")
+    expected_count = component["checks"][0]["expected_passed_test_count"]
+    pin = load_pin()
+    if not isinstance(evidence, Mapping) or (
+        evidence.get("schema") != "crabc-mimalloc-x86_64-m2-bitmaps-evidence"
+        or type(evidence.get("format")) is not int or evidence.get("format") != 1
+        or evidence.get("status") != "passed"
+        or evidence.get("architecture") != "x86_64"
+        or evidence.get("profile") != "scalar-release-stat0"
+        or evidence.get("upstream") != {
+            "revision": pin["revision"], "archive_sha256": pin["sha256"]
+        }
+        or type(evidence.get("rust_passed_test_count")) is not int
+        or evidence.get("rust_passed_test_count") != expected_count
+        or type(evidence.get("rust_execution_count")) is not int
+        or evidence.get("rust_execution_count") != 1
+        or evidence.get("rust_build_reused") is not True
+        or type(evidence.get("compared_value_count")) is not int
+        or evidence.get("compared_value_count") != 132184
+        or evidence.get("transcript_sha256") != "78ff33552d928c12a9bd1e234d409e5d4dabaa77bd1ee9b7b9ee9b84966ceddb"
+    ):
+        raise HarnessError("native x86 M2 bitmap producer result is missing or invalid")
+    names = evidence.get("rust_tests")
+    command = evidence.get("rust_command")
+    if (
+        not isinstance(names, list) or len(names) != expected_count
+        or not all(isinstance(name, str) and name.startswith("bitmap::") for name in names)
+        or len(set(names)) != len(names)
+        or not isinstance(command, list) or not all(isinstance(arg, str) and arg for arg in command)
+        or len(command) != 4 or command[1:] != ["bitmap::", "--test-threads=1", "--nocapture"]
+    ):
+        raise HarnessError("native x86 M2 bitmap executed test inventory changed")
+    return [
+        {
+            "component": "bitmaps", "command": list(command),
+            "evidence_scope": "shared-native-bitmap-module-execution",
+            "shared_execution_id": "native-bitmap-module",
+            "id": check["id"], "passed_test_count": expected_count, "target": check["target"],
+            **({"comparison_status": "matched"} if check["kind"] == "c-rust-native-bitmaps" else {}),
+        }
+        for check in component["checks"]
+    ]
+
+
 def m2_x86_64_memory_substrate_report(
     *,
     contract: Mapping[str, Any],
@@ -12145,14 +12266,38 @@ def m2_x86_64_memory_substrate_report(
     source_contract_evidence: Mapping[str, Any],
     bounded_source_evidence: Mapping[str, Any],
     focused_checks: Sequence[Mapping[str, Any]],
+    bitmap_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Render a fail-closed x86 M2 report with only PageMap completed."""
+    """Render complete PageMap/bitmap evidence while keeping six components partial."""
 
     if (
         source_contract_evidence.get("status") != "passed"
         or bounded_source_evidence.get("status") != "passed"
     ):
         raise HarnessError("native x86 M2 source evidence did not pass")
+    expected_bitmap_records = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
+    expected_anchors = {
+        (component["id"], definition["id"]): definition["source_anchor"]
+        for component in summary["components"]
+        for definition in component.get("bounded_source_definitions", [])
+    }
+    records = bounded_source_evidence.get("records")
+    if (not isinstance(records, list) or len(records) != len(expected_anchors)
+            or type(bounded_source_evidence.get("record_count")) is not int
+            or bounded_source_evidence.get("record_count") != len(expected_anchors)):
+        raise HarnessError("native x86 M2 bounded source result inventory is incomplete")
+    seen = set()
+    for record in records:
+        if not isinstance(record, Mapping) or not all(
+            isinstance(record.get(field), str) for field in ("component", "id")
+        ):
+            raise HarnessError("native x86 M2 bounded source result record is invalid")
+        key = (record.get("component"), record.get("id"))
+        anchor = record.get("source_anchor")
+        if (key in seen or key not in expected_anchors or not isinstance(anchor, Mapping)
+                or any(anchor.get(field) != value for field, value in expected_anchors[key].items())):
+            raise HarnessError("native x86 M2 bounded source result anchor changed")
+        seen.add(key)
     checks_by_component: dict[str, list[dict[str, Any]]] = {
         component["id"]: [] for component in summary["components"]
     }
@@ -12171,8 +12316,15 @@ def m2_x86_64_memory_substrate_report(
             raise HarnessError(f"native x86 M2 component {component_id} lacks an executed check")
         if {check["id"] for check in checks} != {check["id"] for check in expected_checks}:
             raise HarnessError(f"native x86 M2 component {component_id} has an invalid executed-check set")
+        declared = {check["id"]: check for check in expected_checks}
+        for check in checks:
+            expected = declared[check["id"]]
+            if (type(check.get("passed_test_count")) is not int
+                    or check.get("passed_test_count") != expected["expected_passed_test_count"]
+                    or check.get("target") != expected["target"]):
+                raise HarnessError(f"native x86 M2 component {component_id} executed check count or target changed")
         complete = component["native_status"] == "complete" and not component["remaining_conditions"]
-        if complete:
+        if component_id == "page-map":
             differential_statuses = {
                 check["id"]: check.get("comparison_status") for check in checks if "comparison_status" in check
             }
@@ -12182,6 +12334,9 @@ def m2_x86_64_memory_substrate_report(
                 "cold-page-map-initialization-failure": "modeled-safety-divergence",
             }:
                 raise HarnessError("native x86 M2 PageMap differential result inventory changed")
+        elif component_id == "bitmaps":
+            if checks != expected_bitmap_records:
+                raise HarnessError("native x86 M2 bitmap shared execution records changed")
         else:
             unmet.append(component_id)
         report_component: dict[str, Any] = {
@@ -12198,6 +12353,8 @@ def m2_x86_64_memory_substrate_report(
                 component["bounded_source_definitions"]
             )
             report_component["failure_matrix"] = list(component["failure_matrix"])
+            if "evidence_fragment" in component:
+                report_component["evidence_fragment"] = dict(component["evidence_fragment"])
         else:
             report_component["unqualified_failure_matrix"] = list(
                 component["unqualified_failure_matrix"]
@@ -12228,10 +12385,11 @@ def m2_x86_64_memory_substrate_report(
         },
         "schema": "crabc-mimalloc-x86_64-m2-memory-substrate-report",
         "shared_evidence": {
-            "x86-64-bounded-page-map-source-definitions": dict(bounded_source_evidence),
+            "x86-64-bounded-component-source-definitions": dict(bounded_source_evidence),
             "x86-64-page-map-c-rust-differentials": {"status": "passed"},
             "x86-64-page-map-focused-source-test-batch": {"status": "passed"},
             "x86-64-source-contract-inventories": dict(source_contract_evidence),
+            "x86-64-bitmap-source-and-native-evidence": dict(bitmap_evidence),
         },
         "source": dict(source_attestation),
         "target": dict(summary["target"]),
@@ -12239,7 +12397,7 @@ def m2_x86_64_memory_substrate_report(
 
 
 def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
-    """Run target-qualified PageMap evidence while keeping M2 otherwise partial."""
+    """Run PageMap and bitmap evidence from one build; six components remain partial."""
 
     require_native_x86_64()
     source_before = m2_memory_substrate_source_state()
@@ -12261,7 +12419,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     test_program = _x86_64_unit_test_program(
         summary["execution"],
         M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET,
-        gate_name="native x86 M2 PageMap",
+        gate_name="native x86 M2",
     )
     success_component, success_check = _m2_x86_64_check_by_id(
         summary, "successful-page-map-lifecycle"
@@ -12299,7 +12457,10 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         test_program=test_program,
         check=cold_check,
     )
+    bitmap_evidence = _run_m2_x86_64_bitmap_evidence(offline=offline, test_program=test_program)
+    bitmap_checks = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence)
     focused_checks = [
+        *bitmap_checks,
         _m2_x86_64_differential_check_record(success_component, success_check, success),
         _m2_x86_64_differential_check_record(lazy_component, lazy_check, lazy),
         _m2_x86_64_differential_check_record(cold_component, cold_check, cold),
@@ -12307,7 +12468,8 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
             summary,
             test_program,
             already_executed_check_ids=frozenset(
-                {success_check["id"], lazy_check["id"], cold_check["id"]}
+                {success_check["id"], lazy_check["id"], cold_check["id"],
+                 *(check["id"] for check in bitmap_checks)}
             ),
             gate_name="native x86 M2 PageMap",
         ),
@@ -12321,13 +12483,14 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         source_contract_evidence=source_contract_evidence,
         bounded_source_evidence=bounded_source_evidence,
         focused_checks=focused_checks,
+        bitmap_evidence=bitmap_evidence,
     )
     write_json(M2_X86_64_MEMORY_SUBSTRATE_REPORT, report)
     return report
 
 
 def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
-    """Explain the exact seven remaining native M2 components."""
+    """Explain the exact remaining native M2 components."""
 
     milestone = report.get("milestone")
     if not isinstance(milestone, Mapping):

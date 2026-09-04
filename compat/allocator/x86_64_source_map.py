@@ -122,11 +122,13 @@ REQUIRED_UNIT_IDS = (
 # expansion of this baseline.
 REQUIRED_IMPLEMENTED_UNIT_IDS = (
     "x86-64-width-and-bit-operations",
+    "bitmap-algorithms",
+    "bitmap-layout",
 )
 
 # An `implemented` source scope is deliberately rare.  The source map itself
-# cannot prove a whole translation unit, so only this narrow scalar scope may
-# use the stronger word until a later reviewed ratchet expands the allow-list.
+# cannot prove a whole allocator, so only reviewed scalar scopes may use the
+# stronger word. Bitmap native execution belongs to its M2 fragment/gate.
 # The required definitions make the source claim concrete: a range containing
 # only architecture/configuration macros cannot also claim the Rust bit helpers.
 IMPLEMENTED_SOURCE_REQUIREMENTS = {
@@ -142,7 +144,25 @@ IMPLEMENTED_SOURCE_REQUIREMENTS = {
             b"static inline size_t mi_rotl",
             b"static inline uint32_t mi_rotl32",
         ),
-    }
+    },
+    "bitmap-algorithms": {
+        "member": "src/bitmap.c", "minimum_start_line": 26, "minimum_end_line": 1997,
+        "required_definitions": (
+            b"mi_bfield_atomic_clear_once_set", b"mi_bchunk_try_clearNC",
+            b"mi_bitmap_setN", b"mi_bitmap_popcountN", b"mi_bitmap_try_find_and_claim_visit",
+            b"_mi_bitmap_forall_set", b"_mi_bitmap_forall_setc_rangesn",
+            b"mi_bbitmap_set_chunk_bin", b"mi_subproc_stat_increase",
+            b"mi_subproc_stat_decrease", b"mi_subproc_stat_counter_increase",
+            b"mi_bbitmap_try_find_and_clearN_",
+        ),
+    },
+    "bitmap-layout": {
+        "member": "src/bitmap.h", "minimum_start_line": 1, "minimum_end_line": 340,
+        "required_definitions": (
+            b"mi_bfield_t", b"mi_bchunk_t", b"mi_bitmap_t", b"mi_bbitmap_t",
+            b"mi_bbitmap_try_find_and_clearN",
+        ),
+    },
 }
 
 EXPECTED_TOP_LEVEL_FIELDS = {
@@ -433,6 +453,9 @@ def validate_units(
                 raise SourceMapError(
                     f"x86-64 source-map unit {unit_id} has the wrong implemented source member"
                 )
+            if (start_line > requirement.get("minimum_start_line", start_line)
+                    or end_line < requirement.get("minimum_end_line", end_line)):
+                raise SourceMapError(f"x86-64 source-map unit {unit_id} shrank its reviewed source boundary")
             missing = [
                 definition
                 for definition in requirement["required_definitions"]

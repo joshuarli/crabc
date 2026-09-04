@@ -4295,7 +4295,7 @@ class ContractTests(unittest.TestCase):
         native_gate.assert_called_once_with(offline=True)
         aarch_gate.assert_not_called()
 
-    def test_x86_m2_contract_is_target_local_and_qualifies_only_page_map(self) -> None:
+    def test_x86_m2_contract_is_target_local_and_qualifies_page_map_and_bitmaps(self) -> None:
         contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
         summary = RUNNER.validate_x86_64_m2_memory_substrate_contract(
             contract, RUNNER.load_pin()
@@ -4324,7 +4324,7 @@ class ContractTests(unittest.TestCase):
                 and component["remaining_conditions"]
                 and component["unqualified_failure_matrix"]
                 for component in summary["components"]
-                if component["id"] != "page-map"
+                if component["id"] not in {"page-map", "bitmaps"}
             )
         )
 
@@ -4352,7 +4352,7 @@ class ContractTests(unittest.TestCase):
 
         missing_partial_matrix = json.loads(json.dumps(contract))
         bitmaps = next(
-            component for component in missing_partial_matrix["components"] if component["id"] == "bitmaps"
+            component for component in missing_partial_matrix["components"] if component["id"] == "metadata"
         )
         bitmaps["unqualified_failure_matrix"] = []
         with self.assertRaisesRegex(RUNNER.HarnessError, "lacks an unqualified failure matrix"):
@@ -4386,38 +4386,10 @@ class ContractTests(unittest.TestCase):
                     contract, RUNNER.load_pin()
                 )
 
-    def test_x86_m2_report_fails_closed_for_the_seven_unqualified_components(self) -> None:
-        contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
-        summary = RUNNER.validate_x86_64_m2_memory_substrate_contract(
-            contract, RUNNER.load_pin()
-        )
-        focused_checks = []
-        for component in summary["components"]:
-            for check in component["checks"]:
-                record = {
-                    "component": component["id"],
-                    "command": [],
-                    "evidence_scope": "focused-source-test",
-                    "id": check["id"],
-                    "passed_test_count": check["expected_passed_test_count"],
-                    "target": check["target"],
-                }
-                comparison_status = {
-                    "successful-page-map-lifecycle": "matched",
-                    "lazy-page-map-commit-failure": "matched",
-                    "cold-page-map-initialization-failure": "modeled-safety-divergence",
-                }.get(check["id"])
-                if comparison_status is not None:
-                    record["comparison_status"] = comparison_status
-                focused_checks.append(record)
+    def test_x86_m2_report_fails_closed_for_the_six_unqualified_components(self) -> None:
+        from test_x86_64_m2_bitmaps import NativeBitmapAssemblyTests
         report = RUNNER.m2_x86_64_memory_substrate_report(
-            contract=contract,
-            pin=RUNNER.load_pin(),
-            summary=summary,
-            source_attestation={"status": "clean"},
-            source_contract_evidence={"status": "passed"},
-            bounded_source_evidence={"status": "passed"},
-            focused_checks=focused_checks,
+            **NativeBitmapAssemblyTests().report_arguments()
         )
         self.assertEqual(report["milestone"]["status"], "partial")
         self.assertEqual(
@@ -4425,7 +4397,6 @@ class ContractTests(unittest.TestCase):
             [
                 "vm-primitives",
                 "metadata",
-                "bitmaps",
                 "arenas",
                 "initialization",
                 "fault-injection",
@@ -4435,7 +4406,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             RUNNER.m2_x86_64_memory_substrate_unmet_message(report).split(";", 1)[0],
             "native x86 M2 memory substrate remains partial for "
-            "vm-primitives, metadata, bitmaps, arenas, initialization, fault-injection, "
+            "vm-primitives, metadata, arenas, initialization, fault-injection, "
             "allocator-recursion",
         )
 

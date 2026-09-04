@@ -741,37 +741,41 @@
     },
     {
       "id": "bitmap-algorithms",
-      "source_scope": "Bitmap claim visitation and ordinary lowest-bit claim paths.",
+      "source_scope": "Complete default-profile scalar field/chunk, ordinary and binned bitmap algorithms, all visitor dispositions, range/observer/rollback paths and unconditional subprocess statistics events.",
       "source_anchor": {
         "member": "src/bitmap.c",
-        "start_line": 1340,
-        "end_line": 1420,
-        "sha256": "6e012a2b4ee3d5080008324e841f633b3979dfcdabb98c8da1b51f148ebb07d9"
+        "start_line": 26,
+        "end_line": 1997,
+        "sha256": "10204635370854ad2e46c069e746e48c94db6741a0f581427a3f6b56d67673be"
       },
       "rust_modules": [
         "crabc_mimalloc::abandoned",
-        "crabc_mimalloc::bitmap"
+        "crabc_mimalloc::bitmap",
+        "crabc_mimalloc::subproc"
       ],
-      "status": "partial",
-      "difference": "Rust has bounded bitmap claims for mapped ownership protocols, not all generic visitor and statistics paths.",
+      "status": "implemented",
+      "difference": "Checked Rust ranges and typed subprocess counters retain the scalar source algorithms and atomic orders. Optional SIMD/debug modes and full mi_stats_t ABI/reporting are not claimed.",
       "evidence": [
+        "compat/allocator/m2-bitmaps-x86_64-v3.5.0.fragment.json",
         "crabc-mimalloc/src/abandoned.rs",
-        "crabc-mimalloc/src/bitmap.rs"
+        "crabc-mimalloc/src/bitmap.rs",
+        "crabc-mimalloc/src/bitmap_native_tests.rs",
+        "crabc-mimalloc/src/subproc.rs"
       ]
     },
     {
       "id": "bitmap-layout",
-      "source_scope": "Bitmap chunk, flexible layout, and claim declarations.",
+      "source_scope": "Complete scalar bitmap field/chunk representations, flexible ordinary/binned headers, checked size geometry, declarations and source claim dispatch.",
       "source_anchor": {
         "member": "src/bitmap.h",
-        "start_line": 94,
-        "end_line": 224,
-        "sha256": "b385450127b6c92da20c0d8068b1e02af77f78c3a433dc7bbb54591c7bca8539"
+        "start_line": 1,
+        "end_line": 340,
+        "sha256": "05c209ee2a9e9383211a45362a9d4abfd70806b888a0015ec3e9ed1a60864440"
       },
       "rust_modules": [
         "crabc_mimalloc::bitmap"
       ],
-      "status": "partial",
+      "status": "implemented",
       "difference": "Rust exposes lifetime-bound bitmap views instead of a general raw flexible-array API.",
       "evidence": [
         "crabc-mimalloc/src/bitmap.rs"
@@ -1512,14 +1516,14 @@
     "source_member_count": 34,
     "source_members_sha256": "b1efc03256ba0fe0084fbc6190ea9f1ef3d01e2d0de55a17a427dc7f6c3d4f70",
     "status_counts": {
-      "implemented": 1,
+      "implemented": 3,
       "inapplicable": 3,
       "not-started": 5,
-      "partial": 25
+      "partial": 23
     },
-    "unfinished_unit_count": 30,
+    "unfinished_unit_count": 28,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "d64d20b0cf873dc7b4cf04909367ded077096c9c447e69cfb7976ff6f2c03fe5"
+    "units_sha256": "462b22b359f6fd79c58d53ffa90b71865ba1d2be3b2e7633db54b22f892f3b98"
   }
 }

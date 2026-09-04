@@ -79,7 +79,7 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertEqual(result["target"], self.contract["target_context"])
         self.assertEqual(result["source_member_count"], 34)
         self.assertEqual(result["unit_count"], 34)
-        self.assertEqual(result["unfinished_unit_count"], 30)
+        self.assertEqual(result["unfinished_unit_count"], 28)
         self.assertEqual(result["status_counts"], self.contract["ratchet"]["status_counts"])
         self.assertEqual(
             result["contract"]["path"],
@@ -151,16 +151,16 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertEqual(
             self.contract["ratchet"]["status_counts"],
             {
-                "implemented": 1,
+                "implemented": 3,
                 "inapplicable": 3,
                 "not-started": 5,
-                "partial": 25,
+                "partial": 23,
             },
         )
         implemented = [
             unit["id"] for unit in self.contract["units"] if unit["status"] == "implemented"
         ]
-        self.assertEqual(implemented, ["x86-64-width-and-bit-operations"])
+        self.assertEqual(implemented, ["x86-64-width-and-bit-operations", "bitmap-algorithms", "bitmap-layout"])
         self.assertGreater(self.contract["ratchet"]["unfinished_unit_count"], 0)
 
     def test_ordinary_allocation_scope_records_private_expand_and_recalloc_slices(self) -> None:
@@ -173,6 +173,27 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("caller-managed private single-thread lifecycle", ordinary["difference"])
         self.assertLessEqual(ordinary["source_anchor"]["start_line"], 204)
         self.assertGreaterEqual(ordinary["source_anchor"]["end_line"], 483)
+
+    def test_bitmap_source_floors_cannot_shrink_even_with_recomputed_anchor_hashes(self) -> None:
+        for unit_id in ("bitmap-algorithms", "bitmap-layout"):
+            changed = copy.deepcopy(self.contract)
+            unit = next(unit for unit in changed["units"] if unit["id"] == unit_id)
+            anchor = unit["source_anchor"]
+            anchor["end_line"] -= 1
+            anchor["sha256"] = SOURCE_MAP.sha256_bytes(SOURCE_MAP.source_range(
+                self.sources[anchor["member"]], anchor["start_line"], anchor["end_line"]
+            ))
+            with self.subTest(unit=unit_id), self.assertRaisesRegex(
+                SOURCE_MAP.SourceMapError, "shrank its reviewed source boundary"
+            ):
+                SOURCE_MAP.validate_units(changed, self.sources)
+
+    def test_bitmap_promotion_does_not_allow_statistics_or_allocator_unit_promotion(self) -> None:
+        changed = copy.deepcopy(self.contract)
+        unit = next(unit for unit in changed["units"] if unit["id"] == "statistics-collection")
+        unit["status"] = "implemented"
+        with self.assertRaisesRegex(SOURCE_MAP.SourceMapError, "reviewed ratchet expansion"):
+            SOURCE_MAP.validate_units(changed, self.sources)
 
     def test_aligned_allocation_scope_records_bounded_overalloc_realloc_evidence(self) -> None:
         aligned = next(

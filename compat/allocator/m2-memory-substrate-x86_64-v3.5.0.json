@@ -32,40 +32,21 @@
         { "required_status": "partial", "unit_id": "core-layouts-and-configuration" },
         { "required_status": "partial", "unit_id": "atomic-operation-facade" }
       ],
-      "source_units": ["src/meta.c", "include/mimalloc/internal.h"],
+      "source_units": ["src/subproc.c", "include/mimalloc/internal.h"],
       "unqualified_failure_matrix": [
         {
           "id": "metadata-backing-and-publication",
           "required_evidence": ["native metadata lifecycle differential", "publication and cleanup failure tests"],
-          "source_scope": "src/meta.c metadata backing, delayed free, and atomic publication paths"
+          "source_scope": "src/subproc.c:19-81 metadata allocation, detached metadata-theap locking, and typed memory-ID release paths"
         }
       ]
     },
     {
-      "checks": [],
       "id": "bitmaps",
-      "native_status": "partial",
-      "remaining_conditions": [
-        "Close the native bitmap source and failure matrix, including visitor stop/restore behavior and the unconditional statistics owner/counter transitions."
-      ],
-      "source_map_records": [
-        { "required_status": "partial", "unit_id": "bitmap-algorithms" },
-        { "required_status": "partial", "unit_id": "bitmap-layout" },
-        { "required_status": "implemented", "unit_id": "x86-64-width-and-bit-operations" }
-      ],
-      "source_units": ["src/bitmap.c", "include/mimalloc/internal.h"],
-      "unqualified_failure_matrix": [
-        {
-          "id": "bitmap-visitors-chunks-and-restore",
-          "required_evidence": ["native direct-include C bitmap transcript", "complete Rust bitmap unit inventory"],
-          "source_scope": "src/bitmap.c scalar visitors, chunk maps, restore paths, and default-profile scans"
-        },
-        {
-          "id": "statistics-owner-and-counter-transitions",
-          "required_evidence": ["typed native statistics-event boundary", "counter owner and restore-path tests"],
-          "source_scope": "src/bitmap.c statistic changes and their internal.h/stats.c owner transitions"
-        }
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-bitmaps-x86_64-v3.5.0.fragment.json",
+        "inventory_sha256": "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
+      }
     },
     {
       "bounded_source_definitions": [
@@ -212,8 +193,8 @@
     {
       "disposition": "deferred-to-m3",
       "id": "allocation-policy-and-full-path-routing",
-      "reason": "M2 PageMap completion does not claim allocation policy, bins, page queues, or allocator routing.",
-      "source_units": ["src/alloc.c", "src/page.c", "src/segment.c"]
+      "reason": "M2 bitmap and PageMap completion does not claim allocation-path policy, heap size-class bins, page queues, or allocator routing.",
+      "source_units": ["src/alloc.c", "src/page.c"]
     }
   ],
   "execution": {
@@ -227,9 +208,10 @@
   "format": 1,
   "global_evidence": [
     "x86-64-source-contract-inventories",
-    "x86-64-bounded-page-map-source-definitions",
+    "x86-64-bounded-component-source-definitions",
     "x86-64-page-map-c-rust-differentials",
-    "x86-64-page-map-focused-source-test-batch"
+    "x86-64-page-map-focused-source-test-batch",
+    "x86-64-bitmap-source-and-native-evidence"
   ],
   "milestone": {
     "completion_rule": "M2 is complete only when all eight native x86-64 components have complete target-local source boundaries, closed failure matrices, and their declared native C/Rust and Rust evidence.",

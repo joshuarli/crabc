@@ -1,8 +1,9 @@
 # Native M2 bitmap component
 
 `m2-bitmaps-x86_64-v3.5.0.fragment.json` is component evidence, not an M2
-milestone report. Promotion requires the aggregate gate and the two shared
-x86 source-map records to land together. The frozen AArch64 manifest and
+milestone report. The aggregate references its pinned semantic inventory
+digest instead of copying the fragment; both bitmap source-map records are
+implemented for this scalar boundary. The frozen AArch64 manifest and
 qualification status are unchanged.
 
 The boundary is fixed mimalloc 3.5.0 scalar bitmap behavior for the default
@@ -29,8 +30,10 @@ a live subprocess owner, while ordinary `clear_once_set` takes the source
 subprocess explicitly. Test contexts own a stable subprocess rather than
 discarding events through a test observer or process-global fallback.
 
-`m2_bitmaps_x86_64.py::run_evidence(harness, offline=...)` is the native
-producer interface. It uses the canonical harness's pins and contained paths,
+`m2_bitmaps_x86_64.py::run_evidence(harness, offline=..., test_program=...,
+contract_fragment=...)` is the native producer interface. The aggregate passes
+its one prepared test program; standalone use prepares one if omitted.
+It uses the canonical harness's pins and contained paths,
 extracts the fixed archive, builds the direct C fixture with pinned `stats.c`
 and Linux primitives, then runs the complete `bitmap::` Rust module. It checks
 41 passed tests and compares 132,184 ordered unsigned observations, including

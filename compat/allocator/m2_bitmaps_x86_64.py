@@ -39,9 +39,12 @@ def transcript(output: str) -> list[int]:
     return [int(value) for _, value in matches]
 
 
-def run_evidence(harness, *, offline: bool) -> dict:
+def run_evidence(harness, *, offline: bool, test_program=None, contract_fragment=None) -> dict:
     """Run inside the pinned native allocator image; do not infer M2 closure."""
     harness.require_native_x86_64()
+    if contract_fragment is not None:
+        if harness._m1_inventory_digest(contract_fragment) != harness.M2_X86_64_BITMAP_FRAGMENT_DIGEST:
+            raise harness.HarnessError("native bitmap producer fragment inventory changed")
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
     artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-bitmaps"
@@ -65,10 +68,12 @@ def run_evidence(harness, *, offline: bool) -> dict:
         harness.require_success(c_run, "native bitmap source oracle")
         sources = harness.source_file_records(source, SOURCE_FILES)
 
-    program = harness._m1_foundations_test_program(
-        {"package": "crabc-mimalloc", "features": [], "no_default_features": True,
-         "rust_target": "x86_64-unknown-linux-musl", "test_threads": 1,
-         "timeout_seconds": 600}, harness.WORK_ROOT / "target")
+    program = test_program
+    if program is None:
+        program = harness._m1_foundations_test_program(
+            {"package": "crabc-mimalloc", "features": [], "no_default_features": True,
+             "rust_target": "x86_64-unknown-linux-musl", "test_threads": 1,
+             "timeout_seconds": 600}, harness.WORK_ROOT / "target")
     listed = harness.command_record([str(program["path"]), "bitmap::", "--list"],
                                     cwd=ROOT, timeout_seconds=30)
     harness.require_success(listed, "native bitmap test inventory")
@@ -102,6 +107,7 @@ def run_evidence(harness, *, offline: bool) -> dict:
         "fixture": harness.artifact_record(fixture),
         "rust_build_command": program["build_command"], "rust_command": rust_command,
         "rust_tests": test_names, "rust_passed_test_count": len(test_names),
+        "rust_execution_count": 1, "rust_build_reused": test_program is not None,
         "compared_value_count": len(expected),
         "transcript_sha256": hashlib.sha256(payload).hexdigest(),
         "nonclaims": ["Full mi_stats_t ABI/reporting and optional SIMD/modes are not qualified",
