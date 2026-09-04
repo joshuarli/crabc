@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#define _LARGEFILE64_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +58,81 @@ static int stream_regressions(const char *path)
 }
 
 static FILE *shared;
+
+static int reopen_and_lines(const char *first, const char *second)
+{
+    FILE *stream = fopen(first, "w+");
+    if (!stream) return 40;
+    int original_fd = fileno(stream);
+    char file_buffer[31];
+    if (setvbuf(stream, file_buffer, _IOFBF, sizeof file_buffer)
+        || fputs("old-data", stream) < 0) return 41;
+    /* Replacement retains FILE identity, descriptor number and caller buffer,
+     * flushes the previous file, and resets the stream direction and flags. */
+    if (freopen64(second, "w+e", stream) != stream || fileno(stream) != original_fd) return 42;
+    int flags = fcntl(original_fd, F_GETFD);
+    if (flags < 0 || !(flags & FD_CLOEXEC)) return 43;
+    int previous = open(first, O_RDONLY);
+    char bytes[32];
+    if (previous < 0 || read(previous, bytes, sizeof bytes) != 8
+        || memcmp(bytes, "old-data", 8) || close(previous)) return 44;
+    const char binary[] = { 'a', 0, 'b', '|', '\n' };
+    if (fwrite(binary, 1, sizeof binary, stream) != sizeof binary) return 45;
+    for (int i = 0; i < 4097; ++i) if (fputc('L', stream) != 'L') return 45;
+    if (fputs("\nlast", stream) < 0 || fseek(stream, 0, SEEK_SET)) return 45;
+    char *line = 0;
+    size_t capacity = 99;
+    if (getdelim(&line, &capacity, '|', stream) != 4 || !line || capacity < 5
+        || memcmp(line, binary, 4) || line[4] || ftell(stream) != 4) return 46;
+    char *first_allocation = line;
+    if (getline(&line, &capacity, stream) != 1 || strcmp(line, "\n")
+        || line != first_allocation || ftell(stream) != 5) return 47;
+    if (getline(&line, &capacity, stream) != 4098 || capacity < 4099
+        || line[4097] != '\n' || line[4098]) return 48;
+    for (int i = 0; i < 4097; ++i) if (line[i] != 'L') return 48;
+    if (getline(&line, &capacity, stream) != 4 || strcmp(line, "last") || !feof(stream)) return 49;
+    if (getline(&line, &capacity, stream) != -1 || ferror(stream)) return 50;
+    free(line);
+    /* Null-path mode adjustment keeps the same open description and position. */
+    if (freopen(NULL, "a+", stream) != stream || fseek(stream, 0, SEEK_SET)
+        || fputc('Z', stream) != 'Z' || fflush(stream)) return 51;
+    if (!(fcntl(original_fd, F_GETFL) & O_APPEND)) return 52;
+    if (freopen(second, "r", stream) != stream || feof(stream) || ferror(stream)
+        || (fcntl(original_fd, F_GETFD) & FD_CLOEXEC)) return 53;
+    line = malloc(3);
+    if (!line) return 54;
+    capacity = 3;
+    /* A delimiter equal to NUL is data-aware, unlike a C-string search. */
+    if (getdelim(&line, &capacity, 0, stream) != 2 || line[0] != 'a'
+        || line[1] || line[2] || ftell(stream) != 2) return 55;
+    if (fseek(stream, 0, SEEK_SET)) return 56;
+    errno = 0;
+    if (getdelim(&line, NULL, '\n', stream) != -1 || errno != EINVAL || !ferror(stream)) return 57;
+    clearerr(stream);
+    if (close(original_fd)) return 58;
+    errno = 0;
+    if (getline(&line, &capacity, stream) != -1 || errno != EBADF || !ferror(stream)) return 59;
+    free(line);
+    /* When open reuses the externally closed fd, freopen must not close it. */
+    if (freopen(second, "r", stream) != stream || fileno(stream) != original_fd
+        || fgetc(stream) != 'a' || fclose(stream)) return 60;
+    stream = fopen(first, "w");
+    if (!stream) return 61;
+    original_fd = fileno(stream);
+    if (fputs("flushed-on-failure", stream) < 0) return 62;
+    errno = 0;
+    /* An empty pathname deterministically fails without external fixture state. */
+    if (freopen("", "r", stream) || errno != ENOENT) return 63;
+    errno = 0;
+    if (fcntl(original_fd, F_GETFD) != -1 || errno != EBADF) return 64;
+    previous = open(first, O_RDONLY);
+    if (previous < 0 || read(previous, bytes, sizeof bytes) != 18
+        || memcmp(bytes, "flushed-on-failure", 18) || close(previous)) return 65;
+    /* The failed reopen retired its registry member: later global flush and
+     * ordinary exit must not touch freed FILE storage. */
+    if (fflush(NULL)) return 66;
+    return 0;
+}
 static void *writer(void *argument)
 {
     int byte = *(int *)argument;
@@ -122,6 +198,8 @@ int main(int argc, char **argv)
     if (fputc('X', b) != EOF || !ferror(b)) return 28;
     clearerr(b);
     if (ferror(b) || fclose(b)) return 29;
+    int reopened = reopen_and_lines(argv[1], argv[2]);
+    if (reopened) return reopened;
     b = fopen(argv[2], "w");
     if (!b || fputs("exit-flushed\n", b) < 0) return 19;
     /* Deliberately leave a dynamic stream and stdout buffered at ordinary exit. */
