@@ -32,10 +32,10 @@ extern "C" {
 #define MM_NOMSG    1
 #define MM_NOCON    4
 
-#define MM_NULLLBL  ((char *)0)
-#define MM_NULLTXT  ((char *)0)
-#define MM_NULLACT  ((char *)0)
-#define MM_NULLTAG  ((char *)0)
+#define MM_NULLLBL  ((char*)0)
+#define MM_NULLTXT  ((char*)0)
+#define MM_NULLACT  ((char*)0)
+#define MM_NULLTAG  ((char*)0)
 #define MM_NULLSEV  0
 
 int fmtmsg(long, const char *, int, const char *, const char *, const char *);

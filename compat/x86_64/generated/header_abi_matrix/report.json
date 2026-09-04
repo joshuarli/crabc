@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "8d990e1ebaa1c476470aad2b411f337d7427c01f71e9e6bd3417a14383d286a6",
+    "callable_inventory_sha256": "cb14381e33d8333928f6760945530a948ed89cdd551dfc4bd7cd991cf61e4086",
     "compiler": "clang",
     "header_abi_matrix_contract_sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -7894,41 +7894,16 @@
           "function": 1,
           "macro": 26
         },
-        "sha256": "c5d37475de9cad8c3a26c1f43af276d384cac01d4d36bf6574587815c13c96e9"
+        "sha256": "255fa25cd9d19da57c90e5482dbc91f6e7744f9b158e1a38bc952431883cefa7"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLACT",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLLBL",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTAG",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTXT",
-            "reference_signature": "object-like: ((char*)0)"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 23,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 27,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -7951,41 +7926,16 @@
           "function": 1,
           "macro": 26
         },
-        "sha256": "c5d37475de9cad8c3a26c1f43af276d384cac01d4d36bf6574587815c13c96e9"
+        "sha256": "255fa25cd9d19da57c90e5482dbc91f6e7744f9b158e1a38bc952431883cefa7"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLACT",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLLBL",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTAG",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTXT",
-            "reference_signature": "object-like: ((char*)0)"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 23,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 27,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -8008,41 +7958,16 @@
           "function": 1,
           "macro": 26
         },
-        "sha256": "c5d37475de9cad8c3a26c1f43af276d384cac01d4d36bf6574587815c13c96e9"
+        "sha256": "255fa25cd9d19da57c90e5482dbc91f6e7744f9b158e1a38bc952431883cefa7"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLACT",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLLBL",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTAG",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTXT",
-            "reference_signature": "object-like: ((char*)0)"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 23,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 27,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -8065,41 +7990,16 @@
           "function": 1,
           "macro": 26
         },
-        "sha256": "c5d37475de9cad8c3a26c1f43af276d384cac01d4d36bf6574587815c13c96e9"
+        "sha256": "255fa25cd9d19da57c90e5482dbc91f6e7744f9b158e1a38bc952431883cefa7"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLACT",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLLBL",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTAG",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTXT",
-            "reference_signature": "object-like: ((char*)0)"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 23,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 27,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -8122,41 +8022,16 @@
           "function": 1,
           "macro": 26
         },
-        "sha256": "c5d37475de9cad8c3a26c1f43af276d384cac01d4d36bf6574587815c13c96e9"
+        "sha256": "255fa25cd9d19da57c90e5482dbc91f6e7744f9b158e1a38bc952431883cefa7"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLACT",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLLBL",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTAG",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTXT",
-            "reference_signature": "object-like: ((char*)0)"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 23,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 27,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -8179,41 +8054,16 @@
           "function": 1,
           "macro": 26
         },
-        "sha256": "c5d37475de9cad8c3a26c1f43af276d384cac01d4d36bf6574587815c13c96e9"
+        "sha256": "255fa25cd9d19da57c90e5482dbc91f6e7744f9b158e1a38bc952431883cefa7"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLACT",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLLBL",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTAG",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTXT",
-            "reference_signature": "object-like: ((char*)0)"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 23,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 27,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -8236,41 +8086,16 @@
           "function": 1,
           "macro": 26
         },
-        "sha256": "c5d37475de9cad8c3a26c1f43af276d384cac01d4d36bf6574587815c13c96e9"
+        "sha256": "255fa25cd9d19da57c90e5482dbc91f6e7744f9b158e1a38bc952431883cefa7"
       },
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLACT",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLLBL",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTAG",
-            "reference_signature": "object-like: ((char*)0)"
-          },
-          {
-            "candidate_signature": "object-like: ((char *)0)",
-            "kind": "macro",
-            "name": "MM_NULLTXT",
-            "reference_signature": "object-like: ((char*)0)"
-          }
-        ],
-        "incompatible_count": 4,
-        "matched_count": 23,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 27,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -105443,23 +105268,23 @@
     "candidate_public_header_count": 191,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 684,
-      "mismatch": 596,
+      "matched": 691,
+      "mismatch": 589,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "596 comparable header/profile rows have prototype or named declaration-form differences",
+      "589 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {
       "candidate_only_count": 7016,
-      "incompatible_count": 2539,
+      "incompatible_count": 2511,
       "reference_only_count": 1709
     },
-    "mismatch_row_count": 596,
+    "mismatch_row_count": 589,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337
