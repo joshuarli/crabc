@@ -15747,19 +15747,42 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "__stdio_exit" in static_exports,
         "static-c-crt-initial-tls-handoff must expose the selected weak __stdio_exit fallback",
     )
-    implementation = (
-        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
-    ).read_text(encoding="utf-8")
+    exit_sources = [
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / name
+        for name in ("static_startup.rs", "process_exit.rs")
+    ]
+    exit_owners: list[tuple[Path, str]] = []
+    for source in exit_sources:
+        if not source.is_file():
+            continue
+        source_text = source.read_text(encoding="utf-8")
+        if "fn __stdio_exit()" in source_text:
+            exit_owners.append((source, source_text))
+    require(
+        len(exit_owners) == 1,
+        "static-c-crt-initial-tls-handoff must have exactly one x86 __stdio_exit owner",
+    )
+    _exit_source, implementation = exit_owners[0]
     for phrase in (
         "fn __stdio_exit()",
         "weak_alias(dummy, __stdio_exit)",
-        "does not flush streams",
-        "stdio finalization",
     ):
         require(
             phrase in implementation,
             f"static-c-crt-initial-tls-handoff implementation omits {phrase}",
         )
+    require(
+        '#[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]'
+        in implementation,
+        "static-c-crt-initial-tls-handoff must retain the private weak __stdio_exit fallback",
+    )
+    require(
+        '#[cfg(feature = "x86-owned-static-runtime")]\n    unsafe { __stdio_exit() };'
+        in implementation
+        and '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        "    unsafe { super::stdio_standard::flush_all_on_exit() };" in implementation,
+        "static-c-crt-initial-tls-handoff must confine owned stdio finalization to its feature",
+    )
     runner_source = (ROOT / "compat" / "x86_64" / "run_libc_crt_static_tls.sh").read_text(
         encoding="utf-8"
     )
@@ -56245,8 +56268,10 @@ def require_stdio_standard_streams_artifact(family: Mapping[str, Any]) -> None:
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
     require(
-        '#[path = "stdio_standard.rs"]\nmod stdio_standard;' in static_root,
-        "x86 static C ABI must compose the stdio_standard leaf",
+        '#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_static_stdio.rs")]\n'
+        '#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "stdio_standard.rs")]\n'
+        "mod stdio_standard;" in static_root,
+        "x86 static C ABI must retain distinct default and owned stdio leaves",
     )
     implementation = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
@@ -60474,7 +60499,7 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         "errno-output)",
         "CRABC_STDIO_ERRNO_OUTPUT_FREESTANDING",
         "libc_stdio_errno_output_probe.c",
-        "b'm' if length == Length::None",
+        "b'm' if output.allow_errno_message() && length == Length::None",
         "error_strings::error_message",
         "errno::get_errno()",
     ):
@@ -66527,9 +66552,9 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
         "--no-undefined",
         "fldt",
         "fchs",
-        "for unselected in sin sinf",
+        "shared archive ratchet now selects `sin` and `sinf` independently",
+        "candidate closure checks below remain the private boundary",
         "adjacent complete math.complex slice",
-        "`sinl` is public under the separately selected math.elementary-long-double",
         "libm",
     ):
         require(
@@ -67297,7 +67322,8 @@ def require_math_special_slice(family: Mapping[str, Any]) -> None:
         "run_math_special_header_abi.sh",
         "elementary_sin elementary_powl internal_rem_pio2 internal_lgamma_r",
         "SELECTED_SIBLING_SYMBOLS=(rint rintf sqrt sqrtf)",
-        "selected shared long-double archive roots",
+        "scalar providers are all selected by the shared archive ratchet",
+        "Candidate closure below, rather than whole-archive membership",
         "float_parse",
         "fldt fstpt fistpll mulsd mulss",
         "candidate math.special record stream differs from pinned musl",
@@ -67573,7 +67599,7 @@ def require_math_complex_complete_slice(family: Mapping[str, Any]) -> None:
         "--gc-sections",
         "run_math_complex_complete_header_abi.sh",
         "elementary_sin elementary_scalbn elementary_hypotl internal_rem_pio2 internal_mulxc3",
-        "atan atan2 atan2f atanf cos cosf",
+        "for unselected in atan atan2 atan2f atanf hypot hypotf; do",
         "math.elementary-long-double capability",
         "`fabs`/`fabsf`/`copysign`/`copysignf`",
         "`sqrt`/`sqrtf`",
@@ -67861,7 +67887,7 @@ def require_math_elementary_long_double_slice(family: Mapping[str, Any]) -> None
         "--gc-sections",
         "run_math_elementary_long_double_header_abi.sh",
         "internal_rem_pio2l internal_sinl internal_tanl provider_floor provider_scalbn",
-        "floor __cosl __p1evll __polevll __rem_pio2l __rem_pio2_large __sinl __tanl",
+        "for unselected in __cosl __p1evll __polevll __rem_pio2l __rem_pio2_large __sinl __tanl; do",
         "float_parse|libm",
         "fldt fstpt faddp fmulp fsqrt fdivp",
         "candidate math.elementary-long-double record stream differs from pinned musl",

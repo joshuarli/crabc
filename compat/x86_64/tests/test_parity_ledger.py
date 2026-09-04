@@ -236,6 +236,110 @@ class X86ParityLedgerTests(unittest.TestCase):
 
         self.assertTrue(reentered)
 
+    def test_exit_handoff_keeps_private_and_owned_stdio_exit_boundaries(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.pthread-tls")
+        ledger.require_static_crt_initial_tls_handoff_artifact(family)
+
+        exit_owners: list[str] = []
+        for source in (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs",
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_exit.rs",
+        ):
+            if not source.is_file():
+                continue
+            source_text = source.read_text(encoding="utf-8")
+            if "fn __stdio_exit()" in source_text:
+                exit_owners.append(source_text)
+        self.assertEqual(len(exit_owners), 1)
+        implementation = exit_owners[0]
+        self.assertIn("weak_alias(dummy, __stdio_exit)", implementation)
+        self.assertIn(
+            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]',
+            implementation,
+        )
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n    unsafe { __stdio_exit() };',
+            implementation,
+        )
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            "    unsafe { super::stdio_standard::flush_all_on_exit() };",
+            implementation,
+        )
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            '#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_static_stdio.rs")]\n'
+            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "stdio_standard.rs")]\n'
+            "mod stdio_standard;",
+            static_root,
+        )
+
+    def test_stdio_errno_output_runner_retains_the_errno_qualified_m_guard(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        ledger.require_stdio_errno_output_artifact(family)
+
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "b'm' if output.allow_errno_message() && length == Length::None",
+            runner,
+        )
+
+    def test_math_complex_runner_keeps_its_candidate_closure_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        ledger.require_math_complex_foundation_artifact(family)
+
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_math_complex.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "shared archive ratchet now selects `sin` and `sinf` independently",
+            runner,
+        )
+        self.assertIn("candidate closure checks below remain the private boundary", runner)
+
+    def test_math_special_runner_keeps_its_candidate_closure_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        ledger.require_math_special_slice(family)
+
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_math_special.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("scalar providers are all selected by the shared archive ratchet", runner)
+        self.assertIn("Candidate closure below, rather than whole-archive membership", runner)
+
+    def test_math_complex_complete_runner_keeps_its_private_scalar_exclusions(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        ledger.require_math_complex_complete_slice(family)
+
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_math_complex_complete.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "for unselected in atan atan2 atan2f atanf hypot hypotf; do", runner
+        )
+
+    def test_math_elementary_long_double_runner_keeps_private_helpers_unselected(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        ledger.require_math_elementary_long_double_slice(family)
+
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_math_elementary_long_double.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "for unselected in __cosl __p1evll __polevll __rem_pio2l __rem_pio2_large __sinl __tanl; do",
+            runner,
+        )
+
     def test_feature_archive_roster_rejects_unverified_or_default_surface_confusion(self) -> None:
         data = self.data()
         report = ledger.validate_feature_archive_roster(
