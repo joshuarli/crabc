@@ -1749,6 +1749,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    stat-ftw-header-source-form) ;;", source)
         self.assertIn("    param-header-source-form) ;;", source)
         self.assertIn("    math-tgmath-source-form) ;;", source)
+        self.assertIn("    mman-mcl-onfault-header-source-form) ;;", source)
         self.assertIn("    mount-header-source-form) ;;", source)
         self.assertIn("    klog-header-source-form) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
@@ -1999,6 +2000,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "reboot-header-source-form",
             "stdio-header-source-form",
             "math-tgmath-source-form",
+            "mman-mcl-onfault-header-source-form",
             "mount-header-source-form",
             "klog-header-source-form",
             "fcntl-event-header-topology",
