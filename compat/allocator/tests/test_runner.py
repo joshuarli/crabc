@@ -2929,6 +2929,22 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_page_map_trace(c_trace, rust_trace)
 
+    def test_x86_m2_page_map_trace_uses_the_native_47_bit_geometry(self) -> None:
+        c_trace = self._m2_page_map_trace(rust=False)
+        rust_trace = self._m2_page_map_trace(rust=True)
+        for trace in (c_trace, rust_trace):
+            trace["m2.page_map.control.max_vabits"] = 47
+            trace["m2.page_map.init.reserve_count"] = 262144
+        RUNNER.validate_m2_page_map_trace(
+            c_trace, source="pinned C", expected_max_vabits=47
+        )
+        comparison = RUNNER.compare_m2_page_map_trace(
+            c_trace, rust_trace, expected_max_vabits=47
+        )
+        self.assertEqual(comparison["status"], "matched")
+        with self.assertRaisesRegex(RUNNER.HarnessError, "48 virtual-address bits"):
+            RUNNER.validate_m2_page_map_trace(c_trace, source="pinned C")
+
     @staticmethod
     def _m2_page_map_lazy_commit_failure_trace() -> dict[str, int]:
         trace = {key: 1 for key in RUNNER.M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS}
@@ -2969,6 +2985,16 @@ class ContractTests(unittest.TestCase):
         rust_trace["m2.page_map.lazy_commit.failure.committed_unchanged"] = 0
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_page_map_lazy_commit_failure_trace(c_trace, rust_trace)
+
+    def test_x86_m2_page_map_lazy_commit_trace_uses_the_native_47_bit_geometry(self) -> None:
+        c_trace = self._m2_page_map_lazy_commit_failure_trace()
+        rust_trace = self._m2_page_map_lazy_commit_failure_trace()
+        for trace in (c_trace, rust_trace):
+            trace["m2.page_map.lazy_commit.control.max_vabits"] = 47
+        comparison = RUNNER.compare_m2_page_map_lazy_commit_failure_trace(
+            c_trace, rust_trace, expected_max_vabits=47
+        )
+        self.assertEqual(comparison["status"], "matched")
 
     @staticmethod
     def _m2_page_map_cold_init_trace(*, rust: bool) -> dict[str, int]:
@@ -3409,7 +3435,7 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.HarnessError, "unmet relation"):
             RUNNER.compare_m2_binned_bitmap_bsr_inv_trace(c_trace, rust_trace)
 
-    def test_m2_parser_is_native_only_and_mutually_exclusive(self) -> None:
+    def test_m2_parser_selects_its_target_specific_gate_and_remains_exclusive(self) -> None:
         with mock.patch.object(sys, "argv", ["run.py", "--m2"]):
             arguments = RUNNER.parse_arguments()
         self.assertTrue(arguments.m2)
@@ -3417,6 +3443,8 @@ class ContractTests(unittest.TestCase):
         with mock.patch.object(
             sys, "argv", ["run.py", "--m2", "--architecture", "x86_64"]
         ):
+            self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
+        with mock.patch.object(sys, "argv", ["run.py", "--m2", "--m1"]):
             with self.assertRaises(SystemExit):
                 RUNNER.parse_arguments()
 
@@ -4264,6 +4292,161 @@ class ContractTests(unittest.TestCase):
             RUNNER, "run_x86_64_m1_foundations", return_value=report
         ) as native_gate, mock.patch.object(RUNNER, "run_m1_foundations") as aarch_gate:
             self.assertEqual(RUNNER.main(), 0)
+        native_gate.assert_called_once_with(offline=True)
+        aarch_gate.assert_not_called()
+
+    def test_x86_m2_contract_is_target_local_and_qualifies_only_page_map(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
+        summary = RUNNER.validate_x86_64_m2_memory_substrate_contract(
+            contract, RUNNER.load_pin()
+        )
+
+        self.assertEqual(summary["target"]["architecture"], "x86_64")
+        self.assertEqual(summary["target"]["rust_target"], "x86_64-unknown-linux-musl")
+        self.assertEqual(summary["milestone"]["status"], "partial")
+        self.assertEqual(
+            [component["id"] for component in summary["components"]],
+            list(RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS),
+        )
+        page_map = next(
+            component for component in summary["components"] if component["id"] == "page-map"
+        )
+        self.assertEqual(page_map["native_status"], "complete")
+        self.assertEqual(
+            [check["id"] for check in page_map["checks"]],
+            list(RUNNER.M2_X86_64_PAGE_MAP_CHECK_IDS),
+        )
+        self.assertEqual(len(page_map["bounded_source_definitions"]), 4)
+        self.assertEqual(len(page_map["failure_matrix"]), 5)
+        self.assertTrue(
+            all(
+                component["native_status"] == "partial"
+                and component["remaining_conditions"]
+                and component["unqualified_failure_matrix"]
+                for component in summary["components"]
+                if component["id"] != "page-map"
+            )
+        )
+
+    def test_x86_m2_contract_rejects_missing_page_map_source_or_failure_accounting(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
+        missing_definition = json.loads(json.dumps(contract))
+        page_map = next(
+            component for component in missing_definition["components"] if component["id"] == "page-map"
+        )
+        page_map["bounded_source_definitions"].pop()
+        with self.assertRaisesRegex(RUNNER.HarnessError, "bounded source inventory changed"):
+            RUNNER.validate_x86_64_m2_memory_substrate_contract(
+                missing_definition, RUNNER.load_pin()
+            )
+
+        missing_matrix = json.loads(json.dumps(contract))
+        page_map = next(
+            component for component in missing_matrix["components"] if component["id"] == "page-map"
+        )
+        page_map["failure_matrix"].pop()
+        with self.assertRaisesRegex(RUNNER.HarnessError, "failure-matrix inventory changed"):
+            RUNNER.validate_x86_64_m2_memory_substrate_contract(
+                missing_matrix, RUNNER.load_pin()
+            )
+
+        missing_partial_matrix = json.loads(json.dumps(contract))
+        bitmaps = next(
+            component for component in missing_partial_matrix["components"] if component["id"] == "bitmaps"
+        )
+        bitmaps["unqualified_failure_matrix"] = []
+        with self.assertRaisesRegex(RUNNER.HarnessError, "lacks an unqualified failure matrix"):
+            RUNNER.validate_x86_64_m2_memory_substrate_contract(
+                missing_partial_matrix, RUNNER.load_pin()
+            )
+
+    def test_x86_m2_contract_rejects_an_actual_source_map_status_regression(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
+        source_map_regression = json.loads(
+            json.dumps(RUNNER.read_json(RUNNER.X86_64_SOURCE_MAP_CONTRACT))
+        )
+        source_unit = next(
+            unit
+            for unit in source_map_regression["units"]
+            if unit["id"] == "page-map-lifecycle"
+        )
+        source_unit["status"] = "implemented"
+        original_read_json = RUNNER.read_json
+
+        def read_json_with_status_regression(path: Path) -> dict[str, object]:
+            if path == RUNNER.X86_64_SOURCE_MAP_CONTRACT:
+                return source_map_regression
+            return original_read_json(path)
+
+        with mock.patch.object(
+            RUNNER, "read_json", side_effect=read_json_with_status_regression
+        ):
+            with self.assertRaisesRegex(RUNNER.HarnessError, "source-map predicate is not current"):
+                RUNNER.validate_x86_64_m2_memory_substrate_contract(
+                    contract, RUNNER.load_pin()
+                )
+
+    def test_x86_m2_report_fails_closed_for_the_seven_unqualified_components(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
+        summary = RUNNER.validate_x86_64_m2_memory_substrate_contract(
+            contract, RUNNER.load_pin()
+        )
+        focused_checks = []
+        for component in summary["components"]:
+            for check in component["checks"]:
+                record = {
+                    "component": component["id"],
+                    "command": [],
+                    "evidence_scope": "focused-source-test",
+                    "id": check["id"],
+                    "passed_test_count": check["expected_passed_test_count"],
+                    "target": check["target"],
+                }
+                comparison_status = {
+                    "successful-page-map-lifecycle": "matched",
+                    "lazy-page-map-commit-failure": "matched",
+                    "cold-page-map-initialization-failure": "modeled-safety-divergence",
+                }.get(check["id"])
+                if comparison_status is not None:
+                    record["comparison_status"] = comparison_status
+                focused_checks.append(record)
+        report = RUNNER.m2_x86_64_memory_substrate_report(
+            contract=contract,
+            pin=RUNNER.load_pin(),
+            summary=summary,
+            source_attestation={"status": "clean"},
+            source_contract_evidence={"status": "passed"},
+            bounded_source_evidence={"status": "passed"},
+            focused_checks=focused_checks,
+        )
+        self.assertEqual(report["milestone"]["status"], "partial")
+        self.assertEqual(
+            report["milestone"]["unmet_component_ids"],
+            [
+                "vm-primitives",
+                "metadata",
+                "bitmaps",
+                "arenas",
+                "initialization",
+                "fault-injection",
+                "allocator-recursion",
+            ],
+        )
+        self.assertEqual(
+            RUNNER.m2_x86_64_memory_substrate_unmet_message(report).split(";", 1)[0],
+            "native x86 M2 memory substrate remains partial for "
+            "vm-primitives, metadata, bitmaps, arenas, initialization, fault-injection, "
+            "allocator-recursion",
+        )
+
+    def test_x86_m2_main_dispatches_only_to_its_native_gate(self) -> None:
+        report = {"milestone": {"status": "partial", "unmet_component_ids": ["bitmaps"]}}
+        with mock.patch.object(
+            sys, "argv", ["run.py", "--m2", "--architecture", "x86_64", "--offline"]
+        ), mock.patch.object(
+            RUNNER, "run_x86_64_m2_memory_substrate", return_value=report
+        ) as native_gate, mock.patch.object(RUNNER, "run_m2_memory_substrate") as aarch_gate:
+            self.assertEqual(RUNNER.main(), 3)
         native_gate.assert_called_once_with(offline=True)
         aarch_gate.assert_not_called()
 

@@ -1,0 +1,263 @@
+{
+  "components": [
+    {
+      "checks": [],
+      "id": "vm-primitives",
+      "native_status": "partial",
+      "remaining_conditions": [
+        "Qualify native reserve, commit, decommit, purge, reset, and release failure ownership through pinned-C differential evidence."
+      ],
+      "source_map_records": [
+        { "required_status": "partial", "unit_id": "os-allocation-policy" },
+        { "required_status": "partial", "unit_id": "linux-unix-primitives" },
+        { "required_status": "partial", "unit_id": "primitive-interface" }
+      ],
+      "source_units": ["src/os.c", "src/prim/unix/prim.c"],
+      "unqualified_failure_matrix": [
+        {
+          "id": "virtual-memory-route-and-provenance",
+          "required_evidence": ["native C/Rust reserve-commit-release differential", "failure-owner unit inventory"],
+          "source_scope": "src/os.c and src/prim/unix/prim.c allocation, commit, and release routes"
+        }
+      ]
+    },
+    {
+      "checks": [],
+      "id": "metadata",
+      "native_status": "partial",
+      "remaining_conditions": [
+        "Qualify metadata allocation, backing ownership, and cross-thread publication with native source tests and C/Rust evidence."
+      ],
+      "source_map_records": [
+        { "required_status": "partial", "unit_id": "core-layouts-and-configuration" },
+        { "required_status": "partial", "unit_id": "atomic-operation-facade" }
+      ],
+      "source_units": ["src/meta.c", "include/mimalloc/internal.h"],
+      "unqualified_failure_matrix": [
+        {
+          "id": "metadata-backing-and-publication",
+          "required_evidence": ["native metadata lifecycle differential", "publication and cleanup failure tests"],
+          "source_scope": "src/meta.c metadata backing, delayed free, and atomic publication paths"
+        }
+      ]
+    },
+    {
+      "checks": [],
+      "id": "bitmaps",
+      "native_status": "partial",
+      "remaining_conditions": [
+        "Close the native bitmap source and failure matrix, including visitor stop/restore behavior and the unconditional statistics owner/counter transitions."
+      ],
+      "source_map_records": [
+        { "required_status": "partial", "unit_id": "bitmap-algorithms" },
+        { "required_status": "partial", "unit_id": "bitmap-layout" },
+        { "required_status": "implemented", "unit_id": "x86-64-width-and-bit-operations" }
+      ],
+      "source_units": ["src/bitmap.c", "include/mimalloc/internal.h"],
+      "unqualified_failure_matrix": [
+        {
+          "id": "bitmap-visitors-chunks-and-restore",
+          "required_evidence": ["native direct-include C bitmap transcript", "complete Rust bitmap unit inventory"],
+          "source_scope": "src/bitmap.c scalar visitors, chunk maps, restore paths, and default-profile scans"
+        },
+        {
+          "id": "statistics-owner-and-counter-transitions",
+          "required_evidence": ["typed native statistics-event boundary", "counter owner and restore-path tests"],
+          "source_scope": "src/bitmap.c statistic changes and their internal.h/stats.c owner transitions"
+        }
+      ]
+    },
+    {
+      "bounded_source_definitions": [
+        {
+          "evidence_check_ids": ["successful-page-map-lifecycle", "page-map-lazy-publication-private-lock"],
+          "id": "page-map-geometry-and-safe-lookup",
+          "required_definitions": ["#define MI_PAGE_MAP_SUB_SHIFT", "typedef struct mi_page_map_s", "static inline size_t _mi_page_map_index", "static inline mi_page_t* _mi_checked_ptr_page"],
+          "source_anchor": { "end_line": 768, "member": "include/mimalloc/internal.h", "sha256": "761201171309d72ea48748fa5dcaa0aebafc09b1ad4f1ccf13025a84f7e9a09b", "start_line": 710 }
+        },
+        {
+          "evidence_check_ids": ["successful-page-map-lifecycle", "cold-page-map-initialization-failure", "process-page-map-cold-terminal-owner", "page-map-destroy-lazy-submap-release-owner", "page-map-destroy-top-release-owner"],
+          "id": "page-map-initialization-and-destruction",
+          "required_definitions": ["static mi_page_map_t mi_page_map_empty", "static bool mi_page_map_init_once", "mi_atomic_do_once", "void _mi_page_map_unsafe_destroy"],
+          "source_anchor": { "end_line": 384, "member": "src/page-map.c", "sha256": "1080072ecf9facf8892d7a49b82d259d221a934481bbb6f1d3126a7047d6e733", "start_line": 214 }
+        },
+        {
+          "evidence_check_ids": ["lazy-page-map-commit-failure", "page-map-lazy-extension-commit-owner", "page-map-lazy-submap-map-owner", "page-map-lazy-publication-private-lock"],
+          "id": "page-map-commit-and-lazy-publication",
+          "required_definitions": ["mi_page_map_commit_entries", "mi_page_map_ensure_committed", "mi_page_map_alloc_submap_at", "mi_page_map_ensure_submap_at", "mi_atomic_cas_ptr_strong_acq_rel", "static bool mi_page_map_set_range"],
+          "source_anchor": { "end_line": 457, "member": "src/page-map.c", "sha256": "a91808423ba932c10c87d614814bab49af076a3b0b85e13097b2008774eb9ca8", "start_line": 236 }
+        },
+        {
+          "evidence_check_ids": ["successful-page-map-lifecycle", "page-map-lazy-extension-commit-owner", "page-map-lazy-submap-map-owner"],
+          "id": "page-map-registration-and-rollback",
+          "required_definitions": ["static size_t mi_page_map_get_idx", "bool _mi_page_map_register", "void _mi_page_map_unregister", "void _mi_page_map_unregister_range", "mi_page_t* _mi_safe_ptr_page"],
+          "source_anchor": { "end_line": 515, "member": "src/page-map.c", "sha256": "c752c966d40e6ebd16795295a1a87d3b8a762cdfc4ba752aa3a043df44dfb495", "start_line": 460 }
+        }
+      ],
+      "checks": [
+        { "expected_passed_test_count": 1, "id": "successful-page-map-lifecycle", "kind": "c-rust-page-map-success-differential", "target": "page_map::tests::emit_m2_page_map_init_c_rust_trace" },
+        { "expected_passed_test_count": 1, "id": "lazy-page-map-commit-failure", "kind": "c-rust-page-map-lazy-commit-failure-differential", "target": "page_map::tests::emit_m2_page_map_lazy_commit_failure_c_rust_trace" },
+        { "expected_passed_test_count": 1, "id": "cold-page-map-initialization-failure", "kind": "c-rust-page-map-cold-init-differential", "target": "process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace" },
+        { "expected_passed_test_count": 1, "id": "process-page-map-paired-initial-cleanup-owner", "kind": "rust-unit", "target": "process_page_map::tests::paired_initial_commit_and_cleanup_unmap_failure_retains_the_exact_mapping" },
+        { "expected_passed_test_count": 1, "id": "process-page-map-paired-trailing-submap-cleanup-owner", "kind": "rust-unit", "target": "process_page_map::tests::paired_initial_trailing_submap_commit_and_cleanup_unmap_failure_retains_the_exact_mapping" },
+        { "expected_passed_test_count": 1, "id": "page-map-lazy-extension-commit-owner", "kind": "rust-unit", "target": "page_map::tests::lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry" },
+        { "expected_passed_test_count": 1, "id": "page-map-lazy-submap-map-owner", "kind": "rust-unit", "target": "page_map::tests::lazy_submap_mapping_failure_preserves_the_page_map_for_retry" },
+        { "expected_passed_test_count": 1, "id": "page-map-destroy-lazy-submap-release-owner", "kind": "rust-unit", "target": "page_map::tests::destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry" },
+        { "expected_passed_test_count": 1, "id": "page-map-destroy-top-release-owner", "kind": "rust-unit", "target": "page_map::tests::destroy_top_mapping_release_failure_retains_the_exact_mapping_for_retry" },
+        { "expected_passed_test_count": 1, "id": "page-map-lazy-publication-private-lock", "kind": "rust-unit", "target": "page_map::tests::concurrent_lazy_submap_publication_allocates_once_under_the_page_map_lock" },
+        { "expected_passed_test_count": 1, "id": "process-page-map-cold-terminal-owner", "kind": "rust-unit", "target": "process_init::tests::rejected_page_map_after_heap_and_metadata_retains_ticket_zero_without_tls_publication" }
+      ],
+      "failure_matrix": [
+        { "evidence_check_ids": ["cold-page-map-initialization-failure", "process-page-map-cold-terminal-owner"], "id": "cold-initialization-and-terminal-poison", "source_scope": "src/page-map.c:272-384 once initialization, initial allocation, and terminal root handling" },
+        { "evidence_check_ids": ["process-page-map-paired-initial-cleanup-owner", "process-page-map-paired-trailing-submap-cleanup-owner"], "id": "initial-and-trailing-commit-cleanup", "source_scope": "src/page-map.c:299-358 initial and trailing submap commit cleanup" },
+        { "evidence_check_ids": ["lazy-page-map-commit-failure", "page-map-lazy-extension-commit-owner"], "id": "lazy-commit-failure-before-publication", "source_scope": "src/page-map.c:236-269 commit-before-publication path" },
+        { "evidence_check_ids": ["page-map-lazy-submap-map-owner", "page-map-lazy-publication-private-lock", "page-map-destroy-lazy-submap-release-owner", "page-map-destroy-top-release-owner"], "id": "lazy-submap-allocation-and-private-publication", "source_scope": "src/page-map.c:386-427 lazy submap allocation, lock, CAS, and teardown" },
+        { "evidence_check_ids": ["successful-page-map-lifecycle"], "id": "range-registration-rollback-and-unregister", "source_scope": "src/page-map.c:429-515 range setting, retry rollback, registration, and unregister" }
+      ],
+      "id": "page-map",
+      "native_status": "complete",
+      "remaining_conditions": [],
+      "source_map_records": [
+        { "required_status": "partial", "unit_id": "page-map-lifecycle" },
+        { "required_status": "partial", "unit_id": "core-layouts-and-configuration" },
+        { "required_status": "partial", "unit_id": "atomic-operation-facade" },
+        { "required_status": "partial", "unit_id": "process-and-thread-initialization" },
+        { "required_status": "partial", "unit_id": "os-allocation-policy" }
+      ],
+      "source_units": ["include/mimalloc/internal.h", "src/page-map.c"]
+    },
+    {
+      "checks": [],
+      "id": "arenas",
+      "native_status": "partial",
+      "remaining_conditions": [
+        "Qualify arena creation, OS reservation, abandonment, and cross-thread reclamation through native lifecycle and failure evidence."
+      ],
+      "source_map_records": [
+        { "required_status": "partial", "unit_id": "arena-lifecycle" },
+        { "required_status": "partial", "unit_id": "heap-lifecycle" }
+      ],
+      "source_units": ["src/arena.c", "src/heap.c"],
+      "unqualified_failure_matrix": [
+        {
+          "id": "arena-reservation-and-reclaim",
+          "required_evidence": ["native arena lifecycle differential", "abandonment and reclaim failure matrix"],
+          "source_scope": "src/arena.c reservation, committed slices, abandoned visitation, and purge/reclaim paths"
+        }
+      ]
+    },
+    {
+      "checks": [],
+      "id": "initialization",
+      "native_status": "partial",
+      "remaining_conditions": [
+        "Qualify process, thread, detached-TLD, and teardown initialization routes with native source and lifecycle evidence."
+      ],
+      "source_map_records": [
+        { "required_status": "partial", "unit_id": "process-and-thread-initialization" },
+        { "required_status": "partial", "unit_id": "c-support-and-once" },
+        { "required_status": "partial", "unit_id": "tls-interface-and-thread-identity" }
+      ],
+      "source_units": ["src/init.c", "src/prim/prim.c"],
+      "unqualified_failure_matrix": [
+        {
+          "id": "process-thread-and-detached-tld-images",
+          "required_evidence": ["native static-image source witnesses", "process and thread initialization lifecycle tests"],
+          "source_scope": "src/init.c process once, thread-local, detached TLD, and teardown image transitions"
+        }
+      ]
+    },
+    {
+      "checks": [],
+      "id": "fault-injection",
+      "native_status": "partial",
+      "remaining_conditions": [
+        "Qualify the broader native fault-injection seam inventory; the PageMap lazy-commit witness is PageMap evidence and does not complete this component."
+      ],
+      "source_map_records": [
+        { "required_status": "partial", "unit_id": "page-map-lifecycle" },
+        { "required_status": "partial", "unit_id": "os-allocation-policy" }
+      ],
+      "source_units": ["src/os.c", "src/page-map.c"],
+      "unqualified_failure_matrix": [
+        {
+          "id": "cross-component-allocation-and-release-seams",
+          "required_evidence": ["native injected OS failure inventory", "retry, rollback, and terminal-state source tests"],
+          "source_scope": "allocation and release injection seams outside the completed PageMap matrix"
+        }
+      ]
+    },
+    {
+      "checks": [],
+      "id": "allocator-recursion",
+      "native_status": "partial",
+      "remaining_conditions": [
+        "Qualify recursion guards, reentrant initialization, and thread-local recovery under native allocator lifecycle scenarios."
+      ],
+      "source_map_records": [
+        { "required_status": "partial", "unit_id": "process-and-thread-initialization" },
+        { "required_status": "partial", "unit_id": "thread-local-heap-lifecycle" }
+      ],
+      "source_units": ["src/init.c", "src/prim/prim.c"],
+      "unqualified_failure_matrix": [
+        {
+          "id": "reentrant-init-and-thread-local-recovery",
+          "required_evidence": ["native recursion lifecycle traces", "reentrant allocation failure and recovery tests"],
+          "source_scope": "src/init.c recursion state and thread-local initialization/recovery routes"
+        }
+      ]
+    }
+  ],
+  "exclusions": [
+    {
+      "disposition": "deferred-to-m3",
+      "id": "allocation-policy-and-full-path-routing",
+      "reason": "M2 PageMap completion does not claim allocation policy, bins, page queues, or allocator routing.",
+      "source_units": ["src/alloc.c", "src/page.c", "src/segment.c"]
+    }
+  ],
+  "execution": {
+    "features": [],
+    "no_default_features": true,
+    "package": "crabc-mimalloc",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "test_threads": 1,
+    "timeout_seconds": 300
+  },
+  "format": 1,
+  "global_evidence": [
+    "x86-64-source-contract-inventories",
+    "x86-64-bounded-page-map-source-definitions",
+    "x86-64-page-map-c-rust-differentials",
+    "x86-64-page-map-focused-source-test-batch"
+  ],
+  "milestone": {
+    "completion_rule": "M2 is complete only when all eight native x86-64 components have complete target-local source boundaries, closed failure matrices, and their declared native C/Rust and Rust evidence.",
+    "id": "m2",
+    "nonclaims": [
+      "No AArch64 report or completion status is native x86-64 evidence.",
+      "PageMap completion does not complete M2 or any other memory-substrate component.",
+      "Whole-engine x86 source-map incompleteness remains explicit.",
+      "No public allocator backend, general allocation path, or complete statistics subsystem is claimed."
+    ],
+    "status": "partial"
+  },
+  "schema": "crabc-mimalloc-x86_64-m2-memory-substrate",
+  "source_contracts": [
+    "compat/allocator/x86_64-api-v3.5.0.json",
+    "compat/allocator/x86_64-api-coverage-v3.5.0.json",
+    "compat/allocator/x86_64-source-map-v3.5.0.json"
+  ],
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "kernel_baseline": "5.10",
+    "os": "linux",
+    "rust_target": "x86_64-unknown-linux-musl"
+  },
+  "upstream": {
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

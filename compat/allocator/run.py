@@ -208,6 +208,21 @@ M1_X86_64_STATIC_IMAGE_ARTIFACT_ROOT = (
 M2_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-v3.5.0.json"
 M2_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "m2-memory-substrate-latest.json"
 M2_MEMORY_SUBSTRATE_CARGO_TARGET = ARTIFACT_ROOT / "m2-memory-substrate/cargo-target"
+# Native M2 is a separate current-commit record.  Its PageMap result is not a
+# translation of the paused AArch64 report: its source anchors, target, Rust
+# binary, C artifacts, and remaining conditions are all observed on x86-64.
+M2_X86_64_MEMORY_SUBSTRATE_CONTRACT = (
+    ALLOCATOR_ROOT / "m2-memory-substrate-x86_64-v3.5.0.json"
+)
+M2_X86_64_MEMORY_SUBSTRATE_REPORT = (
+    REPORT_ROOT / "x86_64/m2-memory-substrate-latest.json"
+)
+M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET = (
+    ARTIFACT_ROOT / "x86_64/m2-memory-substrate/cargo-target"
+)
+M2_X86_64_PAGE_MAP_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "x86_64/m2-memory-substrate/page-map-trace"
+)
 M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/detached-tld-static-preimage-trace"
 )
@@ -297,6 +312,142 @@ M2_MEMORY_SUBSTRATE_COMPONENT_IDS = (
 M2_MEMORY_SUBSTRATE_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M2_MEMORY_SUBSTRATE_EXCLUSION_DISPOSITIONS = frozenset(
     {"deferred-to-m3", "deferred-to-m8", "outside-m2"}
+)
+M2_X86_64_MEMORY_SUBSTRATE_COMPONENT_STATUSES = frozenset({"partial", "complete"})
+M2_X86_64_SOURCE_MAP_REQUIRED_STATUSES = frozenset({"implemented", "partial"})
+M2_X86_64_PAGE_MAP_CHECK_IDS = (
+    "successful-page-map-lifecycle",
+    "lazy-page-map-commit-failure",
+    "cold-page-map-initialization-failure",
+    "process-page-map-paired-initial-cleanup-owner",
+    "process-page-map-paired-trailing-submap-cleanup-owner",
+    "page-map-lazy-extension-commit-owner",
+    "page-map-lazy-submap-map-owner",
+    "page-map-destroy-lazy-submap-release-owner",
+    "page-map-destroy-top-release-owner",
+    "page-map-lazy-publication-private-lock",
+    "process-page-map-cold-terminal-owner",
+)
+M2_X86_64_SOURCE_MAP_REFERENCES: Mapping[str, tuple[dict[str, str], ...]] = {
+    "vm-primitives": (
+        {"unit_id": "os-allocation-policy", "required_status": "partial"},
+        {"unit_id": "linux-unix-primitives", "required_status": "partial"},
+        {"unit_id": "primitive-interface", "required_status": "partial"},
+    ),
+    "metadata": (
+        {"unit_id": "core-layouts-and-configuration", "required_status": "partial"},
+        {"unit_id": "atomic-operation-facade", "required_status": "partial"},
+    ),
+    "bitmaps": (
+        {"unit_id": "bitmap-algorithms", "required_status": "partial"},
+        {"unit_id": "bitmap-layout", "required_status": "partial"},
+        {"unit_id": "x86-64-width-and-bit-operations", "required_status": "implemented"},
+    ),
+    "page-map": (
+        {"unit_id": "page-map-lifecycle", "required_status": "partial"},
+        {"unit_id": "core-layouts-and-configuration", "required_status": "partial"},
+        {"unit_id": "atomic-operation-facade", "required_status": "partial"},
+        {"unit_id": "process-and-thread-initialization", "required_status": "partial"},
+        {"unit_id": "os-allocation-policy", "required_status": "partial"},
+    ),
+    "arenas": (
+        {"unit_id": "arena-lifecycle", "required_status": "partial"},
+        {"unit_id": "heap-lifecycle", "required_status": "partial"},
+    ),
+    "initialization": (
+        {"unit_id": "process-and-thread-initialization", "required_status": "partial"},
+        {"unit_id": "c-support-and-once", "required_status": "partial"},
+        {"unit_id": "tls-interface-and-thread-identity", "required_status": "partial"},
+    ),
+    "fault-injection": (
+        {"unit_id": "page-map-lifecycle", "required_status": "partial"},
+        {"unit_id": "os-allocation-policy", "required_status": "partial"},
+    ),
+    "allocator-recursion": (
+        {"unit_id": "process-and-thread-initialization", "required_status": "partial"},
+        {"unit_id": "thread-local-heap-lifecycle", "required_status": "partial"},
+    ),
+}
+M2_X86_64_PAGE_MAP_BOUNDED_SOURCE_DEFINITION_IDS = (
+    "page-map-geometry-and-safe-lookup",
+    "page-map-initialization-and-destruction",
+    "page-map-commit-and-lazy-publication",
+    "page-map-registration-and-rollback",
+)
+M2_X86_64_PAGE_MAP_FAILURE_MATRIX_IDS = (
+    "cold-initialization-and-terminal-poison",
+    "initial-and-trailing-commit-cleanup",
+    "lazy-commit-failure-before-publication",
+    "lazy-submap-allocation-and-private-publication",
+    "range-registration-rollback-and-unregister",
+)
+M2_X86_64_PAGE_MAP_CHECKS = (
+    {
+        "expected_passed_test_count": 1,
+        "id": "successful-page-map-lifecycle",
+        "kind": "c-rust-page-map-success-differential",
+        "target": "page_map::tests::emit_m2_page_map_init_c_rust_trace",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "lazy-page-map-commit-failure",
+        "kind": "c-rust-page-map-lazy-commit-failure-differential",
+        "target": "page_map::tests::emit_m2_page_map_lazy_commit_failure_c_rust_trace",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "cold-page-map-initialization-failure",
+        "kind": "c-rust-page-map-cold-init-differential",
+        "target": "process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "process-page-map-paired-initial-cleanup-owner",
+        "kind": "rust-unit",
+        "target": "process_page_map::tests::paired_initial_commit_and_cleanup_unmap_failure_retains_the_exact_mapping",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "process-page-map-paired-trailing-submap-cleanup-owner",
+        "kind": "rust-unit",
+        "target": "process_page_map::tests::paired_initial_trailing_submap_commit_and_cleanup_unmap_failure_retains_the_exact_mapping",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "page-map-lazy-extension-commit-owner",
+        "kind": "rust-unit",
+        "target": "page_map::tests::lazy_extension_commit_failure_preserves_the_top_level_mapping_for_retry",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "page-map-lazy-submap-map-owner",
+        "kind": "rust-unit",
+        "target": "page_map::tests::lazy_submap_mapping_failure_preserves_the_page_map_for_retry",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "page-map-destroy-lazy-submap-release-owner",
+        "kind": "rust-unit",
+        "target": "page_map::tests::destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "page-map-destroy-top-release-owner",
+        "kind": "rust-unit",
+        "target": "page_map::tests::destroy_top_mapping_release_failure_retains_the_exact_mapping_for_retry",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "page-map-lazy-publication-private-lock",
+        "kind": "rust-unit",
+        "target": "page_map::tests::concurrent_lazy_submap_publication_allocates_once_under_the_page_map_lock",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "process-page-map-cold-terminal-owner",
+        "kind": "rust-unit",
+        "target": "process_init::tests::rejected_page_map_after_heap_and_metadata_retains_ticket_zero_without_tls_publication",
+    },
 )
 # This direct C/Rust record covers only src/init.c's detached static-preimage
 # substep: the original MI_MEMID_STATIC image, its kind-only memid
@@ -8265,23 +8416,25 @@ def run_m2_binned_bitmap_bsr_inv_differential(
     }
 
 
-def run_m2_page_map_differential(
-    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
-) -> dict[str, Any]:
-    """Compare the selected source-private C PageMap lifecycle with Rust."""
+def _m2_page_map_rust_check(
+    *,
+    target: str,
+    timeout_seconds: int,
+    architecture: str,
+    test_program: Mapping[str, Any] | None,
+    check: Mapping[str, Any] | None,
+    evidence_name: str,
+) -> tuple[dict[str, Any], str]:
+    """Run one PageMap trace through its target's closed Rust witness path."""
 
-    require_native_aarch64()
-    compiler = require_tool("musl-gcc")
-    archive = fetch_archive(pin, offline)
-    with temporary_directory(prefix="crabc-mimalloc-m2-page-map-source-") as temporary:
-        source = safe_extract(archive, Path(temporary), pin["archive_root"])
-        c_oracle = build_m2_page_map_trace(
-            compiler,
-            source,
-            M2_PAGE_MAP_TRACE_ARTIFACT_ROOT,
-            CONFIGURATION_PROFILES["release"],
+    if test_program is not None:
+        if check is None or check.get("target") != target:
+            raise HarnessError("native x86 M2 PageMap differential lost its exact Rust witness")
+        return _x86_64_run_exact_program_check(
+            test_program, check, nocapture=True, gate_name="native x86 M2 PageMap"
         )
-
+    if architecture != "aarch64" or check is not None:
+        raise HarnessError("M2 PageMap differential requires its target Rust witness")
     command = [
         "cargo",
         "test",
@@ -8289,35 +8442,77 @@ def run_m2_page_map_differential(
         "crabc-mimalloc",
         "--locked",
         "--lib",
-        "page_map::tests::emit_m2_page_map_init_c_rust_trace",
+        target,
         "--",
         "--test-threads=1",
         "--nocapture",
     ]
     environment = os.environ.copy()
     environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
-    rust_result = command_record(
-        command,
-        cwd=ROOT,
-        env=environment,
-        timeout_seconds=timeout_seconds,
+    result = command_record(
+        command, cwd=ROOT, env=environment, timeout_seconds=timeout_seconds
     )
-    require_success(rust_result, "Rust M2 PageMap success trace")
-    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
+    require_success(result, evidence_name)
+    output = str(result["stdout"]) + "\n" + str(result["stderr"])
+    return {
+        "command": command,
+        "passed_test_count": parse_rust_test_count(output),
+        "target": target,
+    }, output
+
+
+def run_m2_page_map_differential(
+    pin: Mapping[str, str],
+    *,
+    offline: bool,
+    timeout_seconds: int,
+    architecture: str = "aarch64",
+    artifact_root: Path = M2_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+    test_program: Mapping[str, Any] | None = None,
+    check: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compare the selected source-private C PageMap lifecycle with Rust."""
+
+    require_native_architecture(architecture)
+    expected_max_vabits = 47 if architecture == "x86_64" else 48
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m2-page-map-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_m2_page_map_trace(
+            compiler,
+            source,
+            artifact_root,
+            CONFIGURATION_PROFILES["release"],
+            expected_max_vabits=expected_max_vabits,
+        )
+
+    rust, rust_output = _m2_page_map_rust_check(
+        target="page_map::tests::emit_m2_page_map_init_c_rust_trace",
+        timeout_seconds=timeout_seconds,
+        architecture=architecture,
+        test_program=test_program,
+        check=check,
+        evidence_name="Rust M2 PageMap success trace",
+    )
     rust_trace = parse_m2_page_map_trace(rust_output, source="Rust")
-    validate_m2_page_map_trace(rust_trace, source="Rust")
-    passed_test_count = parse_rust_test_count(rust_output)
+    validate_m2_page_map_trace(
+        rust_trace, source="Rust", expected_max_vabits=expected_max_vabits
+    )
+    passed_test_count = rust["passed_test_count"]
     if passed_test_count != 1:
         raise HarnessError(
             "Rust M2 PageMap success trace passed an unexpected test count: "
             f"{passed_test_count}"
         )
-    comparison = compare_m2_page_map_trace(c_oracle["record"], rust_trace)
+    comparison = compare_m2_page_map_trace(
+        c_oracle["record"], rust_trace, expected_max_vabits=expected_max_vabits
+    )
     return {
         "c_oracle": c_oracle,
         "comparison": comparison,
         "rust": {
-            "command": command,
+            "command": rust["command"],
             "passed_test_count": passed_test_count,
             "record": rust_trace,
         },
@@ -8334,11 +8529,19 @@ def run_m2_page_map_differential(
 
 
 def run_m2_page_map_lazy_commit_failure_differential(
-    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+    pin: Mapping[str, str],
+    *,
+    offline: bool,
+    timeout_seconds: int,
+    architecture: str = "aarch64",
+    artifact_root: Path = M2_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+    test_program: Mapping[str, Any] | None = None,
+    check: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compare the selected initialized PageMap commit failure with Rust."""
 
-    require_native_aarch64()
+    require_native_architecture(architecture)
+    expected_max_vabits = 47 if architecture == "x86_64" else 48
     compiler = require_tool("musl-gcc")
     archive = fetch_archive(pin, offline)
     with temporary_directory(prefix="crabc-mimalloc-m2-page-map-lazy-commit-failure-source-") as temporary:
@@ -8346,46 +8549,37 @@ def run_m2_page_map_lazy_commit_failure_differential(
         c_oracle = build_m2_page_map_lazy_commit_failure_trace(
             compiler,
             source,
-            M2_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+            artifact_root,
             CONFIGURATION_PROFILES["release"],
+            expected_max_vabits=expected_max_vabits,
         )
 
-    command = [
-        "cargo",
-        "test",
-        "-p",
-        "crabc-mimalloc",
-        "--locked",
-        "--lib",
-        "page_map::tests::emit_m2_page_map_lazy_commit_failure_c_rust_trace",
-        "--",
-        "--test-threads=1",
-        "--nocapture",
-    ]
-    environment = os.environ.copy()
-    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
-    rust_result = command_record(
-        command,
-        cwd=ROOT,
-        env=environment,
+    rust, rust_output = _m2_page_map_rust_check(
+        target="page_map::tests::emit_m2_page_map_lazy_commit_failure_c_rust_trace",
         timeout_seconds=timeout_seconds,
+        architecture=architecture,
+        test_program=test_program,
+        check=check,
+        evidence_name="Rust M2 PageMap lazy-commit failure trace",
     )
-    require_success(rust_result, "Rust M2 PageMap lazy-commit failure trace")
-    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
     rust_trace = parse_m2_page_map_lazy_commit_failure_trace(rust_output, source="Rust")
-    validate_m2_page_map_lazy_commit_failure_trace(rust_trace, source="Rust")
-    passed_test_count = parse_rust_test_count(rust_output)
+    validate_m2_page_map_lazy_commit_failure_trace(
+        rust_trace, source="Rust", expected_max_vabits=expected_max_vabits
+    )
+    passed_test_count = rust["passed_test_count"]
     if passed_test_count != 1:
         raise HarnessError(
             "Rust M2 PageMap lazy-commit failure trace passed an unexpected test count: "
             f"{passed_test_count}"
         )
-    comparison = compare_m2_page_map_lazy_commit_failure_trace(c_oracle["record"], rust_trace)
+    comparison = compare_m2_page_map_lazy_commit_failure_trace(
+        c_oracle["record"], rust_trace, expected_max_vabits=expected_max_vabits
+    )
     return {
         "c_oracle": c_oracle,
         "comparison": comparison,
         "rust": {
-            "command": command,
+            "command": rust["command"],
             "passed_test_count": passed_test_count,
             "record": rust_trace,
         },
@@ -8402,11 +8596,18 @@ def run_m2_page_map_lazy_commit_failure_differential(
 
 
 def run_m2_page_map_cold_init_differential(
-    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+    pin: Mapping[str, str],
+    *,
+    offline: bool,
+    timeout_seconds: int,
+    architecture: str = "aarch64",
+    artifact_root: Path = M2_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+    test_program: Mapping[str, Any] | None = None,
+    check: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Record the selected C/Rust failed-first PageMap initialization boundary."""
 
-    require_native_aarch64()
+    require_native_architecture(architecture)
     compiler = require_tool("musl-gcc")
     archive = fetch_archive(pin, offline)
     with temporary_directory(prefix="crabc-mimalloc-m2-page-map-cold-init-source-") as temporary:
@@ -8414,35 +8615,21 @@ def run_m2_page_map_cold_init_differential(
         c_oracle = build_m2_page_map_cold_init_trace(
             compiler,
             source,
-            M2_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+            artifact_root,
             CONFIGURATION_PROFILES["release"],
         )
 
-    command = [
-        "cargo",
-        "test",
-        "-p",
-        "crabc-mimalloc",
-        "--locked",
-        "--lib",
-        "process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace",
-        "--",
-        "--test-threads=1",
-        "--nocapture",
-    ]
-    environment = os.environ.copy()
-    environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
-    rust_result = command_record(
-        command,
-        cwd=ROOT,
-        env=environment,
+    rust, rust_output = _m2_page_map_rust_check(
+        target="process_page_map::tests::emit_m2_page_map_cold_init_failure_rust_trace",
         timeout_seconds=timeout_seconds,
+        architecture=architecture,
+        test_program=test_program,
+        check=check,
+        evidence_name="Rust M2 PageMap cold-init trace",
     )
-    require_success(rust_result, "Rust M2 PageMap cold-init trace")
-    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
     rust_trace = parse_m2_page_map_cold_init_trace(rust_output, source="Rust")
     validate_m2_page_map_cold_init_trace(rust_trace, source="Rust")
-    passed_test_count = parse_rust_test_count(rust_output)
+    passed_test_count = rust["passed_test_count"]
     if passed_test_count != 1:
         raise HarnessError(
             "Rust M2 PageMap cold-init trace passed an unexpected test count: "
@@ -8453,7 +8640,7 @@ def run_m2_page_map_cold_init_differential(
         "c_oracle": c_oracle,
         "comparison": comparison,
         "rust": {
-            "command": command,
+            "command": rust["command"],
             "passed_test_count": passed_test_count,
             "record": rust_trace,
         },
@@ -9581,17 +9768,17 @@ def _m1_x86_64_exclusions() -> list[dict[str, Any]]:
     return exclusions
 
 
-def _m1_x86_64_source_map_unit_statuses() -> dict[str, str]:
-    """Read the target-local source predicates used by the native M1 record."""
+def _x86_64_source_map_unit_statuses(*, gate_name: str) -> dict[str, str]:
+    """Read target-local source predicates for one native evidence gate."""
 
     contract = read_json(X86_64_SOURCE_MAP_CONTRACT)
     raw_units = contract.get("units")
     if not isinstance(raw_units, list) or not raw_units:
-        raise HarnessError("native x86 M1 source map has no units")
+        raise HarnessError(f"{gate_name} source map has no units")
     statuses: dict[str, str] = {}
     for raw_unit in raw_units:
         if not isinstance(raw_unit, Mapping):
-            raise HarnessError("native x86 M1 source map unit is invalid")
+            raise HarnessError(f"{gate_name} source map unit is invalid")
         unit_id = raw_unit.get("id")
         status = raw_unit.get("status")
         if (
@@ -9600,9 +9787,15 @@ def _m1_x86_64_source_map_unit_statuses() -> dict[str, str]:
             or unit_id in statuses
             or not isinstance(status, str)
         ):
-            raise HarnessError("native x86 M1 source map unit is invalid")
+            raise HarnessError(f"{gate_name} source map unit is invalid")
         statuses[unit_id] = status
     return statuses
+
+
+def _m1_x86_64_source_map_unit_statuses() -> dict[str, str]:
+    """Preserve M1's source-map predicate helper."""
+
+    return _x86_64_source_map_unit_statuses(gate_name="native x86 M1")
 
 
 def _m1_x86_64_bounded_source_definitions(
@@ -10185,10 +10378,10 @@ def m1_foundations_check_command(
     return command
 
 
-def _m1_foundations_test_program(
-    execution: Mapping[str, Any], cargo_target: Path
+def _x86_64_unit_test_program(
+    execution: Mapping[str, Any], cargo_target: Path, *, gate_name: str
 ) -> dict[str, Any]:
-    """Build the M1 unit binary once in a target-private Cargo directory.
+    """Build one native gate's unit binary once in its private Cargo directory.
 
     M1 names many small source-shaped assertions. Building Cargo separately
     for each would turn test accounting into a cache-timing accident.  The
@@ -10212,7 +10405,7 @@ def _m1_foundations_test_program(
         env=environment,
         timeout_seconds=execution["timeout_seconds"],
     )
-    require_success(result, "M1 foundations unit-binary build")
+    require_success(result, f"{gate_name} unit-binary build")
     candidates: list[Path] = []
     for line in (str(result["stdout"]) + "\n" + str(result["stderr"])).splitlines():
         try:
@@ -10234,7 +10427,7 @@ def _m1_foundations_test_program(
         ):
             candidates.append(Path(executable))
     if len(candidates) != 1 or not candidates[0].is_file():
-        raise HarnessError("M1 foundations build did not produce exactly one library test binary")
+        raise HarnessError(f"{gate_name} build did not produce exactly one library test binary")
     return {
         "build_command": command,
         "cargo_target": str(cargo_target),
@@ -10243,38 +10436,58 @@ def _m1_foundations_test_program(
     }
 
 
-def _m1_foundations_test_names(
-    test_program: Mapping[str, Any], *, timeout_seconds: int
+def _m1_foundations_test_program(
+    execution: Mapping[str, Any], cargo_target: Path
+) -> dict[str, Any]:
+    """Preserve the M1-facing wrapper for its native test binary builder."""
+
+    return _x86_64_unit_test_program(
+        execution, cargo_target, gate_name="M1 foundations"
+    )
+
+
+def _x86_64_unit_test_names(
+    test_program: Mapping[str, Any], *, timeout_seconds: int, gate_name: str
 ) -> set[str]:
-    """List all test names in the one already-built M1 unit binary."""
+    """List every test in one already-built native gate binary."""
 
     path = test_program.get("path")
     if not isinstance(path, Path) or not path.is_file():
-        raise HarnessError("M1 foundations test program is unavailable")
+        raise HarnessError(f"{gate_name} test program is unavailable")
     command = [str(path), "--list"]
     result = command_record(command, cwd=ROOT, timeout_seconds=timeout_seconds)
-    require_success(result, "M1 foundations unit-binary test inventory")
+    require_success(result, f"{gate_name} unit-binary test inventory")
     names = {
         line.removesuffix(": test")
         for line in str(result["stdout"]).splitlines()
         if line.endswith(": test")
     }
     if not names:
-        raise HarnessError("M1 foundations unit-binary test inventory is empty")
+        raise HarnessError(f"{gate_name} unit-binary test inventory is empty")
     return names
 
 
-def _m1_foundations_program_check_command(
-    test_program: Mapping[str, Any], target: str, *, nocapture: bool
+def _m1_foundations_test_names(
+    test_program: Mapping[str, Any], *, timeout_seconds: int
+) -> set[str]:
+    """Preserve M1's named unit-binary test inventory helper."""
+
+    return _x86_64_unit_test_names(
+        test_program, timeout_seconds=timeout_seconds, gate_name="M1 foundations"
+    )
+
+
+def _x86_64_program_check_command(
+    test_program: Mapping[str, Any], target: str, *, nocapture: bool, gate_name: str
 ) -> list[str]:
-    """Run one exact named source witness from the prepared M1 binary."""
+    """Build one exact named source witness invocation from a prepared binary."""
 
     path = test_program.get("path")
     if not isinstance(path, Path) or not path.is_file():
-        raise HarnessError("M1 foundations test program is unavailable")
+        raise HarnessError(f"{gate_name} test program is unavailable")
     execution = test_program.get("execution")
     if not isinstance(execution, Mapping):
-        raise HarnessError("M1 foundations test program lacks its execution contract")
+        raise HarnessError(f"{gate_name} test program lacks its execution contract")
     command = [
         str(path),
         target,
@@ -10286,27 +10499,41 @@ def _m1_foundations_program_check_command(
     return command
 
 
-def _m1_foundations_run_exact_program_check(
-    test_program: Mapping[str, Any], check: Mapping[str, Any], *, nocapture: bool
+def _m1_foundations_program_check_command(
+    test_program: Mapping[str, Any], target: str, *, nocapture: bool
+) -> list[str]:
+    """Preserve M1's named exact-test command helper."""
+
+    return _x86_64_program_check_command(
+        test_program, target, nocapture=nocapture, gate_name="M1 foundations"
+    )
+
+
+def _x86_64_run_exact_program_check(
+    test_program: Mapping[str, Any],
+    check: Mapping[str, Any],
+    *,
+    nocapture: bool,
+    gate_name: str,
 ) -> tuple[dict[str, Any], str]:
-    """Execute and account for one existing M1 test binary filter."""
+    """Execute and account for one exact native gate test-binary filter."""
 
     execution = test_program["execution"]
     assert isinstance(execution, Mapping)
-    command = _m1_foundations_program_check_command(
-        test_program, str(check["target"]), nocapture=nocapture
+    command = _x86_64_program_check_command(
+        test_program, str(check["target"]), nocapture=nocapture, gate_name=gate_name
     )
     result = command_record(
         command,
         cwd=ROOT,
         timeout_seconds=int(execution["timeout_seconds"]),
     )
-    require_success(result, f"M1 foundations check {check['id']}")
+    require_success(result, f"{gate_name} check {check['id']}")
     output = str(result["stdout"]) + "\n" + str(result["stderr"])
     passed_test_count = parse_rust_test_count(output)
     if passed_test_count != check["expected_passed_test_count"]:
         raise HarnessError(
-            f"M1 foundations check {check['id']} passed {passed_test_count} tests; "
+            f"{gate_name} check {check['id']} passed {passed_test_count} tests; "
             f"expected {check['expected_passed_test_count']}"
         )
     return {
@@ -10316,13 +10543,24 @@ def _m1_foundations_run_exact_program_check(
     }, output
 
 
-def run_x86_64_m1_foundations_checks(
+def _m1_foundations_run_exact_program_check(
+    test_program: Mapping[str, Any], check: Mapping[str, Any], *, nocapture: bool
+) -> tuple[dict[str, Any], str]:
+    """Preserve M1's named exact-test execution helper."""
+
+    return _x86_64_run_exact_program_check(
+        test_program, check, nocapture=nocapture, gate_name="M1 foundations"
+    )
+
+
+def _run_x86_64_focused_source_checks(
     summary: Mapping[str, Any],
     test_program: Mapping[str, Any],
     *,
     already_executed_check_ids: frozenset[str] = frozenset(),
+    gate_name: str,
 ) -> list[dict[str, Any]]:
-    """Run all remaining native x86 M1 checks in one closed unit-binary batch."""
+    """Run all remaining native checks in one closed unit-binary batch."""
 
     execution = summary["execution"]
     assert isinstance(execution, Mapping)
@@ -10333,11 +10571,11 @@ def run_x86_64_m1_foundations_checks(
     ]
     all_check_ids = [str(check["id"]) for _, check in all_checks]
     if len(set(all_check_ids)) != len(all_check_ids):
-        raise HarnessError("M1 foundations has duplicate focused check identities")
+        raise HarnessError(f"{gate_name} has duplicate focused check identities")
     unknown_preexecuted = sorted(set(already_executed_check_ids) - set(all_check_ids))
     if unknown_preexecuted:
         raise HarnessError(
-            "M1 foundations batch received unknown pre-executed checks: "
+            f"{gate_name} batch received unknown pre-executed checks: "
             + ", ".join(unknown_preexecuted)
         )
     selected = [
@@ -10348,14 +10586,16 @@ def run_x86_64_m1_foundations_checks(
     if not selected:
         return []
 
-    test_names = _m1_foundations_test_names(
-        test_program, timeout_seconds=int(execution["timeout_seconds"])
+    test_names = _x86_64_unit_test_names(
+        test_program,
+        timeout_seconds=int(execution["timeout_seconds"]),
+        gate_name=gate_name,
     )
     selected_targets = {str(check["target"]) for _, check in selected}
     missing = sorted(selected_targets - test_names)
     if missing:
         raise HarnessError(
-            "M1 foundations unit binary lacks selected source tests: " + ", ".join(missing)
+            f"{gate_name} unit binary lacks selected source tests: " + ", ".join(missing)
         )
     command = [
         str(test_program["path"]),
@@ -10367,13 +10607,13 @@ def run_x86_64_m1_foundations_checks(
         cwd=ROOT,
         timeout_seconds=int(execution["timeout_seconds"]),
     )
-    require_success(result, "M1 foundations focused source-test batch")
+    require_success(result, f"{gate_name} focused source-test batch")
     output = str(result["stdout"]) + "\n" + str(result["stderr"])
     expected_count = sum(int(check["expected_passed_test_count"]) for _, check in selected)
     passed_test_count = parse_rust_test_count(output)
     if passed_test_count != expected_count:
         raise HarnessError(
-            f"M1 foundations focused batch passed {passed_test_count} tests; expected {expected_count}"
+            f"{gate_name} focused batch passed {passed_test_count} tests; expected {expected_count}"
         )
     passed_targets = set(
         re.findall(r"(?m)^test ([^\s]+) \.\.\. ok$", output)
@@ -10381,7 +10621,7 @@ def run_x86_64_m1_foundations_checks(
     absent_targets = sorted(selected_targets - passed_targets)
     if absent_targets:
         raise HarnessError(
-            "M1 foundations focused batch did not pass every selected source test: "
+            f"{gate_name} focused batch did not pass every selected source test: "
             + ", ".join(absent_targets)
         )
     return [
@@ -10395,6 +10635,22 @@ def run_x86_64_m1_foundations_checks(
         }
         for component_id, check in selected
     ]
+
+
+def run_x86_64_m1_foundations_checks(
+    summary: Mapping[str, Any],
+    test_program: Mapping[str, Any],
+    *,
+    already_executed_check_ids: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Run all remaining native x86 M1 checks in one closed unit-binary batch."""
+
+    return _run_x86_64_focused_source_checks(
+        summary,
+        test_program,
+        already_executed_check_ids=already_executed_check_ids,
+        gate_name="M1 foundations",
+    )
 
 
 def run_m1_foundations_checks(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -11121,8 +11377,10 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
     return report
 
 
-def _m1_x86_64_source_contract_evidence(shared_oracle: Mapping[str, Any]) -> dict[str, Any]:
-    """Bind M1 to the target-local source inventories checked by the x86 oracle."""
+def _x86_64_source_contract_evidence(
+    shared_oracle: Mapping[str, Any], *, gate_name: str
+) -> dict[str, Any]:
+    """Bind a native gate to the target-local checked source inventories."""
 
     api_inventory = shared_oracle.get("x86_64_source_api_inventory")
     api_coverage = shared_oracle.get("x86_64_api_coverage")
@@ -11135,12 +11393,12 @@ def _m1_x86_64_source_contract_evidence(shared_oracle: Mapping[str, Any]) -> dic
         or not isinstance(source_map, Mapping)
         or source_map.get("status") != "passed"
     ):
-        raise HarnessError("native x86 M1 source-contract inventories did not pass")
+        raise HarnessError(f"{gate_name} source-contract inventories did not pass")
     # The target-wide maps intentionally remain incomplete. Their successful
     # validation proves exact source accounting, not M1 closure; the finite
     # M1 source tests and native C/Rust records above carry that behavior proof.
     if api_coverage.get("overall_status") != "incomplete" or source_map.get("overall_status") != "incomplete":
-        raise HarnessError("native x86 M1 source-contract inventory scope changed")
+        raise HarnessError(f"{gate_name} source-contract inventory scope changed")
     return {
         "api_coverage": {
             "contract": artifact_record(X86_64_API_COVERAGE_CONTRACT),
@@ -11154,7 +11412,7 @@ def _m1_x86_64_source_contract_evidence(shared_oracle: Mapping[str, Any]) -> dic
         },
         "scope": (
             "target-local checked source inventories; their incomplete whole-engine "
-            "status is explicit and does not reduce the finite M1 native evidence gate"
+            "status is explicit and does not reduce this finite native evidence gate"
         ),
         "source_map": {
             "contract": artifact_record(X86_64_SOURCE_MAP_CONTRACT),
@@ -11163,6 +11421,14 @@ def _m1_x86_64_source_contract_evidence(shared_oracle: Mapping[str, Any]) -> dic
         },
         "status": "passed",
     }
+
+
+def _m1_x86_64_source_contract_evidence(shared_oracle: Mapping[str, Any]) -> dict[str, Any]:
+    """Preserve M1's named source-contract evidence helper."""
+
+    return _x86_64_source_contract_evidence(
+        shared_oracle, gate_name="native x86 M1"
+    )
 
 
 def _m1_x86_64_static_image_baseline(
@@ -11318,6 +11584,762 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
     report["source_contracts"] = source_contract_evidence
     write_json(M1_X86_64_FOUNDATIONS_REPORT, report)
     return report
+
+
+def _m2_x86_64_bounded_source_definitions(
+    raw_definitions: object, checks: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Validate PageMap's narrow pinned-C definitions without whole-unit claims."""
+
+    if not isinstance(raw_definitions, list) or not raw_definitions:
+        raise HarnessError("native x86 M2 PageMap lacks bounded source definitions")
+    check_ids = {str(check["id"]) for check in checks}
+    definitions: list[dict[str, Any]] = []
+    for raw_definition in raw_definitions:
+        if not isinstance(raw_definition, Mapping) or set(raw_definition) != {
+            "evidence_check_ids",
+            "id",
+            "required_definitions",
+            "source_anchor",
+        }:
+            raise HarnessError("native x86 M2 PageMap bounded source definition changed")
+        definition_id = raw_definition.get("id")
+        required_definitions = raw_definition.get("required_definitions")
+        evidence_check_ids = raw_definition.get("evidence_check_ids")
+        anchor = raw_definition.get("source_anchor")
+        if (
+            not isinstance(definition_id, str)
+            or not definition_id
+            or not isinstance(required_definitions, list)
+            or not required_definitions
+            or not all(isinstance(definition, str) and definition for definition in required_definitions)
+            or len(set(required_definitions)) != len(required_definitions)
+            or not isinstance(evidence_check_ids, list)
+            or not evidence_check_ids
+            or not all(isinstance(check_id, str) and check_id in check_ids for check_id in evidence_check_ids)
+            or len(set(evidence_check_ids)) != len(evidence_check_ids)
+            or not isinstance(anchor, Mapping)
+            or set(anchor) != {"end_line", "member", "sha256", "start_line"}
+        ):
+            raise HarnessError("native x86 M2 PageMap bounded source definition is invalid")
+        member = anchor.get("member")
+        start_line = anchor.get("start_line")
+        end_line = anchor.get("end_line")
+        digest = anchor.get("sha256")
+        if (
+            not isinstance(member, str)
+            or not member
+            or Path(member).is_absolute()
+            or ".." in Path(member).parts
+            or not isinstance(start_line, int)
+            or isinstance(start_line, bool)
+            or not isinstance(end_line, int)
+            or isinstance(end_line, bool)
+            or start_line < 1
+            or end_line < start_line
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise HarnessError("native x86 M2 PageMap bounded source anchor is invalid")
+        definitions.append(
+            {
+                "evidence_check_ids": list(evidence_check_ids),
+                "id": definition_id,
+                "required_definitions": list(required_definitions),
+                "source_anchor": dict(anchor),
+            }
+        )
+    if [definition["id"] for definition in definitions] != list(
+        M2_X86_64_PAGE_MAP_BOUNDED_SOURCE_DEFINITION_IDS
+    ):
+        raise HarnessError("native x86 M2 PageMap bounded source inventory changed")
+    return definitions
+
+
+def _m2_x86_64_page_map_failure_matrix(
+    raw_matrix: object, checks: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Require every native PageMap test to close one named failure boundary."""
+
+    if not isinstance(raw_matrix, list) or not raw_matrix:
+        raise HarnessError("native x86 M2 PageMap lacks its failure matrix")
+    check_ids = {str(check["id"]) for check in checks}
+    matrix: list[dict[str, Any]] = []
+    covered_check_ids: set[str] = set()
+    for raw_row in raw_matrix:
+        if not isinstance(raw_row, Mapping) or set(raw_row) != {
+            "evidence_check_ids",
+            "id",
+            "source_scope",
+        }:
+            raise HarnessError("native x86 M2 PageMap failure-matrix row changed")
+        row_id = raw_row.get("id")
+        source_scope = raw_row.get("source_scope")
+        evidence_check_ids = raw_row.get("evidence_check_ids")
+        if (
+            not isinstance(row_id, str)
+            or not row_id
+            or not isinstance(source_scope, str)
+            or not source_scope
+            or not isinstance(evidence_check_ids, list)
+            or not evidence_check_ids
+            or not all(isinstance(check_id, str) and check_id in check_ids for check_id in evidence_check_ids)
+            or len(set(evidence_check_ids)) != len(evidence_check_ids)
+        ):
+            raise HarnessError("native x86 M2 PageMap failure-matrix row is invalid")
+        covered_check_ids.update(evidence_check_ids)
+        matrix.append(
+            {
+                "evidence_check_ids": list(evidence_check_ids),
+                "id": row_id,
+                "source_scope": source_scope,
+            }
+        )
+    if [row["id"] for row in matrix] != list(M2_X86_64_PAGE_MAP_FAILURE_MATRIX_IDS):
+        raise HarnessError("native x86 M2 PageMap failure-matrix inventory changed")
+    if covered_check_ids != check_ids:
+        raise HarnessError("native x86 M2 PageMap failure matrix does not cover every check")
+    return matrix
+
+
+def _m2_x86_64_partial_failure_matrix(raw_matrix: object, component_id: str) -> list[dict[str, Any]]:
+    """Reject an empty or vague placeholder for an intentionally incomplete component."""
+
+    if not isinstance(raw_matrix, list) or not raw_matrix:
+        raise HarnessError(
+            f"native x86 M2 partial component {component_id} lacks an unqualified failure matrix"
+        )
+    rows: list[dict[str, Any]] = []
+    ids: set[str] = set()
+    for raw_row in raw_matrix:
+        if not isinstance(raw_row, Mapping) or set(raw_row) != {
+            "id",
+            "required_evidence",
+            "source_scope",
+        }:
+            raise HarnessError(
+                f"native x86 M2 partial component {component_id} failure-matrix row changed"
+            )
+        row_id = raw_row.get("id")
+        source_scope = raw_row.get("source_scope")
+        required_evidence = raw_row.get("required_evidence")
+        if (
+            not isinstance(row_id, str)
+            or not re.fullmatch(r"[a-z][a-z0-9-]*", row_id)
+            or row_id in ids
+            or not isinstance(source_scope, str)
+            or not source_scope
+            or not isinstance(required_evidence, list)
+            or not required_evidence
+            or not all(isinstance(item, str) and item for item in required_evidence)
+            or len(set(required_evidence)) != len(required_evidence)
+        ):
+            raise HarnessError(
+                f"native x86 M2 partial component {component_id} failure-matrix row is invalid"
+            )
+        ids.add(row_id)
+        rows.append(
+            {
+                "id": row_id,
+                "required_evidence": list(required_evidence),
+                "source_scope": source_scope,
+            }
+        )
+    return rows
+
+
+def validate_x86_64_m2_memory_substrate_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Validate the eight-component native M2 boundary without AArch64 status reuse."""
+
+    expected_keys = {
+        "components",
+        "exclusions",
+        "execution",
+        "format",
+        "global_evidence",
+        "milestone",
+        "schema",
+        "source_contracts",
+        "target",
+        "upstream",
+    }
+    if (
+        set(contract) != expected_keys
+        or contract.get("format") != 1
+        or contract.get("schema") != "crabc-mimalloc-x86_64-m2-memory-substrate"
+    ):
+        raise HarnessError("unsupported native x86 M2 memory-substrate contract")
+    expected_upstream = {
+        "archive_sha256": pin["sha256"],
+        "revision": pin["revision"],
+        "version": pin["version"],
+    }
+    if contract.get("upstream") != expected_upstream:
+        raise HarnessError("native x86 M2 memory-substrate upstream identity mismatch")
+    expected_target = {
+        "architecture": "x86_64",
+        "endianness": "little",
+        "kernel_baseline": "5.10",
+        "os": "linux",
+        "rust_target": X86_64_RUST_TARGET,
+    }
+    expected_execution = {
+        "features": [],
+        "no_default_features": True,
+        "package": "crabc-mimalloc",
+        "rust_target": X86_64_RUST_TARGET,
+        "test_threads": 1,
+        "timeout_seconds": 300,
+    }
+    if contract.get("target") != expected_target:
+        raise HarnessError("native x86 M2 memory-substrate target changed")
+    if contract.get("execution") != expected_execution:
+        raise HarnessError("native x86 M2 memory-substrate execution contract changed")
+    if contract.get("global_evidence") != [
+        "x86-64-source-contract-inventories",
+        "x86-64-bounded-page-map-source-definitions",
+        "x86-64-page-map-c-rust-differentials",
+        "x86-64-page-map-focused-source-test-batch",
+    ]:
+        raise HarnessError("native x86 M2 global evidence inventory changed")
+    expected_source_contracts = [
+        relative(X86_64_API_CONTRACT),
+        relative(X86_64_API_COVERAGE_CONTRACT),
+        relative(X86_64_SOURCE_MAP_CONTRACT),
+    ]
+    if contract.get("source_contracts") != expected_source_contracts:
+        raise HarnessError("native x86 M2 source-contract inventory changed")
+    for source_contract in (
+        X86_64_API_CONTRACT,
+        X86_64_API_COVERAGE_CONTRACT,
+        X86_64_SOURCE_MAP_CONTRACT,
+    ):
+        if not source_contract.is_file():
+            raise HarnessError(f"native x86 M2 source contract is absent: {source_contract}")
+
+    milestone = contract.get("milestone")
+    if not isinstance(milestone, Mapping) or set(milestone) != {
+        "completion_rule",
+        "id",
+        "nonclaims",
+        "status",
+    }:
+        raise HarnessError("native x86 M2 lacks a milestone record")
+    if (
+        milestone.get("id") != "m2"
+        or milestone.get("status") not in M2_X86_64_MEMORY_SUBSTRATE_COMPONENT_STATUSES
+        or not isinstance(milestone.get("completion_rule"), str)
+        or not milestone["completion_rule"]
+    ):
+        raise HarnessError("native x86 M2 milestone identity or state changed")
+    nonclaims = milestone.get("nonclaims")
+    if (
+        not isinstance(nonclaims, list)
+        or len(nonclaims) != 4
+        or not all(isinstance(nonclaim, str) and nonclaim for nonclaim in nonclaims)
+        or len(set(nonclaims)) != len(nonclaims)
+    ):
+        raise HarnessError("native x86 M2 nonclaim inventory changed")
+
+    raw_components = contract.get("components")
+    if not isinstance(raw_components, list) or len(raw_components) != len(
+        M2_MEMORY_SUBSTRATE_COMPONENT_IDS
+    ):
+        raise HarnessError("native x86 M2 component inventory changed")
+    source_map_statuses = _x86_64_source_map_unit_statuses(gate_name="native x86 M2")
+    components: list[dict[str, Any]] = []
+    for index, raw_component in enumerate(raw_components):
+        if not isinstance(raw_component, Mapping):
+            raise HarnessError(f"native x86 M2 component {index} is invalid")
+        component_id = raw_component.get("id")
+        if component_id != M2_MEMORY_SUBSTRATE_COMPONENT_IDS[index]:
+            raise HarnessError("native x86 M2 component order or identity changed")
+        complete = component_id == "page-map"
+        expected_component_keys = {
+            "checks",
+            "id",
+            "native_status",
+            "remaining_conditions",
+            "source_map_records",
+            "source_units",
+        }
+        if complete:
+            expected_component_keys.update({"bounded_source_definitions", "failure_matrix"})
+        else:
+            expected_component_keys.add("unqualified_failure_matrix")
+        if set(raw_component) != expected_component_keys:
+            raise HarnessError(f"native x86 M2 component {component_id} has unexpected fields")
+        status = raw_component.get("native_status")
+        if status not in M2_X86_64_MEMORY_SUBSTRATE_COMPONENT_STATUSES or (
+            status == "complete"
+        ) != complete:
+            raise HarnessError(f"native x86 M2 component {component_id} has an invalid native state")
+        remaining = raw_component.get("remaining_conditions")
+        if (
+            not isinstance(remaining, list)
+            or not all(isinstance(condition, str) and condition for condition in remaining)
+            or len(set(remaining)) != len(remaining)
+            or (complete and remaining)
+            or (not complete and not remaining)
+        ):
+            raise HarnessError(f"native x86 M2 component {component_id} has invalid remaining conditions")
+        source_units = raw_component.get("source_units")
+        if (
+            not isinstance(source_units, list)
+            or not source_units
+            or not all(isinstance(unit, str) and unit for unit in source_units)
+            or len(set(source_units)) != len(source_units)
+        ):
+            raise HarnessError(f"native x86 M2 component {component_id} has invalid source units")
+        expected_source_map_records = list(M2_X86_64_SOURCE_MAP_REFERENCES[component_id])
+        if raw_component.get("source_map_records") != expected_source_map_records:
+            raise HarnessError(
+                f"native x86 M2 component {component_id} source-map record inventory changed"
+            )
+        for record in expected_source_map_records:
+            required_status = record["required_status"]
+            if required_status not in M2_X86_64_SOURCE_MAP_REQUIRED_STATUSES:
+                raise HarnessError("native x86 M2 has an invalid source-map status predicate")
+            if source_map_statuses.get(record["unit_id"]) != required_status:
+                raise HarnessError(
+                    f"native x86 M2 component {component_id} source-map predicate is not current"
+                )
+        raw_checks = raw_component.get("checks")
+        if not isinstance(raw_checks, list):
+            raise HarnessError(f"native x86 M2 component {component_id} has invalid checks")
+        if complete:
+            if raw_checks != list(M2_X86_64_PAGE_MAP_CHECKS):
+                raise HarnessError("native x86 M2 PageMap check inventory changed")
+        elif raw_checks:
+            raise HarnessError(
+                f"native x86 M2 incomplete component {component_id} cannot record unqualified checks"
+            )
+        checks: list[dict[str, Any]] = []
+        for raw_check in raw_checks:
+            if not isinstance(raw_check, Mapping) or set(raw_check) != {
+                "expected_passed_test_count",
+                "id",
+                "kind",
+                "target",
+            }:
+                raise HarnessError(f"native x86 M2 component {component_id} has an invalid check")
+            if (
+                not isinstance(raw_check.get("id"), str)
+                or raw_check.get("kind")
+                not in {
+                    "rust-unit",
+                    "c-rust-page-map-success-differential",
+                    "c-rust-page-map-lazy-commit-failure-differential",
+                    "c-rust-page-map-cold-init-differential",
+                }
+                or not isinstance(raw_check.get("target"), str)
+                or raw_check.get("expected_passed_test_count") != 1
+            ):
+                raise HarnessError(f"native x86 M2 component {component_id} has an invalid check")
+            _m2_memory_substrate_source_test_exists(
+                str(raw_check["target"]), str(raw_check["id"])
+            )
+            checks.append(dict(raw_check))
+        component: dict[str, Any] = {
+            "checks": checks,
+            "id": component_id,
+            "native_status": status,
+            "remaining_conditions": list(remaining),
+            "source_map_records": [dict(record) for record in expected_source_map_records],
+            "source_units": list(source_units),
+        }
+        if complete:
+            component["bounded_source_definitions"] = _m2_x86_64_bounded_source_definitions(
+                raw_component.get("bounded_source_definitions"), checks
+            )
+            component["failure_matrix"] = _m2_x86_64_page_map_failure_matrix(
+                raw_component.get("failure_matrix"), checks
+            )
+        else:
+            component["unqualified_failure_matrix"] = _m2_x86_64_partial_failure_matrix(
+                raw_component.get("unqualified_failure_matrix"), component_id
+            )
+        components.append(component)
+    if [check["id"] for check in components[3]["checks"]] != list(M2_X86_64_PAGE_MAP_CHECK_IDS):
+        raise HarnessError("native x86 M2 PageMap check identity inventory changed")
+    if (milestone["status"] == "complete") != all(
+        component["native_status"] == "complete" and not component["remaining_conditions"]
+        for component in components
+    ):
+        raise HarnessError("native x86 M2 milestone status must match component completion states")
+
+    raw_exclusions = contract.get("exclusions")
+    if not isinstance(raw_exclusions, list) or len(raw_exclusions) != 1:
+        raise HarnessError("native x86 M2 exclusion inventory changed")
+    exclusions: list[dict[str, Any]] = []
+    exclusion_ids: set[str] = set()
+    for raw_exclusion in raw_exclusions:
+        if not isinstance(raw_exclusion, Mapping) or set(raw_exclusion) != {
+            "disposition",
+            "id",
+            "reason",
+            "source_units",
+        }:
+            raise HarnessError("native x86 M2 exclusion changed")
+        exclusion_id = raw_exclusion.get("id")
+        disposition = raw_exclusion.get("disposition")
+        reason = raw_exclusion.get("reason")
+        source_units = raw_exclusion.get("source_units")
+        if (
+            not isinstance(exclusion_id, str)
+            or not re.fullmatch(r"[a-z][a-z0-9-]*", exclusion_id)
+            or exclusion_id in exclusion_ids
+            or disposition != "deferred-to-m3"
+            or not isinstance(reason, str)
+            or not reason
+            or not isinstance(source_units, list)
+            or not source_units
+            or not all(isinstance(unit, str) and unit for unit in source_units)
+        ):
+            raise HarnessError("native x86 M2 exclusion is invalid")
+        exclusion_ids.add(exclusion_id)
+        exclusions.append(dict(raw_exclusion))
+    if exclusion_ids != {"allocation-policy-and-full-path-routing"}:
+        raise HarnessError("native x86 M2 exclusion identities changed")
+    return {
+        "components": components,
+        "execution": expected_execution,
+        "exclusions": exclusions,
+        "global_evidence": list(contract["global_evidence"]),
+        "milestone": {
+            "completion_rule": milestone["completion_rule"],
+            "id": "m2",
+            "nonclaims": list(nonclaims),
+            "status": milestone["status"],
+        },
+        "source_contracts": expected_source_contracts,
+        "target": expected_target,
+    }
+
+
+def _m2_x86_64_bounded_source_evidence(
+    summary: Mapping[str, Any], pin: Mapping[str, str], *, offline: bool
+) -> dict[str, Any]:
+    """Re-read every x86 PageMap source anchor from the verified pinned archive."""
+
+    page_map = next(
+        component for component in summary["components"] if component["id"] == "page-map"
+    )
+    archive = fetch_archive(pin, offline)
+    records: list[dict[str, Any]] = []
+    try:
+        with tarfile.open(archive, mode="r:gz") as stream:
+            for definition in page_map["bounded_source_definitions"]:
+                anchor = definition["source_anchor"]
+                member_name = f"{pin['archive_root']}/{anchor['member']}"
+                member = next(
+                    (candidate for candidate in stream.getmembers() if candidate.name == member_name),
+                    None,
+                )
+                if member is None or not member.isfile():
+                    raise HarnessError(
+                        "native x86 M2 PageMap bounded source anchor is absent: " + anchor["member"]
+                    )
+                extracted = stream.extractfile(member)
+                if extracted is None:
+                    raise HarnessError(
+                        "native x86 M2 cannot read bounded source anchor: " + anchor["member"]
+                    )
+                with extracted:
+                    lines = extracted.read().splitlines(keepends=True)
+                start = anchor["start_line"]
+                end = anchor["end_line"]
+                if end > len(lines):
+                    raise HarnessError("native x86 M2 PageMap bounded source anchor exceeds member")
+                payload = b"".join(lines[start - 1 : end])
+                digest = hashlib.sha256(payload).hexdigest()
+                if digest != anchor["sha256"]:
+                    raise HarnessError(
+                        "native x86 M2 PageMap bounded source anchor digest changed: "
+                        + definition["id"]
+                    )
+                missing = [
+                    item
+                    for item in definition["required_definitions"]
+                    if item.encode("utf-8") not in payload
+                ]
+                if missing:
+                    raise HarnessError(
+                        "native x86 M2 PageMap bounded source anchor lacks definitions for "
+                        + definition["id"]
+                        + ": "
+                        + ", ".join(missing)
+                    )
+                records.append(
+                    {
+                        "evidence_check_ids": list(definition["evidence_check_ids"]),
+                        "id": definition["id"],
+                        "source_anchor": {
+                            "bytes": len(payload),
+                            "end_line": end,
+                            "member": anchor["member"],
+                            "sha256": digest,
+                            "start_line": start,
+                        },
+                    }
+                )
+    except (OSError, tarfile.TarError) as error:
+        raise HarnessError("native x86 M2 cannot read its pinned source archive") from error
+    return {
+        "record_count": len(records),
+        "records": records,
+        "scope": "bounded pinned-C PageMap definitions linked to the native PageMap failure matrix",
+        "status": "passed",
+    }
+
+
+def _m2_x86_64_check_by_id(
+    summary: Mapping[str, Any], check_id: str
+) -> tuple[str, Mapping[str, Any]]:
+    """Resolve exactly one closed native PageMap witness."""
+
+    matches = [
+        (str(component["id"]), check)
+        for component in summary["components"]
+        for check in component["checks"]
+        if check["id"] == check_id
+    ]
+    if len(matches) != 1:
+        raise HarnessError(f"native x86 M2 lacks exactly one PageMap check: {check_id}")
+    return matches[0]
+
+
+def _m2_x86_64_differential_check_record(
+    component_id: str, check: Mapping[str, Any], differential: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Record one already-executed native C/Rust PageMap witness."""
+
+    rust = differential.get("rust")
+    comparison = differential.get("comparison")
+    if (
+        not isinstance(rust, Mapping)
+        or rust.get("passed_test_count") != check["expected_passed_test_count"]
+        or not isinstance(comparison, Mapping)
+        or comparison.get("status") not in {"matched", "modeled-safety-divergence"}
+    ):
+        raise HarnessError(f"native x86 M2 PageMap differential {check['id']} is invalid")
+    return {
+        "comparison_status": comparison["status"],
+        "component": component_id,
+        "command": list(rust["command"]),
+        "evidence_scope": "focused-source-test-and-c-rust-differential",
+        "id": check["id"],
+        "passed_test_count": rust["passed_test_count"],
+        "target": check["target"],
+    }
+
+
+def m2_x86_64_memory_substrate_report(
+    *,
+    contract: Mapping[str, Any],
+    pin: Mapping[str, str],
+    summary: Mapping[str, Any],
+    source_attestation: Mapping[str, Any],
+    source_contract_evidence: Mapping[str, Any],
+    bounded_source_evidence: Mapping[str, Any],
+    focused_checks: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Render a fail-closed x86 M2 report with only PageMap completed."""
+
+    if (
+        source_contract_evidence.get("status") != "passed"
+        or bounded_source_evidence.get("status") != "passed"
+    ):
+        raise HarnessError("native x86 M2 source evidence did not pass")
+    checks_by_component: dict[str, list[dict[str, Any]]] = {
+        component["id"]: [] for component in summary["components"]
+    }
+    for check in focused_checks:
+        component_id = check.get("component")
+        if component_id not in checks_by_component:
+            raise HarnessError("native x86 M2 focused check has an unknown component")
+        checks_by_component[component_id].append(dict(check))
+    components: list[dict[str, Any]] = []
+    unmet: list[str] = []
+    for component in summary["components"]:
+        component_id = component["id"]
+        checks = checks_by_component[component_id]
+        expected_checks = component["checks"]
+        if len(checks) != len(expected_checks):
+            raise HarnessError(f"native x86 M2 component {component_id} lacks an executed check")
+        if {check["id"] for check in checks} != {check["id"] for check in expected_checks}:
+            raise HarnessError(f"native x86 M2 component {component_id} has an invalid executed-check set")
+        complete = component["native_status"] == "complete" and not component["remaining_conditions"]
+        if complete:
+            differential_statuses = {
+                check["id"]: check.get("comparison_status") for check in checks if "comparison_status" in check
+            }
+            if differential_statuses != {
+                "successful-page-map-lifecycle": "matched",
+                "lazy-page-map-commit-failure": "matched",
+                "cold-page-map-initialization-failure": "modeled-safety-divergence",
+            }:
+                raise HarnessError("native x86 M2 PageMap differential result inventory changed")
+        else:
+            unmet.append(component_id)
+        report_component: dict[str, Any] = {
+            "executed_checks": checks,
+            "id": component_id,
+            "native_status": component["native_status"],
+            "remaining_conditions": list(component["remaining_conditions"]),
+            "source_map_records": list(component["source_map_records"]),
+            "source_units": list(component["source_units"]),
+            "status": "complete" if complete else "partial",
+        }
+        if complete:
+            report_component["bounded_source_definitions"] = list(
+                component["bounded_source_definitions"]
+            )
+            report_component["failure_matrix"] = list(component["failure_matrix"])
+        else:
+            report_component["unqualified_failure_matrix"] = list(
+                component["unqualified_failure_matrix"]
+            )
+        components.append(report_component)
+    milestone_complete = summary["milestone"]["status"] == "complete" and not unmet
+    return {
+        "components": components,
+        "contract": {
+            "format": contract["format"],
+            "path": relative(M2_X86_64_MEMORY_SUBSTRATE_CONTRACT),
+            "schema": contract["schema"],
+            "sha256": file_digest(M2_X86_64_MEMORY_SUBSTRATE_CONTRACT),
+            "upstream": {
+                "archive_sha256": pin["sha256"],
+                "revision": pin["revision"],
+                "version": pin["version"],
+            },
+        },
+        "exclusions": list(summary["exclusions"]),
+        "format": 1,
+        "milestone": {
+            "completion_rule": summary["milestone"]["completion_rule"],
+            "id": "m2",
+            "nonclaims": list(summary["milestone"]["nonclaims"]),
+            "status": "complete" if milestone_complete else "partial",
+            "unmet_component_ids": unmet,
+        },
+        "schema": "crabc-mimalloc-x86_64-m2-memory-substrate-report",
+        "shared_evidence": {
+            "x86-64-bounded-page-map-source-definitions": dict(bounded_source_evidence),
+            "x86-64-page-map-c-rust-differentials": {"status": "passed"},
+            "x86-64-page-map-focused-source-test-batch": {"status": "passed"},
+            "x86-64-source-contract-inventories": dict(source_contract_evidence),
+        },
+        "source": dict(source_attestation),
+        "target": dict(summary["target"]),
+    }
+
+
+def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
+    """Run target-qualified PageMap evidence while keeping M2 otherwise partial."""
+
+    require_native_x86_64()
+    source_before = m2_memory_substrate_source_state()
+    pin = load_pin()
+    contract = read_json(M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
+    summary = validate_x86_64_m2_memory_substrate_contract(contract, pin)
+    source_contracts = run_milestone0(
+        offline=offline,
+        generate_contracts=False,
+        check_only=True,
+        architecture="x86_64",
+    )
+    source_contract_evidence = _x86_64_source_contract_evidence(
+        source_contracts, gate_name="native x86 M2"
+    )
+    bounded_source_evidence = _m2_x86_64_bounded_source_evidence(
+        summary, pin, offline=offline
+    )
+    test_program = _x86_64_unit_test_program(
+        summary["execution"],
+        M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET,
+        gate_name="native x86 M2 PageMap",
+    )
+    success_component, success_check = _m2_x86_64_check_by_id(
+        summary, "successful-page-map-lifecycle"
+    )
+    lazy_component, lazy_check = _m2_x86_64_check_by_id(
+        summary, "lazy-page-map-commit-failure"
+    )
+    cold_component, cold_check = _m2_x86_64_check_by_id(
+        summary, "cold-page-map-initialization-failure"
+    )
+    success = run_m2_page_map_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+        architecture="x86_64",
+        artifact_root=M2_X86_64_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+        test_program=test_program,
+        check=success_check,
+    )
+    lazy = run_m2_page_map_lazy_commit_failure_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+        architecture="x86_64",
+        artifact_root=M2_X86_64_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+        test_program=test_program,
+        check=lazy_check,
+    )
+    cold = run_m2_page_map_cold_init_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+        architecture="x86_64",
+        artifact_root=M2_X86_64_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+        test_program=test_program,
+        check=cold_check,
+    )
+    focused_checks = [
+        _m2_x86_64_differential_check_record(success_component, success_check, success),
+        _m2_x86_64_differential_check_record(lazy_component, lazy_check, lazy),
+        _m2_x86_64_differential_check_record(cold_component, cold_check, cold),
+        *_run_x86_64_focused_source_checks(
+            summary,
+            test_program,
+            already_executed_check_ids=frozenset(
+                {success_check["id"], lazy_check["id"], cold_check["id"]}
+            ),
+            gate_name="native x86 M2 PageMap",
+        ),
+    ]
+    source_after = m2_memory_substrate_source_state()
+    report = m2_x86_64_memory_substrate_report(
+        contract=contract,
+        pin=pin,
+        summary=summary,
+        source_attestation=m2_memory_substrate_source_attestation(source_before, source_after),
+        source_contract_evidence=source_contract_evidence,
+        bounded_source_evidence=bounded_source_evidence,
+        focused_checks=focused_checks,
+    )
+    write_json(M2_X86_64_MEMORY_SUBSTRATE_REPORT, report)
+    return report
+
+
+def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
+    """Explain the exact seven remaining native M2 components."""
+
+    milestone = report.get("milestone")
+    if not isinstance(milestone, Mapping):
+        return "native x86 M2 memory-substrate report is invalid"
+    components = milestone.get("unmet_component_ids")
+    if not isinstance(components, list) or not all(isinstance(component, str) for component in components):
+        return "native x86 M2 memory-substrate report has no valid unmet-component record"
+    return (
+        "native x86 M2 memory substrate remains partial for "
+        + ", ".join(components)
+        + f"; review {relative(M2_X86_64_MEMORY_SUBSTRATE_REPORT)}"
+    )
 
 
 def m1_foundations_unmet_message(
@@ -15279,7 +16301,9 @@ def parse_m2_page_map_trace(output: str, *, source: str) -> dict[str, int]:
     return trace
 
 
-def validate_m2_page_map_trace(trace: Mapping[str, int], *, source: str) -> None:
+def validate_m2_page_map_trace(
+    trace: Mapping[str, int], *, source: str, expected_max_vabits: int = 48
+) -> None:
     """Validate stable controls and relations before C/Rust comparison."""
 
     if set(trace) != set(M2_PAGE_MAP_TRACE_KEYS):
@@ -15311,9 +16335,15 @@ def validate_m2_page_map_trace(trace: Mapping[str, int], *, source: str) -> None
         raise HarnessError(f"{source} M2 PageMap trace contains an unmet relation")
     if trace["m2.page_map.control.page_size"] != 4 * 1024:
         raise HarnessError(f"{source} M2 PageMap trace is not controlled to 4KiB pages")
-    if trace["m2.page_map.control.max_vabits"] != 48:
-        raise HarnessError(f"{source} M2 PageMap trace is not controlled to 48 virtual-address bits")
-    if trace["m2.page_map.init.reserve_count"] != 524288:
+    if expected_max_vabits not in {47, 48}:
+        raise HarnessError("M2 PageMap has an unsupported virtual-address profile")
+    if trace["m2.page_map.control.max_vabits"] != expected_max_vabits:
+        raise HarnessError(
+            f"{source} M2 PageMap trace is not controlled to "
+            f"{expected_max_vabits} virtual-address bits"
+        )
+    expected_reserve_count = {47: 262144, 48: 524288}[expected_max_vabits]
+    if trace["m2.page_map.init.reserve_count"] != expected_reserve_count:
         raise HarnessError(f"{source} M2 PageMap reserve count changed from the frozen two-level geometry")
     if trace["m2.page_map.layout.header_bytes"] <= 0 or trace["m2.page_map.layout.lock_bytes"] <= 0:
         raise HarnessError(f"{source} M2 PageMap trace has an empty mapped-header representation")
@@ -15349,12 +16379,16 @@ def validate_m2_page_map_trace(trace: Mapping[str, int], *, source: str) -> None
 
 
 def compare_m2_page_map_trace(
-    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int], *, expected_max_vabits: int = 48
 ) -> dict[str, Any]:
     """Compare stable transitions while recording intentional representation differences."""
 
-    validate_m2_page_map_trace(c_trace, source="pinned C")
-    validate_m2_page_map_trace(rust_trace, source="Rust")
+    validate_m2_page_map_trace(
+        c_trace, source="pinned C", expected_max_vabits=expected_max_vabits
+    )
+    validate_m2_page_map_trace(
+        rust_trace, source="Rust", expected_max_vabits=expected_max_vabits
+    )
     exact_keys = tuple(
         key
         for key in M2_PAGE_MAP_TRACE_KEYS
@@ -15427,7 +16461,7 @@ def parse_m2_page_map_lazy_commit_failure_trace(
 
 
 def validate_m2_page_map_lazy_commit_failure_trace(
-    trace: Mapping[str, int], *, source: str
+    trace: Mapping[str, int], *, source: str, expected_max_vabits: int = 48
 ) -> None:
     """Validate the selected failure-before-publication and retry relations."""
 
@@ -15458,9 +16492,12 @@ def validate_m2_page_map_lazy_commit_failure_trace(
         raise HarnessError(
             f"{source} M2 PageMap lazy-commit failure trace is not controlled to 4KiB pages"
         )
-    if trace["m2.page_map.lazy_commit.control.max_vabits"] != 48:
+    if expected_max_vabits not in {47, 48}:
+        raise HarnessError("M2 PageMap lazy-commit failure has an unsupported virtual-address profile")
+    if trace["m2.page_map.lazy_commit.control.max_vabits"] != expected_max_vabits:
         raise HarnessError(
-            f"{source} M2 PageMap lazy-commit failure trace is not controlled to 48 virtual-address bits"
+            f"{source} M2 PageMap lazy-commit failure trace is not controlled to "
+            f"{expected_max_vabits} virtual-address bits"
         )
     if trace["m2.page_map.lazy_commit.failure.commit_attempts"] != 1:
         raise HarnessError(
@@ -15477,12 +16514,16 @@ def validate_m2_page_map_lazy_commit_failure_trace(
 
 
 def compare_m2_page_map_lazy_commit_failure_trace(
-    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int], *, expected_max_vabits: int = 48
 ) -> dict[str, Any]:
     """Compare all selected semantic relations without normalizing representation."""
 
-    validate_m2_page_map_lazy_commit_failure_trace(c_trace, source="pinned C")
-    validate_m2_page_map_lazy_commit_failure_trace(rust_trace, source="Rust")
+    validate_m2_page_map_lazy_commit_failure_trace(
+        c_trace, source="pinned C", expected_max_vabits=expected_max_vabits
+    )
+    validate_m2_page_map_lazy_commit_failure_trace(
+        rust_trace, source="Rust", expected_max_vabits=expected_max_vabits
+    )
     mismatches = [
         f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
         for key in M2_PAGE_MAP_LAZY_COMMIT_FAILURE_TRACE_KEYS
@@ -17667,6 +18708,8 @@ def build_m2_page_map_trace(
     source: Path,
     profile_dir: Path,
     profile_flags: Sequence[str],
+    *,
+    expected_max_vabits: int = 48,
 ) -> dict[str, Any]:
     """Build and execute the selected pinned-C two-level PageMap producer."""
 
@@ -17699,7 +18742,9 @@ def build_m2_page_map_trace(
     run = command_record((str(trace_binary),), cwd=source)
     require_success(run, "pinned C M2 PageMap trace execution")
     record = parse_m2_page_map_trace(str(run["stdout"]), source="pinned C")
-    validate_m2_page_map_trace(record, source="pinned C")
+    validate_m2_page_map_trace(
+        record, source="pinned C", expected_max_vabits=expected_max_vabits
+    )
     return {
         "command": command,
         "record": record,
@@ -17721,6 +18766,8 @@ def build_m2_page_map_lazy_commit_failure_trace(
     source: Path,
     profile_dir: Path,
     profile_flags: Sequence[str],
+    *,
+    expected_max_vabits: int = 48,
 ) -> dict[str, Any]:
     """Build and execute the selected pinned-C PageMap commit-failure producer."""
 
@@ -17755,7 +18802,9 @@ def build_m2_page_map_lazy_commit_failure_trace(
     record = parse_m2_page_map_lazy_commit_failure_trace(
         str(run["stdout"]), source="pinned C"
     )
-    validate_m2_page_map_lazy_commit_failure_trace(record, source="pinned C")
+    validate_m2_page_map_lazy_commit_failure_trace(
+        record, source="pinned C", expected_max_vabits=expected_max_vabits
+    )
     return {
         "command": command,
         "record": record,
@@ -21421,15 +22470,14 @@ def parse_arguments() -> argparse.Namespace:
         if arguments.quick or arguments.m1 or arguments.m2 or arguments.m1_tls_terminal_prototype or arguments.full or arguments.churn or arguments.soak or arguments.native_shadow_stress or arguments.perf_smoke or arguments.perf_full:
             parser.error("contract generation/snapshot cannot be combined with a gate mode")
     if arguments.architecture == "x86_64" and (
-        arguments.m2
-        or arguments.m1_tls_terminal_prototype
+        arguments.m1_tls_terminal_prototype
         or arguments.full
         or arguments.perf_smoke
         or arguments.perf_full
         or arguments.generate_contracts
         or arguments.snapshot_ratchet
     ):
-        parser.error("the native x86-64 profile supports only --quick, --m1, or --check")
+        parser.error("the native x86-64 profile supports only --quick, --m1, --m2, or --check")
     return arguments
 
 
@@ -21476,6 +22524,10 @@ def main() -> int:
                 result["x86_64_m1_foundations_contract"] = (
                     validate_x86_64_m1_foundations_contract(m1_contract, load_pin())
                 )
+                m2_contract = read_json(M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
+                result["x86_64_m2_memory_substrate_contract"] = (
+                    validate_x86_64_m2_memory_substrate_contract(m2_contract, load_pin())
+                )
             print(json.dumps(result, sort_keys=True))
             return 0
         if arguments.m1:
@@ -21492,10 +22544,17 @@ def main() -> int:
                 )
             return 0
         if arguments.m2:
-            report = run_m2_memory_substrate(offline=arguments.offline)
-            print(M2_MEMORY_SUBSTRATE_REPORT)
+            if arguments.architecture == "x86_64":
+                report = run_x86_64_m2_memory_substrate(offline=arguments.offline)
+                report_path = M2_X86_64_MEMORY_SUBSTRATE_REPORT
+                unmet_message = m2_x86_64_memory_substrate_unmet_message
+            else:
+                report = run_m2_memory_substrate(offline=arguments.offline)
+                report_path = M2_MEMORY_SUBSTRATE_REPORT
+                unmet_message = m2_memory_substrate_unmet_message
+            print(report_path)
             if report["milestone"]["status"] != "complete":
-                raise MilestoneUnavailable(m2_memory_substrate_unmet_message(report))
+                raise MilestoneUnavailable(unmet_message(report))
             return 0
         if arguments.m1_tls_terminal_prototype:
             print(json.dumps(run_m1_compiler_tls_terminal_prototype(offline=arguments.offline), sort_keys=True))

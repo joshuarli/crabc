@@ -59,7 +59,7 @@ fi
         )
 
     def test_native_commands_bind_all_mutable_state_to_the_checkout(self):
-        for command in (("allocator", "--quick"), ("allocator-m1",), ("allocator-unit",),
+        for command in (("allocator", "--quick"), ("allocator-m1",), ("allocator-m2",), ("allocator-unit",),
                         ("allocator-release-evidence",), ("allocator-perf", "--smoke")):
             with self.subTest(command=command):
                 result = self.launch(*command)
@@ -206,6 +206,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         for command in (
             "allocator --quick",
             "allocator-m1",
+            "allocator-m2",
             "allocator-release-evidence",
             "allocator-cmake-modes",
             "allocator-live-owner-full-medium-remote-release",
@@ -256,6 +257,17 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         result = self.run_launcher("allocator-m1", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-m1 takes no arguments", result.stderr)
+
+    def test_m2_command_is_closed_and_selects_the_native_x86_gate(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-m2)", source)
+        self.assertIn(
+            "run_in_container python3 compat/allocator/run.py --m2 --offline",
+            source,
+        )
+        result = self.run_launcher("allocator-m2", "unexpected")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("allocator-m2 takes no arguments", result.stderr)
 
     def test_every_native_dispatch_uses_a_fresh_python_bytecode_environment(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
