@@ -54,6 +54,10 @@ x86-ualarm = []
 # dependency-free selected-static archive remains unchanged until the
 # provider's feature archive and ledger artifact are integrated.
 x86-interval-timers = []
+# Private Linux/x86-64 file-handle syscall evidence.  The pair remains
+# opt-in so the frozen dependency-free selected-static archive does not gain
+# filesystem-handle authority before the wider filesystem family closes.
+x86-file-handles = []
 # Private Linux/x86-64 resolver-runtime evidence. The C ABI state owner uses
 # the separately evidenced h_errno state owner plus the existing stateless
 # no_std DNS transport. It remains opt-in after its bounded evidence closes so

@@ -385,6 +385,12 @@ mod signal_alarm;
 #[cfg(feature = "x86-interval-timers")]
 #[path = "interval_timers.rs"]
 mod interval_timers;
+// Linux file handles are opaque caller-owned variable-sized records. Keep the
+// two direct syscall spellings opt-in so the frozen default archive does not
+// imply a broader filesystem authority or handle policy.
+#[cfg(feature = "x86-file-handles")]
+#[path = "file_handles.rs"]
+mod file_handles;
 // This historical microsecond interval-timer adapter mutates process-global
 // ITIMER_REAL state. Keep its one-symbol C ABI evidence opt-in so the frozen
 // default archive remains distinct from this private timer leaf.

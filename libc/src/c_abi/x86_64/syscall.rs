@@ -463,6 +463,10 @@ pub(crate) const SYS_PIPE2: i64 = 293;
 pub(crate) const SYS_INOTIFY_INIT1: i64 = 294;
 pub(crate) const SYS_RECVMMSG: i64 = 299;
 pub(crate) const SYS_PRLIMIT64: i64 = 302;
+/// Linux x86-64 file-handle syscalls use the five/three C words directly;
+/// their variable-sized record remains entirely caller-owned.
+pub(crate) const SYS_NAME_TO_HANDLE_AT: i64 = 303;
+pub(crate) const SYS_OPEN_BY_HANDLE_AT: i64 = 304;
 pub(crate) const SYS_CLOCK_ADJTIME: i64 = 305;
 pub(crate) const SYS_SYNCFS: i64 = 306;
 pub(crate) const SYS_SENDMMSG: i64 = 307;
