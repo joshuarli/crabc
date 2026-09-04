@@ -1,0 +1,579 @@
+{
+  "schema": "crabc-mimalloc-x86_64-m2-component-evidence",
+  "format": 1,
+  "upstream": {
+    "version": "3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305"
+  },
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "kernel_baseline": "5.10",
+    "os": "linux",
+    "rust_target": "x86_64-unknown-linux-musl"
+  },
+  "component": {
+    "id": "vm-primitives",
+    "completion_status": "partial",
+    "source_units": [
+      "include/mimalloc/prim.h",
+      "src/os.c",
+      "src/prim/prim.c",
+      "src/prim/unix/prim.c"
+    ],
+    "source_map_records": [
+      {
+        "unit_id": "os-allocation-policy",
+        "required_status": "partial"
+      },
+      {
+        "unit_id": "linux-unix-primitives",
+        "required_status": "partial"
+      },
+      {
+        "unit_id": "primitive-interface",
+        "required_status": "partial"
+      }
+    ],
+    "bounded_source_definitions": [
+      {
+        "id": "os-memory-configuration-and-good-size",
+        "source_anchor": {
+          "member": "src/os.c",
+          "start_line": 14,
+          "end_line": 101,
+          "sha256": "9ae011596e247f9e9a4a3c8847cbdac4ce20be5e951630b4c8a97b02e94d12fb"
+        },
+        "required_definitions": [
+          "static mi_os_mem_config_t mi_os_mem_config",
+          "size_t _mi_os_good_alloc_size",
+          "void _mi_os_init"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential"
+        ]
+      },
+      {
+        "id": "os-free-and-full-memory-id-release",
+        "source_anchor": {
+          "member": "src/os.c",
+          "start_line": 240,
+          "end_line": 294,
+          "sha256": "b90d71dbe1a3bdee02095502ca799cdea2cd4c1f42983b6117d932c47b931c02"
+        },
+        "required_definitions": [
+          "static void mi_os_prim_free",
+          "void _mi_os_free_ex",
+          "void _mi_os_free"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-os-offset-full-provenance-and-release-retry"
+        ]
+      },
+      {
+        "id": "os-regular-and-aligned-map-owners",
+        "source_anchor": {
+          "member": "src/os.c",
+          "start_line": 303,
+          "end_line": 430,
+          "sha256": "e5ba5306a96cc2ccc54041ef1b7158b93cf6ae6db10e2d4bcecbc62741e6225b"
+        },
+        "required_definitions": [
+          "static void* mi_os_prim_alloc_at",
+          "static void* mi_os_prim_alloc_aligned",
+          "_mi_memid_create_os"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "aligned-map-direct-cleanup-owner",
+          "aligned-map-prefix-cleanup-owner",
+          "aligned-map-suffix-cleanup-owner",
+          "aligned-map-complete-trim-sequence"
+        ]
+      },
+      {
+        "id": "os-normal-aligned-and-offset-owners",
+        "source_anchor": {
+          "member": "src/os.c",
+          "start_line": 438,
+          "end_line": 527,
+          "sha256": "fc4e177b6d6c35be7372e641d8d0209f03cdc84f2f87099dfcf1a00eb0ad1b89"
+        },
+        "required_definitions": [
+          "void* _mi_os_alloc",
+          "void* _mi_os_alloc_aligned",
+          "void* _mi_os_alloc_aligned_at_offset"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-os-offset-full-provenance-and-release-retry",
+          "normal-os-good-size-and-base-provenance",
+          "normal-os-offset-zero-delegation-and-geometry",
+          "normal-os-aligned-failure-owner"
+        ]
+      },
+      {
+        "id": "os-fixed-range-transitions",
+        "source_anchor": {
+          "member": "src/os.c",
+          "start_line": 534,
+          "end_line": 712,
+          "sha256": "dc9c44664aa3348206cdfe456b3a1eff19ffed26192d64ad314baf0b4d014feb"
+        },
+        "required_definitions": [
+          "bool _mi_os_commit_ex",
+          "bool _mi_os_decommit",
+          "bool _mi_os_reset",
+          "void _mi_os_reuse",
+          "bool _mi_os_purge_ex",
+          "bool _mi_os_protect",
+          "bool _mi_os_unprotect"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "reset-advice-retry-snapshot",
+          "linux-os-reuse-contained-range-noop",
+          "native-protection-owner-and-retry"
+        ]
+      },
+      {
+        "id": "unix-fixed-free-primitive",
+        "source_anchor": {
+          "member": "src/prim/unix/prim.c",
+          "start_line": 283,
+          "end_line": 304,
+          "sha256": "6a909d642ed760bdf9f998e300ff9903b5cd6de1130759a4ed97cba7bcfe061f"
+        },
+        "required_definitions": [
+          "int _mi_prim_free"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-os-offset-full-provenance-and-release-retry"
+        ]
+      },
+      {
+        "id": "unix-fixed-transition-primitives",
+        "source_anchor": {
+          "member": "src/prim/unix/prim.c",
+          "start_line": 521,
+          "end_line": 605,
+          "sha256": "3d84bbad5d4717c550d9734e2994cc90fa39527f5bf9b196573283a750647202"
+        },
+        "required_definitions": [
+          "int _mi_prim_commit",
+          "int _mi_prim_reuse",
+          "int _mi_prim_decommit",
+          "int _mi_prim_reset",
+          "int _mi_prim_protect"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "reset-advice-retry-snapshot",
+          "linux-os-reuse-contained-range-noop",
+          "native-protection-owner-and-retry"
+        ]
+      }
+    ],
+    "branch_matrix": [
+      {
+        "id": "unix-platform-primitive-dispatch",
+        "disposition": "qualified-fixed-profile",
+        "source_scope": "src/prim/prim.c:9-17 Linux preprocessor selection of the Unix primitive implementation; the automatic constructor is suppressed only for the direct C fixture's explicit startup sequence.",
+        "source_anchors": [
+          {
+            "member": "src/prim/prim.c",
+            "start_line": 9,
+            "end_line": 17,
+            "sha256": "9242363dc1f756a570368cb74ecb8f1b2f1b7ca9a748fb7f50532d1584a875db"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential"
+        ],
+        "missing_conditions": []
+      },
+      {
+        "id": "os-configuration-and-good-size",
+        "disposition": "qualified-fixed-profile",
+        "source_scope": "src/os.c:14-101 immutable default configuration, source allocation rounding, and explicit primitive initialization.",
+        "source_anchors": [
+          {
+            "member": "src/os.c",
+            "start_line": 14,
+            "end_line": 101,
+            "sha256": "9ae011596e247f9e9a4a3c8847cbdac4ce20be5e951630b4c8a97b02e94d12fb"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential"
+        ],
+        "missing_conditions": []
+      },
+      {
+        "id": "unix-configuration-and-thp-process-policy",
+        "disposition": "unqualified",
+        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch.",
+        "source_anchors": [
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 250,
+            "end_line": 277,
+            "sha256": "955c45eab6dcb9a5fa09decdc76350b69962f806d7d571ac9f39b6e4f08675e0"
+          }
+        ],
+        "evidence_check_ids": [],
+        "missing_conditions": [
+          "A typed allocator-option owner and an explicit Linux THP process-policy transaction, including failed prctl diagnostics and its process-lifetime ownership."
+        ]
+      },
+      {
+        "id": "os-free-and-statistics-events",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events.",
+        "source_anchors": [
+          {
+            "member": "src/os.c",
+            "start_line": 240,
+            "end_line": 294,
+            "sha256": "b90d71dbe1a3bdee02095502ca799cdea2cd4c1f42983b6117d932c47b931c02"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-os-offset-full-provenance-and-release-retry"
+        ],
+        "missing_conditions": [
+          "A typed subprocess statistics-event owner and differential counter transitions for allocation/free, including source warning/error routes and huge MemoryId dispatch."
+        ]
+      },
+      {
+        "id": "os-primitive-regular-and-aligned-allocation",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/os.c:303-430 regular primitive allocation, direct/aligned overmap selection, partial prefix/suffix free, allocation statistics, large-page argument propagation, and cleanup warnings.",
+        "source_anchors": [
+          {
+            "member": "src/os.c",
+            "start_line": 303,
+            "end_line": 430,
+            "sha256": "e5ba5306a96cc2ccc54041ef1b7158b93cf6ae6db10e2d4bcecbc62741e6225b"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "aligned-map-direct-cleanup-owner",
+          "aligned-map-prefix-cleanup-owner",
+          "aligned-map-suffix-cleanup-owner",
+          "aligned-map-complete-trim-sequence",
+          "aligned-map-os-page-claim-owner",
+          "aligned-map-metadata-owner",
+          "aligned-map-process-arena-owner"
+        ],
+        "missing_conditions": [
+          "Every source large-page/option route and every receiving allocator caller must preserve the selected Rust retained-map failure owner; the current fixed regular path does not establish those branches."
+        ]
+      },
+      {
+        "id": "os-normal-aligned-and-offset-allocation",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/os.c:438-527 normal, aligned, zero-offset, and interior-offset allocation routes, including source allow_large forwarding and prefix decommit.",
+        "source_anchors": [
+          {
+            "member": "src/os.c",
+            "start_line": 438,
+            "end_line": 527,
+            "sha256": "fc4e177b6d6c35be7372e641d8d0209f03cdc84f2f87099dfcf1a00eb0ad1b89"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-os-offset-full-provenance-and-release-retry",
+          "normal-os-good-size-and-base-provenance",
+          "normal-os-offset-zero-delegation-and-geometry",
+          "normal-os-aligned-failure-owner",
+          "normal-os-source-reservation-caller"
+        ],
+        "missing_conditions": [
+          "Option-driven large-page/hint policy, all regular and arena callers, prefix-decommit failure disposition, and source statistics/error behavior require their actual owners."
+        ]
+      },
+      {
+        "id": "os-range-transition-policy-and-failure-owners",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, and retry/error ownership.",
+        "source_anchors": [
+          {
+            "member": "src/os.c",
+            "start_line": 534,
+            "end_line": 712,
+            "sha256": "dc9c44664aa3348206cdfe456b3a1eff19ffed26192d64ad314baf0b4d014feb"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "reset-advice-retry-snapshot",
+          "linux-os-reuse-contained-range-noop",
+          "native-protection-owner-and-retry"
+        ],
+        "missing_conditions": [
+          "Custom arena commit callback ownership; purge_decommits and other option branches; all partial-range callers; and pinned-C failure/retry differential coverage for commit, decommit, purge, protect, unprotect, and release."
+        ]
+      },
+      {
+        "id": "aligned-hint-random-state",
+        "disposition": "unqualified",
+        "source_scope": "src/os.c:110-158 atomic aligned-hint range, virtual-address eligibility, secure/debug random Theap state, and wrap/CAS behavior.",
+        "source_anchors": [
+          {
+            "member": "src/os.c",
+            "start_line": 110,
+            "end_line": 158,
+            "sha256": "d5855c977e616eca2f5ed2689d566cafedfe3e2743b5b02665db39c9be2043b5"
+          }
+        ],
+        "evidence_check_ids": [],
+        "missing_conditions": [
+          "A nonrecursive default-Theap random-state owner, atomic hint cursor, secure/debug profile routing, and native C/Rust hint/fallback differential evidence."
+        ]
+      },
+      {
+        "id": "unix-regular-map-large-page-and-thp-routing",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/prim/unix/prim.c:308-497 direct and hinted mmap, MAP_NORESERVE, large-page retry suppression, MAP_HUGETLB/MAP_HUGE modes, and MADV_HUGEPAGE routing.",
+        "source_anchors": [
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 308,
+            "end_line": 497,
+            "sha256": "9098e1a1087326155b66fbf8f5aa1c1ab4ec3a73f30ec5e26b91e6b95b3388b3"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential"
+        ],
+        "missing_conditions": [
+          "The source regular no-hint/no-large mmap slice is compared, but large-page, retry-state, hint, THP advice, and their option/error diagnostics remain unimplemented and unqualified."
+        ]
+      },
+      {
+        "id": "unix-free-primitive",
+        "disposition": "qualified-fixed-profile",
+        "source_scope": "src/prim/unix/prim.c:283-304 regular munmap free primitive and errno return.",
+        "source_anchors": [
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 283,
+            "end_line": 304,
+            "sha256": "6a909d642ed760bdf9f998e300ff9903b5cd6de1130759a4ed97cba7bcfe061f"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-os-offset-full-provenance-and-release-retry"
+        ],
+        "missing_conditions": []
+      },
+      {
+        "id": "unix-commit-decommit-reset-reuse-and-protect",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global fallback, and reuse semantics.",
+        "source_anchors": [
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 521,
+            "end_line": 605,
+            "sha256": "3d84bbad5d4717c550d9734e2994cc90fa39527f5bf9b196573283a750647202"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "reset-advice-retry-snapshot",
+          "linux-os-reuse-contained-range-noop",
+          "native-protection-owner-and-retry"
+        ],
+        "missing_conditions": [
+          "The selected default Linux success/retry slices do not qualify MI_DEBUG/MI_SECURE decommit policy, MADV_FREE fallback state across all callers, mprotect diagnostics, or every failure owner."
+        ]
+      },
+      {
+        "id": "huge-page-and-numa-placement",
+        "disposition": "unqualified",
+        "source_scope": "src/os.c:729-898 and src/prim/unix/prim.c:613-689 huge 1-GiB reservation, timeout/progress policy, high-address hints, mbind placement, and option-driven NUMA count/current normalization.",
+        "source_anchors": [
+          {
+            "member": "src/os.c",
+            "start_line": 729,
+            "end_line": 898,
+            "sha256": "1154184ff8879ce4b6eba1a5369ea050bd00d984c37f32750755e73303f9cefc"
+          },
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 613,
+            "end_line": 689,
+            "sha256": "1a889072508a9c249cebada4eebb756df42bae7567b0e9ae9c4bfbbeb6d83d9a"
+          }
+        ],
+        "evidence_check_ids": [],
+        "missing_conditions": [
+          "Typed huge-page and Linux mbind owners, actual reserve/timeout/free accounting, option and arena placement policy, diagnostics, and native failure/rollback differential evidence."
+        ]
+      },
+      {
+        "id": "primitive-interface-declaration-frontier",
+        "disposition": "unqualified",
+        "source_scope": "include/mimalloc/prim.h:25-136 fixed primitive contract, including raw allocation, commit/decommit/reuse/protection, huge allocation, NUMA, and process support declarations.",
+        "source_anchors": [
+          {
+            "member": "include/mimalloc/prim.h",
+            "start_line": 25,
+            "end_line": 136,
+            "sha256": "6ac73188cce5e2b7d7052ab2b45fb410c274032a5e311593693fd23ce4f87cd7"
+          }
+        ],
+        "evidence_check_ids": [],
+        "missing_conditions": [
+          "The selected typed regular primitives do not implement or qualify the full raw huge-page, placement, option/diagnostic, process-information, and remaining primitive declaration surface."
+        ]
+      }
+    ],
+    "unqualified_failure_matrix": [
+      {
+        "id": "vm-option-hint-large-and-thp-policy",
+        "source_scope": "src/os.c:110-158,303-430,438-527,534-712 and src/prim/unix/prim.c:250-277,308-497 option routing, random hints, large/THP attempts, purge policy, and diagnostics.",
+        "required_evidence": [
+          "typed allocator-option and default-Theap random-state owners",
+          "native C/Rust option, hint, THP, large-page retry, and diagnostic failure differential"
+        ]
+      },
+      {
+        "id": "vm-huge-page-numa-and-arena-placement",
+        "source_scope": "src/os.c:729-898 and src/prim/unix/prim.c:613-689 huge-page reservation/free timeout, high-address hint, mbind, NUMA option, and arena-placement policy.",
+        "required_evidence": [
+          "typed huge-page, mbind, NUMA placement, and arena-reservation owners",
+          "native huge-page success, partial-progress, timeout, free, placement, and rollback evidence"
+        ]
+      },
+      {
+        "id": "vm-range-failure-statistics-and-caller-ownership",
+        "source_scope": "src/os.c:240-712 and normal allocator/arena callers: statistics events, custom commit callbacks, aligned-overmap cleanup, commit/decommit/purge/protect/reset/release errors, and every retained Rust owner receiver.",
+        "required_evidence": [
+          "typed subprocess statistics-event and callback owners",
+          "pinned-C native fault differential covering each failure/retry branch and every caller transfer"
+        ]
+      }
+    ],
+    "checks": [
+      {
+        "id": "native-vm-fixed-lifecycle-differential",
+        "kind": "c-rust-vm-primitives-fixed-lifecycle",
+        "target": "os::tests::emit_m2_vm_primitives_c_rust_trace",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "aligned-map-direct-cleanup-owner",
+        "kind": "rust-unit",
+        "target": "os::tests::aligned_mapping_retains_the_direct_candidate_when_its_cleanup_fails",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "aligned-map-prefix-cleanup-owner",
+        "kind": "rust-unit",
+        "target": "os::tests::aligned_mapping_retains_the_untrimmed_overmap_when_prefix_release_fails",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "aligned-map-suffix-cleanup-owner",
+        "kind": "rust-unit",
+        "target": "os::tests::aligned_mapping_retains_only_the_live_suffix_when_suffix_release_fails",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "aligned-map-complete-trim-sequence",
+        "kind": "rust-unit",
+        "target": "os::tests::forced_aligned_mapping_exercises_all_three_release_edges_before_returning_the_exact_range",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "reset-advice-retry-snapshot",
+        "kind": "rust-unit",
+        "target": "os::tests::reset_retries_the_initial_advice_after_a_concurrent_global_fallback",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "aligned-map-os-page-claim-owner",
+        "kind": "rust-unit",
+        "target": "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "aligned-map-metadata-owner",
+        "kind": "rust-unit",
+        "target": "meta::tests::aligned_map_prefix_cleanup_failure_retains_metadata_before_private_backing_publication",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "aligned-map-process-arena-owner",
+        "kind": "rust-unit",
+        "target": "process_arena::tests::explicit_os_reservation_retains_an_aligned_map_cleanup_failure_before_setup",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "normal-os-offset-full-provenance-and-release-retry",
+        "kind": "rust-unit",
+        "target": "os::tests::normal_offset_os_allocation_retains_full_provenance_and_retries_release",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "normal-os-good-size-and-base-provenance",
+        "kind": "rust-unit",
+        "target": "os::tests::normal_os_allocation_uses_good_size_and_base_provenance",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "normal-os-offset-zero-delegation-and-geometry",
+        "kind": "rust-unit",
+        "target": "os::tests::normal_offset_os_allocation_delegates_zero_and_rejects_invalid_geometry",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "normal-os-aligned-failure-owner",
+        "kind": "rust-unit",
+        "target": "os::tests::normal_os_allocation_preserves_a_failed_aligned_map_owner",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "normal-os-source-reservation-caller",
+        "kind": "rust-unit",
+        "target": "process_arena::tests::explicit_os_reservation_publishes_one_os_arena_for_reserved_and_committed_requests",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "linux-os-reuse-contained-range-noop",
+        "kind": "rust-unit",
+        "target": "os::tests::reuse_is_a_contained_range_noop_on_linux",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "fixed-no-option-numa-cache-and-current-node-normalization",
+        "kind": "rust-unit",
+        "target": "os::tests::os_numa_wrapper_caches_and_normalizes_the_raw_primitives",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "native-protection-owner-and-retry",
+        "kind": "rust-unit",
+        "target": "os::tests::native_protection_failures_preserve_mapping_owner_and_retry",
+        "expected_passed_test_count": 1
+      }
+    ],
+    "remaining_conditions": [
+      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed no-option regular mapping lifecycle, including pinned-C failure ownership and retry evidence for every source branch.",
+      "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners: source large-page arguments, every receiving allocator caller, callback/counter/error paths, and native cleanup failure/retry differentials remain required.",
+      "Complete random aligned-hint policy, virtual-address eligibility, default-Theap random state, source options and diagnostics, Linux THP process policy, MAP_HUGETLB/MADV_HUGEPAGE retry behavior, and their native differential evidence.",
+      "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
+      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes; the selected fixed normal/offset MemoryId owner, contained Linux reuse no-op, reset-advice snapshot, and one-page protection retry do not establish those broader source contracts."
+    ]
+  }
+}

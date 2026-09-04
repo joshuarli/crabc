@@ -3217,6 +3217,185 @@ mod tests {
         std::println!("CRABC_MI_M1_RAW_TRACE_END");
     }
 
+    /// Emits the native M2 fixed-profile VM lifecycle record.
+    ///
+    /// This test deliberately follows every VM transition that the current
+    /// typed Linux owner can perform: reserved and committed mappings,
+    /// covering commit, contained decommit/reset/reuse/protection, ordinary,
+    /// aligned, and offset-aligned normal OS ownership, and the normalized
+    /// NUMA observation.  The companion pinned-C fixture calls the matching
+    /// `src/os.c` private helpers in one process and compares only stable
+    /// ownership and transition facts, never virtual addresses or allocator
+    /// statistics.
+    ///
+    /// It is not a claim for the source's unowned policy branches.  In
+    /// particular, source options, random aligned hints, THP process policy,
+    /// large/1-GiB huge-page reservation, diagnostics, and arena placement
+    /// require their actual owners before the VM component can close.
+    #[test]
+    fn emit_m2_vm_primitives_c_rust_trace() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let alignment = page
+            .checked_mul(16)
+            .expect("the fixed trace alignment fits");
+
+        let mut reserved = Mapping::map_for_allocator(config, page, MapAccess::Reserved)
+            .expect("the fixed trace reserves one page");
+        let reserved_initially_zero = reserved.initially_zero();
+        let reserved_initially_committed = reserved.initially_committed();
+        assert_eq!(
+            reserved.commit(0, page),
+            Ok(Some(CommitOutcome::NotKnownZero)),
+            "the source commit covers the complete one-page reservation"
+        );
+        assert_eq!(
+            reserved.decommit(0, page),
+            Ok(Some(DecommitOutcome::DoesNotNeedRecommit)),
+            "the default Linux source decommit keeps the mapping accessible"
+        );
+        assert!(reserved.purge(0, page).expect("the source reset succeeds"));
+        assert_eq!(
+            reserved.reuse(0, page),
+            Ok(Some(ReuseOutcome::NoOp)),
+            "Linux reuse has no VM syscall after conservative page normalization"
+        );
+        assert!(reserved.protect(0, page).expect("the source protect succeeds"));
+        assert!(reserved
+            .unprotect(0, page)
+            .expect("the source unprotect succeeds"));
+        reserved
+            .unmap()
+            .expect("the fixed trace releases the reserved owner once");
+
+        let normal = NormalOsAllocation::allocate(
+            config,
+            page.checked_add(1).expect("the fixed normal request fits"),
+        )
+        .expect("the source normal OS allocation succeeds");
+        let normal_base = normal.base().expect("normal owner remains live");
+        let normal_pointer = normal.pointer().expect("normal client pointer is live");
+        let normal_size = normal.full_size().expect("normal owner has its full extent");
+        let normal_memory = normal.memory_id().expect("normal owner retains provenance");
+        assert_eq!(normal_pointer.as_ptr(), normal_base);
+        assert_eq!(normal_size, config.good_alloc_size(page + 1));
+        assert_eq!(normal_memory.os_base().map(|base| base.value()), Some(normal_base.addr()));
+        assert_eq!(normal_memory.size(), Some(normal_size));
+        assert!(normal_memory.initially_committed());
+        assert!(normal_memory.initially_zero());
+        normal.release().expect("normal owner releases its exact mapping");
+
+        let aligned = NormalOsAllocation::allocate_aligned(
+            config,
+            page,
+            alignment,
+            MapAccess::Committed,
+        )
+        .expect("the source aligned normal allocation succeeds");
+        let aligned_base = aligned.base().expect("aligned owner remains live");
+        let aligned_size = aligned.full_size().expect("aligned owner has its full extent");
+        let aligned_memory = aligned.memory_id().expect("aligned owner retains provenance");
+        assert_eq!(aligned_base.addr() % alignment, 0);
+        assert_eq!(aligned_size, config.good_alloc_size(page));
+        assert_eq!(aligned_memory.os_base().map(|base| base.value()), Some(aligned_base.addr()));
+        assert_eq!(aligned_memory.size(), Some(aligned_size));
+        aligned
+            .release()
+            .expect("aligned owner releases its exact mapping");
+
+        let offset = page;
+        let offset_allocation = NormalOsAllocation::allocate_aligned_at_offset(
+            config,
+            page.checked_mul(2).expect("the fixed offset request fits"),
+            alignment,
+            offset,
+            MapAccess::Committed,
+        )
+        .expect("the source offset-aligned allocation succeeds");
+        let offset_base = offset_allocation
+            .base()
+            .expect("offset owner retains its mapping base");
+        let offset_pointer = offset_allocation
+            .pointer()
+            .expect("offset client pointer remains live");
+        let offset_size = offset_allocation
+            .full_size()
+            .expect("offset owner retains its full extent");
+        let offset_memory = offset_allocation
+            .memory_id()
+            .expect("offset owner retains base provenance");
+        assert_eq!((offset_pointer.as_ptr().addr() + offset) % alignment, 0);
+        assert!(offset_pointer.as_ptr().addr() > offset_base.addr());
+        assert_eq!(
+            offset_size,
+            config.good_alloc_size(
+                page.checked_mul(2)
+                    .and_then(|size| size.checked_add(alignment - offset))
+                    .expect("the source offset overmap request fits")
+            )
+        );
+        assert_eq!(offset_memory.os_base().map(|base| base.value()), Some(offset_base.addr()));
+        assert_eq!(offset_memory.size(), Some(offset_size));
+        offset_allocation
+            .release()
+            .expect("offset owner releases its full mapping rather than its client pointer");
+
+        let numa_count = os_numa_node_count();
+        let numa_current = os_numa_node();
+        assert!(numa_count >= 1, "the allocator-facing NUMA cache normalizes to one");
+        assert!(numa_current < numa_count, "the source current-node route normalizes modulo count");
+
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!("{}={}", $name, $value);
+            };
+        }
+
+        std::println!("CRABC_MI_M2_VM_TRACE_BEGIN");
+        emit!("m2.vm.config.page_size", page);
+        emit!("m2.vm.config.large_page_size", config.large_page_size());
+        emit!("m2.vm.config.alloc_granularity", config.alloc_granularity());
+        emit!("m2.vm.config.has_overcommit", u8::from(config.has_overcommit()));
+        emit!("m2.vm.config.has_partial_free", u8::from(config.has_partial_free()));
+        emit!("m2.vm.config.has_virtual_reserve", u8::from(config.has_virtual_reserve()));
+        emit!(
+            "m2.vm.config.has_transparent_huge_pages",
+            u8::from(config.has_transparent_huge_pages())
+        );
+        emit!("m2.vm.reserved.initially_zero", u8::from(reserved_initially_zero));
+        emit!(
+            "m2.vm.reserved.initially_committed",
+            u8::from(reserved_initially_committed)
+        );
+        emit!("m2.vm.reserved.commit_not_known_zero", 1);
+        emit!("m2.vm.reserved.decommit_no_recommit", 1);
+        emit!("m2.vm.reserved.reset_success", 1);
+        emit!("m2.vm.reserved.reuse_linux_noop", 1);
+        emit!("m2.vm.reserved.protect_success", 1);
+        emit!("m2.vm.reserved.unprotect_success", 1);
+        emit!("m2.vm.reserved.release_success", 1);
+        emit!("m2.vm.normal.client_is_base", 1);
+        emit!("m2.vm.normal.good_size", normal_size);
+        emit!("m2.vm.normal.memid_base_and_size", 1);
+        emit!("m2.vm.normal.initially_committed", 1);
+        emit!("m2.vm.normal.initially_zero", 1);
+        emit!("m2.vm.normal.release_success", 1);
+        emit!("m2.vm.aligned.alignment", alignment);
+        emit!("m2.vm.aligned.client_is_aligned", 1);
+        emit!("m2.vm.aligned.good_size", aligned_size);
+        emit!("m2.vm.aligned.memid_base_and_size", 1);
+        emit!("m2.vm.aligned.release_success", 1);
+        emit!("m2.vm.offset.client_offset_nonzero", 1);
+        emit!("m2.vm.offset.client_plus_offset_is_aligned", 1);
+        emit!("m2.vm.offset.good_size", offset_size);
+        emit!("m2.vm.offset.memid_base_and_size", 1);
+        emit!("m2.vm.offset.release_full_mapping_success", 1);
+        emit!("m2.vm.numa.count_at_least_one", u8::from(numa_count >= 1));
+        emit!("m2.vm.numa.current_lt_count", u8::from(numa_current < numa_count));
+        std::println!("CRABC_MI_M2_VM_TRACE_END");
+    }
+
     #[test]
     fn entropy_failure_is_direct_and_never_uses_a_secondary_source() {
         let fault = fault::install(fault::Plan::at(fault::Point::Entropy, 1, Errno::NOMEM));
