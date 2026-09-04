@@ -3517,8 +3517,8 @@ def validate_header_layout_foundation_manifest(
             "default_static_callable_count": 1119,
             "verified_feature_callable_count": 78,
             "verified_feature_profile_count": 28,
-            "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 328,
+            "declared_unverified_feature_callable_count": 23,
+            "unprovided_callable_count": 305,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3533,7 +3533,9 @@ def validate_header_layout_foundation_manifest(
     require(
         isinstance(description, str)
         and "ordinary" in description
-        and "unprovided complement" in description
+        and "28 verified feature profiles" in description
+        and "23 declared but unverified callable providers" in description
+        and "305-name unprovided complement" in description
         and "full callable closure" in description
         and "public x86 support" in description,
         "header-foundation selected provider audit description drifted",
@@ -3582,8 +3584,8 @@ def validate_header_layout_foundation_manifest(
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
             "verified_feature_callable_count": 78,
-            "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 328,
+            "declared_unverified_feature_callable_count": 23,
+            "unprovided_callable_count": 305,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
             "missing_reference_declaration_routing_complete": True,
@@ -3600,7 +3602,9 @@ def validate_header_layout_foundation_manifest(
     require(
         isinstance(description, str)
         and "all 1,525 selected external callable names" in description
-        and "zero current missing pinned-musl declaration names" in description
+        and "23 unverified providers" in description
+        and "296 deferred planned-provider names" in description
+        and "Zero missing pinned-musl declaration names" in description
         and "archive extraction" in description
         and "final C ABI provider/archive closure" in description
         and "public x86 support" in description,
@@ -6913,13 +6917,13 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
         dict(summary)
         == {
             "candidate_external_callable_count": 1525,
-            "declared_unverified_feature_callable_count": 0,
+            "declared_unverified_feature_callable_count": 23,
             "default_static_callable_count": 1119,
             "deferred_resolution_counts": {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 319,
+                "planned-provider": 296,
             },
             "final_provider_archive_closure_complete": False,
             "header_declaration_parity_complete": False,
@@ -6930,7 +6934,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 328,
+            "unprovided_callable_count": 305,
             "verified_feature_callable_count": 78,
         },
         "header callable disposition summary drifted",

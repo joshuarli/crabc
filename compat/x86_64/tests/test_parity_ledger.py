@@ -67,9 +67,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 51)
         self.assertEqual(report["verified_artifact_count"], 378)
-        self.assertEqual(report["feature_archive_count"], 28)
+        self.assertEqual(report["feature_archive_count"], 29)
         self.assertEqual(report["verified_feature_archive_count"], 28)
-        self.assertEqual(report["planned_feature_archive_count"], 0)
+        self.assertEqual(report["planned_feature_archive_count"], 1)
         self.assertEqual(report["header_layout_probe_count"], 55)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -346,8 +346,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             data, self.verified_records(data)
         )
         self.assertEqual(report, {
-            "feature_archive_count": 28,
-            "planned_feature_archive_count": 0,
+            "feature_archive_count": 29,
+            "planned_feature_archive_count": 1,
             "verified_feature_archive_count": 28,
         })
 
@@ -4210,8 +4210,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(disposition["candidate_external_callable_count"], 1525)
         self.assertEqual(disposition["default_static_callable_count"], 1119)
         self.assertEqual(disposition["verified_feature_callable_count"], 78)
-        self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 328)
+        self.assertEqual(disposition["declared_unverified_feature_callable_count"], 23)
+        self.assertEqual(disposition["unprovided_callable_count"], 305)
         self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
         self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
@@ -4230,8 +4230,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(provider_audit["default_static_callable_count"], 1119)
         self.assertEqual(provider_audit["verified_feature_callable_count"], 78)
         self.assertEqual(provider_audit["verified_feature_profile_count"], 28)
-        self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 328)
+        self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 23)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 305)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
