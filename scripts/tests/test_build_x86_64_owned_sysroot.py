@@ -32,6 +32,12 @@ DRIVER_SPEC.loader.exec_module(driver)
 
 
 class BuildX86OwnedSysrootTests(unittest.TestCase):
+    def test_default_installation_stays_in_checkout_work_state(self) -> None:
+        self.assertEqual(
+            builder.parse_args([]).output,
+            builder.ROOT / ".work/x86_64/owned-static-sysroot",
+        )
+
     @staticmethod
     def write_elf64_relocatable(
         path: Path,

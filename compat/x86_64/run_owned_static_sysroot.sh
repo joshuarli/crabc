@@ -25,6 +25,20 @@ readonly ELF64_PROGRAM_HEADER_COUNT_OFFSET=56
 readonly ELF64_PROGRAM_HEADER_OFFSET=32
 readonly ELF64_P_FILESZ_OFFSET=32
 
+# Use the producer's checked checkout-state boundary for compiler scratch and
+# test fixtures too, even when called directly inside the pinned container.
+# The dispatcher still binds legacy /tmp spellings for older runners.
+TMPDIR="$(python3 -B - "$ROOT_DIR" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from build_x86_64_owned_sysroot import deterministic_environment
+
+print(deterministic_environment()["TMPDIR"])
+PY
+)"
+export TMPDIR
+
 fail() {
     printf 'ERROR: x86 owned static sysroot: %s\n' "$*" >&2
     exit 1
@@ -659,7 +673,7 @@ python3 -B -m unittest -v \
     scripts.tests.test_build_x86_64_owned_sysroot \
     compat.x86_64.tests.test_owned_static_sysroot_package
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-owned-static-sysroot.XXXXXX)"
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-owned-static-sysroot.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 primary="$work_dir/primary"
 reproduction="$work_dir/reproduction"
