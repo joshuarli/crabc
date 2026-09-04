@@ -2446,6 +2446,14 @@ Native M1 is complete at clean, unchanged revision
 All six bounded components, nine source-definition anchors, and target-local
 source contracts pass. Whole-engine source/API coverage remains incomplete.
 
+Native M2 qualifies PageMap independently at clean, unchanged revision
+`b32c41832329e8cb47cd514fc8204cfface84628`. Run
+`./compat/allocator/run-x86_64.sh allocator-m2`; it intentionally exits 3
+because the other seven components remain partial. The report is
+`.work/allocator-x86_64/reports/allocator/x86_64/m2-memory-substrate-latest.json`.
+PageMap's eleven checks, bounded source anchors, native differentials, and
+failure ownership pass; this does not qualify other substrate components.
+
 The next integrated wave must:
 
 1. Preserve the executable containment contract in
@@ -2458,15 +2466,15 @@ The next integrated wave must:
    architecture, source revision, and source cleanliness. This is the M0
    inventory contract, not allocator-engine parity.
 3. Preserve the architecture-qualified x86 M1 contract and its executable
-   gate. `run.py` admits x86 quick/check and native `--m1`, while x86 M2
-   remains unavailable. Preserve the AArch64 manifests and their
+   gate. `run.py` admits x86 quick/check and native `--m1`/`--m2`; the latter
+   fails closed until all eight components qualify. Preserve AArch64 manifests and their
    exact-revision records; do not relabel them or their completed components
    as x86 evidence. Share neutral definitions only where their target
    contract is genuinely identical.
 4. Close all eight x86 M2 components, using fail-closed gates
    and complete pinned-source behavior/ownership/failure matrices. Audit the
-   inherited seven partial AArch64 components and PageMap for x86 applicability;
-   even the preserved AArch64 PageMap completion is not an x86 pass. A selected
+   inherited partial AArch64 components for x86 applicability; PageMap now has
+   separate native x86 qualification. A selected
    trace, check count, or empty placeholder contract cannot close a component.
 5. Proceed through M3–M11 in dependency order, without waiving correctness,
    lifecycle, ABI, upstream API/mode parity, performance, promotion, or cleanup.

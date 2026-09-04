@@ -39,6 +39,8 @@ planning checkpoints, not runtime or allocator completion.
    that crossed allocator ownership. Native M1 passes all six bounded
    components and source contracts at clean revision `0daef148`; the exact
    report and next M2 work are recorded in `native-mimalloc.md` §26.
+   Native M2 independently qualifies PageMap at `b32c4183`; its other seven
+   components remain incomplete, with bitmap and VM work active.
 3. Integration: agree on bootstrap, errno, TLS/TCB, pthread exit, fork, and
    loader ownership. Continue independent runtime work with the accepted C
    backend; requalify installed x86 products after native allocator promotion.
