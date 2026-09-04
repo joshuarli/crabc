@@ -6,7 +6,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -325,6 +327,109 @@ time.sleep(60)
                 break
             time.sleep(0.02)
         self.assertFalse(status.exists() and " Z " not in status.read_text(encoding="utf-8"))
+
+    def test_sigint_reaps_owned_test_descendants_and_retains_private_artifacts(self) -> None:
+        grandchild_pid = self.fixture_root / "grandchild.pid"
+        ready = self.fixture_root / "ready"
+        cargo = self.cargo_program(
+            """#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+grandchild = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+Path(os.environ["FAKE_GRANDCHILD_PID"]).write_text(str(grandchild.pid), encoding="utf-8")
+Path(os.environ["FAKE_READY"]).write_text("ready", encoding="utf-8")
+time.sleep(60)
+"""
+        )
+        driver = self.write_program(
+            "interrupt-driver.py",
+            f"""
+            import os
+            import sys
+            from pathlib import Path
+
+            sys.path.insert(0, {str(HELPER.parent)!r})
+            import run_core_tests
+
+            try:
+                with run_core_tests.cancellation_handlers():
+                    run_core_tests.run_core_tests(
+                        state_root=Path(os.environ["FAKE_STATE_ROOT"]),
+                        cargo=(sys.executable, os.environ["FAKE_CARGO"]),
+                        objdump=(sys.executable, os.environ["FAKE_OBJDUMP"]),
+                        environment={{
+                            "CORE_TEST_SOURCE": str(run_core_tests.CORE_LIB_SOURCE),
+                            "FAKE_GRANDCHILD_PID": os.environ["FAKE_GRANDCHILD_PID"],
+                            "FAKE_READY": os.environ["FAKE_READY"],
+                        }},
+                        timeout_seconds=30,
+                        retain_success=True,
+                    )
+            except run_core_tests.CoreTestInterrupted as error:
+                raise SystemExit(128 + error.signal_number)
+            """,
+        )
+        objdump = self.write_objdump()
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "FAKE_STATE_ROOT": str(self.state_root),
+                "FAKE_CARGO": cargo[1],
+                "FAKE_OBJDUMP": objdump[1],
+                "FAKE_GRANDCHILD_PID": str(grandchild_pid),
+                "FAKE_READY": str(ready),
+            }
+        )
+        process = subprocess.Popen(
+            driver,
+            cwd=ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 5.0
+            while not ready.exists():
+                if process.poll() is not None or time.monotonic() >= deadline:
+                    self.fail("helper did not start its owned test child")
+                time.sleep(0.02)
+            os.kill(process.pid, signal.SIGINT)
+            stdout, stderr = process.communicate(timeout=5)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+
+        self.assertEqual(process.returncode, 130, stdout.decode() + stderr.decode())
+        status = Path(f"/proc/{grandchild_pid.read_text(encoding='utf-8')}/stat")
+        deadline = time.monotonic() + 2.0
+        while status.exists() and time.monotonic() < deadline:
+            try:
+                if status.read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0] == "Z":
+                    break
+            except (IndexError, OSError):
+                break
+            time.sleep(0.02)
+        self.assertFalse(status.exists() and " Z " not in status.read_text(encoding="utf-8"))
+        runs = list((self.state_root / "runs").iterdir())
+        self.assertEqual(len(runs), 1)
+        self.assertTrue((runs[0] / "crabc-core-tests").is_file())
+        self.assertTrue((runs[0] / "fenv-disassembly").is_file())
+        self.assertIn("timed out: false", (runs[0] / "test.log").read_text(encoding="utf-8"))
+
+    def test_sigterm_uses_the_same_cancellation_path(self) -> None:
+        with run_core_tests.cancellation_handlers():
+            with self.assertRaises(run_core_tests.CoreTestInterrupted) as raised:
+                os.kill(os.getpid(), signal.SIGTERM)
+
+        self.assertEqual(raised.exception.signal_number, signal.SIGTERM)
 
 
 if __name__ == "__main__":

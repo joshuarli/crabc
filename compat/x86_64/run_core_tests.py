@@ -38,6 +38,7 @@ TARGET: Final = "x86_64-unknown-linux-musl"
 DEFAULT_TIMEOUT_SECONDS: Final = 300.0
 MAX_TIMEOUT_SECONDS: Final = 900.0
 FXRSTOR: Final = re.compile(rb"\bfxrstor(?:64)?\b", re.IGNORECASE)
+TERMINATION_GRACE_SECONDS: Final = 2.0
 
 
 class CoreTestError(RuntimeError):
@@ -46,6 +47,15 @@ class CoreTestError(RuntimeError):
     def __init__(self, message: str, run_directory: Path | None = None) -> None:
         super().__init__(message)
         self.run_directory = run_directory
+
+
+class CoreTestInterrupted(KeyboardInterrupt):
+    """A terminal signal whose owned child session has to be reaped first."""
+
+    def __init__(self, signal_number: int) -> None:
+        super().__init__()
+        self.signal_number = signal_number
+        self.run_directory: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -229,6 +239,25 @@ def terminate_owned_group(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
+def reap_interrupted_child(process: subprocess.Popen[bytes], command: Sequence[str]) -> ChildResult:
+    """Kill and reap an owned session before a cancellation can escape."""
+
+    terminate_owned_group(process)
+    try:
+        stdout, stderr = process.communicate(timeout=TERMINATION_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        terminate_owned_group(process)
+        stdout, stderr = process.communicate()
+    return ChildResult(tuple(command), process.returncode, stdout, stderr, False)
+
+
+def interrupted_child_result(error: BaseException) -> ChildResult | None:
+    """Recover the retained output that was attached during exceptional cleanup."""
+
+    result = getattr(error, "core_test_child_result", None)
+    return result if isinstance(result, ChildResult) else None
+
+
 def run_owned_child(
     command: Sequence[str], environment: Mapping[str, str], timeout_seconds: float
 ) -> ChildResult:
@@ -256,6 +285,13 @@ def run_owned_child(
         terminate_owned_group(process)
         stdout, stderr = process.communicate()
         return ChildResult(tuple(command), process.returncode, stdout, stderr, True)
+    except BaseException as error:
+        result = reap_interrupted_child(process, command)
+        try:
+            error.core_test_child_result = result
+        except AttributeError:
+            pass
+        raise
 
 
 def render_child_log(label: str, result: ChildResult) -> bytes:
@@ -385,6 +421,24 @@ def remove_successful_run(run_directory: Path, runs_root: Path) -> None:
     shutil.rmtree(run_directory)
 
 
+@contextmanager
+def cancellation_handlers() -> Iterator[None]:
+    """Translate terminal signals into catchable cleanup before reporting them."""
+
+    def interrupted(signal_number: int, _frame: object) -> None:
+        raise CoreTestInterrupted(signal_number)
+
+    signals = (signal.SIGINT, signal.SIGTERM)
+    previous = {signal_number: signal.getsignal(signal_number) for signal_number in signals}
+    try:
+        for signal_number in signals:
+            signal.signal(signal_number, interrupted)
+        yield
+    finally:
+        for signal_number in signals:
+            signal.signal(signal_number, previous[signal_number])
+
+
 def run_core_tests(
     *,
     state_root: Path = DEFAULT_STATE_ROOT,
@@ -409,31 +463,40 @@ def run_core_tests(
     try:
         values = child_environment(target_root, run_directory, environment)
         with build_lock(cache_root):
-            cargo_result = run_owned_child(
-                [
-                    *cargo,
-                    "test",
-                    "--locked",
-                    "--target",
-                    TARGET,
-                    "-p",
-                    "crabc-core",
-                    "--lib",
-                    "--no-default-features",
-                    "--no-run",
-                    "--message-format=json",
-                ],
-                values,
-                timeout_seconds,
-            )
+            cargo_command = [
+                *cargo,
+                "test",
+                "--locked",
+                "--target",
+                TARGET,
+                "-p",
+                "crabc-core",
+                "--lib",
+                "--no-default-features",
+                "--no-run",
+                "--message-format=json",
+            ]
+            try:
+                cargo_result = run_owned_child(cargo_command, values, timeout_seconds)
+            except BaseException as error:
+                result = interrupted_child_result(error)
+                if result is not None:
+                    write_private_bytes(run_directory, "cargo.log", render_child_log("cargo", result))
+                raise
             write_private_bytes(run_directory, "cargo.log", render_child_log("cargo", cargo_result))
             require_child_success("Cargo test build", cargo_result, run_directory)
             cargo_executable = selected_current_test_executable(cargo_result.stdout, target_root)
             test_executable = copy_private_executable(cargo_executable, target_root, run_directory)
 
-        objdump_result = run_owned_child(
-            [*objdump, "-d", "--", str(test_executable)], values, timeout_seconds
-        )
+        objdump_command = [*objdump, "-d", "--", str(test_executable)]
+        try:
+            objdump_result = run_owned_child(objdump_command, values, timeout_seconds)
+        except BaseException as error:
+            result = interrupted_child_result(error)
+            if result is not None:
+                write_private_bytes(run_directory, "fenv-disassembly", result.stdout)
+                write_private_bytes(run_directory, "objdump.log", render_child_log("objdump", result))
+            raise
         write_private_bytes(run_directory, "fenv-disassembly", objdump_result.stdout)
         write_private_bytes(run_directory, "objdump.log", render_child_log("objdump", objdump_result))
         require_child_success("objdump fenv proof", objdump_result, run_directory)
@@ -442,9 +505,14 @@ def run_core_tests(
                 "x86 fenv codegen must not reload XMM state with fxrstor", run_directory
             )
 
-        test_result = run_owned_child(
-            [str(test_executable), "--test-threads=1"], values, timeout_seconds
-        )
+        test_command = [str(test_executable), "--test-threads=1"]
+        try:
+            test_result = run_owned_child(test_command, values, timeout_seconds)
+        except BaseException as error:
+            result = interrupted_child_result(error)
+            if result is not None:
+                write_private_bytes(run_directory, "test.log", render_child_log("core tests", result))
+            raise
         write_private_bytes(run_directory, "test.log", render_child_log("core tests", test_result))
         require_child_success("core test executable", test_result, run_directory)
         succeeded = True
@@ -452,6 +520,13 @@ def run_core_tests(
     except CoreTestError as error:
         if error.run_directory is None:
             raise CoreTestError(str(error), run_directory) from error
+        raise
+    except BaseException as error:
+        if getattr(error, "run_directory", None) is None:
+            try:
+                error.run_directory = run_directory
+            except AttributeError:
+                pass
         raise
     finally:
         if succeeded and not retain_success:
@@ -465,7 +540,15 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--timeout", default=str(DEFAULT_TIMEOUT_SECONDS))
     parsed = parser.parse_args(arguments)
     try:
-        run_core_tests(timeout_seconds=parse_timeout(parsed.timeout))
+        with cancellation_handlers():
+            run_core_tests(timeout_seconds=parse_timeout(parsed.timeout))
+    except CoreTestInterrupted as error:
+        retained = f"; retained failure: {error.run_directory}" if error.run_directory else ""
+        print(
+            f"x86 cached core tests: interrupted by signal {error.signal_number}{retained}",
+            file=sys.stderr,
+        )
+        return 128 + error.signal_number
     except CoreTestError as error:
         retained = f"; retained failure: {error.run_directory}" if error.run_directory else ""
         print(f"x86 cached core tests: ERROR: {error}{retained}", file=sys.stderr)
