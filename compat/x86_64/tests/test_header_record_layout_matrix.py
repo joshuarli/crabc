@@ -110,6 +110,28 @@ Layout: <ASTRecordLayout
         with self.assertRaisesRegex(MATRIX.RecordLayoutMatrixError, "row count"):
             MATRIX.validate_checked_report(changed, MATRIX.load_contract())
 
+    def test_report_validation_rejects_reference_record_schema_drift(self) -> None:
+        report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
+        changed = copy.deepcopy(report)
+        row = next(row for row in changed["rows"] if row["reference_records"])
+        record = next(record for record in row["reference_records"] if record["applicability"] == "applicable")
+        record["size"] = None
+        with self.assertRaisesRegex(MATRIX.RecordLayoutMatrixError, "reference record.*size"):
+            MATRIX.validate_checked_report(changed, MATRIX.load_contract())
+
+    def test_report_validation_recomputes_differences_and_summary_counts(self) -> None:
+        report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
+        changed = copy.deepcopy(report)
+        row = next(row for row in changed["rows"] if row["comparison"] in {"matched", "mismatch"})
+        row["difference"]["matched_count"] += 1
+        with self.assertRaisesRegex(MATRIX.RecordLayoutMatrixError, "difference counts"):
+            MATRIX.validate_checked_report(changed, MATRIX.load_contract())
+
+        changed = copy.deepcopy(report)
+        changed["summary"]["reference_record_count"] += 1
+        with self.assertRaisesRegex(MATRIX.RecordLayoutMatrixError, "summary counts"):
+            MATRIX.validate_checked_report(changed, MATRIX.load_contract())
+
     def test_runner_is_a_checked_native_boundary(self) -> None:
         result = subprocess.run(["bash", "-n", str(RUNNER)], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)

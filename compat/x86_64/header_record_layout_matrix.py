@@ -497,6 +497,81 @@ def record_summary(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return {"record_count": len(records), "applicable_record_count": applicable, "not_applicable_record_count": len(records) - applicable, "not_applicable_categories": dict(sorted(categories.items())), "not_applicable_field_categories": dict(sorted(field_categories.items()))}
 
 
+def validate_record_facts(records: object, label: str) -> list[Mapping[str, Any]]:
+    """Validate one compiler tree's complete record/field fact schema."""
+    require(isinstance(records, list), f"record-layout {label} records are invalid")
+    checked: list[Mapping[str, Any]] = []
+    keys: set[str] = set()
+    for index, record in enumerate(records):
+        location = f"record-layout {label} record[{index}]"
+        require(isinstance(record, Mapping), f"{location} is invalid")
+        required = {"key", "tag", "name", "alias", "applicability", "size", "alignment", "fields"}
+        optional = {"reason"}
+        require(set(record).issubset(required | optional) and required.issubset(record), f"{location} keys are invalid")
+        key = record.get("key")
+        require(isinstance(key, str) and key and key not in keys, f"{location} key is invalid or duplicated")
+        keys.add(key)
+        require(record.get("tag") in {"struct", "union", "class"}, f"{location} tag is invalid")
+        require(record.get("name") is None or isinstance(record.get("name"), str), f"{location} name is invalid")
+        require(record.get("alias") is None or isinstance(record.get("alias"), str), f"{location} alias is invalid")
+        applicability = record.get("applicability")
+        require(applicability in {"applicable", "not-applicable"}, f"{location} applicability is invalid")
+        fields = record.get("fields")
+        require(isinstance(fields, list), f"{location} fields are invalid")
+        if applicability == "applicable":
+            require(isinstance(record.get("size"), int) and record["size"] >= 0, f"{location} size is invalid")
+            require(isinstance(record.get("alignment"), int) and record["alignment"] > 0, f"{location} alignment is invalid")
+            require("reason" not in record, f"{location} applicable record has an exception reason")
+        else:
+            require(record.get("reason") in NA_CATEGORIES, f"{location} exception category is invalid")
+            require(record.get("size") is None and record.get("alignment") is None, f"{location} non-applicable record has layout facts")
+            require(not fields, f"{location} non-applicable record has fields")
+        field_keys: set[str] = set()
+        for field_index, field in enumerate(fields):
+            field_location = f"{location} field[{field_index}]"
+            require(isinstance(field, Mapping), f"{field_location} is invalid")
+            field_required = {"name", "offset", "offset_bits", "applicability"}
+            field_optional = {"type", "reason"}
+            require(set(field).issubset(field_required | field_optional) and field_required.issubset(field), f"{field_location} keys are invalid")
+            name = field.get("name")
+            require(name is None or isinstance(name, str), f"{field_location} name is invalid")
+            if isinstance(name, str):
+                require(name not in field_keys, f"{field_location} name is duplicated")
+                field_keys.add(name)
+            require(field.get("type") is None or isinstance(field.get("type"), str), f"{field_location} type is invalid")
+            field_applicability = field.get("applicability")
+            require(field_applicability in {"applicable", "not-applicable"}, f"{field_location} applicability is invalid")
+            if field_applicability == "applicable":
+                require(isinstance(field.get("offset"), int) and field["offset"] >= 0, f"{field_location} offset is invalid")
+                require(isinstance(field.get("offset_bits"), int) and field["offset_bits"] >= 0, f"{field_location} bit offset is invalid")
+                require("reason" not in field, f"{field_location} applicable field has an exception reason")
+            else:
+                require(field.get("offset") is None and field.get("reason") in NA_CATEGORIES, f"{field_location} exception facts are invalid")
+        checked.append(record)
+    return checked
+
+
+def expected_summary(rows: Sequence[Mapping[str, Any]], candidate_records: Sequence[Mapping[str, Any]], reference_records: Sequence[Mapping[str, Any]], candidate_header_count: int, pinned_header_count: int, profile_count: int) -> dict[str, Any]:
+    comparisons = Counter(str(row["comparison"]) for row in rows)
+    candidate_summary = record_summary(candidate_records)
+    reference_summary = record_summary(reference_records)
+    return {
+        "candidate_field_categories": dict(sorted(candidate_summary["not_applicable_field_categories"].items())),
+        "candidate_public_header_count": candidate_header_count,
+        "candidate_record_categories": dict(sorted(candidate_summary["not_applicable_categories"].items())),
+        "candidate_record_count": len(candidate_records),
+        "comparison_counts": dict(sorted(comparisons.items())),
+        "complete": False,
+        "incomplete_reasons": [f"{comparisons.get('mismatch', 0)} comparable header/profile rows have record-byte-layout differences", f"{comparisons.get('oracle-not-applicable', 0)} pinned-musl header/profile rows are oracle-not-applicable", f"{comparisons.get('candidate-only-pending-c-abi-policy', 0)} project-only header/profile rows remain pending C ABI policy", "record-byte-layouts remain partial until every applicable named record and field is matched", "archive linkage, runtime behavior, family promotion, and public support remain outside this matrix"],
+        "pinned_public_header_count": pinned_header_count,
+        "profile_count": profile_count,
+        "reference_field_categories": dict(sorted(reference_summary["not_applicable_field_categories"].items())),
+        "reference_record_categories": dict(sorted(reference_summary["not_applicable_categories"].items())),
+        "reference_record_count": len(reference_records),
+        "row_count": len(rows),
+    }
+
+
 def build_report(compiler: str, project_include: Path, musl_include: Path, linux_uapi_include: Path, contract: MatrixContract | None = None) -> dict[str, Any]:
     contract = load_contract() if contract is None else contract
     require(project_include.is_dir() and not project_include.is_symlink(), "project include root is unsafe")
@@ -524,10 +599,9 @@ def build_report(compiler: str, project_include: Path, musl_include: Path, linux
                     comparison = "matched" if difference["candidate_only_count"] == 0 and difference["reference_only_count"] == 0 and difference["incompatible_count"] == 0 else "mismatch"
                     row.update({"comparison": comparison, "difference": difference, "reference": record_summary(reference_records), "reference_records": reference_records, "reference_status": "ok", "reference_detail": reference_detail})
                 rows.append(row)
-    comparison_counts = Counter(row["comparison"] for row in rows)
     candidate_records = [record for row in rows for record in row["candidate_records"]]
     reference_records = [record for row in rows for record in (row["reference_records"] or [])]
-    mismatch_rows = comparison_counts.get("mismatch", 0)
+    summary = expected_summary(rows, candidate_records, reference_records, len(candidate_headers), len(pinned_headers), len(contract.profiles))
     return {
         "schema": SCHEMA,
         "contract_schema": CONTRACT_SCHEMA,
@@ -538,21 +612,7 @@ def build_report(compiler: str, project_include: Path, musl_include: Path, linux
         "scope": dict(REPORT_SCOPE),
         "profiles": [{"id": profile.identifier, "language": profile.language, "standard": profile.standard, "defines": list(profile.defines)} for profile in contract.profiles],
         "rows": rows,
-        "summary": {
-            "candidate_public_header_count": len(candidate_headers),
-            "pinned_public_header_count": len(pinned_headers),
-            "profile_count": len(contract.profiles),
-            "row_count": len(rows),
-            "comparison_counts": dict(sorted(comparison_counts.items())),
-            "candidate_record_count": len(candidate_records),
-            "reference_record_count": len(reference_records),
-        "candidate_record_categories": dict(sorted(record_summary(candidate_records)["not_applicable_categories"].items())),
-            "candidate_field_categories": dict(sorted(record_summary(candidate_records)["not_applicable_field_categories"].items())),
-            "reference_record_categories": dict(sorted(record_summary(reference_records)["not_applicable_categories"].items())),
-            "reference_field_categories": dict(sorted(record_summary(reference_records)["not_applicable_field_categories"].items())),
-            "complete": False,
-            "incomplete_reasons": [f"{mismatch_rows} comparable header/profile rows have record-byte-layout differences", f"{comparison_counts.get('oracle-not-applicable', 0)} pinned-musl header/profile rows are oracle-not-applicable", f"{comparison_counts.get('candidate-only-pending-c-abi-policy', 0)} project-only header/profile rows remain pending C ABI policy", "record-byte-layouts remain partial until every applicable named record and field is matched", "archive linkage, runtime behavior, family promotion, and public support remain outside this matrix"],
-        },
+        "summary": summary,
     }
 
 
@@ -572,36 +632,50 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract 
     require(inputs.get("public_header_inventory_sha256") == sha256_file(contract.public_headers), "record-layout public-header digest is stale")
     require(inputs.get("callable_inventory_sha256") == sha256_file(contract.callable_inventory), "record-layout inventory digest is stale")
     profiles = report.get("profiles")
-    require(isinstance(profiles, list) and [entry.get("id") for entry in profiles if isinstance(entry, Mapping)] == [profile.identifier for profile in contract.profiles], "record-layout profile roster drifted")
+    expected_profiles = [{"id": profile.identifier, "language": profile.language, "standard": profile.standard, "defines": list(profile.defines)} for profile in contract.profiles]
+    require(profiles == expected_profiles, "record-layout profile roster drifted")
     rows = report.get("rows")
     require(isinstance(rows, list), "record-layout rows are invalid")
     pinned_headers = inventory.load_headers(contract.public_headers)
     candidate_headers = inventory.candidate_header_paths(ROOT / "include", pinned_headers)
     candidate_count = len(candidate_headers)
-    expected_keys = {(header, profile.identifier) for header in candidate_headers for profile in contract.profiles}
-    actual_keys = {(row.get("header"), row.get("profile")) for row in rows if isinstance(row, Mapping)}
+    expected_row_keys = [(header, profile.identifier) for header in candidate_headers for profile in contract.profiles]
+    actual_keys = [(row.get("header"), row.get("profile")) for row in rows if isinstance(row, Mapping)]
     require(len(rows) == candidate_count * len(contract.profiles), "record-layout row count drifted")
-    require(actual_keys == expected_keys, "record-layout row key coverage drifted")
+    require(actual_keys == expected_row_keys, "record-layout row key coverage drifted")
     summary = report.get("summary")
     require(isinstance(summary, Mapping), "record-layout summary is invalid")
-    require(summary.get("row_count") == len(rows) and summary.get("profile_count") == len(contract.profiles), "record-layout summary row count drifted")
-    require(summary.get("candidate_public_header_count") == candidate_count and summary.get("pinned_public_header_count") == len(pinned_headers), "record-layout header counts drifted")
-    require(summary.get("complete") is False, "record-layout report cannot claim completion")
-    require(isinstance(summary.get("comparison_counts"), Mapping), "record-layout comparison counts are invalid")
+    candidate_records: list[Mapping[str, Any]] = []
+    reference_records: list[Mapping[str, Any]] = []
+    allowed_comparisons = {"matched", "mismatch", "oracle-not-applicable", "candidate-only-pending-c-abi-policy"}
     for row in rows:
         require(isinstance(row, Mapping), "record-layout row is invalid")
-        require(row.get("candidate_status") == "ok" and isinstance(row.get("candidate_records"), list), "record-layout candidate evidence is invalid")
+        candidate = validate_record_facts(row.get("candidate_records"), "candidate")
+        candidate_records.extend(candidate)
+        require(row.get("candidate_status") == "ok" and isinstance(row.get("candidate"), Mapping), "record-layout candidate evidence is invalid")
+        require(row["candidate"] == record_summary(candidate), "record-layout candidate row summary drifted")
         comparison = row.get("comparison")
-        require(comparison in {"matched", "mismatch", "oracle-not-applicable", "candidate-only-pending-c-abi-policy"}, "record-layout comparison is invalid")
+        require(comparison in allowed_comparisons, "record-layout comparison is invalid")
         if comparison in {"matched", "mismatch"}:
-            require(row.get("reference_status") == "ok" and isinstance(row.get("reference_records"), list), "record-layout reference evidence is invalid")
-        for record in row["candidate_records"]:
-            require(isinstance(record, Mapping), "record-layout candidate record is invalid")
-            if record.get("applicability") == "not-applicable":
-                require(record.get("reason") in NA_CATEGORIES, "record-layout candidate exception category is invalid")
-            for field in record.get("fields", []):
-                if isinstance(field, Mapping) and field.get("applicability") == "not-applicable":
-                    require(field.get("reason") in NA_CATEGORIES, "record-layout candidate field exception category is invalid")
+            reference = validate_record_facts(row.get("reference_records"), "reference")
+            reference_records.extend(reference)
+            require(row.get("reference_status") == "ok" and isinstance(row.get("reference"), Mapping), "record-layout reference evidence is invalid")
+            require(row["reference"] == record_summary(reference), "record-layout reference row summary drifted")
+            difference = row.get("difference")
+            require(isinstance(difference, Mapping), "record-layout row difference is missing")
+            expected_difference = compare_records(candidate, reference)
+            require(difference == expected_difference, "record-layout row difference counts drifted")
+            expected_comparison = "matched" if not difference["candidate_only_count"] and not difference["reference_only_count"] and not difference["incompatible_count"] else "mismatch"
+            require(comparison == expected_comparison, "record-layout row comparison drifted")
+        elif comparison == "oracle-not-applicable":
+            require(row.get("reference_status") == "oracle-not-applicable" and row.get("reference_records") is None and row.get("reference") is None, "record-layout oracle exception evidence is invalid")
+            require(row.get("reference_detail") == contract.oracle_not_applicable.get((row.get("header"), row.get("profile"))), "record-layout oracle exception reason drifted")
+            require("difference" not in row, "record-layout oracle exception has a difference")
+        else:
+            require(row.get("reference_status") == "not-in-pinned-inventory" and row.get("reference_records") is None and row.get("reference") is None, "record-layout project-only evidence is invalid")
+            require("difference" not in row, "record-layout project-only row has a difference")
+    expected = expected_summary(rows, candidate_records, reference_records, candidate_count, len(pinned_headers), len(contract.profiles))
+    require(dict(summary) == expected, "record-layout summary counts or categories drifted")
 
 
 def check_output(report: Mapping[str, Any], path: Path) -> None:
