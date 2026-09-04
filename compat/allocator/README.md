@@ -2099,6 +2099,34 @@ claim from a raw page, block, remote-head, or departed-Theap hint; only the
 typed drain, a current PageMap resolution, and the matching publication
 capability can authorize a later route.
 
+## Isolated allocator Python unit tests
+
+The source-only Python unit suite is safe to split by test module: its
+checked-in tests read contracts and source, use mocks, or create temporary
+fixtures. Run it through `scripts/test_python.py` to keep each module's Python
+globals and temporary state isolated while using a bounded number of processes:
+
+```sh
+python3 scripts/test_python.py --directory compat/allocator/tests
+python3 scripts/test_python.py --directory compat/allocator/tests --jobs 1
+python3 scripts/test_python.py --module compat/allocator/tests/test_runner.py
+```
+
+The default is the lesser of the available CPUs and four workers; `--jobs`
+accepts at most eight. Each module receives unique `TMPDIR`, scratch, report,
+and captured-log directories beneath a retained
+`.work/python-test-runs/run-*/` root. A module has a 300-second timeout by
+default; `--timeout` changes that per-module bound. The runner reports only a
+short ordered failure summary and paths to its logs, rejects traversal and
+symlinked selections before allocating a run root, and fails when discovery or
+a module runs zero tests. Timeout and interruption signal the initial worker
+process group and reap its direct worker. A test that deliberately creates a
+new session can escape normal Unix process-group containment; this unit suite
+does not do so.
+
+This is a unit-test convenience, not a replacement for the contained native
+allocator launcher or a source of runtime qualification evidence.
+
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
 
