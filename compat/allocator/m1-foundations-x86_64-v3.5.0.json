@@ -1,0 +1,133 @@
+{
+  "components": [
+    {
+      "id": "configuration-and-arithmetic",
+      "native_status": "ready-for-native-evidence",
+      "remaining_conditions": []
+    },
+    {
+      "id": "atomics-locks-once-and-bootstrap",
+      "native_status": "ready-for-native-evidence",
+      "remaining_conditions": []
+    },
+    {
+      "id": "provenance-and-represented-layouts",
+      "native_status": "ready-for-native-evidence",
+      "remaining_conditions": []
+    },
+    {
+      "id": "random-image",
+      "native_status": "ready-for-native-evidence",
+      "remaining_conditions": []
+    },
+    {
+      "id": "linux-raw-primitives",
+      "native_status": "ready-for-native-evidence",
+      "remaining_conditions": []
+    },
+    {
+      "id": "compiler-tls-roots",
+      "native_status": "ready-for-native-evidence",
+      "remaining_conditions": []
+    }
+  ],
+  "execution": {
+    "features": [],
+    "no_default_features": true,
+    "package": "crabc-mimalloc",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "test_threads": 1,
+    "timeout_seconds": 300
+  },
+  "format": 1,
+  "global_evidence": [
+    "release-c-rust-layout",
+    "release-static-bootstrap-image",
+    "raw-primitive-c-rust-trace",
+    "compiler-tls-c-rust-trace",
+    "compiler-tls-same-tld-terminal-c-rust-trace",
+    "compiler-tls-codegen",
+    "x86-64-normal-engine-dependency-graph",
+    "x86-64-source-contract-inventories"
+  ],
+  "milestone": {
+    "completion_rule": "Native x86 M1 is complete only when this ready-for-native-evidence contract is executed by the canonical native x86 launcher: every exact source-test and layout inventory must match, every focused x86 Rust test and pinned-C/Rust differential must pass, the native C baseline and compiler-TLS codegen must pass, all named source-contract inventories must be current, and one clean source revision must remain unchanged during the run. The ready state is not completion and cannot be replaced by the preserved AArch64 M1 status or report.",
+    "id": "m1",
+    "nonclaims": [
+      "This gate does not promote crabc-mimalloc to a libc backend or public allocator API.",
+      "This gate does not claim full source-unit completion for types.h, internal.h, prim.h, prim-tls.h, or the target-wide x86 source map.",
+      "The source inventory is shared only because its named Rust checks and selected C/Rust layout keys are identical inputs; the AArch64 completion statuses, source-map assertions, generated reports, and native execution are excluded from this target's evidence.",
+      "Focused Rust tests and selected C/Rust records are bounded witnesses, not whole-component, allocator-lifecycle, or public-runtime parity proof."
+    ],
+    "status": "ready-for-native-evidence"
+  },
+  "neutral_inventory": {
+    "components": [
+      {
+        "check_count": 5,
+        "checks_sha256": "e04490ca91363b12cabcb94a4d61aa4449eee75295bc26684147fb5504eec32e",
+        "id": "configuration-and-arithmetic",
+        "layout_key_count": 71,
+        "layout_keys_sha256": "cff3e3fd23239e8b54a8652a184e198d34ac0beb514cad2c5be45f29a24d92c3"
+      },
+      {
+        "check_count": 11,
+        "checks_sha256": "7795cb3444e4f48731d98f88bac5c4eb867c907934fae10ab486a4aa1ab78020",
+        "id": "atomics-locks-once-and-bootstrap",
+        "layout_key_count": 148,
+        "layout_keys_sha256": "22804e407ce6ea26a53330aa49b1a39499a49ffaa3367ad25432b4522f227ee7"
+      },
+      {
+        "check_count": 3,
+        "checks_sha256": "37ad8228bb206692f084e44ccb38293dd00d944073287283ff93753316491fdd",
+        "id": "provenance-and-represented-layouts",
+        "layout_key_count": 126,
+        "layout_keys_sha256": "1cdb22010f6802bea4d6c2b52220218ee85c504593c7efc9d56af99e34b3ed5b"
+      },
+      {
+        "check_count": 13,
+        "checks_sha256": "ce794bd528a1883f77f6ebbcd24c4fc86542e01c2a201a11522310ba42dc9869",
+        "id": "random-image",
+        "layout_key_count": 27,
+        "layout_keys_sha256": "bc2125ed67abdc256e9417c97d890af187383922763c8eaa6ac732fd51e845a7"
+      },
+      {
+        "check_count": 6,
+        "checks_sha256": "5920fdcb3b20de0ec6e5ace578ef86a96da590f36877404ea994113b2a06f044",
+        "id": "linux-raw-primitives",
+        "layout_key_count": 0,
+        "layout_keys_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "check_count": 7,
+        "checks_sha256": "9b11c0a6a32c257bb1202759304633313dafc6eb319895cb751ceb0c27dcae83",
+        "id": "compiler-tls-roots",
+        "layout_key_count": 0,
+        "layout_keys_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    ],
+    "purpose": "Exact check filters and selected layout-key vectors shared as source-shaped M1 inputs only. Their canonical JSON counts and digests are checked before x86 execution; no AArch64 component status, report, or source-map status is imported.",
+    "source_contract": {
+      "path": "compat/allocator/m1-foundations-v3.5.0.json",
+      "sha256": "73044a9fa746b17002a5c2f73123234a1c4d5a88d090dd8cba8030c3746dbe19"
+    }
+  },
+  "schema": "crabc-mimalloc-x86_64-m1-foundations",
+  "source_contracts": [
+    "compat/allocator/x86_64-api-v3.5.0.json",
+    "compat/allocator/x86_64-api-coverage-v3.5.0.json",
+    "compat/allocator/x86_64-source-map-v3.5.0.json"
+  ],
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "kernel_baseline": "5.10",
+    "os": "linux",
+    "rust_target": "x86_64-unknown-linux-musl"
+  },
+  "upstream": {
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

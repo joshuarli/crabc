@@ -59,7 +59,7 @@ fi
         )
 
     def test_native_commands_bind_all_mutable_state_to_the_checkout(self):
-        for command in (("allocator", "--quick"), ("allocator-unit",),
+        for command in (("allocator", "--quick"), ("allocator-m1",), ("allocator-unit",),
                         ("allocator-release-evidence",), ("allocator-perf", "--smoke")):
             with self.subTest(command=command):
                 result = self.launch(*command)
@@ -111,6 +111,67 @@ fi
                 self.assertEqual(list(outside.iterdir()), [])
                 link.unlink()
 
+    def test_linked_worktree_mounts_actual_readonly_git_metadata_without_git_env(self):
+        repository = self.fixture / "repository"
+        repository.mkdir()
+        subprocess.run(
+            ["git", "init", "--initial-branch=main", str(repository)],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        for key, value in (("user.email", "allocator@example.invalid"), ("user.name", "Allocator")):
+            subprocess.run(
+                ["git", "-C", str(repository), "config", key, value],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        (repository / "README").write_text("linked-worktree fixture\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(repository), "add", "README"],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repository), "commit", "-m", "fixture"],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        linked = self.fixture / "linked-worktree"
+        subprocess.run(
+            ["git", "-C", str(repository), "worktree", "add", "-b", "linked", str(linked)],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        launcher = linked / "compat/allocator/run-x86_64.sh"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text(RUNNER.read_text(encoding="utf-8"), encoding="utf-8")
+        environment = os.environ.copy()
+        environment.update(PATH=f"{self.bin}:{environment['PATH']}", DOCKER_CAPTURE=str(self.capture))
+        result = subprocess.run(
+            ["bash", str(launcher), "allocator", "--quick"],
+            cwd=linked,
+            env=environment,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = self.capture.read_bytes().split(b"\0")
+        common = subprocess.run(
+            ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        self.assertIn(f"{common}:{common}:ro".encode(), arguments)
+        self.assertIn(f"{linked}:{linked}:ro".encode(), arguments)
+        self.assertNotIn(b"GIT_DIR=", arguments)
+        self.assertNotIn(b"GIT_WORK_TREE=", arguments)
+
     def test_help_and_invalid_commands_create_no_workspace_or_docker_state(self):
         for args, expected in ((("--help",), 0), (("shell",), 2),
                                (("allocator", "--full"), 2)):
@@ -144,6 +205,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         for command in (
             "allocator --quick",
+            "allocator-m1",
             "allocator-release-evidence",
             "allocator-cmake-modes",
             "allocator-live-owner-full-medium-remote-release",
@@ -183,6 +245,17 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         self.assertNotIn('"$ROOT_DIR/scripts/dev.sh"', source)
         self.assertNotIn('cargo "$@"', source)
         self.assertNotIn("crabc-libc", source)
+
+    def test_m1_command_is_closed_and_selects_the_native_x86_gate(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-m1)", source)
+        self.assertIn(
+            "run_in_container python3 compat/allocator/run.py --m1 --offline",
+            source,
+        )
+        result = self.run_launcher("allocator-m1", "unexpected")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("allocator-m1 takes no arguments", result.stderr)
 
     def test_every_native_dispatch_uses_a_fresh_python_bytecode_environment(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")

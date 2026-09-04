@@ -434,8 +434,14 @@ class InventoryTests(unittest.TestCase):
             self.assertTrue(arguments.m1)
             self.assertEqual(arguments.architecture, "aarch64")
 
-    def test_parser_does_not_allow_x86_64_to_claim_later_production_lanes(self) -> None:
-        for mode in ("--m1", "--full", "--perf-smoke", "--perf-full", "--generate-contracts", "--snapshot-ratchet"):
+    def test_parser_allows_only_the_native_x86_m1_gate_before_later_production_lanes(self) -> None:
+        with mock.patch.object(
+            sys, "argv", ["run.py", "--m1", "--architecture", "x86_64"]
+        ):
+            arguments = RUNNER.parse_arguments()
+            self.assertTrue(arguments.m1)
+            self.assertEqual(arguments.architecture, "x86_64")
+        for mode in ("--full", "--perf-smoke", "--perf-full", "--generate-contracts", "--snapshot-ratchet"):
             with self.subTest(mode=mode), mock.patch.object(
                 sys, "argv", ["run.py", mode, "--architecture", "x86_64"]
             ):
@@ -3863,6 +3869,92 @@ class ContractTests(unittest.TestCase):
             bootstrap["once_call_site_dispositions"],
             list(RUNNER.M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS),
         )
+
+    def test_x86_m1_contract_is_ready_for_native_evidence_not_an_aarch64_status_copy(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_X86_64_FOUNDATIONS_CONTRACT)
+        summary = RUNNER.validate_x86_64_m1_foundations_contract(
+            contract,
+            RUNNER.load_pin(),
+        )
+
+        self.assertEqual(
+            summary["target"],
+            {
+                "architecture": "x86_64",
+                "endianness": "little",
+                "kernel_baseline": "5.10",
+                "os": "linux",
+                "rust_target": "x86_64-unknown-linux-musl",
+            },
+        )
+        self.assertEqual(summary["milestone"]["status"], "ready-for-native-evidence")
+        self.assertEqual(
+            [component["native_status"] for component in summary["components"]],
+            [RUNNER.M1_X86_64_FOUNDATIONS_COMPONENT_STATUS]
+            * len(RUNNER.M1_FOUNDATIONS_COMPONENT_IDS),
+        )
+        self.assertEqual(
+            [component["id"] for component in summary["components"]],
+            list(RUNNER.M1_FOUNDATIONS_COMPONENT_IDS),
+        )
+        self.assertTrue(
+            all(component["checks"] for component in summary["components"])
+        )
+        self.assertIn(
+            "AArch64 completion statuses",
+            contract["milestone"]["nonclaims"][2],
+        )
+        malformed = json.loads(json.dumps(contract))
+        malformed["target"]["architecture"] = "aarch64"
+        with self.assertRaisesRegex(RUNNER.HarnessError, "target changed"):
+            RUNNER.validate_x86_64_m1_foundations_contract(
+                malformed,
+                RUNNER.load_pin(),
+            )
+
+    def test_x86_m1_commands_select_the_native_target_and_unfeatured_engine(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_X86_64_FOUNDATIONS_CONTRACT)
+        summary = RUNNER.validate_x86_64_m1_foundations_contract(
+            contract,
+            RUNNER.load_pin(),
+        )
+        command = RUNNER.m1_foundations_check_command(
+            summary["execution"], summary["components"][0]["checks"][0]
+        )
+        self.assertEqual(
+            command[:9],
+            [
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--no-default-features",
+                "--target",
+                "x86_64-unknown-linux-musl",
+                "--locked",
+                "--lib",
+            ],
+        )
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            ["run.py", "--m1", "--architecture", "x86_64"],
+        ):
+            self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
+
+    def test_x86_m1_main_dispatches_only_to_the_native_gate(self) -> None:
+        report = {"milestone": {"status": "complete"}}
+        with mock.patch.object(
+            sys,
+            "argv",
+            ["run.py", "--m1", "--architecture", "x86_64", "--offline"],
+        ), mock.patch.object(
+            RUNNER, "run_x86_64_m1_foundations", return_value=report
+        ) as native_gate, mock.patch.object(RUNNER, "run_m1_foundations") as aarch_gate:
+            self.assertEqual(RUNNER.main(), 0)
+        native_gate.assert_called_once_with(offline=True)
+        aarch_gate.assert_not_called()
 
     def test_layout_probe_reads_the_selected_source_shape_macros(self) -> None:
         # The M1 configuration boundary must observe the macros that actually

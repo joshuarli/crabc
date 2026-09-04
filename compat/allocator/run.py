@@ -184,6 +184,27 @@ M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/compiler-t
 M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m1-foundations/compiler-tls-same-tld-trace"
 )
+# The native x86 M1 gate has a distinct contract and result path.  It may
+# reuse only the source-shaped check and layout inventories that are common to
+# both 64-bit Linux profiles; it never consumes the archived AArch64 status or
+# report as target evidence.
+M1_X86_64_FOUNDATIONS_CONTRACT = ALLOCATOR_ROOT / "m1-foundations-x86_64-v3.5.0.json"
+M1_X86_64_FOUNDATIONS_REPORT = REPORT_ROOT / "x86_64/m1-foundations-latest.json"
+M1_X86_64_FOUNDATIONS_CARGO_TARGET = (
+    ARTIFACT_ROOT / "x86_64/m1-foundations/cargo-target"
+)
+M1_X86_64_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "x86_64/m1-foundations/raw-primitive-trace"
+)
+M1_X86_64_COMPILER_TLS_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "x86_64/m1-foundations/compiler-tls-trace"
+)
+M1_X86_64_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "x86_64/m1-foundations/compiler-tls-same-tld-trace"
+)
+M1_X86_64_STATIC_IMAGE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "x86_64/m1-foundations/static-image"
+)
 M2_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-v3.5.0.json"
 M2_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "m2-memory-substrate-latest.json"
 M2_MEMORY_SUBSTRATE_CARGO_TARGET = ARTIFACT_ROOT / "m2-memory-substrate/cargo-target"
@@ -697,6 +718,7 @@ M2_BINNED_BITMAP_BSR_INV_TRACE_KEYS = (
     "m2.bbitmap_bsr_inv.scan.chunkmap_empty_after",
 )
 M1_FOUNDATIONS_COMPONENT_STATUSES = frozenset({"partial", "complete"})
+M1_X86_64_FOUNDATIONS_COMPONENT_STATUS = "ready-for-native-evidence"
 M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
     {
         "deferred-to-m2",
@@ -9179,16 +9201,287 @@ def validate_m1_foundations_contract(
     }
 
 
-def m1_foundations_contract_record(
+def _m1_x86_64_neutral_inventory() -> list[dict[str, Any]]:
+    """Read only target-neutral M1 inputs from the preserved AArch64 record.
+
+    The old M1 manifest is retained as the canonical spelling of the finite
+    source filters and selected C/Rust layout vectors.  This helper
+    intentionally does not read its target, component statuses, source-map
+    claims, exclusions, or report state: those belong to the paused AArch64
+    contract and cannot establish any native x86 result.
+    """
+
+    contract = read_json(M1_FOUNDATIONS_CONTRACT)
+    raw_components = contract.get("components")
+    if not isinstance(raw_components, list) or len(raw_components) != len(
+        M1_FOUNDATIONS_COMPONENT_IDS
+    ):
+        raise HarnessError("shared M1 source inventory has an invalid component count")
+
+    inventory: list[dict[str, Any]] = []
+    seen_checks: set[str] = set()
+    for index, raw_component in enumerate(raw_components):
+        if not isinstance(raw_component, Mapping):
+            raise HarnessError("shared M1 source inventory has an invalid component")
+        component_id = raw_component.get("id")
+        if component_id != M1_FOUNDATIONS_COMPONENT_IDS[index]:
+            raise HarnessError("shared M1 source inventory component order changed")
+        raw_checks = raw_component.get("checks")
+        raw_layout_keys = raw_component.get("layout_keys")
+        if not isinstance(raw_checks, list) or not isinstance(raw_layout_keys, list):
+            raise HarnessError(f"shared M1 source inventory {component_id} is incomplete")
+
+        checks: list[dict[str, Any]] = []
+        for check in raw_checks:
+            if not isinstance(check, Mapping) or set(check) != {
+                "expected_passed_test_count",
+                "id",
+                "target",
+            }:
+                raise HarnessError(
+                    f"shared M1 source inventory {component_id} has an invalid test check"
+                )
+            check_id = check.get("id")
+            target = check.get("target")
+            expected_passed_test_count = check.get("expected_passed_test_count")
+            if (
+                not isinstance(check_id, str)
+                or not check_id
+                or check_id in seen_checks
+                or not isinstance(target, str)
+                or not target
+                or type(expected_passed_test_count) is not int
+                or expected_passed_test_count <= 0
+            ):
+                raise HarnessError(
+                    f"shared M1 source inventory {component_id} has an invalid test check"
+                )
+            _m1_foundations_source_test_exists(target, check_id)
+            seen_checks.add(check_id)
+            checks.append(
+                {
+                    "expected_passed_test_count": expected_passed_test_count,
+                    "id": check_id,
+                    "target": target,
+                }
+            )
+        if (
+            not all(isinstance(key, str) and key for key in raw_layout_keys)
+            or len(set(raw_layout_keys)) != len(raw_layout_keys)
+        ):
+            raise HarnessError(
+                f"shared M1 source inventory {component_id} has an invalid layout vector"
+            )
+        inventory.append(
+            {
+                "checks": checks,
+                "id": component_id,
+                "layout_keys": list(raw_layout_keys),
+            }
+        )
+    return inventory
+
+
+def _m1_inventory_digest(value: object) -> str:
+    """Hash one exact, order-independent JSON source inventory value."""
+
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def validate_x86_64_m1_foundations_contract(
     contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Validate the native x86 M1 execution contract without importing closure.
+
+    This contract deliberately records a *ready* implementation boundary. A
+    completion result is created only by `run_x86_64_m1_foundations` after its
+    native oracle, Rust target, and clean-source observations have all passed.
+    """
+
+    expected_keys = {
+        "components",
+        "execution",
+        "format",
+        "global_evidence",
+        "milestone",
+        "neutral_inventory",
+        "schema",
+        "source_contracts",
+        "target",
+        "upstream",
+    }
+    if (
+        set(contract) != expected_keys
+        or contract.get("format") != 1
+        or contract.get("schema") != "crabc-mimalloc-x86_64-m1-foundations"
+    ):
+        raise HarnessError("unsupported native x86 M1 foundations contract")
+
+    expected_upstream = {
+        "archive_sha256": pin["sha256"],
+        "revision": pin["revision"],
+        "version": pin["version"],
+    }
+    if contract.get("upstream") != expected_upstream:
+        raise HarnessError("native x86 M1 foundations upstream identity mismatch")
+    expected_target = {
+        "architecture": "x86_64",
+        "endianness": "little",
+        "kernel_baseline": "5.10",
+        "os": "linux",
+        "rust_target": X86_64_RUST_TARGET,
+    }
+    if contract.get("target") != expected_target:
+        raise HarnessError("native x86 M1 foundations target changed")
+    expected_execution = {
+        "features": [],
+        "no_default_features": True,
+        "package": "crabc-mimalloc",
+        "rust_target": X86_64_RUST_TARGET,
+        "test_threads": 1,
+        "timeout_seconds": 300,
+    }
+    if contract.get("execution") != expected_execution:
+        raise HarnessError("native x86 M1 foundations execution contract changed")
+
+    expected_evidence = [
+        "release-c-rust-layout",
+        "release-static-bootstrap-image",
+        "raw-primitive-c-rust-trace",
+        "compiler-tls-c-rust-trace",
+        "compiler-tls-same-tld-terminal-c-rust-trace",
+        "compiler-tls-codegen",
+        "x86-64-normal-engine-dependency-graph",
+        "x86-64-source-contract-inventories",
+    ]
+    if contract.get("global_evidence") != expected_evidence:
+        raise HarnessError("native x86 M1 foundations global evidence inventory changed")
+
+    milestone = contract.get("milestone")
+    if not isinstance(milestone, Mapping) or set(milestone) != {
+        "completion_rule",
+        "id",
+        "nonclaims",
+        "status",
+    }:
+        raise HarnessError("native x86 M1 foundations lacks a milestone record")
+    if (
+        milestone.get("id") != "m1"
+        or milestone.get("status") != M1_X86_64_FOUNDATIONS_COMPONENT_STATUS
+        or not isinstance(milestone.get("completion_rule"), str)
+        or not milestone["completion_rule"]
+    ):
+        raise HarnessError("native x86 M1 foundations milestone identity or state changed")
+    nonclaims = milestone.get("nonclaims")
+    if (
+        not isinstance(nonclaims, list)
+        or len(nonclaims) != 4
+        or not all(isinstance(nonclaim, str) and nonclaim for nonclaim in nonclaims)
+        or len(set(nonclaims)) != len(nonclaims)
+    ):
+        raise HarnessError("native x86 M1 foundations nonclaim inventory changed")
+
+    neutral_inventory = _m1_x86_64_neutral_inventory()
+    expected_inventory_components = [
+        {
+            "check_count": len(component["checks"]),
+            "checks_sha256": _m1_inventory_digest(component["checks"]),
+            "id": component["id"],
+            "layout_key_count": len(component["layout_keys"]),
+            "layout_keys_sha256": _m1_inventory_digest(component["layout_keys"]),
+        }
+        for component in neutral_inventory
+    ]
+    expected_neutral_inventory = {
+        "components": expected_inventory_components,
+        "purpose": (
+            "Exact check filters and selected layout-key vectors shared as source-shaped M1 "
+            "inputs only. Their canonical JSON counts and digests are checked before x86 "
+            "execution; no AArch64 component status, report, or source-map status is imported."
+        ),
+        "source_contract": {
+            "path": relative(M1_FOUNDATIONS_CONTRACT),
+            "sha256": file_digest(M1_FOUNDATIONS_CONTRACT),
+        },
+    }
+    if contract.get("neutral_inventory") != expected_neutral_inventory:
+        raise HarnessError("native x86 M1 exact source-check or layout inventory changed")
+
+    raw_components = contract.get("components")
+    if not isinstance(raw_components, list) or len(raw_components) != len(neutral_inventory):
+        raise HarnessError("native x86 M1 component inventory changed")
+    components: list[dict[str, Any]] = []
+    for index, raw_component in enumerate(raw_components):
+        if not isinstance(raw_component, Mapping) or set(raw_component) != {
+            "id",
+            "native_status",
+            "remaining_conditions",
+        }:
+            raise HarnessError(f"native x86 M1 component {index} has unexpected fields")
+        neutral_component = neutral_inventory[index]
+        component_id = raw_component.get("id")
+        if component_id != neutral_component["id"]:
+            raise HarnessError("native x86 M1 component order or identity changed")
+        if raw_component.get("native_status") != M1_X86_64_FOUNDATIONS_COMPONENT_STATUS:
+            raise HarnessError(f"native x86 M1 component {component_id} has an invalid readiness state")
+        if raw_component.get("remaining_conditions") != []:
+            raise HarnessError(f"native x86 M1 component {component_id} has unreviewed conditions")
+        components.append(
+            {
+                "checks": list(neutral_component["checks"]),
+                "id": component_id,
+                "layout_keys": list(neutral_component["layout_keys"]),
+                "native_status": M1_X86_64_FOUNDATIONS_COMPONENT_STATUS,
+                "remaining_conditions": [],
+                "source_map_records": [],
+            }
+        )
+
+    expected_source_contracts = [
+        relative(X86_64_API_CONTRACT),
+        relative(X86_64_API_COVERAGE_CONTRACT),
+        relative(X86_64_SOURCE_MAP_CONTRACT),
+    ]
+    if contract.get("source_contracts") != expected_source_contracts:
+        raise HarnessError("native x86 M1 source-contract inventory changed")
+    for source_contract in (
+        X86_64_API_CONTRACT,
+        X86_64_API_COVERAGE_CONTRACT,
+        X86_64_SOURCE_MAP_CONTRACT,
+    ):
+        if not source_contract.is_file():
+            raise HarnessError(f"native x86 M1 source contract is absent: {source_contract}")
+
+    return {
+        "components": components,
+        "execution": expected_execution,
+        "global_evidence": expected_evidence,
+        "exclusions": [],
+        "milestone": {
+            "completion_rule": milestone["completion_rule"],
+            "id": "m1",
+            "nonclaims": list(nonclaims),
+            "status": M1_X86_64_FOUNDATIONS_COMPONENT_STATUS,
+        },
+        "source_contracts": expected_source_contracts,
+        "target": expected_target,
+    }
+
+
+def m1_foundations_contract_record(
+    contract: Mapping[str, Any], pin: Mapping[str, str], *, contract_path: Path = M1_FOUNDATIONS_CONTRACT
 ) -> dict[str, Any]:
     """Render the checked contract identity retained in each M1 report."""
 
     return {
         "format": contract["format"],
-        "path": relative(M1_FOUNDATIONS_CONTRACT),
+        "path": relative(contract_path),
         "schema": contract["schema"],
-        "sha256": file_digest(M1_FOUNDATIONS_CONTRACT),
+        "sha256": file_digest(contract_path),
         "upstream": {
             "archive_sha256": pin["sha256"],
             "revision": pin["revision"],
@@ -9203,6 +9496,13 @@ def m1_foundations_check_command(
     """Build one focused, source-filtered M1 Cargo invocation."""
 
     command = ["cargo", "test", "-p", str(execution["package"])]
+    if execution.get("no_default_features") is True:
+        command.append("--no-default-features")
+    rust_target = execution.get("rust_target")
+    if rust_target is not None:
+        if not isinstance(rust_target, str) or not rust_target:
+            raise HarnessError("M1 foundations execution has an invalid Rust target")
+        command.extend(("--target", rust_target))
     features = execution["features"]
     if features:
         command.extend(("--features", ",".join(str(feature) for feature in features)))
@@ -9211,45 +9511,227 @@ def m1_foundations_check_command(
     return command
 
 
-def run_m1_foundations_checks(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Run every focused M1 check in a gate-private Cargo target directory."""
+def _m1_foundations_test_program(
+    execution: Mapping[str, Any], cargo_target: Path
+) -> dict[str, Any]:
+    """Build the M1 unit binary once in a target-private Cargo directory.
 
+    M1 names many small source-shaped assertions. Building Cargo separately
+    for each would turn test accounting into a cache-timing accident.  The
+    gate instead records one `--no-run` build, lists that exact binary, and
+    runs a closed batch after explicitly skipping every non-M1 test.
+    """
+
+    command = ["cargo", "test", "-p", str(execution["package"])]
+    if execution.get("no_default_features") is True:
+        command.append("--no-default-features")
+    rust_target = execution.get("rust_target")
+    if rust_target is not None:
+        command.extend(("--target", str(rust_target)))
+    command.extend(("--locked", "--lib", "--no-run", "--message-format=json"))
     environment = os.environ.copy()
-    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
+    environment["CARGO_INCREMENTAL"] = "0"
+    environment["CARGO_TARGET_DIR"] = str(cargo_target)
+    result = command_record(
+        command,
+        cwd=ROOT,
+        env=environment,
+        timeout_seconds=execution["timeout_seconds"],
+    )
+    require_success(result, "M1 foundations unit-binary build")
+    candidates: list[Path] = []
+    for line in (str(result["stdout"]) + "\n" + str(result["stderr"])).splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, Mapping) or event.get("reason") != "compiler-artifact":
+            continue
+        target = event.get("target")
+        profile = event.get("profile")
+        executable = event.get("executable")
+        if (
+            isinstance(target, Mapping)
+            and target.get("name") == "crabc_mimalloc"
+            and target.get("kind") == ["lib"]
+            and isinstance(profile, Mapping)
+            and profile.get("test") is True
+            and isinstance(executable, str)
+        ):
+            candidates.append(Path(executable))
+    if len(candidates) != 1 or not candidates[0].is_file():
+        raise HarnessError("M1 foundations build did not produce exactly one library test binary")
+    return {
+        "build_command": command,
+        "cargo_target": str(cargo_target),
+        "execution": dict(execution),
+        "path": candidates[0],
+    }
+
+
+def _m1_foundations_test_names(
+    test_program: Mapping[str, Any], *, timeout_seconds: int
+) -> set[str]:
+    """List all test names in the one already-built M1 unit binary."""
+
+    path = test_program.get("path")
+    if not isinstance(path, Path) or not path.is_file():
+        raise HarnessError("M1 foundations test program is unavailable")
+    command = [str(path), "--list"]
+    result = command_record(command, cwd=ROOT, timeout_seconds=timeout_seconds)
+    require_success(result, "M1 foundations unit-binary test inventory")
+    names = {
+        line.removesuffix(": test")
+        for line in str(result["stdout"]).splitlines()
+        if line.endswith(": test")
+    }
+    if not names:
+        raise HarnessError("M1 foundations unit-binary test inventory is empty")
+    return names
+
+
+def _m1_foundations_program_check_command(
+    test_program: Mapping[str, Any], target: str, *, nocapture: bool
+) -> list[str]:
+    """Run one exact named source witness from the prepared M1 binary."""
+
+    path = test_program.get("path")
+    if not isinstance(path, Path) or not path.is_file():
+        raise HarnessError("M1 foundations test program is unavailable")
+    execution = test_program.get("execution")
+    if not isinstance(execution, Mapping):
+        raise HarnessError("M1 foundations test program lacks its execution contract")
+    command = [
+        str(path),
+        target,
+        "--exact",
+        f"--test-threads={execution['test_threads']}",
+    ]
+    if nocapture:
+        command.append("--nocapture")
+    return command
+
+
+def _m1_foundations_run_exact_program_check(
+    test_program: Mapping[str, Any], check: Mapping[str, Any], *, nocapture: bool
+) -> tuple[dict[str, Any], str]:
+    """Execute and account for one existing M1 test binary filter."""
+
+    execution = test_program["execution"]
+    assert isinstance(execution, Mapping)
+    command = _m1_foundations_program_check_command(
+        test_program, str(check["target"]), nocapture=nocapture
+    )
+    result = command_record(
+        command,
+        cwd=ROOT,
+        timeout_seconds=int(execution["timeout_seconds"]),
+    )
+    require_success(result, f"M1 foundations check {check['id']}")
+    output = str(result["stdout"]) + "\n" + str(result["stderr"])
+    passed_test_count = parse_rust_test_count(output)
+    if passed_test_count != check["expected_passed_test_count"]:
+        raise HarnessError(
+            f"M1 foundations check {check['id']} passed {passed_test_count} tests; "
+            f"expected {check['expected_passed_test_count']}"
+        )
+    return {
+        "command": command,
+        "passed_test_count": passed_test_count,
+        "target": check["target"],
+    }, output
+
+
+def run_m1_foundations_checks(
+    summary: Mapping[str, Any],
+    test_program: Mapping[str, Any],
+    *,
+    already_executed_check_ids: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Run all remaining M1 source checks in one closed unit-binary batch."""
+
     execution = summary["execution"]
-    records: list[dict[str, Any]] = []
-    for component in summary["components"]:
-        for check in component["checks"]:
-            command = m1_foundations_check_command(execution, check)
-            result = command_record(
-                command,
-                cwd=ROOT,
-                env=environment,
-                timeout_seconds=execution["timeout_seconds"],
-            )
-            require_success(result, f"M1 foundations check {check['id']}")
-            output = str(result["stdout"]) + "\n" + str(result["stderr"])
-            passed_test_count = parse_rust_test_count(output)
-            if passed_test_count != check["expected_passed_test_count"]:
-                raise HarnessError(
-                    f"M1 foundations check {check['id']} passed {passed_test_count} tests; "
-                    f"expected {check['expected_passed_test_count']}"
-                )
-            records.append(
-                {
-                    "component": component["id"],
-                    "command": command,
-                    "evidence_scope": "focused-source-test",
-                    "id": check["id"],
-                    "passed_test_count": passed_test_count,
-                    "target": check["target"],
-                }
-            )
-    return records
+    assert isinstance(execution, Mapping)
+    all_checks = [
+        (component["id"], check)
+        for component in summary["components"]
+        for check in component["checks"]
+    ]
+    all_check_ids = [str(check["id"]) for _, check in all_checks]
+    if len(set(all_check_ids)) != len(all_check_ids):
+        raise HarnessError("M1 foundations has duplicate focused check identities")
+    unknown_preexecuted = sorted(set(already_executed_check_ids) - set(all_check_ids))
+    if unknown_preexecuted:
+        raise HarnessError(
+            "M1 foundations batch received unknown pre-executed checks: "
+            + ", ".join(unknown_preexecuted)
+        )
+    selected = [
+        (component_id, check)
+        for component_id, check in all_checks
+        if check["id"] not in already_executed_check_ids
+    ]
+    if not selected:
+        return []
+
+    test_names = _m1_foundations_test_names(
+        test_program, timeout_seconds=int(execution["timeout_seconds"])
+    )
+    selected_targets = {str(check["target"]) for _, check in selected}
+    missing = sorted(selected_targets - test_names)
+    if missing:
+        raise HarnessError(
+            "M1 foundations unit binary lacks selected source tests: " + ", ".join(missing)
+        )
+    command = [
+        str(test_program["path"]),
+        f"--test-threads={execution['test_threads']}",
+        *(entry for test_name in sorted(test_names - selected_targets) for entry in ("--skip", test_name)),
+    ]
+    result = command_record(
+        command,
+        cwd=ROOT,
+        timeout_seconds=int(execution["timeout_seconds"]),
+    )
+    require_success(result, "M1 foundations focused source-test batch")
+    output = str(result["stdout"]) + "\n" + str(result["stderr"])
+    expected_count = sum(int(check["expected_passed_test_count"]) for _, check in selected)
+    passed_test_count = parse_rust_test_count(output)
+    if passed_test_count != expected_count:
+        raise HarnessError(
+            f"M1 foundations focused batch passed {passed_test_count} tests; expected {expected_count}"
+        )
+    passed_targets = set(
+        re.findall(r"(?m)^test ([^\s]+) \.\.\. ok$", output)
+    )
+    absent_targets = sorted(selected_targets - passed_targets)
+    if absent_targets:
+        raise HarnessError(
+            "M1 foundations focused batch did not pass every selected source test: "
+            + ", ".join(absent_targets)
+        )
+    return [
+        {
+            "component": component_id,
+            "command": command,
+            "evidence_scope": "focused-source-test-batch",
+            "id": check["id"],
+            "passed_test_count": check["expected_passed_test_count"],
+            "target": check["target"],
+        }
+        for component_id, check in selected
+    ]
 
 
 def run_m1_raw_primitive_differential(
-    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+    pin: Mapping[str, str],
+    *,
+    offline: bool,
+    timeout_seconds: int,
+    architecture: str = "aarch64",
+    artifact_root: Path = M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT,
+    test_program: Mapping[str, Any] | None = None,
+    check: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compare the finite raw M1 record against a freshly extracted C oracle.
 
@@ -9258,7 +9740,9 @@ def run_m1_raw_primitive_differential(
     byte sequence, or timestamp is treated as differential evidence.
     """
 
-    require_native_aarch64()
+    require_native_architecture(architecture)
+    if test_program is None or check is None:
+        raise HarnessError("M1 raw differential requires its prepared Rust test program")
     compiler = require_tool("musl-gcc")
     archive = fetch_archive(pin, offline)
     with temporary_directory(prefix="crabc-mimalloc-m1-raw-source-") as temporary:
@@ -9266,35 +9750,18 @@ def run_m1_raw_primitive_differential(
         c_oracle = build_m1_raw_primitive_trace(
             compiler,
             source,
-            M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT,
+            artifact_root,
             CONFIGURATION_PROFILES["release"],
         )
 
-    command = [
-        "cargo",
-        "test",
-        "-p",
-        "crabc-mimalloc",
-        "--locked",
-        "--lib",
-        "os::tests::emit_m1_raw_c_rust_trace",
-        "--",
-        "--test-threads=1",
-        "--nocapture",
-    ]
-    environment = os.environ.copy()
-    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
-    rust_result = command_record(
-        command,
-        cwd=ROOT,
-        env=environment,
-        timeout_seconds=timeout_seconds,
+    if check.get("target") != "os::tests::emit_m1_raw_c_rust_trace":
+        raise HarnessError("M1 raw differential lost its exact Rust source witness")
+    rust, rust_output = _m1_foundations_run_exact_program_check(
+        test_program, check, nocapture=True
     )
-    require_success(rust_result, "Rust M1 raw-primitive trace")
-    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
     rust_trace = parse_m1_raw_primitive_trace(rust_output)
     validate_m1_raw_primitive_trace_schema(rust_trace, source="Rust")
-    passed_test_count = parse_rust_test_count(rust_output)
+    passed_test_count = rust["passed_test_count"]
     if passed_test_count != 1:
         raise HarnessError(
             "Rust M1 raw-primitive trace passed an unexpected test count: "
@@ -9305,7 +9772,7 @@ def run_m1_raw_primitive_differential(
         "c_oracle": c_oracle,
         "comparison": comparison,
         "rust": {
-            "command": command,
+            "command": rust["command"],
             "passed_test_count": passed_test_count,
             "record": rust_trace,
         },
@@ -9319,7 +9786,14 @@ def run_m1_raw_primitive_differential(
 
 
 def run_m1_compiler_tls_differential(
-    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+    pin: Mapping[str, str],
+    *,
+    offline: bool,
+    timeout_seconds: int,
+    architecture: str = "aarch64",
+    artifact_root: Path = M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT,
+    test_program: Mapping[str, Any] | None = None,
+    check: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compare the finite compiler-TLS roots/primitives with pinned C.
 
@@ -9329,7 +9803,9 @@ def run_m1_compiler_tls_differential(
     makes no composite ``mi_thread_theaps_done`` lifecycle claim.
     """
 
-    require_native_aarch64()
+    require_native_architecture(architecture)
+    if test_program is None or check is None:
+        raise HarnessError("M1 compiler-TLS differential requires its prepared Rust test program")
     compiler = require_tool("musl-gcc")
     archive = fetch_archive(pin, offline)
     with temporary_directory(prefix="crabc-mimalloc-m1-compiler-tls-source-") as temporary:
@@ -9337,35 +9813,18 @@ def run_m1_compiler_tls_differential(
         c_oracle = build_m1_compiler_tls_trace(
             compiler,
             source,
-            M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT,
+            artifact_root,
             CONFIGURATION_PROFILES["release"],
         )
 
-    command = [
-        "cargo",
-        "test",
-        "-p",
-        "crabc-mimalloc",
-        "--locked",
-        "--lib",
-        "dynamic_theap::tests::emit_m1_compiler_tls_c_rust_trace",
-        "--",
-        "--test-threads=1",
-        "--nocapture",
-    ]
-    environment = os.environ.copy()
-    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
-    rust_result = command_record(
-        command,
-        cwd=ROOT,
-        env=environment,
-        timeout_seconds=timeout_seconds,
+    if check.get("target") != "dynamic_theap::tests::emit_m1_compiler_tls_c_rust_trace":
+        raise HarnessError("M1 compiler-TLS differential lost its exact Rust source witness")
+    rust, rust_output = _m1_foundations_run_exact_program_check(
+        test_program, check, nocapture=True
     )
-    require_success(rust_result, "Rust M1 compiler-TLS trace")
-    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
     rust_trace = parse_m1_compiler_tls_trace(rust_output)
     validate_m1_compiler_tls_full_trace(rust_trace, source="Rust")
-    passed_test_count = parse_rust_test_count(rust_output)
+    passed_test_count = rust["passed_test_count"]
     if passed_test_count != 1:
         raise HarnessError(
             "Rust M1 compiler-TLS trace passed an unexpected test count: "
@@ -9376,7 +9835,7 @@ def run_m1_compiler_tls_differential(
         "c_oracle": c_oracle,
         "comparison": comparison,
         "rust": {
-            "command": command,
+            "command": rust["command"],
             "passed_test_count": passed_test_count,
             "record": rust_trace,
         },
@@ -9392,7 +9851,14 @@ def run_m1_compiler_tls_differential(
 
 
 def run_m1_compiler_tls_same_tld_differential(
-    pin: Mapping[str, str], *, offline: bool, timeout_seconds: int
+    pin: Mapping[str, str],
+    *,
+    offline: bool,
+    timeout_seconds: int,
+    architecture: str = "aarch64",
+    artifact_root: Path = M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT,
+    test_program: Mapping[str, Any] | None = None,
+    check: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compare the selected page-free same-TLD terminal body with pinned C.
 
@@ -9403,7 +9869,11 @@ def run_m1_compiler_tls_same_tld_differential(
     D/A list. Neither record substitutes for the other.
     """
 
-    require_native_aarch64()
+    require_native_architecture(architecture)
+    if test_program is None or check is None:
+        raise HarnessError(
+            "M1 compiler-TLS same-TLD differential requires its prepared Rust test program"
+        )
     compiler = require_tool("musl-gcc")
     archive = fetch_archive(pin, offline)
     with temporary_directory(prefix="crabc-mimalloc-m1-compiler-tls-same-tld-source-") as temporary:
@@ -9411,35 +9881,18 @@ def run_m1_compiler_tls_same_tld_differential(
         c_oracle = build_m1_compiler_tls_same_tld_trace(
             compiler,
             source,
-            M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT,
+            artifact_root,
             CONFIGURATION_PROFILES["release"],
         )
 
-    command = [
-        "cargo",
-        "test",
-        "-p",
-        "crabc-mimalloc",
-        "--locked",
-        "--lib",
-        "main_theap::tests::emit_m1_same_tld_terminal_c_rust_trace",
-        "--",
-        "--test-threads=1",
-        "--nocapture",
-    ]
-    environment = os.environ.copy()
-    environment["CARGO_TARGET_DIR"] = str(M1_FOUNDATIONS_CARGO_TARGET)
-    rust_result = command_record(
-        command,
-        cwd=ROOT,
-        env=environment,
-        timeout_seconds=timeout_seconds,
+    if check.get("target") != "main_theap::tests::emit_m1_same_tld_terminal_c_rust_trace":
+        raise HarnessError("M1 compiler-TLS same-TLD differential lost its exact Rust source witness")
+    rust, rust_output = _m1_foundations_run_exact_program_check(
+        test_program, check, nocapture=True
     )
-    require_success(rust_result, "Rust M1 compiler-TLS same-TLD terminal trace")
-    rust_output = str(rust_result["stdout"]) + "\n" + str(rust_result["stderr"])
     rust_trace = parse_m1_compiler_tls_same_tld_trace(rust_output)
     validate_m1_compiler_tls_same_tld_trace(rust_trace, source="Rust")
-    passed_test_count = parse_rust_test_count(rust_output)
+    passed_test_count = rust["passed_test_count"]
     if passed_test_count != 1:
         raise HarnessError(
             "Rust M1 compiler-TLS same-TLD terminal trace passed an unexpected test count: "
@@ -9450,7 +9903,7 @@ def run_m1_compiler_tls_same_tld_differential(
         "c_oracle": c_oracle,
         "comparison": comparison,
         "rust": {
-            "command": command,
+            "command": rust["command"],
             "passed_test_count": passed_test_count,
             "record": rust_trace,
         },
@@ -9553,6 +10006,11 @@ def m1_foundations_report(
     compiler_tls_differential: Mapping[str, Any],
     compiler_tls_same_tld_differential: Mapping[str, Any],
     focused_checks: Sequence[Mapping[str, Any]],
+    contract_path: Path = M1_FOUNDATIONS_CONTRACT,
+    report_schema: str = "crabc-mimalloc-m1-foundations-report",
+    component_status_key: str = "completion_status",
+    completion_ready_statuses: frozenset[str] = frozenset({"complete"}),
+    dependency_graph_key: str = "production_dependency_graph",
 ) -> dict[str, Any]:
     """Render a current-commit M1 evidence report without changing its status."""
 
@@ -9584,11 +10042,11 @@ def m1_foundations_report(
     )
 
     compiler_tls = shared_oracle.get("compiler_tls_codegen")
-    dependency_graph = shared_oracle.get("production_dependency_graph")
+    dependency_graph = shared_oracle.get(dependency_graph_key)
     if not isinstance(compiler_tls, Mapping) or compiler_tls.get("status") != "passed":
         raise HarnessError("M1 foundations compiler-TLS codegen evidence did not pass")
     if not isinstance(dependency_graph, Mapping):
-        raise HarnessError("M1 foundations production dependency evidence is absent")
+        raise HarnessError("M1 foundations target dependency evidence is absent")
     if (
         not isinstance(raw_primitive_differential, Mapping)
         or raw_primitive_differential.get("status") != "matched"
@@ -9669,8 +10127,9 @@ def m1_foundations_report(
             component_id != "compiler-tls-roots"
             or compiler_tls_same_tld_comparison["status"] == "matched"
         )
+        component_status = component.get(component_status_key)
         complete = (
-            component["completion_status"] == "complete"
+            component_status in completion_ready_statuses
             and not component["remaining_conditions"]
             and layout["status"] in {"matched", "not-applicable"}
             and raw_trace_matched
@@ -9680,7 +10139,7 @@ def m1_foundations_report(
         if not complete:
             incomplete_components.append(component_id)
         report_component = {
-            "completion_status": component["completion_status"],
+            "completion_status": component_status,
             "executed_checks": checks,
             "id": component_id,
             "layout_evidence": layout,
@@ -9688,14 +10147,18 @@ def m1_foundations_report(
             "source_map_records": list(component["source_map_records"]),
             "status": "complete" if complete else "partial",
         }
-        if component_id == "atomics-locks-once-and-bootstrap":
+        if (
+            component_id == "atomics-locks-once-and-bootstrap"
+            and "once_call_site_dispositions" in component
+        ):
             report_component["once_call_site_dispositions"] = list(
                 component["once_call_site_dispositions"]
             )
         if component_id == "linux-raw-primitives":
-            report_component["prim_h_declaration_inventory"] = list(
-                component["prim_h_declaration_inventory"]
-            )
+            if "prim_h_declaration_inventory" in component:
+                report_component["prim_h_declaration_inventory"] = list(
+                    component["prim_h_declaration_inventory"]
+                )
             report_component["c_rust_differential"] = {
                 "compared_value_count": raw_comparison.get("compared_value_count"),
                 "status": raw_comparison["status"],
@@ -9713,16 +10176,14 @@ def m1_foundations_report(
             }
         components.append(report_component)
 
-    milestone_complete = (
-        summary["milestone"]["status"] == "complete" and not incomplete_components
-    )
+    milestone_complete = summary["milestone"]["status"] in completion_ready_statuses and not incomplete_components
     release_layout_artifact = release.get("artifact")
     if not isinstance(release_layout_artifact, Mapping):
         raise HarnessError("M1 foundations shared release profile lacks its artifact record")
     generic_rust_layout = generic_layout_without_m1_static_reader_fields(rust_layout)
     return {
         "components": components,
-        "contract": m1_foundations_contract_record(contract, pin),
+        "contract": m1_foundations_contract_record(contract, pin, contract_path=contract_path),
         "exclusions": list(summary["exclusions"]),
         "format": 1,
         "milestone": {
@@ -9732,7 +10193,7 @@ def m1_foundations_report(
             "status": "complete" if milestone_complete else "partial",
             "unmet_component_ids": incomplete_components,
         },
-        "schema": "crabc-mimalloc-m1-foundations-report",
+        "schema": report_schema,
         "shared_evidence": {
             "compiler_tls_codegen": {
                 "status": compiler_tls["status"],
@@ -9753,7 +10214,7 @@ def m1_foundations_report(
                 "scope": compiler_tls_same_tld_differential.get("scope"),
                 "status": compiler_tls_same_tld_comparison["status"],
             },
-            "production_dependency_graph": {
+            dependency_graph_key: {
                 "status": "recorded",
             },
             "raw_primitive_c_rust_trace": {
@@ -9792,6 +10253,42 @@ def m1_foundations_report(
     }
 
 
+def _m1_foundations_check_by_id(
+    summary: Mapping[str, Any], check_id: str
+) -> tuple[str, Mapping[str, Any]]:
+    """Resolve one named M1 differential witness from the validated inventory."""
+
+    matches = [
+        (str(component["id"]), check)
+        for component in summary["components"]
+        for check in component["checks"]
+        if check["id"] == check_id
+    ]
+    if len(matches) != 1:
+        raise HarnessError(f"M1 foundations lacks exactly one required differential check: {check_id}")
+    return matches[0]
+
+
+def _m1_foundations_differential_check_record(
+    component_id: str, check: Mapping[str, Any], differential: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Retain a trace test as one exact focused M1 check without rerunning it."""
+
+    rust = differential.get("rust")
+    if not isinstance(rust, Mapping):
+        raise HarnessError(f"M1 foundations differential {check['id']} lacks a Rust record")
+    if rust.get("passed_test_count") != check["expected_passed_test_count"]:
+        raise HarnessError(f"M1 foundations differential {check['id']} has an invalid Rust count")
+    return {
+        "component": component_id,
+        "command": list(rust["command"]),
+        "evidence_scope": "focused-source-test-and-c-rust-differential",
+        "id": check["id"],
+        "passed_test_count": rust["passed_test_count"],
+        "target": check["target"],
+    }
+
+
 def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
     """Execute and record the finite M1 gate, including a clean-commit binding."""
 
@@ -9800,6 +10297,7 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
     contract = read_json(M1_FOUNDATIONS_CONTRACT)
     port_map = load_port_map()
     summary = validate_m1_foundations_contract(contract, pin, port_map)
+    test_program = _m1_foundations_test_program(summary["execution"], M1_FOUNDATIONS_CARGO_TARGET)
     shared_oracle = run_milestone0(
         offline=offline,
         generate_contracts=False,
@@ -9811,18 +10309,56 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
         pin,
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
+        test_program=test_program,
+        check=_m1_foundations_check_by_id(summary, "raw-primitive-c-rust-trace")[1],
     )
     compiler_tls_differential = run_m1_compiler_tls_differential(
         pin,
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
+        test_program=test_program,
+        check=_m1_foundations_check_by_id(summary, "compiler-tls-c-rust-trace")[1],
     )
     compiler_tls_same_tld_differential = run_m1_compiler_tls_same_tld_differential(
         pin,
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
+        test_program=test_program,
+        check=_m1_foundations_check_by_id(
+            summary, "compiler-tls-same-tld-terminal-c-rust-trace"
+        )[1],
     )
-    focused_checks = run_m1_foundations_checks(summary)
+    raw_component, raw_check = _m1_foundations_check_by_id(
+        summary, "raw-primitive-c-rust-trace"
+    )
+    compiler_tls_component, compiler_tls_check = _m1_foundations_check_by_id(
+        summary, "compiler-tls-c-rust-trace"
+    )
+    same_tld_component, same_tld_check = _m1_foundations_check_by_id(
+        summary, "compiler-tls-same-tld-terminal-c-rust-trace"
+    )
+    focused_checks = [
+        _m1_foundations_differential_check_record(
+            raw_component, raw_check, raw_primitive_differential
+        ),
+        _m1_foundations_differential_check_record(
+            compiler_tls_component, compiler_tls_check, compiler_tls_differential
+        ),
+        _m1_foundations_differential_check_record(
+            same_tld_component, same_tld_check, compiler_tls_same_tld_differential
+        ),
+        *run_m1_foundations_checks(
+            summary,
+            test_program,
+            already_executed_check_ids=frozenset(
+                {
+                    raw_check["id"],
+                    compiler_tls_check["id"],
+                    same_tld_check["id"],
+                }
+            ),
+        ),
+    ]
     source_after = m1_foundations_source_state()
     report = m1_foundations_report(
         contract=contract,
@@ -9839,7 +10375,202 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
     return report
 
 
-def m1_foundations_unmet_message(report: Mapping[str, Any]) -> str:
+def _m1_x86_64_source_contract_evidence(shared_oracle: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind M1 to the target-local source inventories checked by the x86 oracle."""
+
+    api_inventory = shared_oracle.get("x86_64_source_api_inventory")
+    api_coverage = shared_oracle.get("x86_64_api_coverage")
+    source_map = shared_oracle.get("x86_64_source_map")
+    if (
+        not isinstance(api_inventory, Mapping)
+        or api_inventory.get("status") != "passed"
+        or not isinstance(api_coverage, Mapping)
+        or api_coverage.get("status") != "passed"
+        or not isinstance(source_map, Mapping)
+        or source_map.get("status") != "passed"
+    ):
+        raise HarnessError("native x86 M1 source-contract inventories did not pass")
+    # The target-wide maps intentionally remain incomplete. Their successful
+    # validation proves exact source accounting, not M1 closure; the finite
+    # M1 source tests and native C/Rust records above carry that behavior proof.
+    if api_coverage.get("overall_status") != "incomplete" or source_map.get("overall_status") != "incomplete":
+        raise HarnessError("native x86 M1 source-contract inventory scope changed")
+    return {
+        "api_coverage": {
+            "contract": artifact_record(X86_64_API_COVERAGE_CONTRACT),
+            "overall_status": api_coverage["overall_status"],
+            "status": api_coverage["status"],
+        },
+        "api_inventory": {
+            "contract": artifact_record(X86_64_API_CONTRACT),
+            "declaration_count": api_inventory["declaration_count"],
+            "status": api_inventory["status"],
+        },
+        "scope": (
+            "target-local checked source inventories; their incomplete whole-engine "
+            "status is explicit and does not reduce the finite M1 native evidence gate"
+        ),
+        "source_map": {
+            "contract": artifact_record(X86_64_SOURCE_MAP_CONTRACT),
+            "overall_status": source_map["overall_status"],
+            "status": source_map["status"],
+        },
+        "status": "passed",
+    }
+
+
+def _m1_x86_64_static_image_baseline(
+    pin: Mapping[str, str], *, offline: bool
+) -> dict[str, Any]:
+    """Build the x86-only C static-image reader without re-running quick.
+
+    The native quick oracle already supplies the ordinary release C artifact,
+    layout, traces, adapter, and direct Rust evidence. M1 adds this one
+    constructor-suppressed reader because its pre-attach static image is a
+    different C boundary, not because x86 inherits the AArch64 reader.
+    """
+
+    require_native_x86_64()
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline)
+    with temporary_directory(prefix="crabc-mimalloc-m1-x86_64-static-image-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        return build_m1_static_image_probe(
+            compiler,
+            source,
+            M1_X86_64_STATIC_IMAGE_ARTIFACT_ROOT,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+
+def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
+    """Execute the native x86 M1 contract and write only x86 evidence.
+
+    This path intentionally consumes the full native x86 M0 oracle rather
+    than an AArch64 report or a source-only check. It therefore waits for the
+    private x86 adapter baseline as well as the exact M1 C/Rust witnesses.
+    """
+
+    require_native_x86_64()
+    source_before = m1_foundations_source_state()
+    pin = load_pin()
+    contract = read_json(M1_X86_64_FOUNDATIONS_CONTRACT)
+    summary = validate_x86_64_m1_foundations_contract(contract, pin)
+    test_program = _m1_foundations_test_program(
+        summary["execution"], M1_X86_64_FOUNDATIONS_CARGO_TARGET
+    )
+    shared_oracle = run_milestone0(
+        offline=offline,
+        generate_contracts=False,
+        check_only=False,
+        architecture="x86_64",
+        write_report=False,
+    )
+    if shared_oracle.get("architecture_profile") != "x86_64-native-c-oracle":
+        raise HarnessError("native x86 M1 received a non-x86 shared oracle")
+    source_contract_evidence = _m1_x86_64_source_contract_evidence(shared_oracle)
+    c_oracle = shared_oracle.get("c_oracle")
+    if not isinstance(c_oracle, Mapping):
+        raise HarnessError("native x86 M1 shared oracle lacks C evidence")
+    profiles = c_oracle.get("profiles")
+    if not isinstance(profiles, Mapping) or not isinstance(profiles.get("release"), dict):
+        raise HarnessError("native x86 M1 shared oracle lacks its release profile")
+    profiles["release"]["m1_static_image_probe"] = _m1_x86_64_static_image_baseline(
+        pin, offline=offline
+    )
+
+    raw_component, raw_check = _m1_foundations_check_by_id(
+        summary, "raw-primitive-c-rust-trace"
+    )
+    compiler_tls_component, compiler_tls_check = _m1_foundations_check_by_id(
+        summary, "compiler-tls-c-rust-trace"
+    )
+    same_tld_component, same_tld_check = _m1_foundations_check_by_id(
+        summary, "compiler-tls-same-tld-terminal-c-rust-trace"
+    )
+    raw_primitive_differential = run_m1_raw_primitive_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+        architecture="x86_64",
+        artifact_root=M1_X86_64_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT,
+        test_program=test_program,
+        check=raw_check,
+    )
+    compiler_tls_differential = run_m1_compiler_tls_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+        architecture="x86_64",
+        artifact_root=M1_X86_64_COMPILER_TLS_TRACE_ARTIFACT_ROOT,
+        test_program=test_program,
+        check=compiler_tls_check,
+    )
+    compiler_tls_same_tld_differential = run_m1_compiler_tls_same_tld_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+        architecture="x86_64",
+        artifact_root=M1_X86_64_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT,
+        test_program=test_program,
+        check=same_tld_check,
+    )
+    focused_checks = [
+        _m1_foundations_differential_check_record(
+            raw_component, raw_check, raw_primitive_differential
+        ),
+        _m1_foundations_differential_check_record(
+            compiler_tls_component, compiler_tls_check, compiler_tls_differential
+        ),
+        _m1_foundations_differential_check_record(
+            same_tld_component, same_tld_check, compiler_tls_same_tld_differential
+        ),
+        *run_m1_foundations_checks(
+            summary,
+            test_program,
+            already_executed_check_ids=frozenset(
+                {
+                    raw_check["id"],
+                    compiler_tls_check["id"],
+                    same_tld_check["id"],
+                }
+            ),
+        ),
+    ]
+    source_after = m1_foundations_source_state()
+    normalized_shared_oracle = {
+        "c_oracle": c_oracle,
+        "compiler_tls_codegen": shared_oracle.get("compiler_tls_codegen"),
+        "rust_release_layout": shared_oracle.get("rust_direct_engine"),
+        "x86_64_normal_engine_dependency_graph": shared_oracle.get(
+            "x86_64_engine_dependency_graph"
+        ),
+    }
+    report = m1_foundations_report(
+        contract=contract,
+        pin=pin,
+        summary=summary,
+        source_attestation=m1_foundations_source_attestation(source_before, source_after),
+        shared_oracle=normalized_shared_oracle,
+        raw_primitive_differential=raw_primitive_differential,
+        compiler_tls_differential=compiler_tls_differential,
+        compiler_tls_same_tld_differential=compiler_tls_same_tld_differential,
+        focused_checks=focused_checks,
+        contract_path=M1_X86_64_FOUNDATIONS_CONTRACT,
+        report_schema="crabc-mimalloc-x86_64-m1-foundations-report",
+        component_status_key="native_status",
+        completion_ready_statuses=frozenset({M1_X86_64_FOUNDATIONS_COMPONENT_STATUS}),
+        dependency_graph_key="x86_64_normal_engine_dependency_graph",
+    )
+    report["shared_evidence"]["x86-64-source-contract-inventories"] = source_contract_evidence
+    report["source_contracts"] = source_contract_evidence
+    write_json(M1_X86_64_FOUNDATIONS_REPORT, report)
+    return report
+
+
+def m1_foundations_unmet_message(
+    report: Mapping[str, Any], *, report_path: Path = M1_FOUNDATIONS_REPORT
+) -> str:
     """Explain an intentional M1 partial result without calling it a test failure."""
 
     milestone = report.get("milestone")
@@ -9851,7 +10582,7 @@ def m1_foundations_unmet_message(report: Mapping[str, Any]) -> str:
     return (
         "M1 foundations remain partial for "
         + ", ".join(components)
-        + f"; review {relative(M1_FOUNDATIONS_REPORT)}"
+        + f"; review {relative(report_path)}"
     )
 
 
@@ -19934,8 +20665,7 @@ def parse_arguments() -> argparse.Namespace:
         if arguments.quick or arguments.m1 or arguments.m2 or arguments.m1_tls_terminal_prototype or arguments.full or arguments.churn or arguments.soak or arguments.native_shadow_stress or arguments.perf_smoke or arguments.perf_full:
             parser.error("contract generation/snapshot cannot be combined with a gate mode")
     if arguments.architecture == "x86_64" and (
-        arguments.m1
-        or arguments.m2
+        arguments.m2
         or arguments.m1_tls_terminal_prototype
         or arguments.full
         or arguments.perf_smoke
@@ -19943,7 +20673,7 @@ def parse_arguments() -> argparse.Namespace:
         or arguments.generate_contracts
         or arguments.snapshot_ratchet
     ):
-        parser.error("the native x86-64 profile supports only --quick or --check")
+        parser.error("the native x86-64 profile supports only --quick, --m1, or --check")
     return arguments
 
 
@@ -19985,13 +20715,25 @@ def main() -> int:
                 result["m2_memory_substrate_contract"] = (
                     validate_m2_memory_substrate_contract(m2_contract, load_pin())
                 )
+            else:
+                m1_contract = read_json(M1_X86_64_FOUNDATIONS_CONTRACT)
+                result["x86_64_m1_foundations_contract"] = (
+                    validate_x86_64_m1_foundations_contract(m1_contract, load_pin())
+                )
             print(json.dumps(result, sort_keys=True))
             return 0
         if arguments.m1:
-            report = run_m1_foundations(offline=arguments.offline)
-            print(M1_FOUNDATIONS_REPORT)
+            if arguments.architecture == "x86_64":
+                report = run_x86_64_m1_foundations(offline=arguments.offline)
+                report_path = M1_X86_64_FOUNDATIONS_REPORT
+            else:
+                report = run_m1_foundations(offline=arguments.offline)
+                report_path = M1_FOUNDATIONS_REPORT
+            print(report_path)
             if report["milestone"]["status"] != "complete":
-                raise MilestoneUnavailable(m1_foundations_unmet_message(report))
+                raise MilestoneUnavailable(
+                    m1_foundations_unmet_message(report, report_path=report_path)
+                )
             return 0
         if arguments.m2:
             report = run_m2_memory_substrate(offline=arguments.offline)
