@@ -763,6 +763,25 @@ pub(crate) unsafe fn read_byte(stream: *mut StandardStream) -> c_int {
     unsafe { read_byte_held(stream) }
 }
 
+// scanf's __toread admission happens even for an empty format. It starts no
+// read syscall, but transitions away from buffered output and records wrong
+// direction as F_ERR without changing errno, exactly like musl. The guard
+// spans parser callbacks, %m cleanup and final delimiter restoration.
+pub(crate) unsafe fn with_scanned_stream(stream: *mut StandardStream, scan: impl FnOnce() -> c_int) -> c_int {
+    unsafe {
+        let _guard = StreamGuard::acquire(stream);
+        if !is_readable(stream) { mark_error(stream); return EOF; }
+        if !prepare_read(stream) { return EOF; }
+        mark_io_started(stream);
+        scan()
+    }
+}
+
+// Only the above scoped adapter may invoke this initialized, held-lock read.
+pub(crate) unsafe fn read_scanned_byte(stream: *mut StandardStream) -> c_int {
+    unsafe { read_byte_held(stream) }
+}
+
 // The caller holds this stream's recursive lock and its buffer is initialized.
 // Bulk/line operations reuse the held helper instead of calling gettid once
 // per byte. Public entry points and external formatter clients use the guard.

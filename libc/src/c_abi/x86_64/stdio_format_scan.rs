@@ -4,8 +4,10 @@
 //! byte-buffer/FILE/descriptor/allocation formatter: positional arguments,
 //! integer/string/count/pointer/%m and binary64/binary80 decimal/hexadecimal
 //! conversion through `owned_printf_float`. Wide conversion is excluded. Owned
-//! scanning retains its existing grammar and a recursive FILE lock spans each
-//! stream call. The narrower formatting/permanent-stream restrictions below
+//! scanning selects `owned_scanf`: byte scansets, integer/float conversion,
+//! widths/suppression, positional pointers and `%m` allocation. A recursive
+//! FILE lock spans each stream call. Wide scanning is still excluded.
+//! The narrower formatting/permanent-stream restrictions below
 //! describe the unchanged private fixture feature, not the owned formatter.
 //!
 //! This target-local leaf owns the byte-buffer entries `snprintf`,
@@ -1334,6 +1336,16 @@ unsafe fn assign_count(args: &mut VaList<'_>, length: Length, count: usize) {
     }
 }
 
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_scanf.rs"]
+mod owned_scanf;
+
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn scan_from_string(input: *const c_char, format: *const c_char, args: &mut VaList<'_>) -> c_int {
+    unsafe { owned_scanf::string(input, format, args) }
+}
+
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 unsafe fn scan_from_string(
     input: *const c_char,
     format: *const c_char,
@@ -1613,6 +1625,11 @@ unsafe fn scan_from_string(
 /// extent required by each nonsuppressed directive; `%c` needs its selected
 /// width and `%s` also needs room for the trailing NUL. The selected
 /// assignment-suppressed `%*3[abc]` state has no variadic destination.
+/// With the owned runtime, `%[` also requires width plus NUL capacity;
+/// `%f`, `%lf`, and `%Lf` require float, double, and x86 long-double storage.
+/// An owned `%m` byte directive takes writable `char **` storage; on success
+/// the caller owns and must free its allocation. Failed unpublished
+/// allocations are freed internally without replacing the destination pointer.
 #[no_mangle]
 pub unsafe extern "C" fn vsscanf(
     input: *const c_char,
@@ -1762,7 +1779,12 @@ unsafe fn scan_integer_stream(
     Some((value, negative))
 }
 
-#[cfg(feature = "x86-stdio-permanent-format-scan")]
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn scan_from_stream(stream: *mut StandardStream, format: *const c_char, args: &mut VaList<'_>) -> c_int {
+    unsafe { owned_scanf::stream(stream, format, args) }
+}
+
+#[cfg(all(feature = "x86-stdio-permanent-format-scan", not(feature = "x86-owned-static-runtime")))]
 unsafe fn scan_from_stream(
     stream: *mut StandardStream,
     format: *const c_char,
@@ -1947,6 +1969,7 @@ unsafe fn scan_from_stream(
 /// `format` must be a readable NUL-terminated string and each destination
 /// pointer in the variadic list must be non-null, writable, and correctly
 /// typed for its selected conversion. The call reads only permanent `stdin`.
+/// Destination extents and owned `%m` ownership are as specified by [`vsscanf`].
 pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
     let stream = unsafe { stdio_standard::stdin };
     unsafe { scan_from_stream(stream, format, &mut args) }
@@ -1959,6 +1982,7 @@ pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
 /// `format` must be NUL-terminated; every destination in the forwarded list
 /// must be non-null, writable, and correctly typed for its selected conversion.
 /// The list is consumed directly while reading permanent `stdin`.
+/// Destination extents and owned `%m` ownership are as specified by [`vsscanf`].
 pub unsafe extern "C" fn vscanf(
     format: *const c_char,
     mut args: VaList,
@@ -1975,6 +1999,8 @@ pub unsafe extern "C" fn vscanf(
 /// otherwise it must be exactly permanent `stdin`, `stdout`, or `stderr`.
 /// `format` must be NUL-terminated and each scan
 /// destination must be valid for its selected conversion.
+/// The FILE must not be concurrently destroyed. Destination extents and
+/// owned `%m` allocation ownership are as specified by [`vsscanf`].
 pub unsafe extern "C" fn fscanf(
     stream: *mut StandardStream,
     format: *const c_char,
@@ -1992,6 +2018,8 @@ pub unsafe extern "C" fn fscanf(
 /// `format` must be NUL-terminated and every forwarded scan destination must
 /// be non-null, writable, and correctly typed. The `VaList` is consumed
 /// directly without reconstruction.
+/// The FILE must not be concurrently destroyed. Destination extents and
+/// owned `%m` allocation ownership are as specified by [`vsscanf`].
 pub unsafe extern "C" fn vfscanf(
     stream: *mut StandardStream,
     format: *const c_char,
