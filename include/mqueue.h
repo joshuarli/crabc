@@ -27,15 +27,13 @@ struct timespec {
 extern "C" {
 #endif
 
-#define MQ_PRIO_MAX 32768
-
 typedef int mqd_t;
 struct mq_attr {
     long mq_flags;
     long mq_maxmsg;
     long mq_msgsize;
     long mq_curmsgs;
-    long __reserved[4];
+    long __unused[4];
 };
 
 int mq_close(mqd_t);

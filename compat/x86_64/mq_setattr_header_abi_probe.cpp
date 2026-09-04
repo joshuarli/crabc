@@ -11,13 +11,18 @@
 #include <stdint.h>
 #include <sys/syscall.h>
 
+#ifdef MQ_PRIO_MAX
+#error "MQ_PRIO_MAX belongs to <limits.h>, not <mqueue.h>"
+#endif
+
 static_assert(sizeof(mqd_t) == sizeof(int), "x86 mq_setattr mqd_t width");
 static_assert(sizeof(mq_attr) == 64 && alignof(mq_attr) == 8,
     "x86 mq_setattr mq_attr layout");
 static_assert(offsetof(mq_attr, mq_flags) == 0 &&
     offsetof(mq_attr, mq_maxmsg) == 8 &&
     offsetof(mq_attr, mq_msgsize) == 16 &&
-    offsetof(mq_attr, mq_curmsgs) == 24,
+    offsetof(mq_attr, mq_curmsgs) == 24 &&
+    offsetof(mq_attr, __unused) == 32,
     "x86 mq_setattr mq_attr field offsets");
 static_assert(SYS_mq_getsetattr == 245, "x86 mq_setattr syscall number");
 
