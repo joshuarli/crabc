@@ -105,7 +105,7 @@ for symbol in memchr memrchr memmem; do
 done
 # The shared archive deliberately exports the bulk-memory and separately
 # evidenced C-string-copy symbols; they are therefore not exclusions here.
-for unselected in __memrchr __memchr strtok strtok_r malloc \
+for unselected in __memrchr __memchr malloc \
     free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

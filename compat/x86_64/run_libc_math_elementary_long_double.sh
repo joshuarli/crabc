@@ -103,7 +103,7 @@ for helper in internal_rem_pio2l internal_sinl internal_tanl provider_floor prov
 		fail "archive exposes private ${helper} provider"
 	fi
 done
-for unselected in floor __cosl __p1evll __polevll __rem_pio2l __rem_pio2_large __sinl __tanl; do
+for unselected in __cosl __p1evll __polevll __rem_pio2l __rem_pio2_large __sinl __tanl; do
 	if grep -Fxq "$unselected" "$selected_symbols"; then
 		fail "archive accidentally exports private elementary provider ${unselected}"
 	fi

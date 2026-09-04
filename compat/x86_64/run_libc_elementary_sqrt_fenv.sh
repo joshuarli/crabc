@@ -71,12 +71,6 @@ for symbol in sqrt sqrtf sqrtl feclearexcept fegetenv fesetenv fesetround \
 	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
 		|| fail "archive does not define $symbol"
 done
-for unselected in cabs cabsf cabsl carg cargf cargl cpow cpowf cpowl; do
-	if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
-		fail "archive accidentally exports unselected ${unselected}"
-	fi
-done
-
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ELEMENTARY_SQRT_FENV_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static \
 	-fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector \

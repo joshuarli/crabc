@@ -270,7 +270,7 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 grep -Fq 'args.next_arg' "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
     fail "format/scan leaf no longer owns the x86 variadic boundary"
 if [ "$EVIDENCE_PROFILE" = errno-output ]; then
-    grep -Fq "b'm' if length == Length::None" \
+    grep -Fq "b'm' if output.allow_errno_message() && length == Length::None" \
         "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
         fail "format/scan leaf no longer owns bare errno-message conversion"
     grep -Fq 'error_strings::error_message' \

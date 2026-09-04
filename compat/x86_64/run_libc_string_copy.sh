@@ -107,7 +107,7 @@ done
 # Shared bootstrap memory/string-search, independent memccpy/mempcpy, and
 # fixed-locale collation roots are deliberate exports. Their materialization
 # does not establish this copy artifact's contract.
-for unselected in __stpcpy __stpncpy strtok strtok_r strdup \
+for unselected in __stpcpy __stpncpy strdup \
     strndup malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

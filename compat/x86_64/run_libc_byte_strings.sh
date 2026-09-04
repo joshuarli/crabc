@@ -120,7 +120,7 @@ done
 # fixed-locale collation roots are deliberate exports of the shared x86
 # archive. Their materialization does not establish this byte-string
 # artifact's contract.
-for unselected in __memrchr __strchrnul strtok strtok_r strdup \
+for unselected in __memrchr __strchrnul strdup \
     strndup malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

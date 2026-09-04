@@ -119,8 +119,8 @@ for symbol in __errno_location cfgetispeed cfgetospeed cfsetispeed cfsetospeed \
         || fail "archive does not define ${symbol}"
 done
 for unselected in syscall tcdrain tcgetsid \
-    ttyname ttyname_r openpty forkpty login_tty posix_openpt \
-    grantpt unlockpt ptsname ptsname_r malloc free calloc realloc; do
+    ttyname openpty forkpty login_tty posix_openpt \
+    ptsname ptsname_r malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

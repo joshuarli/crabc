@@ -82,8 +82,7 @@ for symbol in __errno_location clock clock_getres gettimeofday time timespec_get
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$work_dir/archive-symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in clock_settime clock_getcpuclockid timer_create timer_delete \
-    timer_getoverrun timer_gettime timer_settime setitimer alarm ualarm; do
+for unselected in timer_create setitimer ualarm; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$work_dir/archive-symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

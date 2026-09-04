@@ -104,8 +104,7 @@ done
 ## selected bit-sign and square-root siblings. `copysignl`/`hypotl` belong to
 ## the prior math.elementary-long-double capability. This leaf has localized
 ## providers for its own use, but must not reject those sibling archive exports.
-for unselected in atan atan2 atan2f atanf cos cosf cosh coshf exp expf \
-	expm1 expm1f floor hypot hypotf log logf sin sinf sinh sinhf tan tanf; do
+for unselected in atan atan2 atan2f atanf hypot hypotf; do
 	if grep -Fxq "$unselected" "$selected_symbols"; then
 		fail "archive accidentally exports private scalar provider ${unselected}"
 	fi

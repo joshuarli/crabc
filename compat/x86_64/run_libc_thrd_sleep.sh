@@ -154,13 +154,9 @@ done
  # The shared archive's separately evidenced normal private pthread-mutex,
  # private condition, and TSD lifecycle blocks are deliberately outside this
  # direct sleep adapter.
-for unselected in pthread_mutexattr_init pthread_mutexattr_destroy \
-    pthread_mutexattr_settype pthread_mutex_timedlock pthread_mutex_consistent \
-    pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
-    pthread_condattr_getclock pthread_condattr_setpshared pthread_condattr_getpshared \
+for unselected in pthread_mutex_timedlock pthread_mutex_consistent \
     pthread_cond_timedwait \
-    clock_settime clock_getcpuclockid \
-    timer_create timer_delete timer_getoverrun timer_gettime timer_settime \
+    timer_create \
     setitimer ualarm malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

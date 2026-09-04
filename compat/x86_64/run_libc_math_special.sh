@@ -115,14 +115,9 @@ for helper in elementary_sin elementary_powl internal_rem_pio2 internal_lgamma_r
 		fail "archive exposes private ${helper} provider"
 	fi
 done
-# `powl`, `roundl`, and `sinl` are selected shared long-double archive roots;
-# selected rint/rintf/sqrt/sqrtf siblings are likewise not attributed here.
-for unselected in cos cosf exp expf floor floorf log logf pow round roundf \
-	sin sinf; do
-	if grep -Fxq "$unselected" "$selected_symbols"; then
-		fail "archive accidentally exports private elementary provider ${unselected}"
-	fi
-done
+# This gate's scalar providers are all selected by the shared archive ratchet.
+# Candidate closure below, rather than whole-archive membership, preserves the
+# boundary of this freestanding fixture.
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_SPECIAL_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \

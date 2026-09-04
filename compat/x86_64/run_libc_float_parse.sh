@@ -99,7 +99,7 @@ for symbol in __errno_location __strtod_l __strtof_l __strtold_l atof ecvt fcvt 
 done
 for unselected in __floatscan __intscan __strtod_internal __strtof_internal __strtold_internal \
     malloc calloc realloc free printf fprintf \
-    rand srand drand48; do
+    rand srand; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

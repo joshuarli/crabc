@@ -132,9 +132,7 @@ for symbol in __errno_location clock_nanosleep; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in clock_settime \
-    clock_getcpuclockid timer_create timer_delete timer_getoverrun timer_gettime \
-    timer_settime setitimer ualarm malloc free \
+for unselected in timer_create setitimer ualarm malloc free \
     calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

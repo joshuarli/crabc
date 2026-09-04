@@ -133,7 +133,7 @@ done
 # The separately recorded processor/page artifact owns the four get_*_pages
 # and get_nprocs* exports in this shared archive. They remain outside this
 # fixture's UTS-identity source and runtime surface.
-for unselected in gethostid sethostid getloadavg _Fork vfork clone execve \
+for unselected in sethostid _Fork vfork clone execve \
     syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

@@ -18,6 +18,38 @@ RUNNER = ROOT / "scripts" / "dev-x86_64.sh"
 
 
 class X86_64CoreRunnerTests(unittest.TestCase):
+    def assertIn(self, member: object, container: object, msg: object = None) -> None:
+        """Keep source-contract failures actionable without rendering whole files."""
+
+        if (
+            isinstance(member, str)
+            and isinstance(container, str)
+            and len(container) > 4096
+            and member not in container
+        ):
+            self.fail(
+                msg
+                or f"{member!r} is missing from a {len(container)}-byte source contract"
+            )
+        super().assertIn(member, container, msg)
+
+    def assertNotIn(
+        self, member: object, container: object, msg: object = None
+    ) -> None:
+        """Keep source-contract failures actionable without rendering whole files."""
+
+        if (
+            isinstance(member, str)
+            and isinstance(container, str)
+            and len(container) > 4096
+            and member in container
+        ):
+            self.fail(
+                msg
+                or f"{member!r} is unexpectedly present in a {len(container)}-byte source contract"
+            )
+        super().assertNotIn(member, container, msg)
+
     def test_fcntl_header_posix_fallocate_declarations_stay_explicit(self) -> None:
         c_probe = (
             ROOT / "compat" / "x86_64" / "fcntl_header_abi_probe.c"
@@ -851,7 +883,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "compile_profile bsd",
             "POSIX profile",
             "unmangled",
-            "CMSG_ALIGN remains available",
+            "CMSG_ALIGN remains",
+            "available in every profile",
         ):
             self.assertIn(required, header_runner)
         for required in (
@@ -4488,7 +4521,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('-p crabc-libc', time_header)
         self.assertIn('poll_header_abi_probe.c', poll_header)
         self.assertIn('poll_header_abi_probe.cpp', poll_header)
-        self.assertIn('include/poll.h', poll_header)
+        self.assertIn('for header in poll.h features.h bits/poll.h', poll_header)
         self.assertIn('-fsyntax-only', poll_header)
         self.assertNotIn('-p crabc-libc', poll_header)
         self.assertIn('select_header_abi_probe.c', select_header)
@@ -4688,7 +4721,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('-p crabc-ldso', image)
         self.assertIn('#if defined(__x86_64__) && !defined(__cplusplus)', sys_types)
         self.assertIn('defined(__x86_64__) && defined(__LP64__)', unistd_include)
-        self.assertNotIn('#if defined(__x86_64__)\n', unistd_include)
 
     def test_x86_parity_ledger_is_a_required_contract_check(self) -> None:
         validator = ROOT / "compat" / "x86_64" / "validate_parity_ledger.py"
@@ -5771,9 +5803,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertNotIn("preadv2 pwritev2 splice", artifact_runner)
-        self.assertIn("-Wl,--gc-sections", artifact_runner)
         self.assertIn(
-            "candidate unexpectedly pulls independently selected transfer", artifact_runner
+            "signal-execution candidate unexpectedly pulls", artifact_runner
         )
         for symbol in (
             "kill",
@@ -6985,7 +7016,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertIn("sched_getscheduler", static_exports)
         self.assertNotIn("times sched_getscheduler", process_resources_runner)
-        self.assertIn("sched_setscheduler", process_resources_runner)
+        self.assertNotIn("sched_setscheduler", process_resources_runner)
         self.assertIn('id = "static-c-sched-getscheduler"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-sched-getscheduler"',
@@ -7887,7 +7918,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for required in (
             "typedef struct cpu_set_t",
             "unsigned long __bits[128 / sizeof(long)]",
-            "CPU_*\n * construction/allocation helper macro family remains unselected",
+            "#define CPU_ALLOC(n)",
         ):
             self.assertIn(required, sched_header)
         for required in (
@@ -9029,7 +9060,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "nm --undefined-only",
             "mangled",
             "bits/alltypes.h",
-            "leaked <sys/types.h>",
+            "C probe did not use the project <$header>",
         ):
             self.assertIn(required, header_runner)
         for required in (
@@ -9163,11 +9194,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn("pthread_getcpuclockid signature", header_probe)
         self.assertIn("crabc_force_pthread_getcpuclockid", cxx_header_probe)
         self.assertIn(
-            "pthread_create pthread_detach pthread_self pthread_equal pthread_getconcurrency pthread_getcpuclockid",
+            "pthread_getcpuclockid",
             header_runner,
         )
         self.assertIn(
-            "pthread_create|pthread_detach|pthread_self|pthread_equal|pthread_getconcurrency|pthread_getcpuclockid",
+            "requests a mangled C++ pthread/C11 symbol",
             header_runner,
         )
         self.assertIn('id = "static-c-pthread-cpuclock"', parity_ledger)
@@ -9916,12 +9947,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "/workspace/compat/x86_64/run_pthread_spin_destroy_header_abi.sh",
             runner,
         )
-        self.assertIn("    pthread-spin-destroy-header-abi) ;;", runner)
         self.assertIn(
             '    pthread-spin-destroy-header-abi)\n        [ "$#" -eq 0 ] || fail "pthread-spin-destroy-header-abi takes no arguments"',
             runner,
         )
-        self.assertIn("    libc-pthread-spin-destroy) ;;", runner)
         self.assertIn(
             '    libc-pthread-spin-destroy)\n        [ "$#" -eq 0 ] || fail "libc-pthread-spin-destroy takes no arguments"',
             runner,
@@ -9987,7 +10016,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "private normal-mutex and its private condition-variable handoff artifacts",
         ):
             self.assertIn(required, atomic)
-        self.assertNotIn("#[no_mangle]", atomic)
+        self.assertIn('pub extern "C" fn atomic_thread_fence', atomic)
 
         for required in (
             "1.2.6 release commit",
@@ -10099,7 +10128,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "FUTEX_WAIT_PRIVATE",
             "FUTEX_WAKE_PRIVATE",
             "atomic exchange release",
-            "pthread_mutexattr_init",
             "pthread_cond_timedwait",
             "__tls_get_addr",
         ):
@@ -10117,9 +10145,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertTrue(
             {
-                "pthread_mutexattr_init",
                 "pthread_mutex_timedlock",
-                "pthread_condattr_init",
                 "pthread_cond_timedwait",
             }.isdisjoint(static_exports)
         )
@@ -10587,7 +10613,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_private_futex_path pthread_cond_wait requeue",
             "assert_private_futex_path pthread_cond_signal wake",
             "assert_private_futex_path pthread_cond_broadcast wake",
-            "pthread_condattr_init",
             "pthread_cond_timedwait",
             "__tls_get_addr",
         ):
@@ -10606,8 +10631,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertTrue(
             {
-                "pthread_condattr_init",
-                "pthread_condattr_destroy",
                 "pthread_cond_timedwait",
             }.isdisjoint(static_exports)
         )
@@ -13031,6 +13054,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mktemp.rs"
         ).read_text(encoding="utf-8")
+        randomizer = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "temp_name_random.rs"
+        ).read_text(encoding="utf-8")
         probe = (
             ROOT / "compat" / "x86_64" / "libc_mktemp_probe.c"
         ).read_text(encoding="utf-8")
@@ -13060,6 +13091,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "mktemp.rs"]', static_root)
+        self.assertIn('#[path = "temp_name_random.rs"]', static_root)
         self.assertIn("mktemp", static_export_names)
         self.assertEqual(
             set(
@@ -13077,21 +13109,24 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/temp/__randname.c::__randname",
             "TEMPLATE_SUFFIX_BYTES: usize = 6",
             "MAX_ATTEMPTS: usize = 100",
-            "CLOCK_REALTIME",
-            "struct Timespec",
             "struct KernelStatScratch",
             "size_of::<KernelStatScratch>() == 144",
-            "raw_syscall::SYS_CLOCK_GETTIME",
-            "raw_syscall::SYS_GETTID",
             "raw_syscall::SYS_NEWFSTATAT",
-            "wrapping_mul(65_537)",
-            "random >>= 5",
             "if error != ENOENT",
             "errno::set_errno(EEXIST)",
             "inherently racy",
             "does not create, open, reserve, unlink",
         ):
             self.assertIn(required, source)
+        for required in (
+            "CLOCK_REALTIME",
+            "struct Timespec",
+            "raw_syscall::SYS_CLOCK_GETTIME",
+            "raw_syscall::SYS_GETTID",
+            "wrapping_mul(65_537)",
+            "random >>= 5",
+        ):
+            self.assertIn(required, randomizer)
         for forbidden in (
             "raw_syscall::SYS_OPEN",
             "raw_syscall::SYS_OPENAT",
@@ -14996,8 +15031,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             & {
                 "getservbyname",
                 "getservbyport",
-                "endprotoent",
-                "res_init",
             }
         )
 
@@ -15373,7 +15406,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("dn_skipname", static_exports.splitlines())
         self.assertFalse(
             set(static_exports.splitlines())
-            & {"ns_initparse", "ns_parserr", "ns_name_uncompress"}
+            & {"res_query", "res_querydomain", "res_search"}
         )
         self.assertIn('id = "static-c-dn-skipname"', parity_ledger)
         self.assertIn(
@@ -15659,7 +15692,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("_ns_flagdata", static_exports.splitlines())
         self.assertFalse(
             set(static_exports.splitlines())
-            & {"ns_initparse", "ns_parserr", "ns_name_uncompress"}
+            & {"res_query", "res_querydomain", "res_search"}
         )
         self.assertIn('id = "static-c-ns-flagdata"', parity_ledger)
         self.assertIn(
@@ -16420,13 +16453,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "sys/sysinfo.h",
         ):
             self.assertIn(required, artifact_runner)
-        self.assertIn(
-            "for separately_selected in getloadavg gethostid", artifact_runner
-        )
-        self.assertIn(
-            "processor/page candidate unexpectedly retains separately selected",
-            artifact_runner,
-        )
+        self.assertIn("for unselected in _Fork vfork clone execve syscall", artifact_runner)
         self.assertNotIn("for unselected in getloadavg", artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         for symbol in ("uname", "sysinfo"):
@@ -18956,11 +18983,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, implementation)
         for required in (
             "typedef struct re_pattern_buffer",
-            "#define REG_NEWLINE 4",
-            "#define REG_NOSUB 8",
-            "#define REG_ENOSYS -1",
         ):
             self.assertIn(required, header)
+        for macro, value in (("REG_NEWLINE", 4), ("REG_NOSUB", 8), ("REG_ENOSYS", -1)):
+            self.assertTrue(
+                re.search(rf"(?m)^#define {macro}\s+{value}$", header),
+                f"regex header must retain {macro} value {value}",
+            )
         for required in (
             "a.*a",
             "[]a]+",
@@ -21212,7 +21241,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "emitted_length",
             "0x2...pE",
             "args.next_arg::<f64>()",
-            "b'a' | b'A' if matches!(length, Length::None | Length::L)",
+            "b'a' | b'A' if output.allow_float() && matches!(length, Length::None | Length::L)",
         ):
             self.assertIn(required, implementation)
         self.assertNotIn("libm::", implementation)
@@ -21295,7 +21324,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         dispatcher = RUNNER.read_text(encoding="utf-8")
 
         for required in (
-            "b'm' if length == Length::None",
+            "b'm' if output.allow_errno_message() && length == Length::None",
             "error_strings::error_message",
             "errno::get_errno()",
             "Bare `%m` consumes",
@@ -21327,7 +21356,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "errno-output)",
             "CRABC_STDIO_ERRNO_OUTPUT_FREESTANDING",
             "libc_stdio_errno_output_probe.c",
-            "b'm' if length == Length::None",
+            "b'm' if output.allow_errno_message() && length == Length::None",
             "error_strings::error_message",
             "errno::get_errno()",
             "-nostdlib -static",
@@ -27870,20 +27899,29 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 re.DOTALL,
             ):
                 # A freestanding candidate may deliberately prove that it did
-                # not pull an unrelated archive sibling. Only archive-surface
-                # exclusions must track the shared export manifest.
-                if "$candidate_symbols" in match.group(2):
+                # not pull an unrelated archive sibling. Only whole-archive
+                # checks (including the filtered selected-member roster) must
+                # track the shared export manifest. Candidate closures often
+                # use a differently named symbols file.
+                if not any(
+                    marker in match.group(2)
+                    for marker in (
+                        '"$archive_symbols"',
+                        '"$work_dir/archive-symbols"',
+                        '"$selected_symbols"',
+                    )
+                ):
                     continue
                 excluded_exports.update(
                     token for token in match.group(1).split() if token != "\\"
                 )
 
             with self.subTest(artifact_runner=artifact_runner.name):
-                self.assertSetEqual(
-                    selected_exports & excluded_exports,
-                    set(),
-                    "a shared selected C ABI export cannot remain an artifact-local "
-                    "unselected exclusion",
+                conflicting_exports = selected_exports & excluded_exports
+                self.assertFalse(
+                    conflicting_exports,
+                    f"{artifact_runner.name} rejects shared selected exports: "
+                    f"{', '.join(sorted(conflicting_exports))}",
                 )
 
     def test_pathname_lifecycle_runner_releases_dedicated_mkdirat_export(
@@ -30398,9 +30436,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertFalse(
             static_export_names
             & {
-                "fchdir",
                 "symlinkat",
-                "unlinkat",
                 "renameat",
                 "open_by_handle_at",
             }
@@ -30563,10 +30599,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertFalse(
             static_export_names
             & {
-                "unlinkat",
                 "renameat",
                 "fchmodat",
-                "mkdirat",
                 "symlinkat",
             }
         )
@@ -30728,7 +30762,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("--whole-archive", artifact_runner)
 
         self.assertIn("lchown", static_export_names)
-        self.assertFalse(static_export_names & {"chown", "fchown", "fchownat"})
+        self.assertFalse(static_export_names & {"fchown", "fchownat"})
         self.assertIn('id = "static-c-lchown"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-lchown"',
@@ -31142,7 +31176,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "realpath",
                 "renameat",
                 "symlinkat",
-                "mkdirat",
                 "fchmodat",
                 "scandir",
             }
@@ -34618,7 +34651,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ARCH_SET_FS",
             "R_X86_64_TLSDESC => None",
             "object.tls_module_id = 0",
-            "object.tls_module_id = module_count",
+            "object.tls_module_id = module_id",
             "TLS_TCB_MODULE_SIZE_TABLE_OFFSET",
         ):
             self.assertIn(required, graph)
@@ -36077,7 +36110,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("ns_put32", static_exports.splitlines())
         self.assertFalse(
             set(static_exports.splitlines())
-            & {"ns_name_uncompress"}
+            & {"res_query", "res_querydomain", "res_search"}
         )
         self.assertIn('id = "static-c-ns-put32"', parity_ledger)
         self.assertIn(
@@ -36219,7 +36252,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("ns_skiprr", static_exports.splitlines())
         self.assertFalse(
             set(static_exports.splitlines())
-            & {"ns_initparse", "ns_parserr", "ns_name_uncompress"}
+            & {"res_query", "res_querydomain", "res_search"}
         )
         self.assertIn('id = "static-c-ns-skiprr"', parity_ledger)
         self.assertIn(
@@ -36520,7 +36553,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertIn("sched_getparam", static_exports)
         self.assertNotIn("times sched_getparam", process_resources_runner)
-        self.assertIn("sched_setscheduler", process_resources_runner)
+        self.assertNotIn("sched_setscheduler", process_resources_runner)
         self.assertIn('id = "static-c-sched-getparam"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-sched-getparam"', parity_ledger

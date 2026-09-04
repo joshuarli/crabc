@@ -71,7 +71,7 @@ done
 # The separately selected secure-environment archive export is not part of
 # this candidate. Login-name still excludes passwd/utmp/terminal/allocator use.
 for unselected in getusershell setusershell endusershell getpwnam getpwuid \
-    getutent ttyname ctermid malloc free calloc realloc; do
+    getutent ttyname malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
