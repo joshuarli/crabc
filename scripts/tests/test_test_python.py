@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import resource
 import shutil
 import subprocess
 import sys
@@ -181,6 +182,49 @@ class SelectedTests(unittest.TestCase):
         zero = self.invoke("--module", self.relative(empty), "--jobs", "1")
         self.assertEqual(zero.returncode, 1, zero.stdout + zero.stderr)
         self.assertIn("ZERO-TESTS", zero.stdout)
+
+    def test_core_dumps_are_disabled_before_module_import_and_in_descendants(self) -> None:
+        module = self.write_module(
+            "test_core_policy.py",
+            """\
+import resource
+import subprocess
+import sys
+import unittest
+
+IMPORT_LIMITS = resource.getrlimit(resource.RLIMIT_CORE)
+
+class CorePolicyTests(unittest.TestCase):
+    def test_worker_and_descendant_cannot_create_core_files(self):
+        self.assertEqual(IMPORT_LIMITS, (0, 0))
+        child = subprocess.run(
+            [sys.executable, "-c",
+             "import resource; assert resource.getrlimit(resource.RLIMIT_CORE) == (0, 0)"],
+            check=False, timeout=5,
+        )
+        self.assertEqual(child.returncode, 0)
+""",
+        )
+        # Give only the launcher child a nonzero soft limit. The regression
+        # cannot emit a core and never changes this test process's limits.
+        hard = resource.getrlimit(resource.RLIMIT_CORE)[1]
+        if hard == 0:
+            self.skipTest("parent hard core limit already forbids enabling cores")
+        environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import os, resource, sys; "
+             "resource.setrlimit(resource.RLIMIT_CORE, (1, resource.getrlimit(resource.RLIMIT_CORE)[1])); "
+             "os.execv(sys.executable, [sys.executable, *sys.argv[1:]])",
+             str(RUNNER), "--module", self.relative(module), "--jobs", "1"],
+            cwd=ROOT, env=environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+        )
+        run_root = self.report_run_root(result)
+        if run_root is not None:
+            self.run_roots.append(run_root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("passed 1 modules / 1 tests", result.stdout)
 
     def test_failures_and_discovery_errors_are_nonzero_with_captured_logs(self) -> None:
         failure = self.write_module(

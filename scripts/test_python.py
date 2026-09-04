@@ -14,6 +14,7 @@ import fnmatch
 import json
 import math
 import os
+import resource
 import signal
 import stat
 import subprocess
@@ -571,6 +572,11 @@ def worker_main(raw_module: str) -> int:
     """Private child entry point; its JSON line is the parent protocol."""
 
     try:
+        # Fixtures can deliberately abort native children. Apply the policy
+        # before discovery/import, and lower the hard limit so ordinary child
+        # processes cannot re-enable shared-CWD core dumps. The launcher and
+        # its caller retain their own limits.
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         module = resolve_selected_path(raw_module, "worker test module")
         if module.suffix != ".py" or not module.is_file():
             raise TestPythonError(f"worker test module must be a regular Python file: {raw_module}")
