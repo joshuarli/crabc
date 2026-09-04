@@ -42,6 +42,19 @@ static_assert(__is_same(decltype(FAN_EVENT_NEXT(&first, remaining)),
     struct fanotify_event_metadata *), "fanotify next-record type");
 static_assert(__is_same(decltype(FAN_EVENT_OK(&first, remaining)), bool),
     "fanotify record-validity type");
+static_assert(sizeof(struct fanotify_event_info_header) == 4 &&
+    alignof(struct fanotify_event_info_header) == 2,
+    "fanotify info header layout");
+static_assert(sizeof(struct fanotify_response) == 8 &&
+    alignof(struct fanotify_response) == 4 &&
+    __builtin_offsetof(struct fanotify_response, response) == 4,
+    "fanotify response layout");
+static_assert(FANOTIFY_METADATA_VERSION == 3 && FAN_EVENT_INFO_TYPE_FID == 1 &&
+    FAN_EVENT_INFO_TYPE_DFID_NAME == 2 && FAN_EVENT_INFO_TYPE_DFID == 3 &&
+    FAN_NOFD == -1, "fanotify protocol constants");
+static_assert(FAN_MARK_FILESYSTEM == 0x100 &&
+    FAN_ALL_CLASS_BITS == 0x0c && FAN_ALL_EVENTS == 0x3b,
+    "fanotify aggregate constants");
 
 /* Form both macros through a properly aligned caller-owned record array. */
 static void fanotify_macro_expression_formation()

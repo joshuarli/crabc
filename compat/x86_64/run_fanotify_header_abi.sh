@@ -98,7 +98,7 @@ if ! "$ORACLE_CC" -x c -std=c11 -nostdinc -I "$ROOT_DIR/include" \
     cat "$header_trace" >&2
     fail "project strict C fanotify macro contract drifted"
 fi
-for header in sys/fanotify.h stdint.h; do
+for header in sys/fanotify.h sys/statfs.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "strict C probe did not use project <$header>"
 done

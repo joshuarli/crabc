@@ -44,6 +44,19 @@ _Static_assert(__builtin_types_compatible_p(
 _Static_assert(__builtin_types_compatible_p(
     __typeof__(FAN_EVENT_OK(&first, remaining)), int),
     "fanotify record-validity type");
+_Static_assert(sizeof(struct fanotify_event_info_header) == 4 &&
+    _Alignof(struct fanotify_event_info_header) == 2,
+    "fanotify info header layout");
+_Static_assert(sizeof(struct fanotify_response) == 8 &&
+    _Alignof(struct fanotify_response) == 4 &&
+    offsetof(struct fanotify_response, response) == 4,
+    "fanotify response layout");
+_Static_assert(FANOTIFY_METADATA_VERSION == 3 && FAN_EVENT_INFO_TYPE_FID == 1 &&
+    FAN_EVENT_INFO_TYPE_DFID_NAME == 2 && FAN_EVENT_INFO_TYPE_DFID == 3 &&
+    FAN_NOFD == -1, "fanotify protocol constants");
+_Static_assert(FAN_MARK_FILESYSTEM == 0x100 &&
+    FAN_ALL_CLASS_BITS == 0x0c && FAN_ALL_EVENTS == 0x3b,
+    "fanotify aggregate constants");
 
 /* Form both macros through a properly aligned caller-owned record array. */
 static void fanotify_macro_expression_formation(void)
