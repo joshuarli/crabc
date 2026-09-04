@@ -14,7 +14,7 @@
 //!
 //! Static Initial TLS v1 is deliberately narrower than general TLS: it admits
 //! one final executable image with direct local-exec TPOFF accesses and one
-//! self-word TCB at `%fs:0`.  It has no module registry, dynamic image growth,
+//! self pointer at `%fs:0` and compiler stack guard at `%fs:40`. It has no module registry, dynamic image growth,
 //! loader handoff, or general TCB contract. The hidden CRT static-link
 //! handoff is a private static-startup composition boundary, not general CRT,
 //! loader, sysroot, or public x86 runtime support.
@@ -31,6 +31,7 @@ const AT_NULL: usize = 0;
 const AT_PHDR: usize = 3;
 const AT_PHENT: usize = 4;
 const AT_PHNUM: usize = 5;
+const AT_RANDOM: usize = 25;
 
 const PT_LOAD: u32 = 1;
 const PT_PHDR: u32 = 6;
@@ -58,6 +59,20 @@ const TLS_STATE_BOOTSTRAPPING: u8 = 1;
 const TLS_STATE_READY: u8 = 2;
 const TLS_STATE_FAILED: u8 = 3;
 
+/// Concrete static x86 compiler ABI fields, not a general pthread/loader TCB.
+///
+/// GCC's Linux/x86-64 stack protector reads the word at FS+40. Reserve its
+/// complete storage explicitly rather than relying on mmap's page rounding.
+/// The intervening words carry no runtime contract and remain zero.
+#[repr(C)]
+struct StaticThreadControlBlock {
+    self_pointer: usize,
+    reserved: [usize; 4],
+    stack_guard: usize,
+}
+
+const _: () = assert!(core::mem::offset_of!(StaticThreadControlBlock, stack_guard) == 40);
+
 /// One validated program-header record from the live final executable.
 #[derive(Clone, Copy)]
 struct ProgramHeader {
@@ -73,7 +88,7 @@ struct ProgramHeader {
 /// The immutable layout of the final executable's one initial TLS image.
 ///
 /// This intentionally records only what is needed to materialize direct
-/// local-exec storage and the concrete self-word TCB.  It is not a loader
+/// local-exec storage and the concrete self-pointer/stack-guard TCB. It is not a loader
 /// record, module table, or public ABI type.
 #[derive(Clone, Copy)]
 struct StaticInitialTlsPlan {
@@ -83,6 +98,7 @@ struct StaticInitialTlsPlan {
     image_offset_below_tp: usize,
     tp_alignment: usize,
     allocation_size: usize,
+    stack_guard: usize,
 }
 
 impl StaticInitialTlsPlan {
@@ -93,6 +109,7 @@ impl StaticInitialTlsPlan {
         image_offset_below_tp: 0,
         tp_alignment: 0,
         allocation_size: 0,
+        stack_guard: 0,
     };
 }
 
@@ -393,7 +410,21 @@ impl StaticInitialTlsPlan {
         let tp_alignment = tls_alignment.max(core::mem::align_of::<usize>());
         let allocation_size = image_offset_below_tp
             .checked_add(tp_alignment.checked_sub(1)?)?
-            .checked_add(core::mem::size_of::<usize>())?;
+            .checked_add(core::mem::size_of::<StaticThreadControlBlock>())?;
+
+        // Linux supplies 16 initialized entropy bytes at AT_RANDOM on the
+        // untouched entry stack. Match musl 1.2.6 src/env/__stack_chk_fail.c:
+        // copy one word and clear byte one, retaining off-by-one detection.
+        // Missing or unusable entropy fails bootstrap instead of inventing a
+        // deterministic guard. This is copied into every worker before entry.
+        let entropy = unsafe { auxiliary_value(auxv, AT_RANDOM) }?;
+        if entropy == 0 {
+            return None;
+        }
+        let stack_guard = unsafe { core::ptr::read_unaligned(entropy as *const usize) } & !0xff00;
+        if stack_guard == 0 {
+            return None;
+        }
 
         Some(Self {
             image,
@@ -402,10 +433,11 @@ impl StaticInitialTlsPlan {
             image_offset_below_tp,
             tp_alignment,
             allocation_size,
+            stack_guard,
         })
     }
 
-    /// Allocate one exact image copy and one minimal Variant-II self word.
+    /// Allocate one exact image copy and the static compiler ABI TCB.
     unsafe fn materialize(self) -> Option<StaticInitialTlsBlock> {
         let mapping = unsafe { map_anonymous(self.allocation_size) }?;
         let mapping_address = mapping as usize;
@@ -440,7 +472,7 @@ impl StaticInitialTlsPlan {
                 return None;
             }
         };
-        let tcb_end = match tp.checked_add(core::mem::size_of::<usize>()) {
+        let tcb_end = match tp.checked_add(core::mem::size_of::<StaticThreadControlBlock>()) {
             Some(value) => value,
             None => {
                 let _ = unsafe { unmap(mapping, self.allocation_size) };
@@ -464,10 +496,18 @@ impl StaticInitialTlsPlan {
                 )
             };
         }
-        // x86-64 Variant II starts the minimal TCB at TP.  Static Initial TLS
-        // v1 owns only this self word, which lets the selected worker identity
-        // check read `%fs:0`; a later full runtime owns all other TCB fields.
-        unsafe { core::ptr::write_volatile(tp as *mut usize, tp) };
+        // Publish both compiler ABI fields before ARCH_SET_FS/CLONE_SETTLS;
+        // no application or backend code can observe an uninitialized guard.
+        unsafe {
+            core::ptr::write(
+                tp as *mut StaticThreadControlBlock,
+                StaticThreadControlBlock {
+                    self_pointer: tp,
+                    reserved: [0; 4],
+                    stack_guard: self.stack_guard,
+                },
+            )
+        };
 
         Some(StaticInitialTlsBlock {
             mapping,

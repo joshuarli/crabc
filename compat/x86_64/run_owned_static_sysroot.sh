@@ -9,6 +9,9 @@
 # This remains a narrow non-promoting product slice: no loader, libc.so,
 # dynamic mode, family completion, x86 promotion, or public-support claim.
 set -euo pipefail
+# The stack-protector negative child deliberately faults; do not leave cores
+# in the checkout or make parallel test runs compete for a core filename.
+ulimit -c 0
 export LC_ALL=C
 unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH \
     COMPILER_PATH GCC_EXEC_PREFIX LD_LIBRARY_PATH LD_PRELOAD || true
@@ -513,9 +516,9 @@ run_static_mode() {
     (
         cd "$mode_root"
         "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE \
-            -DCRABC_CRT_STATIC_TLS_CANDIDATE -c \
+            -DCRABC_CRT_STATIC_TLS_CANDIDATE -DCRABC_STATIC_STACK_GUARD -c \
             "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_probe.c" -o probe.o
-        "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE -c \
+        "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE -DCRABC_STATIC_STACK_GUARD -c \
             "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_peer.c" -o peer.o
         "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE -c \
             "$ROOT_DIR/compat/x86_64/owned_static_sysroot_builtins.c" -o builtins.o
@@ -524,6 +527,8 @@ run_static_mode() {
     )
     candidate="$mode_root/candidate"
     receipt="$mode_root/link.receipt.json"
+    nm -u "$mode_root/peer.o" | grep -Eq '[[:space:]]U[[:space:]]+__stack_chk_fail$' ||
+        fail "${label} protected peer did not emit a compiler stack check"
     nm -u "$mode_root/builtins.o" | grep -Eq '[[:space:]]U[[:space:]]+__udivti3$' ||
         fail "${label} compiler-helper consumer did not retain an undefined __udivti3 boundary"
     audit_link_receipt "$installed_root" "$mode_root" "$mode" "$candidate" "$receipt"
@@ -678,7 +683,7 @@ peer_dependency_file="$header_consumer/peer.d"
 builtins_dependency_file="$header_consumer/builtins.d"
 forged_dependency="$header_consumer/forged.d"
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CRT_STATIC_TLS_MUSL_REFERENCE \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CRT_STATIC_TLS_MUSL_REFERENCE -DCRABC_STATIC_STACK_GUARD \
     -pthread -fno-builtin -fno-stack-protector -ftls-model=local-exec \
     -I"$ROOT_DIR/include" \
     "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_probe.c" \

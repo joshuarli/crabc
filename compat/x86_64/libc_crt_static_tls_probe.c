@@ -17,6 +17,36 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
+#ifdef CRABC_STATIC_STACK_GUARD
+#include <signal.h>
+#include <sys/auxv.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern int crabc_crt_guarded_call(int corrupt);
+static uintptr_t process_guard;
+
+static uintptr_t stack_guard(void)
+{
+    uintptr_t guard;
+    __asm__ volatile("mov %%fs:40, %0" : "=r"(guard));
+    return guard;
+}
+
+static int initial_stack_guard_holds(void)
+{
+    const unsigned char *entropy = (const unsigned char *)getauxval(AT_RANDOM);
+    uintptr_t expected = 0;
+    if (!entropy)
+        return 0;
+    /* musl 1.2.6 __init_ssp clears byte one on 64-bit targets. */
+    for (unsigned int index = 0; index < sizeof(expected); ++index)
+        if (index != 1)
+            expected |= (uintptr_t)entropy[index] << (index * 8);
+    process_guard = stack_guard();
+    return expected != 0 && process_guard == expected && crabc_crt_guarded_call(0) == 42;
+}
+#endif
 
 enum {
     primary_initial_value = 0x13579bdf,
@@ -174,6 +204,11 @@ static void *observe_worker(void *opaque)
 {
     struct worker_observation *observation = opaque;
 
+#ifdef CRABC_STATIC_STACK_GUARD
+    if (stack_guard() != process_guard || crabc_crt_guarded_call(0) != 42)
+        return (void *)(uintptr_t)1;
+#endif
+
     observation->initial_errno = errno;
     observation->initial_primary = crabc_crt_primary_initial;
     observation->initial_primary_tbss = crabc_crt_primary_tbss;
@@ -189,6 +224,10 @@ static void *observe_worker(void *opaque)
 
 static void preinit(void)
 {
+#ifdef CRABC_STATIC_STACK_GUARD
+    if (!initial_stack_guard_holds())
+        reject(98);
+#endif
     if (installed_thread_pointer() == 0 || installed_thread_pointer() != fs_self() ||
         !initial_values_hold())
         reject(81);
@@ -318,6 +357,20 @@ int main(int argc, char **argv, char **envp)
         return 86;
     if (pthread_join(worker, &worker_result) != 0)
         return 87;
+#ifdef CRABC_STATIC_STACK_GUARD
+    /* The isolated child changes only its own guard after the protected
+     * function saves it. Its epilogue must enter the owned failure handler. */
+    pid_t child = fork();
+    if (child == 0) {
+        crabc_crt_guarded_call(1);
+        _Exit(99);
+    }
+    int child_status = 0;
+    if (child < 0 || waitpid(child, &child_status, 0) != child ||
+        !WIFSIGNALED(child_status) || WTERMSIG(child_status) != SIGSEGV ||
+        stack_guard() != process_guard)
+        return 99;
+#endif
     if (worker_result != (void *)(uintptr_t)worker_value ||
         observation.initial_errno != 0 || observation.initial_primary != primary_initial_value ||
         observation.initial_primary_tbss != 0 || observation.initial_peer != peer_initial_value ||

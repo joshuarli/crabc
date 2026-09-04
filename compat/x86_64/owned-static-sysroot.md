@@ -85,6 +85,13 @@ with status 127. Two normalized packages are byte-identical, and a safely
 extracted copy must reproduce the same per-mode output, receipt, map, and
 trace evidence.
 
+The static TLS owner explicitly reserves the x86 compiler guard at `%fs:40`,
+initializes it from `AT_RANDOM` before preinit, and copies it into each worker.
+The consumer checks the pinned musl guard transformation and executes real
+compiler-protected code in the initial thread and worker. A child corrupts
+only its own guard and must fault through the owned failure handler; core
+dumps are disabled for this negative test.
+
 ## Deliberately unselected
 
 This tree has a deliberately narrow planned static driver and one private

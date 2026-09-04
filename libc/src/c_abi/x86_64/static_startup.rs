@@ -223,9 +223,10 @@ fn startup_reject() -> ! {
 /// former archive-binding spelling here, next to the selected static startup
 /// owner, so a stronger application or runtime definition can replace it.
 ///
-/// This x86 static runtime deliberately does not initialize a canary, read
-/// `AT_RANDOM`, or call this fallback from `__libc_start_main`: those actions
-/// would select stack-protector startup and broader process/loader state.
+/// The static TLS bootstrap already initializes the concrete x86 guard from
+/// `AT_RANDOM` before any protected code can run, including constructors.
+/// `__libc_start_main` does not call this compatibility fallback or reseed the
+/// guard after protected frames may have saved it.
 /// The ignored pointer therefore has no validity requirement for this inert
 /// private static-link boundary.
 #[inline(never)]

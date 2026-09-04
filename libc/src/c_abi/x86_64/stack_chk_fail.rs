@@ -15,10 +15,9 @@
 //! `__init_ssp` canary initializer. They are deliberately not selected here:
 //! this static archive leaf handles an already-detected failed check only. It
 //! neither creates guard storage nor consumes entropy, initializes a canary,
-//! selects stack-protector startup, CRT/loader state, TLS, a process lifecycle,
-//! or a public x86 C API. The separate static-startup leaf retains only its
-//! musl-shaped inert weak `__init_ssp` fallback and remains independent from
-//! this terminal compiler-support boundary.
+//! or selects a public x86 C API. The separate static TLS bootstrap owns the
+//! x86 FS+40 guard and its worker copies; static startup retains the inert weak
+//! `__init_ssp` compatibility spelling without reseeding a running thread.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("x86 stack-check failure requires little-endian Linux/x86-64");
