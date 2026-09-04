@@ -70,6 +70,12 @@ const _: () = assert!(core::mem::offset_of!(PosixSpawnFileActions, actions) == 8
 const _: () = assert!(core::mem::size_of::<FdOp>() == 40);
 const _: () = assert!(core::mem::align_of::<FdOp>() == 8);
 const FDOP_PATH_OFFSET: usize = 36;
+// Musl allocates `sizeof *op` for descriptor-only records and appends exactly
+// `strlen(path) + 1` bytes only for OPEN/CHDIR records.  Keep this split
+// explicit because the flexible-array member starts before the struct's
+// trailing padding, while `sizeof *op` still includes that padding.
+const _: () = assert!(core::mem::size_of::<FdOp>() + 0 == 40);
+const _: () = assert!(core::mem::size_of::<FdOp>() + 1 == 41);
 
 unsafe extern "C" {
     #[link_name = "malloc"]
@@ -108,7 +114,11 @@ unsafe fn allocate_operation(
     } else {
         0
     };
-    let path_bytes = path_length.checked_add(1).ok_or(ENOMEM)?;
+    let path_bytes = if has_path {
+        path_length.checked_add(1).ok_or(ENOMEM)?
+    } else {
+        0
+    };
     let allocation_size = core::mem::size_of::<FdOp>()
         .checked_add(path_bytes)
         .ok_or(ENOMEM)?;
