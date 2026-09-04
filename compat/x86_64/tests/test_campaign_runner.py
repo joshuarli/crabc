@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -96,6 +97,23 @@ class CampaignRunnerTests(unittest.TestCase):
             campaign_runner.product_machine_gate_command(
                 "dynamic_product", {"machine_gate_command": "./scripts/dev-x86_64.sh musl-oracle"}
             )
+
+    def test_registered_commands_reject_symlinked_executables_and_parents(self) -> None:
+        scratch = ROOT / ".work" / "campaign-command-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="command-", dir=scratch) as directory:
+            fixture = Path(directory)
+            (fixture / "runner.sh").symlink_to(ROOT / "scripts/dev-x86_64.sh")
+            (fixture / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
+            for path in (fixture / "runner.sh", fixture / "scripts/dev-x86_64.sh"):
+                with self.subTest(path=path.name):
+                    command = "./" + path.relative_to(ROOT).as_posix() + " musl-oracle"
+                    with self.assertRaisesRegex(campaign_runner.CampaignRunnerError, "symlink"):
+                        campaign_runner.verified_command_tokens(command)
+        self.assertEqual(
+            campaign_runner.verified_command_tokens("./scripts/dev-x86_64.sh musl-oracle"),
+            ["./scripts/dev-x86_64.sh", "musl-oracle"],
+        )
 
     def test_unknown_aggregate_command_is_rejected(self) -> None:
         completed = self.invoke("not-a-campaign-command")

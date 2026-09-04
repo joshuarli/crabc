@@ -64,6 +64,17 @@ def blocker_payload(gate_name: str, gate: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def require_repository_file(relative: Path, description: str) -> None:
+    """Keep registered execution targets on physical checkout paths."""
+    require(not relative.is_absolute() and ".." not in relative.parts,
+            f"{description} escapes repository")
+    path = ROOT
+    for part in relative.parts:
+        path /= part
+        require(not path.is_symlink(), f"{description} crosses a symlink: {relative}")
+    require(path.is_file(), f"{description} is missing from the repository: {relative}")
+
+
 def verified_command_tokens(command: str) -> list[str]:
     """Accept only direct, repository-local command forms from the ledger."""
     try:
@@ -75,7 +86,7 @@ def verified_command_tokens(command: str) -> list[str]:
     require(executable.startswith("./"), f"registered campaign command is not repository-local: {command}")
     relative = Path(executable)
     require(not relative.is_absolute() and ".." not in relative.parts, f"registered campaign command escapes repository: {command}")
-    require((ROOT / relative).is_file(), f"registered campaign command executable is missing: {command}")
+    require_repository_file(relative, "registered campaign command executable")
     require(not any(token in {"|", ";", "&&", "||", "<", ">"} for token in tokens), f"registered campaign command requires shell parsing: {command}")
     if executable == "./scripts/dev-x86_64.sh":
         require(len(tokens) >= 2, f"x86 dispatcher command has no subcommand: {command}")
@@ -133,10 +144,7 @@ def qualification_machine_gate_command(gate: Mapping[str, Any]) -> list[str]:
         not runner.is_absolute() and ".." not in runner.parts,
         "qualification runner command escapes repository",
     )
-    require(
-        (ROOT / runner).is_file(),
-        "qualification runner is missing from the repository",
-    )
+    require_repository_file(runner, "qualification runner")
     return tokens
 
 
