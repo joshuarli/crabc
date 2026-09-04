@@ -157,11 +157,11 @@ int main(int argc, char **argv)
     if (snprintf(buffer, sizeof buffer, "%2$d", 1, 2) != -1 || errno != EINVAL || buffer[0]) return 17;
 #ifdef CRABC_OWNED_PRINTF
     /* Defined owned diagnostics for invalid argument-class conflicts and
-     * still-unimplemented numerical grammar, not musl parity claims. */
+     * still-unimplemented wide grammar, not musl parity claims. */
     errno = 0;
     if (snprintf(buffer, sizeof buffer, "%1$d/%1$a") != -1 || errno != EINVAL || buffer[0]) return 26;
     errno = 0;
-    if (snprintf(buffer, sizeof buffer, "%f", 1.5) != -1 || errno != EINVAL || buffer[0]) return 27;
+    if (snprintf(buffer, sizeof buffer, "%ls", L"wide") != -1 || errno != EINVAL || buffer[0]) return 27;
 #endif
     if (snprintf(buffer, sizeof buffer, "%jd/%td/%hhu/%hu", (intmax_t)INT64_MIN,
         (ptrdiff_t)-7, 257, 65537) != 27 || strcmp(buffer, "-9223372036854775808/-7/1/1")) return 18;

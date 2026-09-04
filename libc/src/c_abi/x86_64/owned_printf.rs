@@ -4,13 +4,13 @@
 //! 9fa28ece75d8a2191de7c5bb53bed224c5947417; `compat/upstreams.toml`) supplies
 //! states/pop_arg, printf_core's two-pass NL_ARGMAX=9 argument discovery,
 //! integer/string/count/pointer rendering and overflow discipline. Numeric
-//! rendering reuses the existing source-mapped helpers in stdio_format_scan.
+//! rendering uses the fixed x87 musl translation in owned_printf_float.
 //! vdprintf.c supplies a borrowed descriptor with an 80-byte output buffer;
 //! vasprintf.c supplies count-then-malloc ownership. No descriptor is closed.
 //!
 //! The supported owned grammar is byte c/s, signed/unsigned integer lengths,
-//! n, p, m, binary64 a/A, flags and positional width/precision. Decimal float,
-//! long double and wide conversion remain EINVAL prerequisites. The C locale
+//! n, p, m, binary64/binary80 a/e/f/g, flags and positional width/precision.
+//! Wide conversion remains an EINVAL prerequisite. The C locale
 //! has no thousands grouping, so the apostrophe flag has no output effect.
 //! Unlike musl's underspecified invalid-format paths, mixed argument numbering
 //! and conflicts between ABI extraction classes fail before output/va_arg.
@@ -19,11 +19,14 @@ use super::*;
 use core::{ffi::c_void, ptr};
 use super::super::{c_ssize_status, raw_syscall};
 
+#[path = "owned_printf_float.rs"]
+mod owned_printf_float;
+
 const NL_ARGMAX: usize = 9;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind { Absent, None, Int, Uint, Long, Ulong, LongLong, UlongLong,
-    Short, Ushort, Char, Uchar, Size, Difference, Pointer, Double }
+    Short, Ushort, Char, Uchar, Size, Difference, Pointer, Double, LongDouble }
 
 impl Kind {
     fn extraction_class(self) -> u8 {
@@ -32,13 +35,14 @@ impl Kind {
             Self::Long | Self::Ulong | Self::LongLong | Self::UlongLong | Self::Size | Self::Difference => 2,
             Self::Pointer => 3,
             Self::Double => 4,
+            Self::LongDouble => 5,
             _ => 0,
         }
     }
 }
 
 #[derive(Clone, Copy)]
-enum Argument { Integer(u64), Pointer(*mut c_void), Float(f64) }
+enum Argument { Integer(u64), Pointer(*mut c_void), Float(owned_printf_float::Binary80) }
 
 // Concrete x86 C ABI va_arg types, including int promotion before h/hh
 // narrowing. Cached positional slots retain musl's final classification of
@@ -59,7 +63,8 @@ unsafe fn pop(args: &mut VaList<'_>, kind: Kind) -> Argument {
             Kind::Size => args.next_arg::<usize>() as u64,
             Kind::Difference => args.next_arg::<isize>() as u64,
             Kind::Pointer => return Argument::Pointer(args.next_arg::<*mut c_void>()),
-            Kind::Double => return Argument::Float(args.next_arg::<f64>()),
+            Kind::Double => return Argument::Float(owned_printf_float::promote(args.next_arg::<f64>())),
+            Kind::LongDouble => return Argument::Float(owned_printf_float::pop(args)),
             Kind::None | Kind::Absent => 0,
         })
     }
@@ -94,7 +99,8 @@ fn kind(length: Length, specifier: u8) -> Result<Kind, c_int> {
         b'c' if length == Length::None => Kind::Int,
         b's' | b'p' if length == Length::None => Kind::Pointer,
         b'm' if length == Length::None => Kind::None,
-        b'a' | b'A' if matches!(length, Length::None | Length::L) => Kind::Double,
+        b'a' | b'A' | b'e' | b'E' | b'f' | b'F' | b'g' | b'G'
+            if matches!(length, Length::None | Length::L) => Kind::Double,
         _ => return Err(EINVAL),
     })
 }
@@ -141,9 +147,15 @@ unsafe fn conversion(cursor: &mut *const u8) -> Result<Conversion, c_int> {
                 Count::Argument(index(cursor)?)
             } else { Count::Literal(decimal(cursor)?) })
         } else { None };
-        let length = parse_length(cursor);
+        let extended = read_byte(*cursor) == b'L';
+        let length = if extended { *cursor = (*cursor).add(1); Length::None }
+            else { parse_length(cursor) };
         let specifier = read_byte(*cursor);
-        let kind = kind(length, specifier)?;
+        let mut kind = kind(length, specifier)?;
+        if extended {
+            if kind != Kind::Double { return Err(EINVAL); }
+            kind = Kind::LongDouble;
+        }
         *cursor = (*cursor).add(1);
         if kind == Kind::None && position != 0 { return Err(EINVAL); }
         Ok(Conversion { position, width, precision, flags, length, specifier, kind })
@@ -257,7 +269,6 @@ unsafe fn emit(output: &mut impl FormatSink, item: &Conversion, value: Argument,
                 let message = error_strings::error_message(errno::get_errno());
                 write_string(output, message.as_ptr().cast(), width, precision, flags);
             }
-            (b'a' | b'A', Argument::Float(value)) => write_hex_float(output, value, width, precision, flags, item.specifier == b'A'),
             _ => unreachable!(),
         }
     }
@@ -291,6 +302,11 @@ unsafe fn render(output: &mut impl FormatSink, format: *const c_char,
             if item.specifier == b'n' {
                 let Argument::Pointer(pointer) = value else { unreachable!() };
                 store_count(pointer, item.length, output.count());
+                continue;
+            }
+            if let Argument::Float(value) = value {
+                owned_printf_float::render(output, value, item.kind == Kind::LongDouble,
+                    width, precision, flags, item.specifier)?;
                 continue;
             }
             // Measure before emitting padding. This is printf_core's INT_MAX

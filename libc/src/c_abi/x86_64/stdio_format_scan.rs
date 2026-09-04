@@ -2,8 +2,8 @@
 //!
 //! With `x86-owned-static-runtime`, `owned_printf` selects the shared owned
 //! byte-buffer/FILE/descriptor/allocation formatter: positional arguments,
-//! integer/string/count/pointer/%m and binary64 hexadecimal conversion. It
-//! still excludes decimal floating, long-double and wide conversion. Owned
+//! integer/string/count/pointer/%m and binary64/binary80 decimal/hexadecimal
+//! conversion through `owned_printf_float`. Wide conversion is excluded. Owned
 //! scanning retains its existing grammar and a recursive FILE lock spans each
 //! stream call. The narrower formatting/permanent-stream restrictions below
 //! describe the unchanged private fixture feature, not the owned formatter.
