@@ -543,6 +543,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mktemp-header-abi
 ./scripts/dev-x86_64.sh libc-mktemp
 ./scripts/dev-x86_64.sh libc-file-handles
+./scripts/dev-x86_64.sh posix-spawn-file-actions-header-abi
+./scripts/dev-x86_64.sh libc-posix-spawn-file-actions
 ./scripts/dev-x86_64.sh libc-process-context
 ./scripts/dev-x86_64.sh libc-environment
 ./scripts/dev-x86_64.sh libc-secure-environment
@@ -1728,8 +1730,8 @@ work, and `libc.c-abi-compat` retains final provider selection, ordinary
 archive extraction, behavior, and C-ABI closure.
 
 `header-callable-disposition` regenerates the compiler-derived callable
-inventory, then checks that its 1,119 default-static, 54 verified
-feature-provider, and 352 deferred names form one exact primary partition.
+inventory, then checks that its 1,119 default-static, 60 verified
+feature-provider, and 346 deferred names form one exact primary partition.
 Its deferred groups distinguish planned semantic providers from compiler
 builtins, consumer-supplied callbacks, and oracle-declared no-provider names;
 the project-only addressable atomic names are now selected default-static
@@ -1738,11 +1740,11 @@ declaration parity, family promotion, final C-ABI closure, or public x86
 support.
 
 `header-callable-provider-linkage-audit` separately uses the checked inventory
-to ordinarily extract the 1,119 current default-static and 54 verified
+to ordinarily extract the 1,119 current default-static and 60 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 352-name unprovided complement remains explicit:
+selection and behavior. Its 346-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 
@@ -4931,6 +4933,23 @@ lifecycle state. It excludes ordinary `exit`/`abort`/`atexit`,
 `at_quick_exit`/`quick_exit` hooks, stdio flushing/fini/destructors, fork
 coordination, pthread lifecycle, dynamic runtime, and public x86 support.
 
+`posix-spawn-file-actions-header-abi` and
+`libc-posix-spawn-file-actions` are a private opt-in file-actions lifecycle
+pair inside still-planned `libc.posix-runtime`, not process-spawn or
+process-control support. The header matrix compares the six C/C++ profiles,
+the unconditional init/destroy/addclose/adddup2/addopen declarations, GNU-only
+addchdir_np/addfchdir_np declarations, C++ linkage, and the 80-byte
+posix_spawn_file_actions_t layout. The runtime differential compares pinned
+musl with a mixed-runtime static candidate whose selected archive has the six
+adding/destruction providers, default initializer, allocator wrapper, errno
+owner, and bundled mimalloc backend; pinned musl supplies the remaining
+startup/process/syscall prerequisites, while the link map rejects musl action
+and allocator objects. It proves fdop allocation/path-copy/prepend-link,
+positive EBADF and ENOMEM results, and destruction's dangling-head rule. It
+does not execute an action or select posix_spawn/posix_spawnp, fork/vfork/clone,
+exec, attributes, allocator promotion, default-archive change, family
+completion, promotion, or public x86 support.
+
 `libc-posix-spawnattr-init` is a separately recorded
 `static-c-posix-spawnattr-init` `verified_artifact` inside still-planned
 `libc.posix-runtime`, not a spawn or process-control capability. Its focused
@@ -7459,7 +7478,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-mktemp`,
 `libc-file-handles`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and
-`libc-immediate-termination`, `libc-posix-exit`, `libc-posix-spawnattr-init`, `libc-callback-algorithms`,
+`libc-immediate-termination`, `libc-posix-exit`, `libc-posix-spawn-file-actions`, `libc-posix-spawnattr-init`, `libc-callback-algorithms`,
 `libc-search-hash-table`,
 `libc-gettext-catalog`,
 `libc-clock-gettime`,

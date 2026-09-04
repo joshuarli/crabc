@@ -179,6 +179,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   select-header-abi  compile the staged x86 C/C++ sys/select header layouts
   fcntl-header-abi compile the staged x86 C/C++ fcntl header layouts
   file-handles-header-abi verify x86 GNU <fcntl.h> file-handle C/C++ ABI
+  posix-spawn-file-actions-header-abi verify x86 C/C++ POSIX spawn file-actions ABI
   descriptor-advice-header-abi verify x86 C/C++ descriptor-advice header profiles
   filesystem-capacity-header-abi verify x86 C/C++ filesystem-capacity header profiles
   vector-io-header-abi verify x86 C/C++ vector-I/O header profiles
@@ -440,6 +441,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-hasmntopt  run the static x86 crabc-libc hasmntopt leaf
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
   libc-file-handles  run the opt-in static x86 file-handle syscall slice
+  libc-posix-spawn-file-actions  run the opt-in mixed-runtime x86 spawn file-actions lifecycle
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-environment  run the static x86 crabc-libc environment-mutation slice
   libc-secure-environment  run the static x86 crabc-libc GNU secure-environment slice
@@ -2336,6 +2338,7 @@ general facade admission, or C ABI support claim.
   protocol-database-header-abi  compile the staged x86 C/C++ musl proto.c declarations
   libc-protocol-database  run the static x86 crabc-libc musl proto.c provider slice
   libc-posix-spawn-file-actions-init  run the static x86 crabc-libc POSIX spawn file-actions init slice
+  libc-posix-spawn-file-actions  run the opt-in mixed-runtime x86 POSIX spawn file-actions lifecycle
   libc-posix-spawnattr-destroy  run the static x86 crabc-libc POSIX spawn-attribute destroy slice
   libc-posix-spawnattr-getflags  run the static x86 crabc-libc POSIX spawn-attribute getflags slice
   libc-posix-spawnattr-setpgroup  run the static x86 crabc-libc POSIX spawn-attribute setpgroup slice
@@ -2343,6 +2346,7 @@ general facade admission, or C ABI support claim.
   libc-posix-spawnattr-setschedpolicy  run the static x86 crabc-libc POSIX spawn-attribute setschedpolicy slice
   libc-res-init  run the static x86 crabc-libc legacy resolver-initializer slice
   posix-spawn-file-actions-init-header-abi  compile the staged x86 C/C++ POSIX spawn file-actions init declaration
+  posix-spawn-file-actions-header-abi  compile the staged x86 C/C++ POSIX spawn file-actions declarations
   posix-spawnattr-destroy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute destroy declaration
   posix-spawnattr-getflags-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute getflags declaration
   posix-spawnattr-setpgroup-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setpgroup declaration
@@ -2920,6 +2924,10 @@ run_libc_posix_exit() {
     run_in_container bash /workspace/compat/x86_64/run_libc_posix_exit.sh
 }
 
+run_libc_posix_spawn_file_actions() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawn_file_actions.sh
+}
+
 run_libc_posix_spawnattr_init() {
     run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_init.sh
 }
@@ -3434,6 +3442,10 @@ run_fcntl_header_abi() {
 
 run_file_handles_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_file_handles_header_abi.sh
+}
+
+run_posix_spawn_file_actions_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_posix_spawn_file_actions_header_abi.sh
 }
 
 run_flock_header_abi() {
@@ -5124,6 +5136,7 @@ case "$command" in
     sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     file-handles-header-abi|libc-file-handles) ;;
+    posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
     tee-header-abi|splice-header-abi) ;;
     sync-file-range-header-abi|copy-file-range-header-abi) ;;
@@ -6035,6 +6048,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "file-handles-header-abi takes no arguments"
         ensure_image
         run_file_handles_header_abi
+        ;;
+    posix-spawn-file-actions-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawn-file-actions-header-abi takes no arguments"
+        ensure_image
+        run_posix_spawn_file_actions_header_abi
         ;;
     flock-header-abi)
         [ "$#" -eq 0 ] || fail "flock-header-abi takes no arguments"
@@ -7219,6 +7237,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-file-handles takes no arguments"
         ensure_image
         run_libc_file_handles_probe
+        ;;
+    libc-posix-spawn-file-actions)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawn-file-actions takes no arguments"
+        ensure_image
+        run_libc_posix_spawn_file_actions
         ;;
     libc-process-context)
         [ "$#" -eq 0 ] || fail "libc-process-context takes no arguments"

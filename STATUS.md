@@ -512,6 +512,22 @@ other attribute APIs, file actions, fork/vfork/clone, exec, child lifecycle,
 signals, scheduler policy, family completion, promotion, or public x86
 support; the generic AArch64 export remains unchanged.
 
+`./scripts/dev-x86_64.sh posix-spawn-file-actions-header-abi` and
+`./scripts/dev-x86_64.sh libc-posix-spawn-file-actions` record a separate
+private `static-c-posix-spawn-file-actions` artifact inside still-planned
+`libc.posix-runtime`. The six opt-in adding/destruction names use musl's
+80-byte caller record and 40-byte fdop allocation/list representation; the
+default static archive continues to own only initialization. The native
+candidate deliberately has a mixed static closure: it selects the action
+provider, initializer, allocator wrapper, errno owner, and bundled mimalloc
+backend, while pinned musl supplies remaining startup/process/syscall
+prerequisites and the link map rejects musl action/allocator objects. It
+proves action-list construction and destruction only, including positive
+EBADF/ENOMEM results and the dangling-head reinitialization rule. It does not
+execute a spawn action or select posix_spawn/posix_spawnp, fork/vfork/clone,
+exec, attributes, allocator completion, default-archive change, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup` is a separate private
 `static-c-posix-spawnattr-getpgroup` artifact inside still-planned
 `libc.posix-runtime`, not a process-spawn or process-control capability. Its

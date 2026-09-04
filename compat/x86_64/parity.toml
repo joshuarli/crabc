@@ -1491,7 +1491,7 @@ id = "libc.headers-layouts"
 order = 60
 depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
-description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf, plus GNU `<sys/stat.h>` `statx` declaration/layout and C++ C-linkage evidence without a C runtime-provider claim; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, seven-row `stddef.h`, seven-row `netinet/tcp.h`, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. Its separate selected install projection materializes the 183 pinned paths and project-private bits/** inputs while explicitly excluding the eight shared source-only headers; that private source-preserving policy does not complete callable providers. The checked declaration/macro identity matrix derives generic feature visibility from that compiler-generated source-form report: it records 518 current comparable identity-mismatch rows and 762 matched rows, while the one aio.h oracle-not-applicable row and 56 project-only rows retain checked candidate fact summaries and digests; 2,567 same-identity source-form differences remain separately accounted. The compiler-derived callable inventory partitions every declared external among default, feature, and remaining provider classes. Its checked disposition now routes all 1,525 selected external names through current selected provider assignments or exact deferred owners, with zero current missing pinned-musl declaration records; neither fact completes declaration parity or C-ABI provider closure. A selected-provider audit ordinarily extracts all 1,119 current default-static and 54 verified feature-provider members through isolated exact Cargo profiles, while retaining the 352-name deferred complement and full callable closure as red work. The project-only `stdatomic.h` artifact separately proves its six address-taken C symbols without exposing a C++ header surface or treating Musl's absent header as an oracle. Its all-header matrix records direct callable name/class visibility differences and the eight project-only current surfaces without treating either as prototype, noncallable ABI, linkage, or runtime parity. A separate compiler-derived record byte-layout matrix records complete named record sizes, alignments, and field offsets with 191 current comparable mismatch rows, explicit non-addressable facts, one oracle-not-applicable row, and 56 project-only rows; it is partial evidence only and neither archive nor runtime proof. The checked `headers_layouts_aggregate` control binds each direct probe, generic report, profile/facet/ownership roster, and finite blocker to reviewed native runners while retaining planned family status. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Declaration-form equality, complete record byte-layout closure, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
+description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf, plus GNU `<sys/stat.h>` `statx` declaration/layout and C++ C-linkage evidence without a C runtime-provider claim; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, seven-row `stddef.h`, seven-row `netinet/tcp.h`, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. Its separate selected install projection materializes the 183 pinned paths and project-private bits/** inputs while explicitly excluding the eight shared source-only headers; that private source-preserving policy does not complete callable providers. The checked declaration/macro identity matrix derives generic feature visibility from that compiler-generated source-form report: it records 518 current comparable identity-mismatch rows and 762 matched rows, while the one aio.h oracle-not-applicable row and 56 project-only rows retain checked candidate fact summaries and digests; 2,567 same-identity source-form differences remain separately accounted. The compiler-derived callable inventory partitions every declared external among default, feature, and remaining provider classes. Its checked disposition now routes all 1,525 selected external names through current selected provider assignments or exact deferred owners, with zero current missing pinned-musl declaration records; neither fact completes declaration parity or C-ABI provider closure. A selected-provider audit ordinarily extracts all 1,119 current default-static and 60 verified feature-provider members through isolated exact Cargo profiles, while retaining the 346-name deferred complement and full callable closure as red work. The project-only `stdatomic.h` artifact separately proves its six address-taken C symbols without exposing a C++ header surface or treating Musl's absent header as an oracle. Its all-header matrix records direct callable name/class visibility differences and the eight project-only current surfaces without treating either as prototype, noncallable ABI, linkage, or runtime parity. A separate compiler-derived record byte-layout matrix records complete named record sizes, alignments, and field offsets with 191 current comparable mismatch rows, explicit non-addressable facts, one oracle-not-applicable row, and 56 project-only rows; it is partial evidence only and neither archive nor runtime proof. The checked `headers_layouts_aggregate` control binds each direct probe, generic report, profile/facet/ownership roster, and finite blocker to reviewed native runners while retaining planned family status. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Declaration-form equality, complete record byte-layout closure, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
 aarch64_gates = ["abi-probe", "build", "test"]
 source_owners = [
   "docker/Dockerfile.x86_64",
@@ -2126,7 +2126,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-h
 
 [[family.verified_artifact]]
 id = "header-callable-disposition"
-description = "Private native x86 checked header-callable disposition artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived selected external callable inventory and derives, rather than replaces, its current selected provider assignments before validating an exact, disjoint ownership routing for all 1,525 current names: 1,119 default-static, 54 verified feature-provider, and 352 exact deferred-owner records. The deferred names retain planned semantic family owners, compiler-builtin, consumer-supplied callback, and oracle-declared-no-provider distinctions rather than becoming a blanket no-provider exception. The project-only addressable atomic names are exact default-static assignments, while the interval-timer, file-handle, and pthread-spin feature archives own their seven opt-in names. The zero current pinned-musl missing declaration records are not declaration parity. It does not perform archive extraction, establish runtime semantics, complete final C ABI provider/archive closure, promote the header family, or claim public x86 support."
+description = "Private native x86 checked header-callable disposition artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived selected external callable inventory and derives, rather than replaces, its current selected provider assignments before validating an exact, disjoint ownership routing for all 1,525 current names: 1,119 default-static, 60 verified feature-provider, and 346 exact deferred-owner records. The deferred names retain planned semantic family owners, compiler-builtin, consumer-supplied callback, and oracle-declared-no-provider distinctions rather than becoming a blanket no-provider exception. The project-only addressable atomic names are exact default-static assignments, while the interval-timer, file-handle, spawn-file-actions, and pthread-spin feature archives own their thirteen opt-in names. The zero current pinned-musl missing declaration records are not declaration parity. It does not perform archive extraction, establish runtime semantics, complete final C ABI provider/archive closure, promote the header family, or claim public x86 support."
 source_owners = [
   "compat/x86_64/header_callable_disposition.toml",
   "compat/x86_64/header_callable_disposition.py",
@@ -2153,12 +2153,12 @@ x86_header_prerequisites = [
   "Header ownership routing is complete only when every selected external name and every current missing pinned-musl declaration name has one exact checked record. A zero missing-declaration roster does not waive the independent declaration/macro matrix or final provider closure.",
   "Compiler builtins, program-supplied callbacks, and oracle-declared no-provider names remain structural dispositions rather than silently becoming archive-provider claims; the project-only addressable atomic declarations have an explicit selected default-static provider.",
 ]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh header-callable-disposition", scope = "Native inventory regeneration plus exact checked header-callable ownership routing report. It preserves the 352 deferred providers as explicit red work; zero missing reference declaration names do not establish declaration parity. It is not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh header-callable-disposition", scope = "Native inventory regeneration plus exact checked header-callable ownership routing report. It preserves the 346 deferred providers as explicit red work; zero missing reference declaration names do not establish declaration parity. It is not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 public headers and checked compiler-derived callable inventory", role = "Selected callable declaration and missing-reference boundary oracle; provider/archive proof remains separate." }]
 
 [[family.verified_artifact]]
 id = "selected-header-callable-provider-linkage-audit"
-description = "Private native x86 selected header-callable provider linkage artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived candidate callable inventory, builds the no-feature default static archive plus every verified feature archive in isolated exact Cargo requests, and uses ordinary archive extraction to prove all 1,119 current default-static and 54 verified feature-provider callable members. It checks each declared replacement symbol is extractable from both baseline and enabled archives, while dedicated environment and resolver evidence retains replacement-provider selection and behavior; it proves weak same-address aliases without making hidden resolver targets public. The named `x86-crypt-allocator-composition` profile is deliberately topology-only: the audit builds only its named composition and delegates its intentionally rejected direct manual pair plus allocator-provider proof to its dedicated runner. The finite 352-name unprovided complement remains explicit, so this is not full callable closure, behavior replacement proof, header-family promotion, runtime completion, or public x86 support."
+description = "Private native x86 selected header-callable provider linkage artifact within still-planned `libc.headers-layouts`. It regenerates the compiler-derived candidate callable inventory, builds the no-feature default static archive plus every verified feature archive in isolated exact Cargo requests, and uses ordinary archive extraction to prove all 1,119 current default-static and 60 verified feature-provider callable members. It checks each declared replacement symbol is extractable from both baseline and enabled archives, while dedicated environment and resolver evidence retains replacement-provider selection and behavior; it proves weak same-address aliases without making hidden resolver targets public. The named `x86-crypt-allocator-composition` profile is deliberately topology-only: the audit builds only its named composition and delegates its intentionally rejected direct manual pair plus allocator-provider proof to its dedicated runner. The finite 346-name unprovided complement remains explicit, so this is not full callable closure, behavior replacement proof, header-family promotion, runtime completion, or public x86 support."
 source_owners = [
   "compat/x86_64/feature_archive_roster.py",
   "compat/x86_64/header_callable_inventory.toml",
@@ -3927,6 +3927,64 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declaration, static-member, full-record zeroing, and stale-errno behavior oracle for src/process/posix_spawnattr_init.c::posix_spawnattr_init." },
   { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "One caller-record pointer/signed-int C ABI, C++ C linkage, x86 record layout, and true-static ET_EXEC closure contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-posix-spawn-file-actions"
+description = "Private native x86 opt-in mixed-runtime POSIX spawn file-actions lifecycle C ABI artifact inside still-planned libc.posix-runtime. It maps pinned musl 1.2.6 src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init, addclose.c::posix_spawn_file_actions_addclose, adddup2.c::posix_spawn_file_actions_adddup2, addopen.c::posix_spawn_file_actions_addopen, addchdir.c::posix_spawn_file_actions_addchdir_np, addfchdir.c::posix_spawn_file_actions_addfchdir_np, and destroy.c::posix_spawn_file_actions_destroy. The installed x86 posix_spawn_file_actions_t is 80-byte align-8 storage with its opaque __actions pointer at offset eight. The feature-local six additions use musl's 40-byte align-8 fdop prefix with a flexible pathname tail at offset 36: descriptor-only records allocate 40 bytes, while open/chdir records allocate 40 plus strlen(path) + 1. Each addition prepends a next link and updates the prior head's prev link; a future executor would recover insertion order from the tail through prev, but this artifact never executes an action. Negative descriptors return positive EBADF without changing errno or the list; allocation failure returns positive ENOMEM under the selected allocator's ordinary errno behavior. Destroy frees the linked records but intentionally leaves the now-dangling __actions head unchanged, so callers must reinitialize before reuse or a second destroy. The frozen default selected-static archive remains unchanged and already owns posix_spawn_file_actions_init; x86-posix-spawn-file-actions adds exactly posix_spawn_file_actions_addchdir_np, posix_spawn_file_actions_addclose, posix_spawn_file_actions_adddup2, posix_spawn_file_actions_addfchdir_np, posix_spawn_file_actions_addopen, and posix_spawn_file_actions_destroy over x86-allocator-runtime. Its mixed candidate selects the action object, default initializer, allocator wrapper, errno owner, and bundled mimalloc backend, while pinned musl supplies startup and still-unowned process/syscall prerequisites; the link map rejects pinned-musl action and allocator objects. It does not select posix_spawn or posix_spawnp execution, fork/vfork/clone/exec, spawn attributes, child lifecycle, signal or scheduler policy, allocator lifecycle/backend promotion, a default-archive change, a Rust facade, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. The generic AArch64 export surface remains unchanged."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/posix-spawn-file-actions-provider.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/allocator_mimalloc.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/posix_spawn_file_actions_init.rs",
+  "libc/src/c_abi/x86_64/posix_spawn_file_actions.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/sys/types.h",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/spawn.h",
+  "compat/x86_64/posix_spawn_file_actions_header_abi_probe.c",
+  "compat/x86_64/posix_spawn_file_actions_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_spawn_file_actions_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_posix_spawn_file_actions_probe.c",
+  "compat/x86_64/run_libc_posix_spawn_file_actions.sh",
+  "compat/x86_64/tests/test_libc_posix_spawn_file_actions.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_feature_archive_roster.py",
+  "compat/x86_64/tests/test_header_callable_inventory.py",
+  "compat/x86_64/tests/test_header_callable_disposition.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI passes addclose's file-actions pointer and signed descriptor in rdi/esi; adddup2's pointer/source/destination words in rdi/esi/edx; addopen's pointer, descriptor, pathname, flags, and unsigned mode_t words in rdi/esi/rdx/ecx/r8d; addchdir_np's pointer/pathname in rdi/rsi; addfchdir_np's pointer/descriptor in rdi/esi; and destroy's pointer in rdi. Each returns its signed int result in eax.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps its seven src/process/posix_spawn_file_actions_*.c functions to an align-8, 80-byte caller record with __actions at byte eight and a 40-byte align-8 fdop prefix whose path tail begins at byte 36. It prepends next links, repairs the prior head's prev link, copies pathname bytes through the NUL terminator, returns positive EBADF without errno/list mutation for invalid descriptors, returns positive ENOMEM through allocator failure, and leaves the freed head dangling after destroy.",
+  "The featured x86-posix-spawn-file-actions archive delta is exactly the six adding/destruction callables over the x86-allocator-runtime baseline; default static_c_abi_exports.txt retains only posix_spawn_file_actions_init. Its selected mixed-static candidate contains the action provider, default init object, allocator wrapper, errno owner, and bundled mimalloc backend; pinned musl supplies startup/process/syscall prerequisites. The link map rejects musl file-actions and allocator objects while the final ELF has no interpreter, DT_NEEDED, unresolved symbol, or dynamic TLS model. This is not dependency-free or an owned product link interface.",
+]
+x86_header_prerequisites = [
+  "The dedicated pinned-musl/project-first C11/C++17 spawn.h matrix proves unconditional init/destroy/addclose/adddup2/addopen declarations, exact function-pointer types, unmangled C++ linkage, x86 80-byte align-8 posix_spawn_file_actions_t storage with __actions at offset eight, and four-byte mode_t. It proves addchdir_np/addfchdir_np only under GNU visibility across strict, POSIX.1-2008, X/Open 700, and GNU C/C++ profiles; this is bounded declaration/layout evidence, not archive linkage, spawn execution, installed-header completion, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-posix-spawn-file-actions", scope = "Pinned-musl/project C/C++ spawn-file-actions header proof plus equivalent pinned-musl lifecycle execution and an opt-in x86 --features x86-posix-spawn-file-actions mixed-runtime static candidate. The runner selects exactly the action provider, default init, allocator wrapper, errno owner, and bundled mimalloc backend, links them with pinned musl under -static, and rejects pinned-musl action or allocator objects in its link map. It proves the exact six-name feature delta over x86-allocator-runtime, 80-byte caller record, 40-byte fdop allocation/path tail, prepend/prev ordering, copied paths, positive EBADF without list/errno changes, and destroy's uncleared dangling head. It rejects an interpreter, DT_NEEDED, unresolved symbols, dynamic TLS forms, unowned runtime symbols, and spawn-execution exports. It does not execute actions or select posix_spawn/posix_spawnp, fork/vfork/clone/exec, spawn attributes, allocator lifecycle/backend promotion, default-archive change, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and spawn.h declaration oracle for src/process/posix_spawn_file_actions_init.c, addclose.c, adddup2.c, addopen.c, addchdir.c, addfchdir.c, and destroy.c: caller-owned fdop allocation/link/path-copy/error/destruction behavior only." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static linker", role = "LP64 caller-record/function-pointer/mode_t ABI, unmangled C++ linkage, and the intentionally mixed-static candidate closure." },
 ]
 
 [[family.verified_artifact]]
@@ -20032,6 +20090,25 @@ baseline_features = ["x86-allocator-runtime"]
 enabled_features = ["x86-environment-runtime"]
 additive_callables = []
 replacement_callables = ["clearenv", "getenv", "putenv", "setenv", "unsetenv"]
+aliases = []
+
+[[feature_archive]]
+id = "x86-posix-spawn-file-actions"
+state = "verified"
+evidence_record = "static-c-posix-spawn-file-actions"
+runner = "compat/x86_64/run_libc_posix_spawn_file_actions.sh"
+dispatch_command = "libc-posix-spawn-file-actions"
+baseline_features = ["x86-allocator-runtime"]
+enabled_features = ["x86-posix-spawn-file-actions"]
+additive_callables = [
+  "posix_spawn_file_actions_addchdir_np",
+  "posix_spawn_file_actions_addclose",
+  "posix_spawn_file_actions_adddup2",
+  "posix_spawn_file_actions_addfchdir_np",
+  "posix_spawn_file_actions_addopen",
+  "posix_spawn_file_actions_destroy",
+]
+replacement_callables = []
 aliases = []
 
 [[feature_archive]]

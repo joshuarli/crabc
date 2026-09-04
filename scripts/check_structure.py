@@ -4330,6 +4330,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "posix_exit.rs"]',
         '#[path = "posix_spawnattr_init.rs"]',
         '#[path = "posix_spawnattr_getpgroup.rs"]',
+        '#[cfg(feature = "x86-posix-spawn-file-actions")]',
+        '#[path = "posix_spawn_file_actions.rs"]',
         '#[path = "bsearch.rs"]',
         '#[path = "linear_search.rs"]',
         '#[path = "intrusive_queue.rs"]',
@@ -9247,6 +9249,143 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "compat/x86_64/run_libc_posix_spawnattr_init.sh: selected static "
             "evidence must not force-link the archive"
         )
+
+    posix_spawn_file_actions_source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawn_file_actions.rs"
+    )
+    posix_spawn_file_actions_text = posix_spawn_file_actions_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "Private Linux/x86-64 POSIX spawn file-actions lifecycle",
+        "musl 1.2.6",
+        "src/process/posix_spawn_file_actions_{init,addclose,",
+        "struct PosixSpawnFileActions",
+        "struct FdOp",
+        "size_of::<PosixSpawnFileActions>() == 80",
+        "offset_of!(PosixSpawnFileActions, actions) == 8",
+        "size_of::<FdOp>() == 40",
+        "const FDOP_PATH_OFFSET: usize = 36",
+        "cabi_malloc",
+        "cabi_free",
+        "ptr::addr_of_mut!((*old_head).prev).write(operation)",
+        "ptr::addr_of_mut!((*file_actions).actions).write",
+        "return EBADF",
+        "return Err(ENOMEM)",
+        "Err(error) => return error",
+        "# Safety",
+    ):
+        if required not in posix_spawn_file_actions_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawn_file_actions.rs: "
+                f"opt-in lifecycle boundary is missing {required!r}"
+            )
+    posix_spawn_file_actions_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawn_file_actions_text,
+        )
+    )
+    expected_posix_spawn_file_actions_exports = {
+        "posix_spawn_file_actions_addchdir_np",
+        "posix_spawn_file_actions_addclose",
+        "posix_spawn_file_actions_adddup2",
+        "posix_spawn_file_actions_addfchdir_np",
+        "posix_spawn_file_actions_addopen",
+        "posix_spawn_file_actions_destroy",
+        "__crabc_x86_posix_spawn_file_actions_v1",
+    }
+    if posix_spawn_file_actions_exports != expected_posix_spawn_file_actions_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawn_file_actions.rs: opt-in "
+            "provider must export exactly the six action lifecycle spellings"
+        )
+    if (
+        posix_spawn_file_actions_text.count("# Safety")
+        != 6
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawn_file_actions.rs: every "
+            "public unsafe lifecycle API needs one concrete safety contract"
+        )
+    for forbidden in ("raw_syscall::", "crabc_core", "alloc::", "std::"):
+        if forbidden in posix_spawn_file_actions_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawn_file_actions.rs: opt-in "
+                f"lifecycle provider must not select {forbidden!r}"
+            )
+
+    posix_spawn_file_actions_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawn_file_actions.sh"
+    )
+    posix_spawn_file_actions_runner_text = posix_spawn_file_actions_runner.read_text(
+        errors="replace"
+    )
+    for required in (
+        "mixed-runtime differential",
+        "run_posix_spawn_file_actions_header_abi.sh",
+        "--features x86-posix-spawn-file-actions",
+        "selected_archive",
+        "action_members",
+        "init_members",
+        "allocator_members",
+        "errno_members",
+        "backend_members",
+        'ar crs "$selected_archive"',
+        '-Wl,-Map,"$link_map"',
+        "pinned-musl allocator implementation",
+        "pinned-musl file-actions implementation",
+        "candidate leaked an execution or separately owned spawn entry",
+    ):
+        if required not in posix_spawn_file_actions_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_posix_spawn_file_actions.sh: "
+                f"mixed-runtime evidence is missing {required!r}"
+            )
+    if (
+        "-nostdlib" in posix_spawn_file_actions_runner_text
+        or "libc_posix_spawn_file_actions_start.S"
+        in posix_spawn_file_actions_runner_text
+    ):
+        errors.append(
+            "compat/x86_64/run_libc_posix_spawn_file_actions.sh: mixed-runtime "
+            "evidence must not restore a freestanding closure"
+        )
+    if (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawn_file_actions_start.S"
+    ).exists():
+        errors.append(
+            "compat/x86_64: obsolete spawn file-actions freestanding start shim "
+            "must remain absent"
+        )
+
+    posix_spawn_file_actions_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_spawn_file_actions_header_abi.sh"
+    )
+    posix_spawn_file_actions_header_runner_text = (
+        posix_spawn_file_actions_header_runner.read_text(errors="replace")
+    )
+    for required in (
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "cxx17-strict",
+        "cxx17-gnu",
+        "posix_spawn_file_actions_addchdir_np",
+        "posix_spawn_file_actions_addfchdir_np",
+        "unmangled",
+    ):
+        if required not in posix_spawn_file_actions_header_runner_text:
+            errors.append(
+                "compat/x86_64/run_posix_spawn_file_actions_header_abi.sh: "
+                f"header ABI evidence is missing {required!r}"
+            )
 
     posix_spawnattr_getpgroup_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_getpgroup.rs"

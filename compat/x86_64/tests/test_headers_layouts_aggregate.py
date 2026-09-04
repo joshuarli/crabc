@@ -124,8 +124,8 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
                 "callable_provider_counts": {
                     "declared_unverified_feature_archives": 0,
                     "default_static": 1119,
-                    "unprovided": 352,
-                    "verified_feature_archives": 54,
+                    "unprovided": 346,
+                    "verified_feature_archives": 60,
                 },
                 "complete": False,
                 "extraction_status_counts": {"extracted": 1119},
@@ -133,7 +133,7 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
                     "static export complement is nonempty",
                     "one or more candidate external callables have no declared archive provider",
                 ],
-                "static_export_complement_count": 407,
+                "static_export_complement_count": 406,
             },
         }
         AGGREGATE.validate_accounted_incomplete_linkage_audit_report(report)

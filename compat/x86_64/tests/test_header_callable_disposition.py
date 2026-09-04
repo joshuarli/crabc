@@ -39,15 +39,15 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         summary = report["summary"]
         self.assertEqual(summary["candidate_external_callable_count"], 1525)
         self.assertEqual(summary["default_static_callable_count"], 1119)
-        self.assertEqual(summary["verified_feature_callable_count"], 54)
-        self.assertEqual(summary["unprovided_callable_count"], 352)
+        self.assertEqual(summary["verified_feature_callable_count"], 60)
+        self.assertEqual(summary["unprovided_callable_count"], 346)
         self.assertEqual(
             summary["deferred_resolution_counts"],
             {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 343,
+                "planned-provider": 337,
             },
         )
         self.assertEqual(
@@ -96,6 +96,33 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         }
         self.assertNotIn("name_to_handle_at", deferred_members)
         self.assertNotIn("open_by_handle_at", deferred_members)
+
+    def test_spawn_file_actions_are_verified_opt_in_providers_not_deferred_defaults(
+        self,
+    ) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: row
+            for row in report["primary_disposition"]["verified_feature_archives"]
+        }
+        actions = providers["x86-posix-spawn-file-actions"]
+        self.assertEqual(
+            actions["members"],
+            [
+                "posix_spawn_file_actions_addchdir_np",
+                "posix_spawn_file_actions_addclose",
+                "posix_spawn_file_actions_adddup2",
+                "posix_spawn_file_actions_addfchdir_np",
+                "posix_spawn_file_actions_addopen",
+                "posix_spawn_file_actions_destroy",
+            ],
+        )
+        deferred_members = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        self.assertFalse(set(actions["members"]) & deferred_members)
 
     def test_structural_dispositions_and_atomic_providers_stay_distinct(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

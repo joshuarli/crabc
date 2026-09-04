@@ -55,7 +55,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         rows = ROSTER.load_feature_archive_roster()
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
-        self.assertEqual(len(rows), 24)
+        self.assertEqual(len(rows), 25)
         self.assertEqual([item.identifier for item in rows if item.state == "planned"], [])
         resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
         self.assertEqual(resolver.state, "verified")
@@ -87,6 +87,34 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(
             file_handles.additive_callables,
             ("name_to_handle_at", "open_by_handle_at"),
+        )
+        spawn_file_actions = next(
+            item
+            for item in rows
+            if item.identifier == "x86-posix-spawn-file-actions"
+        )
+        self.assertEqual(
+            spawn_file_actions.evidence_record,
+            "static-c-posix-spawn-file-actions",
+        )
+        self.assertEqual(
+            spawn_file_actions.dispatch_command,
+            "libc-posix-spawn-file-actions",
+        )
+        self.assertEqual(
+            spawn_file_actions.baseline_features,
+            ("x86-allocator-runtime",),
+        )
+        self.assertEqual(
+            spawn_file_actions.additive_callables,
+            (
+                "posix_spawn_file_actions_addchdir_np",
+                "posix_spawn_file_actions_addclose",
+                "posix_spawn_file_actions_adddup2",
+                "posix_spawn_file_actions_addfchdir_np",
+                "posix_spawn_file_actions_addopen",
+                "posix_spawn_file_actions_destroy",
+            ),
         )
         spin_operations = next(
             item

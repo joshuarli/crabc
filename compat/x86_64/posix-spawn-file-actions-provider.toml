@@ -6,7 +6,7 @@ oracle = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947
 
 [work_package]
 target_family = "libc.posix-runtime"
-target_capability = "process.control"
+target_obligations = ["header-callable-disposition", "x86-posix-spawn-file-actions"]
 target_verified_slice = "static-c-posix-spawn-file-actions"
 blocker = "Resolves the seven-name caller-owned POSIX spawn file-actions lifecycle block with real fdop allocation, pathname copying, ordered links, descriptor validation, and destruction; spawn execution remains a separate blocker."
 musl_source_mapping = [

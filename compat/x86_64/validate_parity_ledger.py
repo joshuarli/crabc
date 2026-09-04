@@ -3400,10 +3400,10 @@ def validate_header_layout_foundation_manifest(
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 54,
-            "verified_feature_profile_count": 24,
+            "verified_feature_callable_count": 60,
+            "verified_feature_profile_count": 25,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 352,
+            "unprovided_callable_count": 346,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3466,9 +3466,9 @@ def validate_header_layout_foundation_manifest(
             "report": "compat/x86_64/header_callable_disposition.json",
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
-            "verified_feature_callable_count": 54,
+            "verified_feature_callable_count": 60,
             "declared_unverified_feature_callable_count": 0,
-            "unprovided_callable_count": 352,
+            "unprovided_callable_count": 346,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
             "missing_reference_declaration_routing_complete": True,
@@ -6728,8 +6728,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
         "still-planned `libc.headers-layouts`",
         "all 1,525 current names",
         "1,119 default-static",
-        "54 verified feature-provider",
-        "352 exact deferred-owner records",
+        "60 verified feature-provider",
+        "346 exact deferred-owner records",
         "zero current pinned-musl missing declaration records",
         "not declaration parity",
         "does not perform archive extraction",
@@ -6770,7 +6770,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "352 deferred providers" in scope
+        and "346 deferred providers" in scope
         and "zero missing reference declaration names" in scope
         and "not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
@@ -6799,7 +6799,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 343,
+                "planned-provider": 337,
             },
             "final_provider_archive_closure_complete": False,
             "header_declaration_parity_complete": False,
@@ -6810,8 +6810,8 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "primary_disposition_exact_coverage": True,
             "undispositioned_candidate_callable_count": 0,
             "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 352,
-            "verified_feature_callable_count": 54,
+            "unprovided_callable_count": 346,
+            "verified_feature_callable_count": 60,
         },
         "header callable disposition summary drifted",
     )
@@ -6873,11 +6873,11 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "isolated exact Cargo requests",
         "ordinary archive extraction",
         "1,119 current default-static",
-        "54 verified feature-provider",
+        "60 verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "352-name unprovided complement",
+        "346-name unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):
@@ -23322,6 +23322,439 @@ def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_mktemp_probe()",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_posix_spawn_file_actions_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the allocating spawn-action list private, opt-in, and non-executing."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-posix-spawn-file-actions"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-posix-spawn-file-actions artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-spawn-file-actions must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-spawn-file-actions must remain a private artifact without capability promotion",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-posix-spawn-file-actions needs a description",
+    )
+    for phrase in (
+        "Private native x86 opt-in mixed-runtime POSIX spawn file-actions lifecycle C ABI artifact",
+        "still-planned libc.posix-runtime",
+        "posix_spawn_file_actions_init.c::posix_spawn_file_actions_init",
+        "addclose.c::posix_spawn_file_actions_addclose",
+        "adddup2.c::posix_spawn_file_actions_adddup2",
+        "addopen.c::posix_spawn_file_actions_addopen",
+        "addchdir.c::posix_spawn_file_actions_addchdir_np",
+        "addfchdir.c::posix_spawn_file_actions_addfchdir_np",
+        "destroy.c::posix_spawn_file_actions_destroy",
+        "80-byte align-8 storage",
+        "__actions pointer at offset eight",
+        "40-byte align-8 fdop prefix",
+        "pathname tail at offset 36",
+        "descriptor-only records allocate 40 bytes",
+        "strlen(path) + 1",
+        "prepends a next link",
+        "prior head's prev link",
+        "never executes an action",
+        "positive EBADF without changing errno or the list",
+        "positive ENOMEM",
+        "leaves the now-dangling __actions head unchanged",
+        "must reinitialize before reuse or a second destroy",
+        "frozen default selected-static archive remains unchanged",
+        "already owns posix_spawn_file_actions_init",
+        "x86-posix-spawn-file-actions adds exactly",
+        "over x86-allocator-runtime",
+        "action object, default initializer, allocator wrapper, errno owner, and bundled mimalloc backend",
+        "pinned musl supplies startup and still-unowned process/syscall prerequisites",
+        "link map rejects pinned-musl action and allocator objects",
+        "posix_spawn or posix_spawnp execution",
+        "fork/vfork/clone/exec",
+        "allocator lifecycle/backend promotion",
+        "default-archive change",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-spawn-file-actions description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-posix-spawn-file-actions.source_owners",
+        )
+    )
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/posix-spawn-file-actions-provider.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/allocator_mimalloc.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/posix_spawn_file_actions_init.rs",
+        "libc/src/c_abi/x86_64/posix_spawn_file_actions.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/sys/types.h",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/spawn.h",
+        "compat/x86_64/posix_spawn_file_actions_header_abi_probe.c",
+        "compat/x86_64/posix_spawn_file_actions_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_spawn_file_actions_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_spawn_file_actions_probe.c",
+        "compat/x86_64/run_libc_posix_spawn_file_actions.sh",
+        "compat/x86_64/tests/test_libc_posix_spawn_file_actions.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_feature_archive_roster.py",
+        "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_header_callable_disposition.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-posix-spawn-file-actions source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-posix-spawn-file-actions.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "rdi/esi" in item
+            and "rdi/esi/edx" in item
+            and "rdi/esi/rdx/ecx/r8d" in item
+            and "rdi/rsi" in item
+            and "eax" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawn-file-actions must retain its SysV AMD64 call boundary",
+    )
+    require(
+        any(
+            "seven src/process/posix_spawn_file_actions_*.c functions" in item
+            and "80-byte caller record" in item
+            and "40-byte align-8 fdop prefix" in item
+            and "byte 36" in item
+            and "positive EBADF" in item
+            and "positive ENOMEM" in item
+            and "dangling after destroy" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawn-file-actions must retain musl list and error semantics",
+    )
+    require(
+        any(
+            "exactly the six adding/destruction callables" in item
+            and "x86-allocator-runtime baseline" in item
+            and "action provider, default init object, allocator wrapper, errno owner, and bundled mimalloc backend" in item
+            and "link map rejects musl file-actions and allocator objects" in item
+            and "not dependency-free or an owned product link interface" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawn-file-actions must retain its mixed-runtime closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-posix-spawn-file-actions.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17 spawn.h matrix" in item
+            and "init/destroy/addclose/adddup2/addopen" in item
+            and "addchdir_np/addfchdir_np only under GNU visibility" in item
+            and "80-byte align-8" in item
+            and "four-byte mode_t" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-posix-spawn-file-actions must retain its bounded header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list) and len(evidence) == 1,
+        "static-c-posix-spawn-file-actions native evidence is invalid",
+    )
+    evidence_entry = evidence[0]
+    require(
+        isinstance(evidence_entry, Mapping)
+        and evidence_entry.get("command")
+        == "./scripts/dev-x86_64.sh libc-posix-spawn-file-actions",
+        "static-c-posix-spawn-file-actions must use the closed lifecycle command",
+    )
+    scope = evidence_entry.get("scope")
+    require(
+        isinstance(scope, str),
+        "static-c-posix-spawn-file-actions evidence needs a scope",
+    )
+    for phrase in (
+        "x86-posix-spawn-file-actions mixed-runtime static candidate",
+        "action provider, default init, allocator wrapper, errno owner, and bundled mimalloc backend",
+        "pinned-musl action or allocator objects",
+        "exact six-name feature delta",
+        "positive EBADF",
+        "uncleared dangling head",
+        "does not execute actions",
+        "posix_spawn/posix_spawnp",
+        "allocator lifecycle/backend promotion",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-posix-spawn-file-actions evidence omits {phrase}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(
+        isinstance(oracle, list)
+        and any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "posix_spawn_file_actions_init.c" in entry["role"]
+            and "destroy.c" in entry["role"]
+            for entry in oracle
+        )
+        and any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "mixed-static candidate closure" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-posix-spawn-file-actions must retain musl and ELF ABI oracles",
+    )
+
+    default_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "posix_spawn_file_actions_init" in default_exports,
+        "default static archive must retain posix_spawn_file_actions_init",
+    )
+    action_symbols = {
+        "posix_spawn_file_actions_addchdir_np",
+        "posix_spawn_file_actions_addclose",
+        "posix_spawn_file_actions_adddup2",
+        "posix_spawn_file_actions_addfchdir_np",
+        "posix_spawn_file_actions_addopen",
+        "posix_spawn_file_actions_destroy",
+    }
+    require(
+        not (action_symbols & default_exports),
+        "static-c-posix-spawn-file-actions must keep its six names opt-in",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[cfg(feature = "x86-posix-spawn-file-actions")]'
+        '\n#[path = "posix_spawn_file_actions.rs"]'
+        "\nmod posix_spawn_file_actions;" in static_root,
+        "x86 static C ABI must make spawn-action lifecycle composition opt-in",
+    )
+    source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawn_file_actions.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/process/posix_spawn_file_actions_{init,addclose,",
+        "struct PosixSpawnFileActions",
+        "struct FdOp",
+        "size_of::<PosixSpawnFileActions>() == 80",
+        "offset_of!(PosixSpawnFileActions, actions) == 8",
+        "size_of::<FdOp>() == 40",
+        "const FDOP_PATH_OFFSET: usize = 36",
+        "cabi_malloc",
+        "cabi_free",
+        "ptr::addr_of_mut!((*old_head).prev).write(operation)",
+        "ptr::addr_of_mut!((*file_actions).actions).write",
+        "return EBADF",
+        "return Err(ENOMEM)",
+        "Err(error) => return error",
+        "# Safety",
+    ):
+        require(
+            snippet in source,
+            f"spawn file-actions implementation omits {snippet}",
+        )
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(
+        exported == action_symbols,
+        "spawn file-actions implementation must export exactly the six opt-in names",
+    )
+    require(
+        source.count("# Safety") == len(action_symbols),
+        "each public unsafe spawn file-actions API needs one concrete safety contract",
+    )
+    for forbidden in ("raw_syscall::", "crabc_core", "alloc::", "std::"):
+        require(
+            forbidden not in source,
+            f"spawn file-actions implementation selects {forbidden}",
+        )
+
+    package = load_toml(
+        ROOT / "compat" / "x86_64" / "posix-spawn-file-actions-provider.toml"
+    )
+    require(
+        package.get("schema")
+        == "crabc.x86_64-posix-spawn-file-actions-provider/v1",
+        "spawn file-actions provider package schema drifted",
+    )
+    work_package = package.get("work_package")
+    require(
+        isinstance(work_package, Mapping)
+        and work_package.get("target_family") == "libc.posix-runtime"
+        and work_package.get("target_obligations")
+        == ["header-callable-disposition", "x86-posix-spawn-file-actions"]
+        and "target_capability" not in work_package
+        and work_package.get("target_verified_slice")
+        == "static-c-posix-spawn-file-actions"
+        and work_package.get("focused_evidence_command")
+        == "bash compat/x86_64/run_libc_posix_spawn_file_actions.sh"
+        and work_package.get("header_evidence_command")
+        == "bash compat/x86_64/run_posix_spawn_file_actions_header_abi.sh",
+        "spawn file-actions provider package contract drifted",
+    )
+    source_mapping = work_package.get("musl_source_mapping")
+    require(
+        isinstance(source_mapping, list)
+        and len(source_mapping) == 7
+        and source_mapping[0]
+        == "src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init"
+        and source_mapping[-1]
+        == "src/process/posix_spawn_file_actions_destroy.c::posix_spawn_file_actions_destroy",
+        "spawn file-actions provider package must retain all seven musl source mappings",
+    )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawn_file_actions.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "mixed-runtime differential",
+        "run_posix_spawn_file_actions_header_abi.sh",
+        "--features x86-posix-spawn-file-actions",
+        "selected_archive",
+        "action_members",
+        "init_members",
+        "allocator_members",
+        "errno_members",
+        "backend_members",
+        'ar crs "$selected_archive"',
+        '-Wl,-Map,"$link_map"',
+        "pinned-musl allocator implementation",
+        "pinned-musl file-actions implementation",
+        "candidate leaked an execution or separately owned spawn entry",
+    ):
+        require(
+            snippet in runner,
+            f"spawn file-actions runner omits {snippet}",
+        )
+    require(
+        "-nostdlib" not in runner
+        and "libc_posix_spawn_file_actions_start.S" not in runner,
+        "spawn file-actions runner must retain the selected mixed-runtime closure",
+    )
+    require(
+        not (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_posix_spawn_file_actions_start.S"
+        ).exists(),
+        "spawn file-actions must not restore a freestanding start shim",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawn_file_actions_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "sizeof(posix_spawn_file_actions_t) == 80",
+        "__builtin_offsetof(posix_spawn_file_actions_t, __actions) == 8",
+        "__builtin_offsetof(struct crabc_fdop, path) == 36",
+        "addclose(&actions, -1) != EBADF",
+        "destroy(&actions) != 0",
+        "fresh init; this checks only",
+    ):
+        require(
+            snippet in probe,
+            f"spawn file-actions lifecycle probe omits {snippet}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_spawn_file_actions_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "cxx17-strict",
+        "cxx17-gnu",
+        "posix_spawn_file_actions_addchdir_np",
+        "posix_spawn_file_actions_addfchdir_np",
+        "unmangled",
+    ):
+        require(
+            snippet in header_runner,
+            f"spawn file-actions header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "posix-spawn-file-actions-header-abi)",
+        "libc-posix-spawn-file-actions)",
+        "run_posix_spawn_file_actions_header_abi()",
+        "run_libc_posix_spawn_file_actions()",
+        "run_posix_spawn_file_actions_header_abi.sh",
+        "run_libc_posix_spawn_file_actions.sh",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits {snippet}",
+        )
 
 
 def require_file_handles_artifact(family: Mapping[str, Any]) -> None:
@@ -77522,6 +77955,7 @@ def validate_ledger(
         ),
     )
     require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawn_file_actions_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getpgroup_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_signal_fields_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getschedparam_artifact(by_id["libc.posix-runtime"])

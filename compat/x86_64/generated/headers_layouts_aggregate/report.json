@@ -2,7 +2,7 @@
   "abi_facet_count": 25,
   "accounting_complete": true,
   "blocker_counts": {
-    "callable_provider_unprovided": 352,
+    "callable_provider_unprovided": 346,
     "callable_visibility_mismatch_rows": 94,
     "declaration_identity_mismatch_rows": 518,
     "declaration_source_form_differences": 2567,
@@ -563,7 +563,7 @@
       "id": "declaration-macro-visibility",
       "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v1",
-      "sha256": "6877230036a1a99428ff84e71baec422e4e2a714f4a43e8d7178a4b5933944cc",
+      "sha256": "2b03f78e000b19262a1a1aec99f2faa4abab6943c35b29dd7f43fa1045dfb6e6",
       "summary": {
         "candidate_only_identity_count": 7016,
         "candidate_only_identity_kind_counts": {
@@ -622,7 +622,7 @@
       "id": "callable-visibility",
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
-      "sha256": "ba2554ddfd2677f444b47e5337774373d56a3080811c3d0fee8a54ff74b34b52",
+      "sha256": "379234dc340ccd95f2ffdbd12e0a02462a1193ae5eb06f5708046c4483f21fd8",
       "summary": {
         "candidate_only_callable_count": 423,
         "candidate_public_header_count": 191,
@@ -658,7 +658,7 @@
       "id": "prototype-layout",
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
       "schema": "crabc.x86_64-header-abi-matrix-report/v1",
-      "sha256": "0af27c15955a99d3903a22f9ec5b051d9f8f8242913da619a7c71122f862c2cf",
+      "sha256": "5dca875ca017b5a20d576bbc5c8f72a7f56e5b2a53acd3087f6ba798796aa9b7",
       "summary": {
         "candidate_public_header_count": 191,
         "comparison_counts": {
@@ -690,7 +690,7 @@
       "id": "record-byte-layout",
       "path": "compat/x86_64/generated/header_record_layout_matrix/report.json",
       "schema": "crabc.x86_64-header-record-layout-matrix-report/v1",
-      "sha256": "9f6bc14dfd86d829763f9fd85a506ead5907ba15df9d45a078883ba8b83621e5",
+      "sha256": "0bd9e9c33927dcc0c3ddce8676333690ac69bf1beff9c049bdbeb223175ede83",
       "summary": {
         "candidate_field_categories": {
           "bit-field": 723,
@@ -737,7 +737,7 @@
       "id": "callable-disposition",
       "path": "compat/x86_64/header_callable_disposition.json",
       "schema": "crabc.x86_64-header-callable-disposition-report/v1",
-      "sha256": "1cd01e8c765a4aab72809554a7a9abcd9e6c8c709026363d90015e46bc73fdb0",
+      "sha256": "4be201ca0872385ebf6e9bc847144e16b6ee93e4792e150cc067e810ec78825c",
       "summary": {
         "candidate_external_callable_count": 1525,
         "declared_unverified_feature_callable_count": 0,
@@ -746,7 +746,7 @@
           "compiler-builtin": 1,
           "consumer-supplied": 1,
           "oracle-declared-no-provider": 7,
-          "planned-provider": 343
+          "planned-provider": 337
         },
         "final_provider_archive_closure_complete": false,
         "header_declaration_parity_complete": false,
@@ -757,8 +757,8 @@
         "primary_disposition_exact_coverage": true,
         "undispositioned_candidate_callable_count": 0,
         "undispositioned_missing_reference_name_count": 0,
-        "unprovided_callable_count": 352,
-        "verified_feature_callable_count": 54
+        "unprovided_callable_count": 346,
+        "verified_feature_callable_count": 60
       },
       "table": "callable_disposition"
     }
@@ -771,7 +771,7 @@
   "inputs": [
     {
       "path": "compat/x86_64/headers-layouts-foundation.toml",
-      "sha256": "6b2814f54f39e19c42ccacb5370fed66ba61751aa13aec26940d9319c15cb50a"
+      "sha256": "cb650c4f54b3bd46ea163c14c1a83e903a820dc0c3537b7abdcffdf8035b64e5"
     },
     {
       "path": "compat/x86_64/headers-layouts.toml",
@@ -779,7 +779,7 @@
     },
     {
       "path": "compat/x86_64/parity.toml",
-      "sha256": "7acf667a52bc7c60ae2dee2a90179937fe2f1e8b4d84e9119001fdce9786eadc"
+      "sha256": "c31e3905a60af08f7e30258045a2f89dd0daff7429ddfa315d8d651a3db409e2"
     },
     {
       "path": "compat/x86_64/public_headers.txt",
@@ -791,11 +791,11 @@
     },
     {
       "path": "compat/x86_64/header_callable_inventory.json",
-      "sha256": "ba2873dd135a637a540da2825d29e52ecfb7870d0349688c480edcd024a033ee"
+      "sha256": "e434aa01f870f7ea55983d0409e3ff6792e4ec964e9b2356ed142f2b66e69216"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.toml",
-      "sha256": "de4805497046e65558b52c06ce1e8f0de2b2f5859cef33164c6e5459c21de0ec"
+      "sha256": "e62464d84732070d73249487fc2ea86047ef25e5e0bc8e778f147c1ee31f9d81"
     },
     {
       "path": "compat/x86_64/header_callable_visibility_matrix.toml",
@@ -819,27 +819,27 @@
     },
     {
       "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
-      "sha256": "6877230036a1a99428ff84e71baec422e4e2a714f4a43e8d7178a4b5933944cc"
+      "sha256": "2b03f78e000b19262a1a1aec99f2faa4abab6943c35b29dd7f43fa1045dfb6e6"
     },
     {
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
-      "sha256": "ba2554ddfd2677f444b47e5337774373d56a3080811c3d0fee8a54ff74b34b52"
+      "sha256": "379234dc340ccd95f2ffdbd12e0a02462a1193ae5eb06f5708046c4483f21fd8"
     },
     {
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
-      "sha256": "0af27c15955a99d3903a22f9ec5b051d9f8f8242913da619a7c71122f862c2cf"
+      "sha256": "5dca875ca017b5a20d576bbc5c8f72a7f56e5b2a53acd3087f6ba798796aa9b7"
     },
     {
       "path": "compat/x86_64/generated/header_record_layout_matrix/report.json",
-      "sha256": "9f6bc14dfd86d829763f9fd85a506ead5907ba15df9d45a078883ba8b83621e5"
+      "sha256": "0bd9e9c33927dcc0c3ddce8676333690ac69bf1beff9c049bdbeb223175ede83"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.json",
-      "sha256": "1cd01e8c765a4aab72809554a7a9abcd9e6c8c709026363d90015e46bc73fdb0"
+      "sha256": "4be201ca0872385ebf6e9bc847144e16b6ee93e4792e150cc067e810ec78825c"
     },
     {
       "path": "compat/x86_64/headers_layouts_aggregate.py",
-      "sha256": "7199d26cf5160bb75653655cff4af6dabfb24deb7327b86a44f8735217b897e5"
+      "sha256": "1a86e824c29824daa0bb7d38889f70e5475d6a95037acdd9a4093b9bda01a20f"
     },
     {
       "path": "compat/x86_64/run_headers_layouts_aggregate.sh",

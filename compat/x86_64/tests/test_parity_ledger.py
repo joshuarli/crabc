@@ -66,9 +66,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
-        self.assertEqual(report["verified_artifact_count"], 373)
-        self.assertEqual(report["feature_archive_count"], 24)
-        self.assertEqual(report["verified_feature_archive_count"], 24)
+        self.assertEqual(report["verified_artifact_count"], 375)
+        self.assertEqual(report["feature_archive_count"], 25)
+        self.assertEqual(report["verified_feature_archive_count"], 25)
         self.assertEqual(report["planned_feature_archive_count"], 0)
         self.assertEqual(report["header_layout_probe_count"], 55)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -135,9 +135,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             data, self.verified_records(data)
         )
         self.assertEqual(report, {
-            "feature_archive_count": 24,
+            "feature_archive_count": 25,
             "planned_feature_archive_count": 0,
-            "verified_feature_archive_count": 24,
+            "verified_feature_archive_count": 25,
         })
 
         feature_archives = data["feature_archive"]
@@ -225,6 +225,73 @@ class X86ParityLedgerTests(unittest.TestCase):
         changed_artifact["description"] = "private file handles"
         with self.assertRaisesRegex(ledger.LedgerError, "file-handle C ABI artifact"):
             ledger.require_file_handles_artifact(changed_family)
+
+    def test_posix_spawn_file_actions_artifact_stays_opt_in_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        ledger.require_posix_spawn_file_actions_artifact(family)
+
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "static-c-posix-spawn-file-actions"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn("mixed-runtime POSIX spawn file-actions lifecycle", artifact["description"])
+        self.assertIn("never executes an action", artifact["description"])
+
+        exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("posix_spawn_file_actions_init", exports)
+        for name in (
+            "posix_spawn_file_actions_addchdir_np",
+            "posix_spawn_file_actions_addclose",
+            "posix_spawn_file_actions_adddup2",
+            "posix_spawn_file_actions_addfchdir_np",
+            "posix_spawn_file_actions_addopen",
+            "posix_spawn_file_actions_destroy",
+        ):
+            self.assertNotIn(name, exports)
+
+        archives = data["feature_archive"]
+        assert isinstance(archives, list)
+        feature = next(
+            entry
+            for entry in archives
+            if entry["id"] == "x86-posix-spawn-file-actions"
+        )
+        assert isinstance(feature, dict)
+        self.assertEqual(feature["baseline_features"], ["x86-allocator-runtime"])
+        self.assertEqual(feature["enabled_features"], ["x86-posix-spawn-file-actions"])
+        self.assertEqual(
+            feature["additive_callables"],
+            [
+                "posix_spawn_file_actions_addchdir_np",
+                "posix_spawn_file_actions_addclose",
+                "posix_spawn_file_actions_adddup2",
+                "posix_spawn_file_actions_addfchdir_np",
+                "posix_spawn_file_actions_addopen",
+                "posix_spawn_file_actions_destroy",
+            ],
+        )
+
+        changed = self.data()
+        changed_family = self.family(changed, "libc.posix-runtime")
+        changed_artifacts = changed_family["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "static-c-posix-spawn-file-actions"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = "private spawn file actions"
+        with self.assertRaisesRegex(ledger.LedgerError, "mixed-runtime POSIX"):
+            ledger.require_posix_spawn_file_actions_artifact(changed_family)
 
     def test_resolver_runtime_artifact_keeps_its_opt_in_alias_boundary(self) -> None:
         data = self.data()
@@ -3695,9 +3762,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(disposition["candidate_external_callable_count"], 1525)
         self.assertEqual(disposition["default_static_callable_count"], 1119)
-        self.assertEqual(disposition["verified_feature_callable_count"], 54)
+        self.assertEqual(disposition["verified_feature_callable_count"], 60)
         self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 352)
+        self.assertEqual(disposition["unprovided_callable_count"], 346)
         self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
         self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
@@ -3714,10 +3781,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1525)
         self.assertEqual(provider_audit["default_static_callable_count"], 1119)
-        self.assertEqual(provider_audit["verified_feature_callable_count"], 54)
-        self.assertEqual(provider_audit["verified_feature_profile_count"], 24)
+        self.assertEqual(provider_audit["verified_feature_callable_count"], 60)
+        self.assertEqual(provider_audit["verified_feature_profile_count"], 25)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 352)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 346)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
