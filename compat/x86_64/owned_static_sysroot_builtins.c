@@ -10,6 +10,7 @@
 #endif
 
 typedef unsigned __int128 crabc_uint128;
+extern int __popcountdi2(unsigned long long);
 
 static volatile crabc_uint128 numerator = (crabc_uint128)10 << 64;
 static volatile crabc_uint128 denominator = 5;
@@ -31,6 +32,13 @@ static void require_owned_udivti3(void)
 
     if (quotient != (crabc_uint128)2 << 64)
         reject();
+    /* The accepted C allocator also needs the baseline x86 population-count
+     * helper. Exercise its real machine-word C ABI through the owned archive. */
+    if (__popcountdi2(0) != 0 || __popcountdi2(~0ULL) != 64)
+        reject();
+    for (unsigned int bit = 0; bit < 64; ++bit)
+        if (__popcountdi2(1ULL << bit) != 1 || __popcountdi2(~(1ULL << bit)) != 63)
+            reject();
 }
 
 __attribute__((used, section(".init_array")))

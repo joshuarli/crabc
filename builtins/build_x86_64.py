@@ -26,7 +26,7 @@ TOOLCHAIN = "nightly-2026-07-24"
 TARGET = "x86_64-unknown-linux-musl"
 ARCHIVE_NAME = "libcrabc-builtins.a"
 MEMBER_NAME = "crabc-builtins.o"
-REQUIRED_SYMBOLS = frozenset({"__udivti3", "__umodti3", "__multi3", "__muldc3"})
+REQUIRED_SYMBOLS = frozenset({"__udivti3", "__umodti3", "__multi3", "__muldc3", "__popcountdi2"})
 FORBIDDEN_SYMBOL_PARTS = ("memcpy", "memmove", "memset", "__gcc_", "__gxx_", "__cxa_", "__atomic_")
 FORBIDDEN_SECTIONS = (".eh_frame", ".gcc_except_table")
 

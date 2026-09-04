@@ -342,7 +342,6 @@ def plan_record(root: Path, mode: StaticMode) -> dict[str, object]:
             "loader",
         ],
         "not_proven_by_this_seed": [
-            "accepted allocator backend",
             "complete libc archive closure",
             "complete compiler-helper closure",
             "declared static-product coverage suite",

@@ -503,6 +503,16 @@ pub extern "C" fn __popcountti2(value: Uint128) -> i32 {
     (value.lo.count_ones() + value.hi.count_ones()) as i32
 }
 
+/// GCC's x86-64 population-count ABI used by the accepted C allocator.
+///
+/// Keep this in the owned helper archive so baseline CPUs without POPCNT do
+/// not import libgcc. The existing 128-bit helper uses the same LLVM primitive.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __popcountdi2(value: u64) -> i32 {
+    value.count_ones() as i32
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn __parityti2(value: Uint128) -> i32 {
     __popcountti2(value) & 1
@@ -590,6 +600,17 @@ mod tests {
         *state ^= *state >> 9;
         *state ^= *state << 8;
         *state
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn allocator_population_count_helper_matches_bitwise_count() {
+        for shift in 0..64 {
+            for input in [0, u64::MAX, 1 << shift, !(1 << shift), 0x5555_aaaa_3333_cccc] {
+                let expected = (0..64).map(|bit| ((input >> bit) & 1) as i32).sum::<i32>();
+                assert_eq!(super::__popcountdi2(input), expected);
+            }
+        }
     }
 
     #[test]

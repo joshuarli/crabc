@@ -417,6 +417,7 @@ assert_final_static_image() {
     local dynamic="$5"
     local symbols="$6"
     local relocations="$7"
+    local minimum_tls_alignment="${8:-4096}"
     local tls_count tls_filesz tls_memsz tls_alignment unresolved
 
     grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' "$file_header" ||
@@ -452,8 +453,8 @@ assert_final_static_image() {
     if (( tls_filesz == 0 || tls_memsz <= tls_filesz )); then
         fail "${mode} candidate TLS lacks initialized and TBSS content"
     fi
-    if (( tls_alignment < 4096 || (tls_alignment & (tls_alignment - 1)) != 0 )); then
-        fail "${mode} candidate TLS lost the fixture's 4096-byte alignment"
+    if (( tls_alignment < minimum_tls_alignment || (tls_alignment & (tls_alignment - 1)) != 0 )); then
+        fail "${mode} candidate TLS lost the fixture's required alignment"
     fi
     unresolved="$(awk '$7 == "UND" && NF >= 8 { print }' "$symbols")"
     [ -z "$unresolved" ] || fail "${mode} candidate retains unresolved symbols: $unresolved"
@@ -510,14 +511,24 @@ run_static_mode() {
     local mode="$2"
     local mode_root="$3"
     local label="$4"
+    local consumer_kind="${5:-tls}"
     local candidate receipt candidate_output
+    local probe=libc_crt_static_tls_probe.c
+    local expected_output=PIMBCAF
+    local minimum_tls_alignment=4096
+    if [ "$consumer_kind" = allocator ]; then
+        probe=libc_allocator_basic_runtime_v1_probe.c
+        expected_output=ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT
+        minimum_tls_alignment=1
+    fi
 
     mkdir "$mode_root"
     (
         cd "$mode_root"
         "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE \
-            -DCRABC_CRT_STATIC_TLS_CANDIDATE -DCRABC_STATIC_STACK_GUARD -c \
-            "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_probe.c" -o probe.o
+            -DCRABC_CRT_STATIC_TLS_CANDIDATE -DCRABC_STATIC_STACK_GUARD \
+            -DCRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE -c \
+            "$ROOT_DIR/compat/x86_64/$probe" -o probe.o
         "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE -DCRABC_STATIC_STACK_GUARD -c \
             "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_peer.c" -o peer.o
         "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE -c \
@@ -540,9 +551,9 @@ run_static_mode() {
     readelf --relocs --wide "$candidate" >"$mode_root/relocations"
     assert_final_static_image "$candidate" "$mode" "$mode_root/file-header" \
         "$mode_root/program-headers" "$mode_root/dynamic" "$mode_root/symbols" \
-        "$mode_root/relocations"
+        "$mode_root/relocations" "$minimum_tls_alignment"
     candidate_output="$(env -i "$candidate")" || fail "${label} candidate failed"
-    [ "$candidate_output" = PIMBCAF ] ||
+    [ "$candidate_output" = "$expected_output" ] ||
         fail "${label} candidate output drifted: $candidate_output"
     assert_malformed_tls_rejected "$candidate" "$label"
     sha256sum "$candidate" | awk '{ print $1 }' >"$mode_root/candidate.sha256"
@@ -692,6 +703,15 @@ forged_dependency="$header_consumer/forged.d"
 reference_output="$(env -i "$header_consumer/reference")" || fail "pinned-musl reference failed"
 [ "$reference_output" = PIMBCAF ] || fail "pinned-musl reference output drifted: $reference_output"
 
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" \
+    "$ROOT_DIR/compat/x86_64/libc_allocator_basic_runtime_v1_probe.c" \
+    -o "$header_consumer/allocator-reference"
+reference_output="$(env -i "$header_consumer/allocator-reference")" ||
+    fail "pinned-musl allocator reference failed"
+[ "$reference_output" = ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT ] ||
+    fail "pinned-musl allocator reference output drifted: $reference_output"
+
 common_compile=(
     gcc -std=c11 -D_GNU_SOURCE -fno-pie -ffreestanding -fno-builtin
     -fno-stack-protector -ftls-model=local-exec -nostdinc
@@ -709,6 +729,12 @@ audit_header_dependencies "$peer_dependency_file" "$primary" \
     "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_peer.c"
 audit_header_dependencies "$builtins_dependency_file" "$primary" \
     "$ROOT_DIR/compat/x86_64/owned_static_sysroot_builtins.c"
+"${common_compile[@]}" -DCRABC_ALLOCATOR_BASIC_RUNTIME_V1_CANDIDATE \
+    -MD -MF "$header_consumer/allocator.d" \
+    -c "$ROOT_DIR/compat/x86_64/libc_allocator_basic_runtime_v1_probe.c" \
+    -o "$header_consumer/allocator.o"
+audit_header_dependencies "$header_consumer/allocator.d" "$primary" \
+    "$ROOT_DIR/compat/x86_64/libc_allocator_basic_runtime_v1_probe.c"
 grep -Fq "$primary/usr/include/errno.h" "$dependency_file" ||
     fail "consumer dependency trace did not resolve installed errno.h"
 grep -Fq "$primary/usr/include/pthread.h" "$dependency_file" ||
@@ -729,7 +755,11 @@ assert_missing_builtins_rejected "$primary" "$primary_consumer/static-et-exec"
 run_static_mode "$primary" -static-pie "$primary_consumer/static-pie" "primary static PIE"
 run_static_mode "$extracted" -static "$extracted_consumer/static-et-exec" "extracted ET_EXEC"
 run_static_mode "$extracted" -static-pie "$extracted_consumer/static-pie" "extracted static PIE"
-for mode_root in static-et-exec static-pie; do
+run_static_mode "$primary" -static "$primary_consumer/allocator-et-exec" "allocator ET_EXEC" allocator
+run_static_mode "$primary" -static-pie "$primary_consumer/allocator-pie" "allocator static PIE" allocator
+run_static_mode "$extracted" -static "$extracted_consumer/allocator-et-exec" "extracted allocator ET_EXEC" allocator
+run_static_mode "$extracted" -static-pie "$extracted_consumer/allocator-pie" "extracted allocator static PIE" allocator
+for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"
@@ -737,4 +767,4 @@ for mode_root in static-et-exec static-pie; do
         "$extracted" "$extracted_consumer/$mode_root" "$mode_root"
 done
 
-printf 'x86 owned static sysroot dual-mode + extracted pthread/TLS consumer: PASS\n'
+printf 'x86 owned static sysroot dual-mode + extracted pthread/TLS and allocator consumers: PASS\n'

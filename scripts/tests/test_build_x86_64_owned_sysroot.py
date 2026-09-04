@@ -199,6 +199,28 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 )
             )
 
+    def test_libc_member_classification_admits_only_the_attested_allocator_member(self) -> None:
+        members = (
+            "c.one.rcgu.o",
+            "compiler_builtins-abc.rcgu.o",
+            "45c91108d938afe8-addvdi3.o",
+            "1234-static.o",
+        )
+        selected, excluded = builder.classify_libc_members(
+            members, allocator_member="1234-static.o"
+        )
+        self.assertEqual(selected, ("c.one.rcgu.o", "1234-static.o"))
+        self.assertEqual(excluded, members[1:3])
+        for roster, approved in (
+            (members, None),
+            (members, "5678-static.o"),
+            (members + ("5678-static.o",), "1234-static.o"),
+            (members + ("foreign.o",), "foreign.o"),
+        ):
+            with self.subTest(roster=roster, approved=approved):
+                with self.assertRaises(builder.BuildError):
+                    builder.classify_libc_members(roster, allocator_member=approved)
+
     def test_libc_member_classification_rejects_path_like_archive_members(self) -> None:
         """Archive extraction must never receive a member path outside its private root."""
 
@@ -212,6 +234,68 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                     "45c91108d938afe8-addvdi3.o",
                 )
             )
+
+    def test_installed_allocator_rejects_a_different_cargo_object_before_extraction(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "cargo-libc.a"
+            backend = root / "libmimalloc.a"
+            output = root / "installed/libc.a"
+
+            def fake_run(command: list[str], **kwargs: object) -> bytes:
+                if command[1] == "t":
+                    return b"1234-static.o\n" if command[2] == str(backend) else (
+                        b"c.one.rcgu.o\ncompiler_builtins-abc.rcgu.o\n"
+                        b"45c91108d938afe8-addvdi3.o\n1234-static.o\n"
+                    )
+                self.assertEqual(command[1], "p")
+                return b"producer" if command[2] == str(backend) else b"substituted"
+
+            with mock.patch.object(builder, "run", side_effect=fake_run):
+                with self.assertRaisesRegex(builder.BuildError, "differs from its dependency producer"):
+                    builder.rebuild_libc_archive(
+                        source, output, llvm_ar="llvm-ar", llvm_nm="llvm-nm", allocator_archive=backend
+                    )
+            self.assertFalse(output.parent.exists())
+
+    def test_allocator_header_trace_rejects_ambient_inputs_and_records_owned_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary)
+            cargo = checkout / ".work/cargo"
+            package = cargo / "registry/src/test/libmimalloc-sys-0.1.49"
+            source = package / "c_src/mimalloc/v3/src/static.c"
+            header = checkout / "include/stdint.h"
+            for path in (source, header):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"owned\n")
+            dependencies = checkout / "allocator.d"
+            dependencies.write_text(f"allocator.o: {source} {header}\n", encoding="utf-8")
+            with mock.patch.object(builder, "ROOT", checkout):
+                record = builder.allocator_header_provenance(dependencies, cargo)
+                self.assertEqual(record["include/stdint.h"], builder.sha256_file(header))
+                self.assertIn("libmimalloc-sys/c_src/mimalloc/v3/src/static.c", record)
+                foreign = checkout / "ambient.h"
+                foreign.write_bytes(b"ambient\n")
+                dependencies.write_text(f"allocator.o: {source} {header} {foreign}\n", encoding="utf-8")
+                with self.assertRaisesRegex(builder.BuildError, "unowned source/header"):
+                    builder.allocator_header_provenance(dependencies, cargo)
+                dependencies.write_text(f"allocator.o: {header}\n", encoding="utf-8")
+                with self.assertRaisesRegex(builder.BuildError, "lacks its source"):
+                    builder.allocator_header_provenance(dependencies, cargo)
+
+    def test_accepted_allocator_pin_rejects_changed_or_duplicate_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary)
+            entry = "[[package]]\n" + "\n".join(
+                f'{key} = "{value}"' for key, value in builder.C_ALLOCATOR_PIN.items()
+            ) + "\n"
+            with mock.patch.object(builder, "ROOT", checkout):
+                (checkout / "Cargo.lock").write_text(entry, encoding="utf-8")
+                self.assertEqual(builder.accepted_allocator_pin(), builder.C_ALLOCATOR_PIN)
+                for changed in (entry.replace("0.1.49", "0.1.50"), entry + entry):
+                    (checkout / "Cargo.lock").write_text(changed, encoding="utf-8")
+                    with self.assertRaisesRegex(builder.BuildError, "Cargo pin changed"):
+                        builder.accepted_allocator_pin()
 
     def test_regular_tree_materialization_rejects_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -293,22 +377,22 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         """Published provenance must retain the cfg used for the rebuilt archive."""
 
         source = SCRIPT.read_text(encoding="utf-8")
-        actual = source[source.index("cargo_command = ["):source.index("run(cargo_command)")]
+        actual = source[source.index("cargo_command = ["):source.index("run(cargo_command,")]
         recorded = source[source.index('"cargo_command": ['):source.index('"crt_root": crt_root')]
         self.assertIn('"--cfg",\n        "crabc_owned_static_sysroot",', actual)
         self.assertIn('"--cfg",\n            "crabc_owned_static_sysroot",', recorded)
 
-    def test_owned_static_archive_is_pic_initial_exec_without_optional_runtime_roots(self) -> None:
-        """One installed archive must serve both static ELF modes without opt-in roots."""
+    def test_owned_static_archive_selects_one_pic_initial_exec_runtime_composition(self) -> None:
+        """One installed composition serves both static ELF modes without ambient support."""
 
         source = SCRIPT.read_text(encoding="utf-8")
-        actual = source[source.index("cargo_command = ["):source.index("run(cargo_command)")]
+        actual = source[source.index("cargo_command = ["):source.index("run(cargo_command,")]
         recorded = source[source.index('"cargo_command": ['):source.index('"crt_root": crt_root')]
         for command in (actual, recorded):
             self.assertIn('"relocation-model=pic"', command)
             self.assertIn('"-Ztls-model=initial-exec"', command)
-            self.assertNotIn('"--features"', command)
-            self.assertNotIn('x86-allocator-runtime', command)
+            self.assertIn('"--features"', command)
+            self.assertIn('x86-owned-static-runtime', command)
             self.assertNotIn('x86-environment-runtime', command)
             self.assertNotIn('x86-resolver-runtime', command)
 

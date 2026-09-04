@@ -20,10 +20,12 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Sequence
 
@@ -43,6 +45,12 @@ STATIC_DRIVER_PATH = "bin/crabc-cc"
 PACKAGE_FORMAT = "crabc-x86-64-owned-static-sysroot-package/v1"
 PACKAGE_ARCHIVE_ROOT = "crabc-x86_64-owned-static-sysroot"
 LIBC_MEMBER = re.compile(r"^c\..+\.rcgu\.o$")
+ALLOCATOR_MEMBER = re.compile(r"^[0-9a-f]+-static\.o$")
+C_ALLOCATOR_PIN = {
+    "name": "libmimalloc-sys",
+    "version": "0.1.49",
+    "checksum": "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9",
+}
 STOCK_COMPILER_BUILTINS_MEMBER = re.compile(r"^compiler_builtins-.+\.rcgu\.o$")
 STOCK_RUST_CORE_MEMBER = re.compile(
     r"^core-[0-9a-f]+\.core\.[0-9a-f]+-cgu\.[0-9]+\.rcgu\.o$"
@@ -66,6 +74,7 @@ TARGET_RUNTIME_INPUTS = (
     "project regular-file headers",
     "Rust-produced x86 CRT objects",
     "crabc-libc c.*.rcgu.o members",
+    "Cargo-pinned libmimalloc-sys C allocator compiled against project headers",
     "Rust-produced bounded x86 compiler helpers",
 )
 NOT_SELECTED = (
@@ -301,11 +310,13 @@ def producer_tool_path(producer_tools: dict[str, object], name: str) -> str:
     return path
 
 
-def run(command: Sequence[str], *, cwd: Path = ROOT) -> bytes:
+def run(
+    command: Sequence[str], *, cwd: Path = ROOT, environment: dict[str, str] | None = None
+) -> bytes:
     completed = subprocess.run(
         list(command),
         cwd=cwd,
-        env=deterministic_environment(),
+        env=deterministic_environment() if environment is None else environment,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -381,7 +392,9 @@ def copy_regular_tree(source: Path, destination: Path) -> dict[str, str]:
     return records
 
 
-def classify_libc_members(members: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def classify_libc_members(
+    members: Sequence[str], *, allocator_member: str | None = None
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     if not members or len(set(members)) != len(members):
         raise BuildError("Cargo libc archive has an empty or duplicate member roster")
     unsafe = tuple(
@@ -399,9 +412,16 @@ def classify_libc_members(members: Sequence[str]) -> tuple[tuple[str, ...], tupl
         raise BuildError(
             "Cargo libc archive has an unsafe member path: " + ", ".join(unsafe)
         )
-    selected = tuple(member for member in members if LIBC_MEMBER.fullmatch(member))
+    if allocator_member is not None and (
+        ALLOCATOR_MEMBER.fullmatch(allocator_member) is None or allocator_member not in members
+    ):
+        raise BuildError("attested allocator member is invalid or absent from Cargo libc")
+    selected = tuple(
+        member for member in members
+        if LIBC_MEMBER.fullmatch(member) or member == allocator_member
+    )
     excluded = tuple(member for member in members if member not in selected)
-    if not selected:
+    if not any(LIBC_MEMBER.fullmatch(member) for member in selected):
         raise BuildError("Cargo libc archive has no crabc Rust object members")
     unexpected = tuple(
         member
@@ -443,7 +463,8 @@ def archive_defined_symbols(nm: str, archive: Path) -> set[str]:
 
 
 def rebuild_libc_archive(
-    source: Path, output: Path, *, llvm_ar: str, llvm_nm: str
+    source: Path, output: Path, *, llvm_ar: str, llvm_nm: str,
+    allocator_archive: Path | None = None,
 ) -> dict[str, object]:
     """Rebuild from the already-attested target LLVM archive tools."""
 
@@ -452,7 +473,27 @@ def rebuild_libc_archive(
         for line in run([llvm_ar, "t", str(source)]).decode("utf-8", errors="replace").splitlines()
         if line
     )
-    selected, excluded = classify_libc_members(members)
+    allocator_record = None
+    allocator_member = None
+    if allocator_archive is not None:
+        # The backend must be the exact single object produced by the locked
+        # dependency build, not any archive member with a convenient suffix.
+        backend_members = run([llvm_ar, "t", str(allocator_archive)]).decode().splitlines()
+        if len(backend_members) != 1 or ALLOCATOR_MEMBER.fullmatch(backend_members[0]) is None:
+            raise BuildError("accepted allocator archive must contain one named static object")
+        allocator_member = backend_members[0]
+        backend_object = run([llvm_ar, "p", str(allocator_archive), allocator_member])
+        cargo_object = run([llvm_ar, "p", str(source), allocator_member])
+        if backend_object != cargo_object:
+            raise BuildError("Cargo libc allocator object differs from its dependency producer")
+        allocator_record = {
+            "crate": dict(C_ALLOCATOR_PIN),
+            "archive_sha256": sha256_file(allocator_archive),
+            "member": allocator_member,
+            "member_sha256": hashlib.sha256(backend_object).hexdigest(),
+            "implementation": "accepted C backend; native Rust promotion remains separate",
+        }
+    selected, excluded = classify_libc_members(members, allocator_member=allocator_member)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="x86-libc-members.", dir=output.parent) as temporary:
         member_root = Path(temporary)
@@ -473,7 +514,7 @@ def rebuild_libc_archive(
     missing = sorted(REQUIRED_LIBC_SYMBOLS.difference(defined))
     if missing:
         raise BuildError(f"reconstructed libc archive lacks selected runtime symbols: {missing}")
-    return {
+    result = {
         "archive": {"name": output.name, "sha256": sha256_file(output)},
         "selected_members": [
             {"name": member, "sha256": member_hashes[member]} for member in selected
@@ -490,8 +531,11 @@ def rebuild_libc_archive(
             ],
         },
         "required_defined_symbols": sorted(REQUIRED_LIBC_SYMBOLS),
-        "policy": "only c.*.rcgu.o members are installed; stock core/compiler_builtins and native compiler-rt members are classified then excluded",
+        "policy": "crabc objects and the explicitly attested allocator object only; stock core/compiler_builtins and native compiler-rt members are classified then excluded",
     }
+    if allocator_record is not None:
+        result["allocator_backend"] = allocator_record
+    return result
 
 
 def copy_artifact(source: Path, destination: Path) -> None:
@@ -564,7 +608,6 @@ def installed_manifest(
                 "loader",
             ],
             "not_proven_by_this_seed": [
-                "accepted allocator backend",
                 "complete libc archive closure",
                 "complete compiler-helper closure",
                 "declared static-product coverage suite",
@@ -583,6 +626,48 @@ def installed_manifest(
     }
 
 
+def accepted_allocator_pin() -> dict[str, str]:
+    """Bind the accepted backend to the reviewed Cargo lock, not a filename."""
+
+    lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
+    packages = [item for item in lock.get("package", []) if item.get("name") == C_ALLOCATOR_PIN["name"]]
+    if len(packages) != 1 or any(packages[0].get(key) != value for key, value in C_ALLOCATOR_PIN.items()):
+        raise BuildError("accepted allocator Cargo pin changed; review its production provenance")
+    return dict(C_ALLOCATOR_PIN)
+
+
+def allocator_header_provenance(dependencies: Path, cargo_home: Path) -> dict[str, str]:
+    """Reject target headers outside the project and pinned allocator source."""
+
+    packages = list((cargo_home / "registry/src").glob("*/libmimalloc-sys-0.1.49"))
+    if len(packages) != 1:
+        raise BuildError("accepted allocator source package is absent or ambiguous")
+    package = packages[0].resolve()
+    source_root = package / "c_src/mimalloc/v3"
+    if not package.is_relative_to(cargo_home.resolve()):
+        raise BuildError("accepted allocator source package escapes the checkout cache")
+    text = dependencies.read_text(encoding="utf-8").replace("\\\n", " ")
+    _, separator, inputs = text.partition(":")
+    if not separator:
+        raise BuildError("allocator compiler dependency trace has no target")
+    records: dict[str, str] = {}
+    for spelling in shlex.split(inputs):
+        path = Path(spelling)
+        path = (path if path.is_absolute() else package / path).resolve(strict=True)
+        if path.is_relative_to(ROOT / "include"):
+            name = path.relative_to(ROOT).as_posix()
+        elif path.is_relative_to(source_root):
+            name = "libmimalloc-sys/" + path.relative_to(package).as_posix()
+        else:
+            raise BuildError(f"allocator compiler used an unowned source/header: {path}")
+        records[name] = sha256_file(path)
+    if "libmimalloc-sys/c_src/mimalloc/v3/src/static.c" not in records or not any(
+        name.startswith("include/") for name in records
+    ):
+        raise BuildError("allocator dependency trace lacks its source or project headers")
+    return records
+
+
 def build_runtime_inputs(stage: Path) -> dict[str, object]:
     producer_tools = resolve_pinned_producer_tools()
     rustup_record = producer_tools["rustup"]
@@ -596,6 +681,20 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
     llvm_objdump = producer_tool_path(producer_tools, "llvm-objdump")
     python = sys.executable
     cargo_root = stage / "cargo"
+    allocator_pin = accepted_allocator_pin()
+    c_compiler = executable_identity(Path("/usr/bin/gcc"), "pinned-image allocator C compiler")
+    dependency_file = stage / "allocator.d"
+    c_flags = [
+        "-nostdinc", "-isystem", str(ROOT / "include"),
+        "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong",
+        f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file),
+    ]
+    environment = deterministic_environment()
+    environment.update({
+        "CC_x86_64_unknown_linux_musl": str(c_compiler["path"]),
+        "CFLAGS_x86_64_unknown_linux_musl": shlex.join(c_flags),
+        "CC_SHELL_ESCAPED_FLAGS": "1",
+    })
     cargo_command = [
         rustup,
         "run",
@@ -607,6 +706,8 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         "crabc-libc",
         "--lib",
         "--release",
+        "--features",
+        "x86-owned-static-runtime",
         "--target",
         TARGET,
         "--target-dir",
@@ -624,10 +725,14 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         "--remap-path-prefix",
         f"{ROOT}=/crabc",
     ]
-    run(cargo_command)
+    run(cargo_command, environment=environment)
     raw_libc = cargo_root / TARGET / "release" / "libc.a"
     if not raw_libc.is_file():
         raise BuildError("Cargo did not produce the x86 crabc-libc static archive")
+    allocator_archives = list((cargo_root / TARGET / "release/build").glob("libmimalloc-sys-*/out/libmimalloc.a"))
+    if len(allocator_archives) != 1:
+        raise BuildError("Cargo did not produce one unambiguous accepted allocator archive")
+    allocator_headers = allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"]))
 
     crt_root = stage / "crt"
     run(
@@ -661,7 +766,14 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         libc,
         llvm_ar=llvm_ar,
         llvm_nm=llvm_nm,
+        allocator_archive=allocator_archives[0],
     )
+    libc_provenance["allocator_backend"].update({
+        "crate": allocator_pin,
+        "compiler": c_compiler,
+        "target_flags": [flag.replace(str(stage), "$CRABC_X86_BUILD").replace(str(ROOT), "$CRABC_SOURCE") for flag in c_flags],
+        "source_and_header_sha256": allocator_headers,
+    })
     return {
         "cargo_command": [
             "$CRABC_PINNED_CARGO_HOME/bin/rustup",
@@ -674,6 +786,8 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
             "crabc-libc",
             "--lib",
             "--release",
+            "--features",
+            "x86-owned-static-runtime",
             "--target",
             TARGET,
             "--target-dir",
