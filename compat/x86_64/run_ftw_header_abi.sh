@@ -100,6 +100,11 @@ check_trace() {
     if [ "$tree" = candidate ] && grep -Fq "$MUSL_ROOT/include/" "$trace"; then
         fail "candidate trace reached pinned musl"
     fi
+    for forbidden_header in time.h sys/types.h; do
+        if grep -Fq "$root/$forbidden_header" "$trace"; then
+            fail "$tree trace over-included $forbidden_header through ftw.h/sys/stat.h"
+        fi
+    done
 }
 
 check_cxx_linkage() {

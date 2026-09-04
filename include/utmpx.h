@@ -5,8 +5,14 @@
 extern "C" {
 #endif
 
-#include <sys/types.h>
-#include <sys/time.h>
+#include <features.h>
+
+#define __NEED_pid_t
+#define __NEED_time_t
+#define __NEED_suseconds_t
+#define __NEED_struct_timeval
+
+#include <bits/alltypes.h>
 
 struct utmpx {
     short ut_type;

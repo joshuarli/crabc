@@ -66,6 +66,11 @@ grep -Fq "$ROOT_DIR/include/sys/stat.h" "$header_trace" || {
 grep -Fq "$ROOT_DIR/include/bits/stat.h" "$header_trace" || {
     fail "C probe did not use the project x86 bits/stat.h"
 }
+for forbidden_header in time.h sys/types.h; do
+    if grep -Fq "$ROOT_DIR/include/$forbidden_header" "$header_trace"; then
+        fail "C probe over-included project $forbidden_header through sys/stat.h"
+    fi
+done
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -fsyntax-only "$c_probe"
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -I "$ROOT_DIR/include" \
     -fsyntax-only "$c_probe"

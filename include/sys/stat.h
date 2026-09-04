@@ -2,19 +2,33 @@
 #define _SYS_STAT_H
 
 #include <features.h>
+#if defined(__x86_64__)
+#define __NEED_dev_t
+#define __NEED_ino_t
+#define __NEED_mode_t
+#define __NEED_nlink_t
+#define __NEED_uid_t
+#define __NEED_gid_t
+#define __NEED_off_t
+#define __NEED_time_t
+#define __NEED_blksize_t
+#define __NEED_blkcnt_t
+#define __NEED_struct_timespec
+#endif
 #if defined(_GNU_SOURCE)
 #define __NEED_int64_t
 #define __NEED_uint64_t
 #define __NEED_uint32_t
 #define __NEED_uint16_t
 #endif
+#if !defined(__x86_64__)
 #include <sys/types.h>
 #if defined(_GNU_SOURCE)
 #include <bits/alltypes.h>
 #endif
 #include <time.h>
-
-#if defined(__x86_64__)
+#else
+#include <bits/alltypes.h>
 #include <bits/stat.h>
 #endif
 

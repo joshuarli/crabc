@@ -87,6 +87,25 @@ trace_has_unapproved_path() {
     return 1
 }
 
+assert_no_time_record_overincludes() {
+    local tree="$1"
+    local target_id="$2"
+    local profile="$3"
+    local trace="$4"
+    local root
+
+    case "$tree" in
+        candidate) root="$PROJECT_INCLUDE" ;;
+        reference) root="$MUSL_ROOT/include" ;;
+        *) fail "unknown trace tree: $tree" ;;
+    esac
+    for forbidden_header in sys/types.h sys/time.h time.h; do
+        if trace_has_header "$trace" "$root" "$forbidden_header"; then
+            fail "$target_id $profile $tree trace over-included $forbidden_header"
+        fi
+    done
+}
+
 first_diagnostic() {
     local diagnostic="$1"
     local line
@@ -188,11 +207,10 @@ check_trace() {
     fi
     trace_has_header "$trace" "$root" "$target_header" ||
         fail "$target_id $profile $tree trace omitted ${root}/$target_header"
-    # Musl's utmpx route provides struct timeval directly through alltypes,
-    # whereas the project route currently reaches it through sys/time.h. The
-    # slice selects complete public type/layout visibility, not an identical
-    # private include graph. The declared paths below prove the named public
-    # chains, and only the sys/time.h/sys/timex.h paths require sys/select.h.
+    # Musl's utmpx route provides struct timeval directly through alltypes.
+    # Keep the candidate include graph equally narrow: these accounting
+    # records must not import the unrelated sys/types, sys/time, or time
+    # declaration surfaces merely to obtain their fixed-width record types.
     case "$target_id" in
         sys-time|sys-timex)
             for required_header in sys/time.h sys/select.h; do
@@ -203,18 +221,21 @@ check_trace() {
         utmpx)
             trace_has_header "$trace" "$root" utmpx.h ||
                 fail "$target_id $profile $tree trace omitted required public chain ${root}/utmpx.h"
+            assert_no_time_record_overincludes "$tree" "$target_id" "$profile" "$trace"
             ;;
         utmp)
             for required_header in utmp.h utmpx.h; do
                 trace_has_header "$trace" "$root" "$required_header" ||
                     fail "$target_id $profile $tree trace omitted required public chain ${root}/$required_header"
             done
+            assert_no_time_record_overincludes "$tree" "$target_id" "$profile" "$trace"
             ;;
         lastlog)
             for required_header in lastlog.h utmp.h utmpx.h; do
                 trace_has_header "$trace" "$root" "$required_header" ||
                     fail "$target_id $profile $tree trace omitted required public chain ${root}/$required_header"
             done
+            assert_no_time_record_overincludes "$tree" "$target_id" "$profile" "$trace"
             ;;
         *) fail "unknown timeval transitive-header target: $target_id" ;;
     esac
