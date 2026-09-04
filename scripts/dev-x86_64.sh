@@ -76,6 +76,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   param-header-source-form  verify x86 sys/param.h and sys/resource.h pinned-musl source forms
   pathname-lifecycle-header-abi  verify selected x86 pathname-lifecycle C/C++ ABI profiles
   ioctl-header-abi  verify selected direct sys/ioctl.h C/C++ ABI profile matrix
+  ioctl-header-source-form  verify x86 ioctl header forms and frozen AArch64 arm
   link-header-source-form  verify x86 <link.h> pinned-musl include topology
   reboot-header-source-form  verify x86 <sys/reboot.h> pinned-musl macro form
   mount-header-source-form  verify x86 <sys/mount.h> pinned-musl source form
@@ -2690,6 +2691,10 @@ run_pathname_lifecycle_header_abi() {
 
 run_ioctl_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ioctl_header_abi.sh
+}
+
+run_ioctl_header_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_ioctl_header_source_form.sh
 }
 
 run_link_header_source_form() {
@@ -5426,6 +5431,7 @@ case "$command" in
     mman-mcl-onfault-header-source-form) ;;
     mount-header-source-form) ;;
     klog-header-source-form) ;;
+    ioctl-header-source-form) ;;
     fcntl-event-header-topology) ;;
 
     *)
@@ -5570,6 +5576,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ioctl-header-abi takes no arguments"
         ensure_image
         run_ioctl_header_abi
+        ;;
+    ioctl-header-source-form)
+        [ "$#" -eq 0 ] || fail "ioctl-header-source-form takes no arguments"
+        ensure_image
+        run_ioctl_header_source_form
         ;;
     link-header-source-form)
         [ "$#" -eq 0 ] || fail "link-header-source-form takes no arguments"

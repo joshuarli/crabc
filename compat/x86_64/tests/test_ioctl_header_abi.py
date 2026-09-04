@@ -26,7 +26,11 @@ class IoctlHeaderAbiTests(unittest.TestCase):
     def test_direct_header_and_static_forwarder_keep_the_selected_boundary(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
         bits_header = BITS_HEADER.read_text(encoding="utf-8")
-        ioctl_surface = header + bits_header
+        x86_bits_header = bits_header.split("#if defined(__x86_64__)\n", 1)[1].split(
+            "\n#else\n/* Linux generic ioctl ABI used by musl's x86-64 public headers. */",
+            1,
+        )[0]
+        ioctl_surface = header + x86_bits_header
         self.assertIn('#ifdef __cplusplus\nextern "C" {\n#endif', header)
         self.assertIn("int ioctl(int, int, ...);", header)
         self.assertIn("#define __NEED_struct_winsize", header)
@@ -41,8 +45,8 @@ class IoctlHeaderAbiTests(unittest.TestCase):
         ):
             self.assertIn(phrase, ioctl_surface)
         self.assertIn("#include <bits/ioctl.h>", header)
-        self.assertIn("#include <bits/ioctl_fix.h>", bits_header)
-        self.assertNotIn("_BITS_IOCTL_H", bits_header)
+        self.assertIn("#include <bits/ioctl_fix.h>", x86_bits_header)
+        self.assertNotIn("_BITS_IOCTL_H", x86_bits_header)
 
         source = STATIC_SOURCE.read_text(encoding="utf-8")
         for phrase in (
@@ -61,6 +65,9 @@ class IoctlHeaderAbiTests(unittest.TestCase):
 
     def test_direct_header_retains_pinned_macro_source_forms(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
+        x86_literals = header.split("#if defined(__x86_64__)\n", 1)[1].split(
+            "#else\n", 1
+        )[0]
         for phrase in (
             "#define SIOCSIFBRDADDR     0x891a",
             "#define SIOCGIFNETMASK     0x891b",
@@ -69,7 +76,7 @@ class IoctlHeaderAbiTests(unittest.TestCase):
             "#define SIOCSIFMETRIC      0x891e",
             "#define SIOCGIFMEM         0x891f",
         ):
-            self.assertIn(phrase, header)
+            self.assertIn(phrase, x86_literals)
 
     def test_header_matrix_and_static_fixture_are_closed_and_native(self) -> None:
         for probe in (
@@ -151,13 +158,17 @@ class IoctlHeaderAbiTests(unittest.TestCase):
         self.assertIn("__crabc_x86_static_tls_bootstrap", start)
         self.assertNotIn("ARCH_SET_FS", start)
 
-    def test_dispatcher_exposes_both_ioctl_gates(self) -> None:
+    def test_dispatcher_exposes_all_ioctl_gates(self) -> None:
         dispatcher = DISPATCHER.read_text(encoding="utf-8")
         for phrase in (
             "ioctl-header-abi)",
             "run_ioctl_header_abi()",
             "run_ioctl_header_abi.sh",
             "ioctl-header-abi takes no arguments",
+            "ioctl-header-source-form)",
+            "run_ioctl_header_source_form()",
+            "run_ioctl_header_source_form.sh",
+            "ioctl-header-source-form takes no arguments",
             "libc-ioctl)",
             "run_libc_ioctl()",
             "run_libc_ioctl.sh",

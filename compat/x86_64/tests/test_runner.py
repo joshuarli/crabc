@@ -1754,6 +1754,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    mount-header-source-form) ;;", source)
         self.assertIn("    klog-header-source-form) ;;", source)
         self.assertIn("    pthread-header-source-form) ;;", source)
+        self.assertIn("    ioctl-header-source-form) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
         self.assertIn("    stddef-header-abi) ;;", source)
         self.assertIn(
@@ -2007,6 +2008,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "mman-mcl-onfault-header-source-form",
             "mount-header-source-form",
             "klog-header-source-form",
+            "ioctl-header-source-form",
             "fcntl-event-header-topology",
         )
         expected_groups = tuple(
@@ -2183,6 +2185,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn(
             'compat/x86_64/run_pthread_header_source_form.sh', source
         )
+        self.assertIn('run_ioctl_header_source_form()', source)
+        self.assertIn(
+            'compat/x86_64/run_ioctl_header_source_form.sh', source
+        )
         self.assertIn('run_fcntl_event_header_topology()', source)
         self.assertIn(
             'compat/x86_64/run_fcntl_event_header_topology.sh', source
@@ -2281,6 +2287,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn('run_ioctl_header_abi()', source)
         self.assertIn('compat/x86_64/run_ioctl_header_abi.sh', source)
+        self.assertIn('run_ioctl_header_source_form()', source)
+        self.assertIn('compat/x86_64/run_ioctl_header_source_form.sh', source)
         self.assertIn('run_unistd_header_abi()', source)
         self.assertIn('compat/x86_64/run_unistd_header_abi.sh', source)
         self.assertIn('run_system_header_abi()', source)
