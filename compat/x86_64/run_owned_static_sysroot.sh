@@ -651,6 +651,24 @@ if records != expected:
 PY
 }
 
+assert_scanf_matrix_records() {
+    python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import struct
+import sys
+
+data = Path(sys.argv[1]).read_bytes()
+label = sys.argv[2]
+record_size = 6 * 4 + 64
+if len(data) != 940 * record_size:
+    raise SystemExit(f"{label} scanf matrix must contain exactly 940 complete records")
+for offset in range(0, len(data), record_size):
+    count, _, _, next_byte, eof, error = struct.unpack_from("=6i", data, offset)
+    if count < -1 or count > 6 or not -1 <= next_byte <= 255 or eof not in (0, 1) or error not in (0, 1):
+        raise SystemExit(f"{label} scanf record has invalid status fields at byte {offset}")
+PY
+}
+
 seed_resolver_fixture() {
     local fixture_root="$1"
 
@@ -789,6 +807,13 @@ run_static_mode() {
             candidate_arguments=("$mode_root/float-stream")
             [ -f "$printf_matrix_reference" ] || fail "${label} numeric reference is missing"
             ;;
+        scanf)
+            probe=owned_static_scanf_probe.c
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/scan-stream")
+            probe_defines+=(-DCRABC_OWNED_SCANF)
+            [ -f "$printf_matrix_reference" ] || fail "${label} scanf reference is missing"
+            ;;
         *) fail "unknown installed consumer: $consumer_kind" ;;
     esac
 
@@ -830,7 +855,14 @@ run_static_mode() {
     assert_final_static_image "$candidate" "$mode" "$mode_root/file-header" \
         "$mode_root/program-headers" "$mode_root/dynamic" "$mode_root/symbols" \
         "$mode_root/relocations" "$minimum_tls_alignment"
-    if [ "$consumer_kind" = printf-float ]; then
+    if [ "$consumer_kind" = scanf ]; then
+        env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/scan-records" ||
+            fail "${label} scanf candidate failed"
+        assert_scanf_matrix_records "$mode_root/scan-records" "$label"
+        cmp "$printf_matrix_reference" "$mode_root/scan-records" ||
+            fail "${label} scanf records differ from pinned musl"
+        [ ! -e "$mode_root/scan-stream" ] || fail "${label} retained its scanf scratch"
+    elif [ "$consumer_kind" = printf-float ]; then
         # Binary fenv/rounding records must never pass through shell command
         # substitution, which discards NUL bytes. The probe owns this job's
         # private pathname and unlinks its stream after opening it.
@@ -869,6 +901,8 @@ run_static_mode() {
         # numerical binary has its own installed link receipt and ELF proof.
         run_static_mode "$installed_root" "$mode" "$mode_root/float" \
             "$label numerics" printf-float "$printf_matrix_reference.float"
+        run_static_mode "$installed_root" "$mode" "$mode_root/scan" \
+            "$label scanning" scanf "$printf_matrix_reference.scan"
     fi
     assert_malformed_tls_rejected "$candidate" "$label"
     sha256sum "$candidate" | awk '{ print $1 }' >"$mode_root/candidate.sha256"
@@ -991,7 +1025,7 @@ compare_consumer_matrix_runs() {
     # the serial/parallel comparison an additional determinism check rather
     # than just a timing report, while both passes reuse the same cold-built
     # primary and extracted trees.
-    for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float; do
+    for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
         cmp "$serial_primary/$mode_root/candidate.sha256" \
             "$parallel_primary/$mode_root/candidate.sha256" ||
             fail "${mode_root} primary output differs between serial and parallel consumers"
@@ -1251,6 +1285,14 @@ env -i "$header_consumer/printf-float-reference" "$header_consumer/float-stream"
 assert_printf_matrix_records "$printf_matrix_reference.float" "pinned-musl numeric reference" 1
 [ ! -e "$header_consumer/float-stream" ] || fail "numeric reference retained its temporary stream"
 
+"$ORACLE_CC" -std=c11 -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_scanf_probe.c" \
+    -o "$header_consumer/scanf-reference"
+env -i "$header_consumer/scanf-reference" "$header_consumer/scan-stream" \
+    >"$printf_matrix_reference.scan" || fail "pinned-musl scanf reference failed"
+assert_scanf_matrix_records "$printf_matrix_reference.scan" "pinned-musl scanf reference"
+[ ! -e "$header_consumer/scan-stream" ] || fail "scanf reference retained its temporary stream"
+
 common_compile=(
     gcc -std=c11 -D_GNU_SOURCE -fno-pie -ffreestanding -fno-builtin
     -fno-stack-protector -ftls-model=local-exec -nostdinc
@@ -1300,6 +1342,11 @@ audit_header_dependencies "$header_consumer/printf.d" "$primary" \
     -o "$header_consumer/printf-float.o"
 audit_header_dependencies "$header_consumer/printf-float.d" "$primary" \
     "$ROOT_DIR/compat/x86_64/owned_static_printf_float_probe.c"
+"${common_compile[@]}" -DCRABC_OWNED_SCANF -MD -MF "$header_consumer/scanf.d" \
+    -c "$ROOT_DIR/compat/x86_64/owned_static_scanf_probe.c" \
+    -o "$header_consumer/scanf.o"
+audit_header_dependencies "$header_consumer/scanf.d" "$primary" \
+    "$ROOT_DIR/compat/x86_64/owned_static_scanf_probe.c"
 grep -Fq "$primary/usr/include/errno.h" "$dependency_file" ||
     fail "consumer dependency trace did not resolve installed errno.h"
 grep -Fq "$primary/usr/include/pthread.h" "$dependency_file" ||
@@ -1334,7 +1381,7 @@ if [ "$consumer_benchmark" = 1 ]; then
         "$primary_consumer" "$extracted_consumer" \
         "$work_dir/consumer-matrix-serial-logs" "$work_dir/consumer-matrix-logs"
 fi
-for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float; do
+for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"
