@@ -38,6 +38,8 @@ static_assert(_IOFBF == 0 && _IOLBF == 1 && _IONBF == 2,
     "stream buffering mode values");
 static_assert(SEEK_SET == 0 && SEEK_CUR == 1 && SEEK_END == 2,
     "stream seek value macros");
+static_assert(__is_same(fpos_t, union _G_fpos64_t),
+    "fpos_t C++ named union identity");
 
 /* The C++ public FILE is deliberately opaque. Verify only pointer/data ABI,
  * not the private implementation's stream-state representation.

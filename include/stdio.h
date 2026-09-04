@@ -31,7 +31,7 @@ extern "C" {
  * bytes carry the file offset today, while the union's array/alignment arms
  * keep the public ABI stable for callers that store or pass fpos_t objects.
  */
-typedef union {
+typedef union _G_fpos64_t {
     char __opaque[16];
     long long __lldata;
     double __align;

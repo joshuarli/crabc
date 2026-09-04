@@ -63,6 +63,12 @@ CRABC_STDIO_ASSERT(crabc_stdio_buffer_modes,
 CRABC_STDIO_ASSERT(crabc_stdio_seek_values,
     SEEK_SET == 0 && SEEK_CUR == 1 && SEEK_END == 2);
 
+/* Musl's public fpos_t is an alias of a named union, not merely an
+ * ABI-equivalent anonymous object. Consumers may name that union directly.
+ */
+CRABC_STDIO_ASSERT(crabc_stdio_fpos_named_union,
+    CRABC_STDIO_TYPE_IS(fpos_t, union _G_fpos64_t));
+
 /* Test the public declarations rather than the macro-expanded lvalue type. */
 #undef stdin
 #undef stdout
