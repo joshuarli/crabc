@@ -1722,7 +1722,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn("    madvise-reference) ;;", source)
         self.assertIn(
-            "    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi) ;;",
+            "    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi|uchar-stateful-header-abi) ;;",
             source,
         )
         self.assertIn("    ffs-header-abi) ;;", source)
@@ -1739,18 +1739,21 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    header-callable-disposition) ;;", source)
         self.assertIn("    header-abi-matrix) ;;", source)
         self.assertIn("    header-record-layout-matrix) ;;", source)
-        self.assertIn("    process-exec-header-abi) ;;", source)
+        self.assertIn(
+            "    posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions|process-exec-header-abi|libc-process-exec) ;;",
+            source,
+        )
         self.assertIn("    header-declaration-macro-visibility-matrix) ;;", source)
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    ftw-header-abi) ;;", source)
         self.assertIn("    tcp-header-abi) ;;", source)
         self.assertIn("    stddef-header-abi) ;;", source)
         self.assertIn(
-            "    inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi) ;;",
+            "    inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi|service-lifecycle-header-abi) ;;",
             source,
         )
         self.assertIn(
-            "    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate) ;;",
+            "    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser) ;;",
             source,
         )
         self.assertIn("    libc-in6addr-any)", source)
@@ -1848,8 +1851,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ldso-bounded-dlopen",
             "math-special-header-abi|libc-math-special",
             "math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow",
-            "inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi",
-            "libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate",
+            "inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi|service-lifecycle-header-abi",
+            "libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser",
             "ldso-target-root",
             "libc-fenv-rounding",
             "libc-math-minmax",
@@ -1898,9 +1901,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "madvise-reference",
             "basename-header-abi|siginterrupt-header-abi|mlockall-header-abi|munlockall-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-basename|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-ftime|libc-clock-getcpuclockid",
             "umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf",
-            "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi",
+            "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi|uchar-stateful-header-abi",
             "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|crypt-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|wait-extensions-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi",
-            "posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi|posix-spawnattr-getschedparam-header-abi|posix-spawnattr-getschedpolicy-header-abi",
+            "posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi|posix-spawnattr-signal-fields-header-abi|posix-spawnattr-getschedparam-header-abi|posix-spawnattr-getschedpolicy-header-abi",
             "ffs-header-abi",
             "memory-special-header-abi",
             "memccpy-header-abi",
@@ -1910,7 +1913,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memccpy-header-abi",
             "mempcpy-header-abi",
             "strsep-header-abi",
-            "strtok-header-abi",
+            "strtok-header-abi|stateful-byte-strings-header-abi",
             "string-copy-header-abi",
             "error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi",
             "string-duplication-header-abi",
@@ -1930,7 +1933,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
             "libc-pthread-name",
-            "libc-pthread-attributes|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init|libc-pthread-spin-operations",
+            "libc-pthread-attributes|libc-pthread-attr-lifecycle|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init|libc-pthread-spin-operations",
             "libc-pthread-spin-destroy",
             "libc-pthread-detach",
             "libc-thrd-yield",
@@ -1942,7 +1945,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memccpy",
             "libc-mempcpy",
             "libc-strsep",
-            "libc-strtok",
+            "libc-strtok|libc-stateful-byte-strings",
             "libc-allocator-runtime",
             "libc-allocator-basic-runtime-v1",
             "libc-allocator-string-duplication",
@@ -1952,7 +1955,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
-            "libc-posix-exit|libc-posix-spawnattr-init|libc-posix-spawnattr-getpgroup|libc-posix-spawnattr-getschedparam|libc-posix-spawnattr-getschedpolicy",
+            "libc-posix-exit|libc-posix-spawnattr-init|libc-posix-spawnattr-getpgroup|libc-posix-spawnattr-signal-fields|libc-posix-spawnattr-getschedparam|libc-posix-spawnattr-getschedpolicy",
             "libc-clock-adjtime",
             "libc-clock-settime",
             "libc-timer-getoverrun",
@@ -1961,7 +1964,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-timer-settime",
             "libc-tee|libc-splice",
             "libc-sync-file-range|libc-copy-file-range",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-crypt-allocator-composition|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-crypt-allocator-composition|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-service-lifecycle|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-uchar-stateful|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -1972,6 +1975,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-math-exp10f",
             "libc-math-sinh",
             "libc-pthread-condattr-pshared",
+            "libc-pthread-attr-lifecycle",
             "libc-pthread-condattr-clock",
             "libc-pthread-mutexattr-protocol-query",
             "libc-pthread-mutexattr-pshared-query",
@@ -1981,7 +1985,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-mutex-prioceiling-query",
             "libc-pthread-getconcurrency",
             "libc-pthread-setconcurrency",
-            "libc-rand-r",
+            "libc-rand-r|libc-lrand48",
         )
         expected_groups = tuple(
             group.replace(

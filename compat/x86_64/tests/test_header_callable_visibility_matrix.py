@@ -116,12 +116,12 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1197,
-                "mismatch": 83,
+                "matched": 1235,
+                "mismatch": 45,
                 "oracle-not-applicable": 1,
             },
         )
-        self.assertEqual(report["summary"]["candidate_only_callable_count"], 224)
+        self.assertEqual(report["summary"]["candidate_only_callable_count"], 217)
         self.assertFalse(report["summary"]["complete"])
         self.assertFalse(report["scope"]["prototype_or_macro_replacement_equality"])
         self.assertFalse(report["scope"]["noncallable_abi"])

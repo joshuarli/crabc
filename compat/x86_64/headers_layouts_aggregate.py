@@ -677,7 +677,11 @@ def blockers(foundation: Mapping[str, Any], reports: Sequence[Mapping[str, Any]]
         "declaration_identity_mismatch_rows": int(declaration.get("mismatch_row_count", -1)),
         "declaration_source_form_differences": int(declaration.get("source_form_difference_count", -1)),
         "prototype_or_named_declaration_mismatch_rows": int(prototype.get("mismatch_row_count", -1)),
-        "record_byte_layout_mismatch_rows": int(record_layout_comparisons.get("mismatch", -1)),
+        # A zero-valued comparison category is intentionally absent from the
+        # deterministic record report. Treat that omission as zero rather than
+        # a malformed blocker, while retaining the negative default for fields
+        # that are required to be present.
+        "record_byte_layout_mismatch_rows": int(record_layout_comparisons.get("mismatch", 0)),
     }
     require(all(value >= 0 for value in counts.values()), "generic blocker count is invalid")
     completion = foundation.get("completion")

@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-record-layout-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "1395bf0e2a0496cf0f27e31f7e078fd1ec50d3631aa9c2f0c07724cb67387470",
+    "callable_inventory_sha256": "f2e8b8fcab8f0dfdd526392de73fb5c952347be078f9e691d4fa12ed0af6f326",
     "compiler": "clang",
     "header_record_layout_matrix_contract_sha256": "e7fc69edb51a58bfe817812a5aa8f482915c47fdac79027be109bc05b9aeb7b8",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
@@ -143645,7 +143645,7 @@
           "tag": "struct"
         },
         {
-          "alias": "fpos_t",
+          "alias": null,
           "alignment": 8,
           "applicability": "applicable",
           "fields": [
@@ -143671,26 +143671,22 @@
               "type": "double"
             }
           ],
-          "key": "union-typedef:fpos_t",
-          "name": null,
+          "key": "union:_G_fpos64_t",
+          "name": "_G_fpos64_t",
           "size": 16,
           "tag": "union"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "union-typedef:fpos_t"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "union:_G_fpos64_t"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "stdio.h",
       "profile": "c11-gnu",
@@ -143827,7 +143823,7 @@
           "tag": "struct"
         },
         {
-          "alias": "fpos_t",
+          "alias": null,
           "alignment": 8,
           "applicability": "applicable",
           "fields": [
@@ -143853,26 +143849,22 @@
               "type": "double"
             }
           ],
-          "key": "union-typedef:fpos_t",
-          "name": null,
+          "key": "union:_G_fpos64_t",
+          "name": "_G_fpos64_t",
           "size": 16,
           "tag": "union"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "union-typedef:fpos_t"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "union:_G_fpos64_t"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "stdio.h",
       "profile": "cxx17-gnu",
@@ -143970,7 +143962,7 @@
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
         {
-          "alias": "fpos_t",
+          "alias": null,
           "alignment": 8,
           "applicability": "applicable",
           "fields": [
@@ -143996,26 +143988,22 @@
               "type": "double"
             }
           ],
-          "key": "union-typedef:fpos_t",
-          "name": null,
+          "key": "union:_G_fpos64_t",
+          "name": "_G_fpos64_t",
           "size": 16,
           "tag": "union"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "union-typedef:fpos_t"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 0,
-        "reference_only": [
-          "union:_G_fpos64_t"
-        ],
-        "reference_only_count": 1
+        "matched_count": 1,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "stdio.h",
       "profile": "c11-strict",
@@ -144074,7 +144062,7 @@
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
         {
-          "alias": "fpos_t",
+          "alias": null,
           "alignment": 8,
           "applicability": "applicable",
           "fields": [
@@ -144100,26 +144088,22 @@
               "type": "double"
             }
           ],
-          "key": "union-typedef:fpos_t",
-          "name": null,
+          "key": "union:_G_fpos64_t",
+          "name": "_G_fpos64_t",
           "size": 16,
           "tag": "union"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "union-typedef:fpos_t"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 0,
-        "reference_only": [
-          "union:_G_fpos64_t"
-        ],
-        "reference_only_count": 1
+        "matched_count": 1,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "stdio.h",
       "profile": "c11-posix-2008",
@@ -144178,7 +144162,7 @@
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
         {
-          "alias": "fpos_t",
+          "alias": null,
           "alignment": 8,
           "applicability": "applicable",
           "fields": [
@@ -144204,26 +144188,22 @@
               "type": "double"
             }
           ],
-          "key": "union-typedef:fpos_t",
-          "name": null,
+          "key": "union:_G_fpos64_t",
+          "name": "_G_fpos64_t",
           "size": 16,
           "tag": "union"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "union-typedef:fpos_t"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 0,
-        "reference_only": [
-          "union:_G_fpos64_t"
-        ],
-        "reference_only_count": 1
+        "matched_count": 1,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "stdio.h",
       "profile": "c11-xopen-700",
@@ -144282,7 +144262,7 @@
       "candidate_detail": "compiler AST plus -fdump-record-layouts-simple",
       "candidate_records": [
         {
-          "alias": "fpos_t",
+          "alias": null,
           "alignment": 8,
           "applicability": "applicable",
           "fields": [
@@ -144308,26 +144288,22 @@
               "type": "double"
             }
           ],
-          "key": "union-typedef:fpos_t",
-          "name": null,
+          "key": "union:_G_fpos64_t",
+          "name": "_G_fpos64_t",
           "size": 16,
           "tag": "union"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "union-typedef:fpos_t"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 0,
-        "reference_only": [
-          "union:_G_fpos64_t"
-        ],
-        "reference_only_count": 1
+        "matched_count": 1,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "stdio.h",
       "profile": "c11-bsd",
@@ -144425,7 +144401,7 @@
           "tag": "struct"
         },
         {
-          "alias": "fpos_t",
+          "alias": null,
           "alignment": 8,
           "applicability": "applicable",
           "fields": [
@@ -144451,26 +144427,22 @@
               "type": "double"
             }
           ],
-          "key": "union-typedef:fpos_t",
-          "name": null,
+          "key": "union:_G_fpos64_t",
+          "name": "_G_fpos64_t",
           "size": 16,
           "tag": "union"
         }
       ],
       "candidate_status": "ok",
-      "comparison": "mismatch",
+      "comparison": "matched",
       "difference": {
-        "candidate_only": [
-          "union-typedef:fpos_t"
-        ],
-        "candidate_only_count": 1,
+        "candidate_only": [],
+        "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 1,
-        "reference_only": [
-          "union:_G_fpos64_t"
-        ],
-        "reference_only_count": 1
+        "matched_count": 2,
+        "reference_only": [],
+        "reference_only_count": 0
       },
       "header": "stdio.h",
       "profile": "cxx17-strict",
@@ -253334,13 +253306,12 @@
     "candidate_record_count": 2615,
     "comparison_counts": {
       "candidate-only-pending-c-abi-policy": 56,
-      "matched": 1273,
-      "mismatch": 7,
+      "matched": 1280,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "7 comparable header/profile rows have record-byte-layout differences",
+      "0 comparable header/profile rows have record-byte-layout differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "56 project-only header/profile rows remain pending C ABI policy",
       "record-byte-layouts remain partial until every applicable named record and field is matched",

@@ -408,23 +408,23 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 719,
-        "mismatch": 561,
+        "matched": 887,
+        "mismatch": 393,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "561 comparable header/profile rows have prototype or named declaration-form differences",
+        "393 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 4899,
-        "incompatible_count": 2080,
-        "reference_only_count": 1709,
+        "candidate_only_count": 4518,
+        "incompatible_count": 1918,
+        "reference_only_count": 884,
     },
-    "mismatch_row_count": 561,
+    "mismatch_row_count": 393,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -434,22 +434,21 @@ EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_COMMAND = (
 )
 EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_SUMMARY = {
     "candidate_field_categories": {
-        "bit-field": 343,
+        "bit-field": 329,
         "flexible-tail": 31,
         "non-addressable-field": 10,
     },
     "candidate_public_header_count": 191,
-    "candidate_record_categories": {"anonymous-only": 446, "incomplete": 88},
-    "candidate_record_count": 2549,
+    "candidate_record_categories": {"anonymous-only": 452, "incomplete": 118},
+    "candidate_record_count": 2615,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 1192,
-        "mismatch": 88,
+        "matched": 1280,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "88 comparable header/profile rows have record-byte-layout differences",
+        "0 comparable header/profile rows have record-byte-layout differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record-byte-layouts remain partial until every applicable named record and field is matched",
@@ -462,8 +461,8 @@ EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_SUMMARY = {
         "flexible-tail": 31,
         "non-addressable-field": 10,
     },
-    "reference_record_categories": {"anonymous-only": 436, "incomplete": 89},
-    "reference_record_count": 2186,
+    "reference_record_categories": {"anonymous-only": 438, "incomplete": 115},
+    "reference_record_count": 2562,
     "row_count": 1337,
 }
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_COMMAND = (
@@ -476,30 +475,30 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 4899,
+    "candidate_only_identity_count": 4518,
     "candidate_only_identity_kind_counts": {
         "function": 133,
-        "macro": 4667,
+        "macro": 4305,
         "record": 28,
-        "typedef": 71,
+        "typedef": 52,
     },
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 803,
-        "mismatch": 477,
+        "matched": 984,
+        "mismatch": 296,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "477 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "296 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 293655,
-    "mismatch_row_count": 477,
+    "matched_identity_count": 294480,
+    "mismatch_row_count": 296,
     "oracle_not_applicable_candidate_fact_count": 104,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -508,24 +507,22 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 1709,
+    "reference_only_identity_count": 884,
     "reference_only_identity_kind_counts": {
-        "function": 29,
-        "macro": 1614,
-        "record": 29,
-        "typedef": 28,
-        "variable": 9,
+        "function": 8,
+        "macro": 862,
+        "typedef": 14,
     },
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 719,
-        "mismatch": 561,
+        "matched": 887,
+        "mismatch": 393,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 2080,
-    "source_form_difference_row_count": 404,
-    "source_form_only_difference_row_count": 84,
+    "source_form_difference_count": 1918,
+    "source_form_difference_row_count": 302,
+    "source_form_only_difference_row_count": 97,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -2768,23 +2765,23 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 224,
+            "candidate_only_callable_count": 217,
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1197,
-                "mismatch": 83,
+                "matched": 1235,
+                "mismatch": 45,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "83 comparable pinned header/profile rows have callable visibility differences",
+                "45 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
-            "matched_callable_count": 34639,
-            "mismatch_row_count": 83,
+            "matched_callable_count": 34684,
+            "mismatch_row_count": 45,
             "oracle_not_applicable_candidate_visible_callable_count": 21,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
@@ -2793,7 +2790,7 @@ def require_header_callable_visibility_matrix(
             "project_only_callable_count": 407,
             "project_only_header_count": 8,
             "project_only_row_count": 56,
-            "reference_only_callable_count": 53,
+            "reference_only_callable_count": 8,
             "row_count": 1337,
         },
         "callable visibility matrix finite baseline drifted",
@@ -6625,13 +6622,13 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "477 current comparable declaration-or-macro identity mismatch rows",
-        "803 matched identity rows",
+        "296 current comparable declaration-or-macro identity mismatch rows",
+        "984 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "2,080 same-identity source-form differences across 404 rows",
-        "84 form-only rows",
+        "1,918 same-identity source-form differences across 302 rows",
+        "97 form-only rows",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"declaration/macro visibility artifact description omits {phrase}")
@@ -6699,7 +6696,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "83 current comparable callable name/class mismatch rows",
+        "45 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6996,7 +6993,7 @@ def require_all_header_prototype_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "561 current comparable prototype or named source-form mismatch rows",
+        "393 current comparable prototype or named source-form mismatch rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",
@@ -7057,8 +7054,8 @@ def require_all_header_record_byte_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "88 current comparable record-byte-layout mismatch rows",
-        "1,192 matched rows",
+        "zero current comparable record-byte-layout mismatch rows",
+        "1,280 matched rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "complete named record sizes, alignments, and named field offsets",
@@ -7092,7 +7089,7 @@ def require_all_header_record_byte_layout_artifact(
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "red byte-layout differences" in scope
+        and "zero comparable byte-layout differences" in scope
         and "not archive, runtime, promotion, or public-support evidence" in scope,
         "record byte-layout artifact evidence scope drifted",
     )

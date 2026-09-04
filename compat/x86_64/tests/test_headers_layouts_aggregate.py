@@ -52,9 +52,10 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         self.assertEqual(report["linkage_owner_count"], 3)
         self.assertIn("declaration-macro-identity", report["blockers"])
         self.assertIn("callable-provider-closure", report["blockers"])
+        self.assertIn("record-byte-layouts", report["blockers"])
         blocker_counts = report["blocker_counts"]
         assert isinstance(blocker_counts, dict)
-        self.assertEqual(blocker_counts["record_byte_layout_mismatch_rows"], 88)
+        self.assertEqual(blocker_counts["record_byte_layout_mismatch_rows"], 0)
         generic_reports = report["generic_reports"]
         assert isinstance(generic_reports, list)
         self.assertIn(

@@ -344,7 +344,12 @@ Layout: <ASTRecordLayout
         self.assertEqual(report["summary"]["row_count"], 1337)
         self.assertEqual(report["summary"]["profile_count"], 7)
         self.assertFalse(report["summary"]["complete"])
-        self.assertIn("mismatch", report["summary"]["comparison_counts"])
+        self.assertNotIn("mismatch", report["summary"]["comparison_counts"])
+        self.assertEqual(report["summary"]["comparison_counts"].get("mismatch", 0), 0)
+        self.assertIn(
+            "0 comparable header/profile rows have record-byte-layout differences",
+            report["summary"]["incomplete_reasons"],
+        )
         self.assertTrue(any("record-byte-layouts" in reason for reason in report["summary"]["incomplete_reasons"]))
         self.assertFalse(report["scope"]["family_promotion"])
         self.assertFalse(report["scope"]["public_support"])

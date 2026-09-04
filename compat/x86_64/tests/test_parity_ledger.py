@@ -3845,14 +3845,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 803,
-                "mismatch": 477,
+                "matched": 984,
+                "mismatch": 296,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 4899, "reference_only": 1709},
+            {"candidate_only": 4518, "reference_only": 884},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3872,8 +3872,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 719,
-                "mismatch": 561,
+                "matched": 887,
+                "mismatch": 393,
                 "oracle-not-applicable": 1,
             },
         )
@@ -3888,8 +3888,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             record_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 1192,
-                "mismatch": 88,
+                "matched": 1280,
                 "oracle-not-applicable": 1,
             },
         )
@@ -5022,13 +5021,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "477 current comparable declaration-or-macro identity mismatch rows",
-            "803 matched identity rows",
+            "296 current comparable declaration-or-macro identity mismatch rows",
+            "984 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "2,080 same-identity source-form differences across 404 rows",
-            "84 form-only rows",
+            "1,918 same-identity source-form differences across 302 rows",
+            "97 form-only rows",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -5065,7 +5064,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "83 current comparable callable name/class mismatch rows",
+            "45 current comparable callable name/class mismatch rows",
             "one current oracle-not-applicable `aio.h` row",
             "56 project-only header/profile rows",
             "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -5105,7 +5104,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "561 current comparable prototype or named source-form mismatch rows",
+            "393 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",
@@ -5161,8 +5160,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "88 current comparable record-byte-layout mismatch rows",
-            "1,192 matched rows",
+            "zero current comparable record-byte-layout mismatch rows",
+            "1,280 matched rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "complete named record sizes, alignments, and named field offsets",
