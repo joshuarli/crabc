@@ -47,6 +47,19 @@ Use `./scripts/dev-x86_64.sh --help` and the owning ledger's evidence commands
 for focused gates. The dispatcher owns the command roster; this guide does not
 duplicate it or define alternate host paths.
 
+For Python-only iteration, `python3 -B scripts/test_python.py --directory
+compat/x86_64/tests --jobs 4` runs isolated modules with immediate failure
+diagnostics and per-module logs under `.work/python-test-runs/`. Select the
+nearest module while developing; reserve the full campaign for integration.
+
+The installed static sysroot gate runs independent consumers with four workers
+by default. Set `CRABC_X86_64_OWNED_STATIC_CONSUMER_WORKERS=1` for a serial replay
+(valid range: 1–8). The extra same-input serial comparison is disabled unless
+`CRABC_X86_64_OWNED_STATIC_CONSUMER_BENCHMARK=1` is set with four workers. Cold
+producer reproducibility checks remain mandatory. Failed jobs retain private
+logs and artifacts; timed-out or interrupted jobs have their process groups
+terminated and reaped.
+
 ## Boundary and caveats
 
 The campaign covers Linux 5.10-or-newer, native x86-64 little-endian execution,
@@ -117,7 +130,7 @@ gates.
 - compat/*/README.md, docs/design/, and docs/evidence/: harness mechanics,
   architecture, and durable rationale.
 - COMPATIBILITY.md: generated dashboard; never edit by hand.
-- .work/x86_64/: all mutable worktrees, scratch, source extracts, caches,
+- .work/: all mutable worktrees, scratch, source extracts, caches,
   sysroots, and generated report backing storage. Do not create new external
   scratch or target state.
 

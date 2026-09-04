@@ -39,12 +39,13 @@ planning checkpoints, not runtime or allocator completion.
    that crossed allocator ownership. Native M1 passes all six bounded
    components and source contracts at clean revision `0daef148`; the exact
    report and next M2 work are recorded in `native-mimalloc.md` §26.
-   Native M2 independently qualifies PageMap at `b32c4183`; its other seven
-   components remain incomplete, with bitmap and VM work active.
+   Native M2 independently qualifies PageMap at `b32c4183`. Scalar bitmap
+   implementation and native differential evidence are committed; aggregate
+   bitmap qualification and the remaining memory-substrate components are open.
 3. Integration: agree on bootstrap, errno, TLS/TCB, pthread exit, fork, and
    loader ownership. Continue independent runtime work with the accepted C
    backend; requalify installed x86 products after native allocator promotion.
-   Installed static/static-PIE allocator, TLS, and POSIX consumers pass, including
+   Installed static/static-PIE allocator, TLS, POSIX, and stdio consumers pass, including
    extracted-package and two-clean-build checks. Complete runtime composition
    and allocator lifecycle remain open; this is not static-product completion.
 4. Recovery: inspect existing worktrees before duplicating work. The legacy
@@ -59,11 +60,12 @@ native x86 header gates, backend-selection compile probes, and a passing
 frozen-baseline validator. It did not run AArch64 qualification or establish
 full x86 parity.
 
-Runner-contract reconciliation reduced the inherited 59 failures to one
-stale-header-evidence failure (301 of 302 tests pass). Header evidence and
-its validator tests are being reconciled; this is not yet a green campaign
-baseline. Rerun relevant checks against current committed source; historical
-passes are not current qualification.
+Runner source-contract repairs and per-validation artifact reuse are committed.
+The owned aggregate feature's planned provider accounting is being reconciled;
+the full current campaign baseline is not yet green. Installed-consumer jobs
+now use bounded parallel workers with private evidence and process cleanup;
+serial benchmarking is opt-in. Rerun affected checks against committed source;
+historical passes are not current qualification.
 
 The recorded AArch64 owned CRT/sysroot and Lua deliverables are complete at
 their documented evidence boundary. Full target-runtime Rust purity remains
