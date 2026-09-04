@@ -39,9 +39,8 @@ planning checkpoints, not runtime or allocator completion.
    that crossed allocator ownership. Native M1 passes all six bounded
    components and source contracts at clean revision `0daef148`; the exact
    report and next M2 work are recorded in `native-mimalloc.md` §26.
-   Native M2 independently qualifies PageMap at `b32c4183`. Scalar bitmap
-   implementation and native differential evidence are committed; aggregate
-   bitmap qualification and the remaining memory-substrate components are open.
+   Native M2 qualifies PageMap and scalar bitmaps at `62d6435c`; the other six
+   memory-substrate components remain partial.
 3. Integration: agree on bootstrap, errno, TLS/TCB, pthread exit, fork, and
    loader ownership. Continue independent runtime work with the accepted C
    backend; requalify installed x86 products after native allocator promotion.
@@ -61,7 +60,7 @@ frozen-baseline validator. It did not run AArch64 qualification or establish
 full x86 parity.
 
 Runner source-contract repairs and per-validation artifact reuse are committed.
-The owned aggregate feature's planned provider accounting is being reconciled;
+The owned aggregate feature's planned provider accounting is reconciled;
 the full current campaign baseline is not yet green. Installed-consumer jobs
 now use bounded parallel workers with private evidence and process cleanup;
 serial benchmarking is opt-in. Rerun affected checks against committed source;

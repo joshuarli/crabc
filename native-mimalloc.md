@@ -2446,13 +2446,16 @@ Native M1 is complete at clean, unchanged revision
 All six bounded components, nine source-definition anchors, and target-local
 source contracts pass. Whole-engine source/API coverage remains incomplete.
 
-Native M2 qualifies PageMap independently at clean, unchanged revision
-`b32c41832329e8cb47cd514fc8204cfface84628`. Run
+Native M2 qualifies PageMap and scalar bitmaps at clean, unchanged revision
+`62d6435c772e9ddc144de302cc54ad78cea720e9`. Run
 `./compat/allocator/run-x86_64.sh allocator-m2`; it intentionally exits 3
-because the other seven components remain partial. The report is
+because VM, metadata, arenas, initialization, fault injection, and allocator
+recursion remain partial. The report is
 `.work/allocator-x86_64/reports/allocator/x86_64/m2-memory-substrate-latest.json`.
-PageMap's eleven checks, bounded source anchors, native differentials, and
-failure ownership pass; this does not qualify other substrate components.
+PageMap's eleven checks and the bitmap's 41 tests and 132,184 C/Rust value
+comparisons pass, including all thirteen bounded source anchors. The two
+components reuse one native build; bitmap's two logical evidence records share
+one execution. This does not qualify the remaining substrate components.
 
 The next integrated wave must:
 
@@ -2473,8 +2476,8 @@ The next integrated wave must:
    contract is genuinely identical.
 4. Close all eight x86 M2 components, using fail-closed gates
    and complete pinned-source behavior/ownership/failure matrices. Audit the
-   inherited partial AArch64 components for x86 applicability; PageMap now has
-   separate native x86 qualification. A selected
+   inherited partial AArch64 components for x86 applicability; PageMap and
+   bitmaps now have separate native x86 qualification. A selected
    trace, check count, or empty placeholder contract cannot close a component.
 5. Proceed through M3–M11 in dependency order, without waiving correctness,
    lifecycle, ABI, upstream API/mode parity, performance, promotion, or cleanup.
