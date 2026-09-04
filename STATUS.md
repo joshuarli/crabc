@@ -32,17 +32,17 @@ planning checkpoints, not runtime or allocator completion.
    generated evidence, and choose dependency-ready family/product blockers
    from the campaign contracts. Do not restart the one-export-at-a-time queue.
 2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
-   then establish native x86 M0/M1/M2 qualification. Imported
+   then complete native x86 M2 qualification. Imported
    AArch64 milestone passes do not count as x86 passes.
    Native unit tests pass with target-qualified PageMap address-bit controls.
    The native quick gate passes after correcting legacy fixture allocations
-   that crossed allocator ownership. Native M1 behavioral checks pass on a
-   worker revision, but source-classification requirements still need to be
-   restored in its target-qualified gate before claiming M1 completion.
+   that crossed allocator ownership. Native M1 passes all six bounded
+   components and source contracts at clean revision `0daef148`; the exact
+   report and next M2 work are recorded in `native-mimalloc.md` §26.
 3. Integration: agree on bootstrap, errno, TLS/TCB, pthread exit, fork, and
    loader ownership. Continue independent runtime work with the accepted C
    backend; requalify installed x86 products after native allocator promotion.
-   Installed static/static-PIE allocator and TLS consumers now pass, including
+   Installed static/static-PIE allocator, TLS, and POSIX consumers pass, including
    extracted-package and two-clean-build checks. Complete runtime composition
    and allocator lifecycle remain open; this is not static-product completion.
 4. Recovery: inspect existing worktrees before duplicating work. The legacy
@@ -57,12 +57,11 @@ native x86 header gates, backend-selection compile probes, and a passing
 frozen-baseline validator. It did not run AArch64 qualification or establish
 full x86 parity.
 
-The broad x86 runner had the same 59 failures before and after integration
-(302 tests; comparison records in `.work/runner-before-merge.json` and
-`.work/runner-current.json`). The parity validator also rejected stale generated
-header-callable disposition evidence. These remain work to reconcile, not
-waived gates or a green campaign baseline. Rerun the relevant checks against
-the current committed source; historical passes are not current qualification.
+Runner-contract reconciliation reduced the inherited 59 failures to one
+stale-header-evidence failure (301 of 302 tests pass). Header evidence and
+its validator tests are being reconciled; this is not yet a green campaign
+baseline. Rerun relevant checks against current committed source; historical
+passes are not current qualification.
 
 The recorded AArch64 owned CRT/sysroot and Lua deliverables are complete at
 their documented evidence boundary. Full target-runtime Rust purity remains

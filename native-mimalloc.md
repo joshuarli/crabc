@@ -2439,6 +2439,13 @@ checkout. Neither commit closes a native x86 allocator milestone. The
 existing x86 source/oracle evidence is a starting point, not transferred
 AArch64 M0/M1/M2 qualification.
 
+Native M1 is complete at clean, unchanged revision
+`0daef148bd20dc2bef2ac9dc34af4f3dd0e99d7a`: run
+`./compat/allocator/run-x86_64.sh allocator-m1`. Its report is
+`.work/allocator-x86_64/reports/allocator/x86_64/m1-foundations-latest.json`.
+All six bounded components, nine source-definition anchors, and target-local
+source contracts pass. Whole-engine source/API coverage remains incomplete.
+
 The next integrated wave must:
 
 1. Preserve the executable containment contract in
@@ -2456,7 +2463,7 @@ The next integrated wave must:
    exact-revision records; do not relabel them or their completed components
    as x86 evidence. Share neutral definitions only where their target
    contract is genuinely identical.
-4. Close x86 M1, then all eight x86 M2 components, using fail-closed gates
+4. Close all eight x86 M2 components, using fail-closed gates
    and complete pinned-source behavior/ownership/failure matrices. Audit the
    inherited seven partial AArch64 components and PageMap for x86 applicability;
    even the preserved AArch64 PageMap completion is not an x86 pass. A selected
