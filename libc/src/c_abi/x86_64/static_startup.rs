@@ -248,6 +248,11 @@ pub unsafe extern "C" fn __init_ssp(_entropy: *mut c_void) {}
 /// The private fixture does not call its inert fallback. The owned-static
 /// aggregate supplies a strong hook and invokes it after ordinary-exit
 /// callbacks, flushing permanent and registry-owned dynamic streams.
+///
+/// # Safety
+/// The caller must be the ordinary-exit owner after callbacks have returned,
+/// with no concurrent process finalization or stream destruction. All live
+/// streams and caller-supplied setvbuf storage must remain valid until return.
 #[inline(never)]
 #[no_mangle]
 #[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]

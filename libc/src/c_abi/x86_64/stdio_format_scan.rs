@@ -1079,13 +1079,14 @@ pub unsafe extern "C" fn vprintf(
     unsafe { format_to_stream(stream, format, &mut args) }
 }
 
-/// Format to one of the three permanent standard streams.
+/// Format to a stream admitted by the selected stdio engine.
 #[no_mangle]
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 /// # Safety
 ///
-/// `stream` must be exactly one of this module's permanent `stdin`, `stdout`,
-/// or `stderr` objects (no fabricated or general `FILE` value); `format` must
+/// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
+/// otherwise it must be exactly permanent `stdin`, `stdout`, or `stderr`.
+/// `format` must
 /// be readable through NUL and variadic arguments must match the grammar.
 pub unsafe extern "C" fn fprintf(
     stream: *mut StandardStream,
@@ -1099,7 +1100,8 @@ pub unsafe extern "C" fn fprintf(
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 /// # Safety
 ///
-/// `stream` must be exactly one of the permanent standard-stream objects;
+/// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
+/// otherwise it must be exactly one of the permanent standard-stream objects.
 /// `format` must be NUL-terminated and `args` must contain the required
 /// promoted values. The `VaList` is forwarded directly and consumed in place.
 pub unsafe extern "C" fn vfprintf(
@@ -1934,8 +1936,9 @@ pub unsafe extern "C" fn vscanf(
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 /// # Safety
 ///
-/// `stream` must be exactly permanent `stdin`, `stdout`, or `stderr`, never a
-/// fabricated/general `FILE`; `format` must be NUL-terminated and each scan
+/// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
+/// otherwise it must be exactly permanent `stdin`, `stdout`, or `stderr`.
+/// `format` must be NUL-terminated and each scan
 /// destination must be valid for its selected conversion.
 pub unsafe extern "C" fn fscanf(
     stream: *mut StandardStream,
@@ -1949,7 +1952,8 @@ pub unsafe extern "C" fn fscanf(
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 /// # Safety
 ///
-/// `stream` must be exactly one of the permanent standard-stream objects;
+/// With `x86-owned-static-runtime`, `stream` must be a live owned FILE;
+/// otherwise it must be exactly one of the permanent standard-stream objects.
 /// `format` must be NUL-terminated and every forwarded scan destination must
 /// be non-null, writable, and correctly typed. The `VaList` is consumed
 /// directly without reconstruction.

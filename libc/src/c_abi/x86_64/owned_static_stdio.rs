@@ -100,10 +100,13 @@ unsafe fn initialize_buffer(stream: *mut StandardStream) {
             (*stream).read_position = buffer;
             (*stream).read_end = buffer;
             (*stream).write_position = buffer;
-            if stream == ptr::addr_of_mut!(STDOUT_STREAM) {
-                let mut termios = [0u8; 64];
-                (*stream).line_buffered = raw_syscall::syscall3(16, 1, 0x5401,
-                    termios.as_mut_ptr() as i64) == 0;
+            // musl __fdopen activates line buffering for every writable
+            // terminal via TIOCGWINSZ; stderr remains unbuffered.
+            if (*stream).flags & F_NOWR == 0 && (*stream).capacity != 0 {
+                let mut window_size = [0u16; 4];
+                (*stream).line_buffered = raw_syscall::syscall3(16,
+                    (*stream).file_descriptor as i64, 0x5413,
+                    window_size.as_mut_ptr() as i64) == 0;
             }
         }
     }
@@ -315,6 +318,9 @@ unsafe fn open_mode(mode: *const c_char) -> Option<(c_int, u32)> {
 
 /// # Safety
 /// `mode` is NUL terminated; `fd` is an open descriptor transferred on success.
+/// Its access mode must permit the requested stream operations. As an
+/// intentional diagnostic strengthening over musl __fdopen, invalid or
+/// incompatible descriptors are rejected before ownership transfer.
 #[no_mangle]
 pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut StandardStream {
     unsafe {
@@ -336,6 +342,9 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut Standard
                 free(stream.cast()); return ptr::null_mut();
             }
         }
+        // Unpublished dynamic state needs no lock. Establish terminal mode
+        // at fdopen time, as musl does, before callers can replace the fd.
+        initialize_buffer(stream);
         let _list = ListGuard::acquire();
         (*stream).next = OPEN_STREAMS;
         if !OPEN_STREAMS.is_null() { (*OPEN_STREAMS).previous = stream; }
@@ -934,8 +943,7 @@ pub unsafe extern "C" fn fgets(
 }
 
 /// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
+/// `stream` must be a live FILE and `source` a readable NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn fputs(
     source: *const c_char,
@@ -965,8 +973,7 @@ pub unsafe extern "C" fn fputs(
 }
 
 /// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
+/// `source` must be a readable NUL-terminated string and stdout must be open.
 #[no_mangle]
 pub unsafe extern "C" fn puts(source: *const c_char) -> c_int {
     let _guard = unsafe { StreamGuard::acquire(ptr::addr_of_mut!(STDOUT_STREAM)) };
@@ -974,8 +981,6 @@ pub unsafe extern "C" fn puts(source: *const c_char) -> c_int {
         return EOF;
     }
     if unsafe { write_byte(ptr::addr_of_mut!(STDOUT_STREAM), b'\n') } == EOF {
-        EOF
-    } else if unsafe { flush_output(ptr::addr_of_mut!(STDOUT_STREAM)) } == EOF {
         EOF
     } else {
         0
@@ -1143,8 +1148,9 @@ pub unsafe extern "C" fn rewind(stream: *mut StandardStream) {
 }
 
 /// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
+/// `stream` must be live. `position` must point to writable storage for one
+/// installed x86 `fpos_t` object (16 bytes, aligned to 8 bytes). The first
+/// eight bytes hold the opaque saved offset; callers must not interpret it.
 #[no_mangle]
 pub unsafe extern "C" fn fgetpos(
     stream: *mut StandardStream,
@@ -1164,8 +1170,9 @@ pub unsafe extern "C" fn fgetpos(
 }
 
 /// # Safety
-/// Stream arguments must be live FILE pointers; string and byte ranges must
-/// be valid for the size specified by this C operation.
+/// `stream` must be live. `position` must point to a readable installed x86
+/// `fpos_t` object (16 bytes, aligned to 8 bytes) previously populated by a
+/// successful fgetpos for this stream and not modified since that call.
 #[no_mangle]
 pub unsafe extern "C" fn fsetpos(
     stream: *mut StandardStream,
