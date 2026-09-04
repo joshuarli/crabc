@@ -105,7 +105,16 @@ int crabc_test_posix_memalign(void **out, size_t alignment, size_t size);
  * operations only for the existing libc fixture. They add no ELF symbols and
  * do not claim a public crabc-libc allocator ABI.
  */
-enum { CRABC_TEST_LIBC_MALLOC_ALIGNMENT = 16 };
+enum {
+  CRABC_TEST_LIBC_MALLOC_ALIGNMENT = 16,
+  /*
+   * The checked fixture asserts the native Linux baseline's 4 KiB page
+   * alignment for valloc. Keep that source-only assertion in this private
+   * adapter instead of allowing a system valloc pointer to cross its
+   * prefixed free boundary.
+   */
+  CRABC_TEST_LIBC_PAGE_ALIGNMENT = 4096
+};
 
 /*
  * The Rust adapter's `usize` parameters and the fixture's standard C
@@ -148,6 +157,14 @@ static inline void *crabc_test_libc_reallocarray(void *p, size_t count, size_t s
 #define aligned_alloc(alignment, size) crabc_test_malloc_aligned((size), (alignment))
 #define posix_memalign(out, alignment, size) \
   crabc_test_posix_memalign((out), (alignment), (size))
+/*
+ * allocator_test.c also exercises the legacy alignment spellings. They must
+ * follow the same private adapter route as free: forwarding only the later
+ * free would hand an unrelated system allocation to the engine's fail-stop
+ * invalid-pointer boundary.
+ */
+#define memalign(alignment, size) crabc_test_malloc_aligned((size), (alignment))
+#define valloc(size) crabc_test_malloc_aligned((size), CRABC_TEST_LIBC_PAGE_ALIGNMENT)
 #endif
 
 #endif

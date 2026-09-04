@@ -1973,6 +1973,25 @@ class ContractTests(unittest.TestCase):
             },
         )
 
+    def test_private_allocator_fixture_remaps_legacy_alignment_allocators(self) -> None:
+        """No system allocation may cross the prefixed adapter's `free` boundary."""
+
+        fixture = (RUNNER.ROOT / "tests/fixtures/allocator_test.c").read_text(encoding="utf-8")
+        header = RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
+
+        self.assertIn("memalign(64, 19)", fixture)
+        self.assertIn("valloc(7)", fixture)
+        self.assertRegex(
+            header,
+            r"#define\s+memalign\(alignment, size\)\s+"
+            r"crabc_test_malloc_aligned\(\(size\), \(alignment\)\)",
+        )
+        self.assertRegex(
+            header,
+            r"#define\s+valloc\(size\)\s+"
+            r"crabc_test_malloc_aligned\(\(size\), CRABC_TEST_LIBC_PAGE_ALIGNMENT\)",
+        )
+
     def test_adapted_stress_fixture_contract_is_exact_and_reviewed(self) -> None:
         contract = RUNNER.read_json(RUNNER.ADAPTED_STRESS_TEST_CONTRACT)
         header = RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
