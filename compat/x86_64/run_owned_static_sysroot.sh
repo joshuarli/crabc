@@ -2,10 +2,10 @@
 # Private installed Linux/x86-64 static sysroot and pthread/TLS consumer gate.
 #
 # Two clean builds must produce byte-identical regular-file trees. The actual
-# consumer first proves header isolation, then compiles, links, and executes
-# the existing initialized/TBSS/high-alignment TLS lifecycle through the
+# consumer setup first proves header isolation, then each independent TLS,
+# allocator, POSIX, and stdio job compiles, links, and executes through the
 # installed sealed driver in both ET_EXEC and static-PIE modes. It also packs
-# and safely extracts the regular-file tree before running the same smoke.
+# and safely extracts the regular-file tree before running the same matrix.
 # This remains a narrow non-promoting product slice: no loader, libc.so,
 # dynamic mode, family completion, x86 promotion, or public-support claim.
 set -euo pipefail
@@ -20,6 +20,10 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
 readonly PACKAGE="$ROOT_DIR/compat/x86_64/owned_static_sysroot_package.py"
+readonly CONSUMER_MATRIX="$ROOT_DIR/compat/x86_64/owned_static_consumer_matrix.py"
+readonly CONSUMER_MATRIX_DEFAULT_WORKERS=4
+readonly CONSUMER_MATRIX_MAX_WORKERS=8
+readonly CONSUMER_MATRIX_TIMEOUT_SECONDS=300
 readonly ELF64_PROGRAM_HEADER_SIZE=56
 readonly ELF64_PROGRAM_HEADER_COUNT_OFFSET=56
 readonly ELF64_PROGRAM_HEADER_OFFSET=32
@@ -54,6 +58,68 @@ require_native_linux_x86_64() {
         x86_64|amd64) ;;
         *) fail "refuses emulation on $(uname -m)" ;;
     esac
+}
+
+selected_consumer_workers() {
+    local workers="${CRABC_X86_64_OWNED_STATIC_CONSUMER_WORKERS:-$CONSUMER_MATRIX_DEFAULT_WORKERS}"
+
+    # `1` intentionally remains available when a developer needs a serial
+    # replay. The default four-worker run additionally compares itself with a
+    # serial pass over the same already-built installed trees; validating
+    # before the cold producer work avoids spending two builds on a malformed
+    # setting.
+    case "$workers" in
+        [1-8]) printf '%s\n' "$workers" ;;
+        *) fail "CRABC_X86_64_OWNED_STATIC_CONSUMER_WORKERS must be an integer from 1 through $CONSUMER_MATRIX_MAX_WORKERS" ;;
+    esac
+}
+
+owned_work_dir_is_safe() {
+    local candidate="$1"
+    local physical
+
+    case "$candidate" in
+        "$TMPDIR"/crabc-x86-64-owned-static-sysroot.*) ;;
+        *) return 1 ;;
+    esac
+    physical="$(cd -P "$candidate" 2>/dev/null && pwd)" || return 1
+    [ "$physical" = "$candidate" ]
+}
+
+finish_owned_work_dir() {
+    local status=$?
+
+    trap - EXIT
+    if [ "$status" -eq 0 ]; then
+        if owned_work_dir_is_safe "$work_dir"; then
+            rm -rf -- "$work_dir"
+        else
+            printf 'ERROR: x86 owned static sysroot: refusing unsafe successful-work cleanup: %s\n' \
+                "$work_dir" >&2
+            status=1
+        fi
+    else
+        printf 'ERROR: x86 owned static sysroot: retained failure artifacts: %s\n' \
+            "$work_dir" >&2
+    fi
+    exit "$status"
+}
+
+consumer_matrix_pid=''
+
+interrupt_consumer_matrix() {
+    local signal_name="$1"
+    local exit_status="$2"
+
+    trap - INT TERM
+    if [ -n "$consumer_matrix_pid" ]; then
+        kill -s "$signal_name" "$consumer_matrix_pid" >/dev/null 2>&1 || true
+        wait "$consumer_matrix_pid" || true
+        consumer_matrix_pid=''
+    fi
+    # The helper owns and reaps every child process group before it returns;
+    # retaining this run's artifacts is then safe for failure triage.
+    exit "$exit_status"
 }
 
 write_tree_manifest() {
@@ -531,6 +597,13 @@ run_static_mode() {
     local probe=libc_crt_static_tls_probe.c
     local expected_output=PIMBCAF
     local minimum_tls_alignment=4096
+
+    # The malformed-PT_TLS executable is deliberately rejected by the owned
+    # startup code. A rejected image may fault before it can install any
+    # application policy, so do not let a concurrent consumer emit an
+    # uncontrolled `core` file into the inherited checkout CWD.
+    ulimit -c 0
+
     case "$consumer_kind" in
         tls) ;;
         allocator)
@@ -612,6 +685,148 @@ assert_missing_builtins_rejected() {
         fail "missing-builtins link did not fail at the selected helper boundary"
 }
 
+write_consumer_matrix_manifest() {
+    local destination="$1"
+    local primary="$2"
+    local extracted="$3"
+    local primary_consumer="$4"
+    local extracted_consumer="$5"
+
+    python3 - "$destination" "$ROOT_DIR/compat/x86_64/run_owned_static_sysroot.sh" \
+        "$primary" "$extracted" "$primary_consumer" "$extracted_consumer" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+
+destination = Path(sys.argv[1])
+runner = sys.argv[2]
+primary, extracted, primary_consumer, extracted_consumer = map(Path, sys.argv[3:])
+jobs: list[dict[str, object]] = []
+consumer_specs = (
+    ("tls", "static-et-exec", "-static", "ET_EXEC", "et-exec"),
+    ("tls", "static-pie", "-static-pie", "static PIE", "static-pie"),
+    ("allocator", "allocator-et-exec", "-static", "allocator ET_EXEC", "et-exec"),
+    ("allocator", "allocator-pie", "-static-pie", "allocator static PIE", "static-pie"),
+    ("posix", "posix-et-exec", "-static", "POSIX ET_EXEC", "et-exec"),
+    ("posix", "posix-pie", "-static-pie", "POSIX static PIE", "static-pie"),
+    ("stdio", "stdio-et-exec", "-static", "stdio ET_EXEC", "et-exec"),
+    ("stdio", "stdio-pie", "-static-pie", "stdio static PIE", "static-pie"),
+)
+for tree_name, installed_root, consumer_root in (
+    ("primary", primary, primary_consumer),
+    ("extracted", extracted, extracted_consumer),
+):
+    for kind, mode_root_name, mode, label, mode_name in consumer_specs:
+        jobs.append(
+            {
+                "name": f"{tree_name}-{kind}-{mode_name}",
+                "argv": [
+                    runner,
+                    "--consumer-job",
+                    str(installed_root),
+                    mode,
+                    str(consumer_root / mode_root_name),
+                    label if tree_name == "primary" else f"extracted {label}",
+                    kind,
+                ],
+            }
+        )
+with destination.open("x", encoding="utf-8", newline="\n") as stream:
+    json.dump({"schema": 1, "jobs": jobs}, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
+}
+
+run_consumer_matrix() {
+    local work_root="$1"
+    local primary="$2"
+    local extracted="$3"
+    local primary_consumer="$4"
+    local extracted_consumer="$5"
+    local workers="$6"
+    local matrix_name="${7:-consumer-matrix}"
+    local manifest="$work_root/$matrix_name.json"
+    local logs="$work_root/$matrix_name-logs"
+    local status=0
+
+    write_consumer_matrix_manifest "$manifest" "$primary" "$extracted" \
+        "$primary_consumer" "$extracted_consumer"
+    python3 "$CONSUMER_MATRIX" --state-root "$work_root" --manifest "$manifest" \
+        --log-directory "$logs" --workers "$workers" \
+        --timeout "$CONSUMER_MATRIX_TIMEOUT_SECONDS" &
+    consumer_matrix_pid=$!
+    wait "$consumer_matrix_pid" || status=$?
+    consumer_matrix_pid=''
+    return "$status"
+}
+
+compare_consumer_matrix_runs() {
+    local serial_primary="$1"
+    local serial_extracted="$2"
+    local parallel_primary="$3"
+    local parallel_extracted="$4"
+    local serial_logs="$5"
+    local parallel_logs="$6"
+    local mode_root
+
+    # Every job already checks its observable C result. Candidate hashes make
+    # the serial/parallel comparison an additional determinism check rather
+    # than just a timing report, while both passes reuse the same cold-built
+    # primary and extracted trees.
+    for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie; do
+        cmp "$serial_primary/$mode_root/candidate.sha256" \
+            "$parallel_primary/$mode_root/candidate.sha256" ||
+            fail "${mode_root} primary output differs between serial and parallel consumers"
+        cmp "$serial_extracted/$mode_root/candidate.sha256" \
+            "$parallel_extracted/$mode_root/candidate.sha256" ||
+            fail "${mode_root} extracted output differs between serial and parallel consumers"
+    done
+    python3 - "$serial_logs/summary.json" "$parallel_logs/summary.json" <<'PY'
+import json
+import math
+import sys
+from pathlib import Path
+
+
+serial_path, parallel_path = map(Path, sys.argv[1:])
+
+
+def read_summary(path: Path, expected_workers: int) -> tuple[float, list[str]]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"cannot read consumer timing summary {path}: {error}") from error
+    jobs = value.get("jobs")
+    if (
+        value.get("schema") != 1
+        or value.get("workers") != expected_workers
+        or not isinstance(jobs, list)
+        or len(jobs) != 16
+        or any(not isinstance(job, dict) or job.get("status") != "passed" for job in jobs)
+    ):
+        raise SystemExit(f"consumer timing summary is not a complete passing 16-job run: {path}")
+    elapsed = value.get("elapsed_seconds")
+    if not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed) or elapsed <= 0:
+        raise SystemExit(f"consumer timing summary has no finite elapsed time: {path}")
+    names = [job.get("name") for job in jobs]
+    if any(not isinstance(name, str) for name in names):
+        raise SystemExit(f"consumer timing summary has an invalid job name: {path}")
+    return float(elapsed), names
+
+
+serial_seconds, serial_names = read_summary(serial_path, 1)
+parallel_seconds, parallel_names = read_summary(parallel_path, 4)
+if serial_names != parallel_names:
+    raise SystemExit("serial and parallel consumer summaries name different jobs")
+print(
+    "owned-static consumer timing: "
+    f"workers=1 {serial_seconds:.1f}s; workers=4 {parallel_seconds:.1f}s; "
+    f"same-input speedup={serial_seconds / parallel_seconds:.2f}x"
+)
+PY
+}
+
 assert_mode_evidence_reproducible() {
     local primary_root="$1"
     local primary_mode_root="$2"
@@ -675,13 +890,22 @@ if primary != extracted:
 PY
 }
 
+if [ "${1:-}" = "--consumer-job" ]; then
+    shift
+    [ "$#" -eq 5 ] || fail "usage: $0 --consumer-job <installed-root> <mode> <consumer-root> <label> <kind>"
+    run_static_mode "$@"
+    exit
+fi
+
 [ "$#" -eq 0 ] || fail "usage: $0"
 require_native_linux_x86_64
+consumer_workers="$(selected_consumer_workers)"
 for tool in awk cmp cp dd env find gcc grep nm od python3 readelf rustup sha256sum sort tr xargs; do
     require_tool "$tool"
 done
 [ -f "$BUILDER" ] || fail "missing x86 owned-sysroot builder"
 [ -f "$PACKAGE" ] || fail "missing x86 owned-sysroot package helper"
+[ -f "$CONSUMER_MATRIX" ] || fail "missing owned-static consumer matrix helper"
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 if command -v ld.lld >/dev/null 2>&1; then
     link_editor=ld.lld
@@ -694,10 +918,14 @@ fi
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 python3 -B -m unittest -v \
     scripts.tests.test_build_x86_64_owned_sysroot \
-    compat.x86_64.tests.test_owned_static_sysroot_package
+    compat.x86_64.tests.test_owned_static_sysroot_package \
+    compat.x86_64.tests.test_owned_static_consumer_matrix
 
 work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-owned-static-sysroot.XXXXXX")"
-trap 'rm -rf -- "$work_dir"' EXIT
+chmod 2770 "$work_dir"
+trap finish_owned_work_dir EXIT
+trap 'interrupt_consumer_matrix INT 130' INT
+trap 'interrupt_consumer_matrix TERM 143' TERM
 primary="$work_dir/primary"
 reproduction="$work_dir/reproduction"
 python3 "$BUILDER" --output "$primary" >"$work_dir/primary-build.json"
@@ -817,23 +1045,19 @@ fi
 primary_consumer="$work_dir/primary-consumer"
 extracted_consumer="$work_dir/extracted-consumer"
 mkdir "$primary_consumer" "$extracted_consumer"
-run_static_mode "$primary" -static "$primary_consumer/static-et-exec" "primary ET_EXEC"
+run_consumer_matrix "$work_dir" "$primary" "$extracted" "$primary_consumer" \
+    "$extracted_consumer" "$consumer_workers"
 assert_missing_builtins_rejected "$primary" "$primary_consumer/static-et-exec"
-run_static_mode "$primary" -static-pie "$primary_consumer/static-pie" "primary static PIE"
-run_static_mode "$extracted" -static "$extracted_consumer/static-et-exec" "extracted ET_EXEC"
-run_static_mode "$extracted" -static-pie "$extracted_consumer/static-pie" "extracted static PIE"
-run_static_mode "$primary" -static "$primary_consumer/allocator-et-exec" "allocator ET_EXEC" allocator
-run_static_mode "$primary" -static-pie "$primary_consumer/allocator-pie" "allocator static PIE" allocator
-run_static_mode "$extracted" -static "$extracted_consumer/allocator-et-exec" "extracted allocator ET_EXEC" allocator
-run_static_mode "$extracted" -static-pie "$extracted_consumer/allocator-pie" "extracted allocator static PIE" allocator
-run_static_mode "$primary" -static "$primary_consumer/posix-et-exec" "POSIX ET_EXEC" posix
-run_static_mode "$primary" -static-pie "$primary_consumer/posix-pie" "POSIX static PIE" posix
-run_static_mode "$extracted" -static "$extracted_consumer/posix-et-exec" "extracted POSIX ET_EXEC" posix
-run_static_mode "$extracted" -static-pie "$extracted_consumer/posix-pie" "extracted POSIX static PIE" posix
-run_static_mode "$primary" -static "$primary_consumer/stdio-et-exec" "stdio ET_EXEC" stdio
-run_static_mode "$primary" -static-pie "$primary_consumer/stdio-pie" "stdio static PIE" stdio
-run_static_mode "$extracted" -static "$extracted_consumer/stdio-et-exec" "extracted stdio ET_EXEC" stdio
-run_static_mode "$extracted" -static-pie "$extracted_consumer/stdio-pie" "extracted stdio static PIE" stdio
+if [ "$consumer_workers" = "$CONSUMER_MATRIX_DEFAULT_WORKERS" ]; then
+    serial_primary_consumer="$work_dir/primary-consumer-serial"
+    serial_extracted_consumer="$work_dir/extracted-consumer-serial"
+    mkdir "$serial_primary_consumer" "$serial_extracted_consumer"
+    run_consumer_matrix "$work_dir" "$primary" "$extracted" "$serial_primary_consumer" \
+        "$serial_extracted_consumer" 1 consumer-matrix-serial
+    compare_consumer_matrix_runs "$serial_primary_consumer" "$serial_extracted_consumer" \
+        "$primary_consumer" "$extracted_consumer" \
+        "$work_dir/consumer-matrix-serial-logs" "$work_dir/consumer-matrix-logs"
+fi
 for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie stdio-et-exec stdio-pie; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
