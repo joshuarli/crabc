@@ -28,7 +28,8 @@
 //! application callbacks execute without borrowed Rust backend references.
 //! `owned_printf` supplies integer/byte and binary64/binary80 formatting;
 //! `owned_scanf` supplies byte, numeric, scanset and allocated conversions.
-//! Wide stdio, popen, cancellation and fork lock recovery remain separate
+//! `owned_stdio_process` supplies popen/pclose and their private shell-spawn
+//! seam, also used by system. Wide stdio, cancellation and fork lock recovery remain separate
 //! integration obligations. This is not completion of the stdio family.
 
 use core::{ffi::{c_char, c_int, c_void}, ptr, sync::atomic::{AtomicI32, Ordering}};
@@ -36,6 +37,8 @@ use super::{c_off_status, c_ssize_status, c_status, errno, raw_syscall};
 
 #[path = "owned_stdio_backends.rs"]
 mod owned_stdio_backends;
+#[path = "owned_stdio_process.rs"]
+mod owned_stdio_process;
 use owned_stdio_backends::Backend;
 
 const BUFSIZ: usize = 1024;
@@ -63,6 +66,7 @@ struct IoVec { base: *mut c_void, length: usize }
 pub struct StandardStream {
     flags: u32,
     file_descriptor: c_int,
+    pipe_pid: c_int,
     buffer: *mut u8,
     capacity: usize,
     read_position: *mut u8,
@@ -80,7 +84,7 @@ pub struct StandardStream {
 
 impl StandardStream {
     const fn new(fd: c_int, flags: u32, capacity: usize) -> Self {
-        Self { flags, file_descriptor: fd, buffer: ptr::null_mut(), capacity,
+        Self { flags, file_descriptor: fd, pipe_pid: 0, buffer: ptr::null_mut(), capacity,
             read_position: ptr::null_mut(), read_end: ptr::null_mut(),
             write_position: ptr::null_mut(), owner: AtomicI32::new(0),
             lock_count: 0, next: ptr::null_mut(), previous: ptr::null_mut(),

@@ -825,7 +825,7 @@ mod posix_spawnattr_setschedparam;
 mod posix_spawnattr_setschedpolicy;
 #[path = "posix_spawn_file_actions_init.rs"]
 mod posix_spawn_file_actions_init;
-#[cfg(feature = "x86-posix-spawn-file-actions")]
+#[cfg(any(feature = "x86-posix-spawn-file-actions", feature = "x86-owned-static-runtime"))]
 #[path = "posix_spawn_file_actions.rs"]
 mod posix_spawn_file_actions;
 #[path = "endservent.rs"]
