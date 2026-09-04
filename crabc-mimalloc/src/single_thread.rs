@@ -39276,7 +39276,7 @@ mod tests {
 
     fn with_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {
         let mut region = AlignedRegion::zeroed();
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(crate::subproc::MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -39327,7 +39327,7 @@ mod tests {
     /// full-page collection regression below.
     fn with_detached_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {
         let mut region = AlignedRegion::zeroed();
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(crate::subproc::MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -39387,7 +39387,7 @@ mod tests {
             MapAccess::Committed,
         )
         .unwrap();
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(crate::subproc::MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -40341,7 +40341,7 @@ mod tests {
     #[test]
     fn page_metadata_commit_failure_returns_the_fresh_claim_for_reuse() {
         let mut region = AlignedRegion::zeroed();
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(crate::subproc::MainSubprocess::test_static_owner().as_ptr());
         let script = PageMetadataCommitScript::new();
         let managed = unsafe {
             manage_external_in_place(

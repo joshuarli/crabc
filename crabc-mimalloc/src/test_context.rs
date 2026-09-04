@@ -235,6 +235,9 @@ pub struct TestAllocatorContext {
     // underscore marks this intentionally lifetime-only ownership edge.
     _registry: Box<ArenaRegistry>,
     arena_mapping: Option<Mapping>,
+    // Stable source statistics owner; no shared process singleton. It is
+    // dropped after the allocator, registry, and their live bitmap views.
+    _subprocess: Box<crate::subproc::MainSubprocess>,
     root: PageMapRoot,
     outstanding: usize,
     stage: ShutdownStage,
@@ -695,7 +698,8 @@ impl TestAllocatorContext {
                 ));
             }
         };
-        let registry = Box::new(ArenaRegistry::new(ptr::null_mut()));
+        let subprocess = Box::new(crate::subproc::MainSubprocess::new());
+        let registry = Box::new(ArenaRegistry::new(subprocess.as_ptr()));
         let arena_start = match arena_mapping.base() {
             Ok(start) => start,
             Err(_) => {
@@ -813,6 +817,7 @@ impl TestAllocatorContext {
             _bootstrap: bootstrap,
             page_map: Some(page_map),
             _registry: registry,
+            _subprocess: subprocess,
             arena_mapping: Some(arena_mapping),
             root,
             outstanding: 0,

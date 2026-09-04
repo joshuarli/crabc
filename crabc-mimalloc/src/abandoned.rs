@@ -3877,7 +3877,7 @@ mod tests {
         maps[bin] = bitmap;
         Arena {
             memid: MemoryId::none(),
-            subprocess: core::ptr::null_mut(),
+            subprocess: crate::subproc::MainSubprocess::test_static_owner().as_ptr(),
             arena_index: 0,
             start: core::ptr::null_mut(),
             slice_count: BCHUNK_BITS,

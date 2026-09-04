@@ -107,6 +107,9 @@ impl MainStaticTldSlot {
 /// the actual source-shaped `mi_process_tld_main` branch selected only by
 /// sequence zero; it is not a metadata allocation cache or a reusable TLD.
 pub(crate) struct MainSubprocess {
+    /// Source bitmap events are unconditional even when optional statistics
+    /// are disabled. This is a typed subset, not the full `mi_stats_t` ABI.
+    bitmap_statistics: crate::bitmap::BitmapStatistics,
     thread_count: AtomicUsize,
     thread_total_count: AtomicUsize,
     /// The one source `subproc->heap_main` identity selected for this
@@ -260,6 +263,7 @@ pub(crate) struct MainHeapPublication<'subprocess> {
 impl MainSubprocess {
     pub(crate) const fn new() -> Self {
         Self {
+            bitmap_statistics: crate::bitmap::BitmapStatistics::new(),
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
             main_heap: AtomicPtr::new(core::ptr::null_mut()),
@@ -282,6 +286,10 @@ impl MainSubprocess {
     #[inline]
     pub(crate) fn global() -> &'static Self {
         &PROCESS_MAIN_SUBPROCESS
+    }
+
+    pub(crate) fn bitmap_statistics(&self) -> &crate::bitmap::BitmapStatistics {
+        &self.bitmap_statistics
     }
 
     /// Reserves the unique source-static ticket-zero path for a process

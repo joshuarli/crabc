@@ -21265,7 +21265,8 @@ mod tests {
         thread::spawn(|| {
             let (subprocess, metadata, _) = fixture();
             let foreign = MainSubprocess::test_static_owner();
-            let reject = |registry, expected| {
+            let reject = |subprocess_identity, expected| {
+                let registry = ArenaRegistry::new(subprocess.as_ptr());
                 let mut region = DynamicArenaRegion::zeroed();
                 let managed = unsafe {
                     manage_external_in_place(
@@ -21282,6 +21283,10 @@ mod tests {
                     )
                 }
                 .expect("the isolated external arena publishes");
+                // Bitmap construction now requires a real statistics owner.
+                // Inject only the arena identity preflight defect, after
+                // valid construction and before creating any borrowed view.
+                unsafe { (*managed.arena_id().as_ptr()).subprocess = subprocess_identity };
                 let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
                     .expect("the published arena has a view");
                 let heap = Heap::bootstrap_empty();
@@ -21302,11 +21307,11 @@ mod tests {
             };
 
             reject(
-                ArenaRegistry::new(null_mut()),
+                null_mut(),
                 DynamicArenaPagesOwnerError::UnboundArenaSubprocess,
             );
             reject(
-                ArenaRegistry::new(foreign.as_ptr()),
+                foreign.as_ptr(),
                 DynamicArenaPagesOwnerError::ForeignArenaSubprocess,
             );
         })

@@ -23,14 +23,17 @@
 // `src/bitmap.c:1462-1521` (the selected scalar clear-range visitor and its
 // default `rangesn` dispatch), plus `src/bitmap.c:1583-1784,1794-1997`
 // (binned initialization, size bins, two-level claims, and exact multi-chunk
-// rollback). This slice intentionally excludes other visitor/callback families
-// and statistics-counter integration. The M2 C/Rust traces below cover the
+// rollback). The native bitmap component also covers all scalar callback
+// dispositions and range/observer paths, including unconditional subprocess
+// counters (`src/stats.c::mi_stat_update_mt` and `__mi_stat_counter_increase_mt`).
+// The legacy selected M2 C/Rust traces below cover the
 // abandoned visitor's reject/restore, accepted-claim, and stale-map repair;
 // the scalar clear-range visitor's completed and stopped field-bounded walks;
 // the `rangesn` wrapper's selected aligned/delegated paths; and a direct
 // 65-chunk read-only set-bit walk across the first chunk-map field boundary;
 // and the binned inverse-BSR observer's rounded padding and descending
-// chunk/field walk. None is general callback parity or allocator integration.
+// chunk/field walk. `bitmap_native_tests.rs` and its pinned C fixture extend
+// this to the complete scalar bitmap boundary, not allocator integration.
 // The allocator-owned dynamic TLS registry projects its typed metadata
 // capability only transiently through the ordinary lowest-bit claim path below;
 // it does not add a general bitmap metadata ownership API.
@@ -47,6 +50,59 @@ use crate::atomic::{
 };
 use crate::bits::{bsf, bsr, clz, ctz, popcount};
 use crate::config::BCHUNK_BITS;
+
+#[cfg(test)]
+#[path = "bitmap_native_tests.rs"]
+mod native_tests;
+
+// Statistics translation: Copyright (c) 2018-2026 Microsoft Research, Daan
+// Leijen, MIT. Source: pinned `src/stats.c:25-63`, `include/mimalloc-stats.h:
+// 29-116`, and `include/mimalloc/internal.h:394-398`.
+/// The unconditional bitmap subset of `mi_subproc_t::stats`, not a
+/// `mi_stats_t` ABI image. Even `MI_STAT=0` executes these source events.
+/// `stats.c::mi_stat_update_mt` updates current, then peak, then positive
+/// total with relaxed signed 64-bit atomics; observations are not snapshots.
+pub(crate) struct BitmapStatistics {
+    chunk_bins: [BitmapStatCount; 5],
+    pages_unabandon_busy_wait: crate::atomic::AtomicI64Value,
+}
+
+struct BitmapStatCount {
+    total: crate::atomic::AtomicI64Value,
+    peak: crate::atomic::AtomicI64Value,
+    current: crate::atomic::AtomicI64Value,
+}
+
+impl BitmapStatCount {
+    const fn new() -> Self {
+        Self {
+            total: crate::atomic::AtomicI64Value::new(0),
+            peak: crate::atomic::AtomicI64Value::new(0),
+            current: crate::atomic::AtomicI64Value::new(0),
+        }
+    }
+
+    fn update(&self, amount: i64) {
+        let previous = crate::atomic::i64_add_relaxed(&self.current, amount);
+        crate::atomic::i64_max_relaxed(&self.peak, previous.wrapping_add(amount));
+        if amount > 0 {
+            crate::atomic::i64_add_relaxed(&self.total, amount);
+        }
+    }
+}
+
+impl BitmapStatistics {
+    pub(crate) const fn new() -> Self {
+        Self {
+            chunk_bins: [const { BitmapStatCount::new() }; 5],
+            pages_unabandon_busy_wait: crate::atomic::AtomicI64Value::new(0),
+        }
+    }
+
+    fn busy_wait(&self) {
+        crate::atomic::i64_add_relaxed(&self.pages_unabandon_busy_wait, 1);
+    }
+}
 
 /// `MI_BFIELD_BITS` for the configured 64-bit Linux target profiles.
 pub(crate) const BFIELD_BITS: usize = usize::BITS as usize;
@@ -196,17 +252,21 @@ pub(crate) struct TryClaim {
 ///
 /// `KeepSet` is not a rollback convenience: `arena.c:655-671` requires it
 /// after a failed ownership claim so a concurrent `unabandon` can observe the
-/// reader's completion through [`BitmapView::clear_once_set`]. There is no
-/// third disposition in this visitor: terminal removal first unabandons and
-/// therefore clears through `clear_once_set`, outside the reader callback.
-/// The narrow enum prevents a bitmap caller from silently choosing a different
-/// restoration policy.
+/// reader's completion through [`BitmapView::clear_once_set`]. The generic
+/// `bitmap.c:1340-1370` callback also admits refusal without restoration:
+/// [`Self::Discarded`] expresses `claim == false && keep_set == false`.
+/// The arena owner must continue to use `KeepSet` whenever an unabandoning
+/// writer can be waiting for that restoration; bitmap-level removal alone
+/// establishes no page ownership or reclamation permission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AbandonedBitmapClaim {
     /// The candidate page ownership claim succeeded; retain the bit clear.
     Claimed,
     /// Ownership was unavailable; restore the bit before returning to search.
     KeepSet,
+    /// Refuse this candidate without restoring it, and continue the search.
+    /// The caller has separately established that no owner needs restoration.
+    Discarded,
 }
 
 impl TryClaim {
@@ -1659,6 +1719,7 @@ impl<'storage> BitmapView<'storage> {
                 let index = chunk_index * BCHUNK_BITS + chunk_bit;
                 match claim(index) {
                     AbandonedBitmapClaim::Claimed => return Some(index),
+                    AbandonedBitmapClaim::Discarded => (),
                     AbandonedBitmapClaim::KeepSet => {
                         let restored = chunk.set_run(chunk_bit, 1);
                         debug_assert!(matches!(restored, Some(transition) if transition.all_transitioned()));
@@ -1680,11 +1741,11 @@ impl<'storage> BitmapView<'storage> {
     /// quiescence: the writer does not clear permanently until that reader has
     /// restored its failed candidate. A successful weak CAS uses AcqRel and
     /// leaves the conservative chunk map set, as upstream does.
-    pub(crate) fn clear_once_set(&self, index: usize) -> Option<()> {
-        self.clear_once_set_with(index, || {})
+    pub(crate) fn clear_once_set(&self, subprocess: &crate::subproc::MainSubprocess, index: usize) -> Option<()> {
+        self.clear_once_set_with(subprocess, index, || {})
     }
 
-    fn clear_once_set_with<F>(&self, index: usize, mut observed_temporary_clear: F) -> Option<()>
+    fn clear_once_set_with<F>(&self, subprocess: &crate::subproc::MainSubprocess, index: usize, mut observed_temporary_clear: F) -> Option<()>
     where
         F: FnMut(),
     {
@@ -1700,6 +1761,9 @@ impl<'storage> BitmapView<'storage> {
             if previous & mask == 0 {
                 observed_temporary_clear();
                 previous = word_load_acquire(field);
+                if previous & mask == 0 {
+                    subprocess.bitmap_statistics().busy_wait();
+                }
                 while previous & mask == 0 {
                     // `sched_yield` is the Linux no-libc equivalent of the
                     // pinned `_mi_prim_thread_yield` busy-wait backoff. Its
@@ -1721,7 +1785,7 @@ impl<'storage> BitmapView<'storage> {
     where
         F: FnMut(),
     {
-        self.clear_once_set_with(index, observer)
+        self.clear_once_set_with(crate::subproc::MainSubprocess::test_static_owner(), index, observer)
     }
 }
 
@@ -1864,6 +1928,9 @@ impl<'storage> BinnedBitmapView<'storage> {
     /// `layout.byte_size()` bytes for `'storage`. If `already_zero` is true,
     /// the complete image must already contain initialized zero bytes. No
     /// concurrent observer may access it until this call returns.
+    /// `subprocess` must point to a live initialized `MainSubprocess` that
+    /// outlives this image and every attached view; bin transitions update
+    /// its statistics through shared atomic access.
     pub(crate) unsafe fn initialize(
         subprocess: *mut crate::types::Subprocess,
         storage: *mut u8,
@@ -1871,7 +1938,7 @@ impl<'storage> BinnedBitmapView<'storage> {
         layout: BinnedBitmapLayout,
         already_zero: bool,
     ) -> Option<Self> {
-        if storage.is_null()
+        if subprocess.is_null() || storage.is_null()
             || (storage as usize) % BCHUNK_SIZE != 0
             || storage_byte_count < layout.byte_size()
         {
@@ -1911,7 +1978,9 @@ impl<'storage> BinnedBitmapView<'storage> {
             return None;
         }
         let prefix = storage.cast::<BinnedBitmapPrefix>();
-        if unsafe { word_load_relaxed(&(*prefix).chunk_count) } != layout.chunk_count {
+        if unsafe { word_load_relaxed(&(*prefix).chunk_count) } != layout.chunk_count
+            || unsafe { (*prefix).subprocess.is_null() }
+        {
             return None;
         }
         Some(Self {
@@ -2009,12 +2078,19 @@ impl<'storage> BinnedBitmapView<'storage> {
 
     fn set_chunk_bin(&self, chunk_index: usize, selected: ChunkBin) {
         debug_assert!(chunk_index < self.chunk_count());
+        // SAFETY: initialize/attach retain the live source subprocess owner
+        // for the entire image lifetime, including these atomic updates.
+        let stats = unsafe { &*self.subprocess() }.bitmap_statistics();
         for index in 0..ChunkBin::MAPPED_COUNT {
             let bin = ChunkBin::from_index(index);
             if bin == selected {
-                let _ = self.bin_map(bin).set_run(chunk_index, 1);
+                if self.bin_map(bin).set_run(chunk_index, 1).is_some_and(|change| change.all_transitioned()) {
+                    stats.chunk_bins[index].update(1);
+                }
             } else {
-                let _ = self.bin_map(bin).clear_run(chunk_index, 1);
+                if self.bin_map(bin).clear_run(chunk_index, 1).is_some_and(|change| change.all_transitioned()) {
+                    stats.chunk_bins[index].update(-1);
+                }
             }
         }
     }
@@ -2419,7 +2495,7 @@ mod tests {
         let mut storage = BinnedBitmapTestStorage::uninit();
         let bitmap = unsafe {
             BinnedBitmapView::initialize(
-                core::ptr::null_mut(),
+                crate::subproc::MainSubprocess::test_static_owner().as_ptr(),
                 storage.bytes.as_mut_ptr().cast(),
                 storage.bytes.len(),
                 layout,
@@ -2444,7 +2520,7 @@ mod tests {
         let mut storage = BinnedBitmapTestStorage::uninit();
         let bitmap = unsafe {
             BinnedBitmapView::initialize(
-                core::ptr::null_mut(),
+                crate::subproc::MainSubprocess::test_static_owner().as_ptr(),
                 storage.bytes.as_mut_ptr().cast(),
                 storage.bytes.len(),
                 layout,
@@ -2504,7 +2580,7 @@ mod tests {
         let mut padding_storage = BinnedBitmapTestStorage::uninit();
         let padding = unsafe {
             BinnedBitmapView::initialize(
-                core::ptr::null_mut(),
+                crate::subproc::MainSubprocess::test_static_owner().as_ptr(),
                 padding_storage.bytes.as_mut_ptr().cast(),
                 padding_storage.bytes.len(),
                 padding_layout,
@@ -2521,7 +2597,7 @@ mod tests {
         let mut scan_storage = BinnedBitmapTestStorage::uninit();
         let scan = unsafe {
             BinnedBitmapView::initialize(
-                core::ptr::null_mut(),
+                crate::subproc::MainSubprocess::test_static_owner().as_ptr(),
                 scan_storage.bytes.as_mut_ptr().cast(),
                 scan_storage.bytes.len(),
                 scan_layout,
@@ -2655,7 +2731,7 @@ mod tests {
         let mut storage = BinnedBitmapTestStorage::uninit();
         let mut bitmap = unsafe {
             BinnedBitmapView::initialize(
-                core::ptr::null_mut(),
+                crate::subproc::MainSubprocess::test_static_owner().as_ptr(),
                 storage.bytes.as_mut_ptr().cast(),
                 storage.bytes.len(),
                 layout,
@@ -2685,7 +2761,7 @@ mod tests {
         let mut storage = BinnedBitmapTestStorage::uninit();
         let mut bitmap = unsafe {
             BinnedBitmapView::initialize(
-                core::ptr::null_mut(),
+                crate::subproc::MainSubprocess::test_static_owner().as_ptr(),
                 storage.bytes.as_mut_ptr().cast(),
                 storage.bytes.len(),
                 layout,

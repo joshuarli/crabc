@@ -829,7 +829,12 @@ impl MappedAbandonedPages for DynamicArenaMappedAbandonedPage<'_> {
         slice_index == self.slice_index
             && self
                 .owner
-                .with_abandoned(self.bin, |pages| pages.clear_once_set(slice_index))
+                .with_abandoned(self.bin, |pages| {
+                    // SAFETY: the dynamic owner was formed with this live,
+                    // process-long subprocess and retains the arena image.
+                    let subprocess = unsafe { &*self.owner.arena.as_ref().subprocess };
+                    pages.clear_once_set(subprocess, slice_index)
+                })
                 == Some(Some(()))
     }
 
@@ -1059,6 +1064,9 @@ impl ManagedExternalRegion {
 /// zero must truly have those properties. When `initially_committed` is false,
 /// `commit_hook` must make each metadata prefix writable before returning true.
 /// No other thread may access the region until this function returns.
+/// The registry must be bound to an initialized subprocess that remains live
+/// for every arena and bitmap view; their unconditional statistics events
+/// access that owner through shared atomics.
 pub(crate) unsafe fn manage_external_in_place(
     registry: &ArenaRegistry,
     start: *mut u8,
@@ -1108,6 +1116,8 @@ pub(crate) unsafe fn manage_external_in_place(
 /// observations. When it starts reserved, `commit_hook` must make every
 /// requested metadata prefix writable before returning true. No other thread
 /// may access the region until this function returns.
+/// The registry's initialized subprocess must outlive every resulting arena
+/// and bitmap view, including later subprocess statistics updates.
 pub(crate) unsafe fn manage_os_in_place(
     registry: &ArenaRegistry,
     start: *mut u8,
@@ -1956,7 +1966,12 @@ impl ArenaAbandonedPages<'_> {
     /// bitmap quiescence boundary.
     #[inline]
     pub(crate) fn clear_once_set(&self, slice_index: usize) -> bool {
-        self.bitmap.clear_once_set(slice_index) == Some(())
+        // SAFETY: this view retains the arena and its initialized subprocess
+        // owner for the bitmap lifetime, as required when forming the arena.
+        let Some(subprocess) = (unsafe { self.arena.as_ref().subprocess.as_ref() }) else {
+            return false;
+        };
+        self.bitmap.clear_once_set(subprocess, slice_index) == Some(())
     }
 
     #[cfg(test)]
@@ -2058,7 +2073,9 @@ impl MappedAbandonedPages for MainArenaMappedAbandonedPage<'_> {
 impl<'arena> ArenaView<'arena> {
     /// # Safety
     ///
-    /// `arena` must remain live and registry-published for `'arena`.
+    /// `arena` must remain live and registry-published for `'arena`. Any
+    /// non-null subprocess must remain initialized and live for every view;
+    /// operations requiring that binding reject a null subprocess.
     pub(crate) unsafe fn from_ptr(arena: *mut Arena) -> Option<Self> {
         Some(Self {
             arena: NonNull::new(arena)?,
@@ -2707,7 +2724,7 @@ mod tests {
     #[test]
     fn in_place_initialization_marks_only_usable_slices_free_and_preserves_flags() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -2756,7 +2773,7 @@ mod tests {
     #[test]
     fn arena_memory_ids_and_exclusive_suitability_preserve_parent_relations() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -3191,7 +3208,7 @@ mod tests {
     #[test]
     fn suitable_slice_claim_exhausts_and_release_reuses_its_contiguous_span() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -3244,7 +3261,7 @@ mod tests {
     #[test]
     fn commit_failure_returns_claimed_slices_without_rolling_back_dirty_observation() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let script = CommitScript::new(false);
         let managed = unsafe {
             manage_external_in_place(
@@ -3301,7 +3318,7 @@ mod tests {
     #[test]
     fn successful_external_commit_hook_can_report_a_zero_committed_slice() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let script = CommitScript::new(true);
         let managed = unsafe {
             manage_external_in_place(
@@ -3342,7 +3359,7 @@ mod tests {
     #[test]
     fn fully_committed_arena_claim_invokes_linux_reuse_for_its_exact_span() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -3387,7 +3404,7 @@ mod tests {
     #[test]
     fn unpinned_slice_release_schedules_the_default_delayed_decommit_before_reuse() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -3426,7 +3443,7 @@ mod tests {
         // `needs_recommit`, so a true `commit = false` result must clear the
         // exact committed range before the source returns it to `slices_free`.
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let script = RecommitPurgeScript::new();
         let managed = unsafe {
             manage_external_in_place(
@@ -3511,7 +3528,7 @@ mod tests {
     #[test]
     fn scheduled_purge_splits_a_run_at_each_source_bitmap_field_boundary() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let script = CommitScript::new(false);
         let managed = unsafe {
             manage_external_in_place(
@@ -3575,7 +3592,7 @@ mod tests {
         // collection so this observes that source fallback rather than an
         // ordinary two-slice purge.
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let script = CommitScript::new(false);
         let managed = unsafe {
             manage_external_in_place(
@@ -3638,7 +3655,7 @@ mod tests {
             crabc_core::Errno::NOMEM,
         ));
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -3675,7 +3692,7 @@ mod tests {
     #[test]
     fn pinned_slice_release_skips_purge_scheduling() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
@@ -3927,7 +3944,7 @@ mod tests {
     #[test]
     fn purge_owned_slice_cannot_be_claimed_for_allocation() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
-        let registry = ArenaRegistry::new(null_mut());
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let managed = unsafe {
             manage_external_in_place(
                 &registry,
