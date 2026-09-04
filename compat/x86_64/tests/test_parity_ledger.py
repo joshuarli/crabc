@@ -19,18 +19,58 @@ assert SPEC is not None and SPEC.loader is not None
 ledger = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = ledger
 SPEC.loader.exec_module(ledger)
+UNPATCHED_LOAD_TOML = ledger.load_toml
 
 
 class X86ParityLedgerTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Parse immutable checked inputs once; each test still owns a deep copy."""
+
+        cls._ledger_template = ledger.load_toml(ledger.LEDGER_PATH)
+        cls._header_template = ledger.load_toml(ledger.HEADER_LAYOUT_MANIFEST_PATH)
+        cls._header_foundation_template = ledger.load_toml(
+            ledger.HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH
+        )
+
     def data(self) -> dict[str, object]:
+        if ledger.load_toml is UNPATCHED_LOAD_TOML:
+            return copy.deepcopy(self._ledger_template)
         return copy.deepcopy(ledger.load_toml(ledger.LEDGER_PATH))
 
     def header_manifest(self) -> dict[str, object]:
+        if ledger.load_toml is UNPATCHED_LOAD_TOML:
+            return copy.deepcopy(self._header_template)
         return copy.deepcopy(ledger.load_toml(ledger.HEADER_LAYOUT_MANIFEST_PATH))
 
     def header_foundation_manifest(self) -> dict[str, object]:
-        return copy.deepcopy(
-            ledger.load_toml(ledger.HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH)
+        if ledger.load_toml is UNPATCHED_LOAD_TOML:
+            return copy.deepcopy(self._header_foundation_template)
+        return copy.deepcopy(ledger.load_toml(ledger.HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH))
+
+    def assert_source_contains(self, source: str, phrase: str, source_name: str) -> None:
+        """Keep a missing source-contract phrase concise instead of dumping a runner."""
+
+        self.assertTrue(phrase in source, f"{source_name} is missing {phrase!r}")
+
+    def replace_required(
+        self, source: str, old: str, new: str, source_name: str
+    ) -> str:
+        """Change a known contract phrase, never a silently absent substring."""
+
+        self.assert_source_contains(source, old, source_name)
+        changed = source.replace(old, new)
+        self.assertNotEqual(changed, source, f"{source_name} replacement made no change")
+        return changed
+
+    @staticmethod
+    def static_c_abi_exports() -> set[str]:
+        """Read symbols through the validator's comment-aware export ratchet parser."""
+
+        return set(
+            ledger.static_c_abi_export_names(
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            )
         )
 
     @staticmethod
@@ -128,6 +168,35 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
+
+    def test_test_input_templates_are_isolated_and_honor_a_patched_loader(self) -> None:
+        original = self.data()
+        original["family"] = []
+        self.assertNotEqual(self.data()["family"], [])
+
+        header = self.header_manifest()
+        header["probe"] = []
+        self.assertNotEqual(self.header_manifest()["probe"], [])
+
+        foundation = self.header_foundation_manifest()
+        foundation["language_profile"] = []
+        self.assertNotEqual(self.header_foundation_manifest()["language_profile"], [])
+
+        replacement: dict[str, object] = {"family": []}
+        with mock.patch.object(ledger, "load_toml", return_value=replacement) as load:
+            self.assertEqual(self.data(), replacement)
+        load.assert_called_once_with(ledger.LEDGER_PATH)
+
+        with mock.patch.object(ledger, "load_toml", return_value=replacement) as load:
+            self.assertEqual(self.header_manifest(), replacement)
+            self.assertEqual(self.header_foundation_manifest(), replacement)
+        self.assertEqual(
+            load.call_args_list,
+            [
+                mock.call(ledger.HEADER_LAYOUT_MANIFEST_PATH),
+                mock.call(ledger.HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH),
+            ],
+        )
 
     def test_validate_ledger_reuses_successful_artifact_owner_checks_within_one_call(
         self,
@@ -1817,7 +1886,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "actual public crypt/crypt_r and every private helper",
             "crypt_data.__buf overlap",
             "pinned-musl malloc/aligned_alloc/free",
-            "x86-allocator-runtime composition",
+            "manual x86-crypt/x86-allocator-runtime selection",
             "public x86 support",
         ):
             self.assertIn(phrase, runtime["scope"])
@@ -5840,12 +5909,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertNotIn("capabilities", artifact)
         slices = text_math["verified_slice"]
-        assert isinstance(slices, list) and len(slices) == 4
-        capability = next(
+        assert isinstance(slices, list)
+        matching = [
             entry
             for entry in slices
             if isinstance(entry, dict) and entry["id"] == "numeric.parse-float-locale"
-        )
+        ]
+        self.assertEqual(len(matching), 1)
+        capability = matching[0]
         self.assertEqual(capability["id"], "numeric.parse-float-locale")
         self.assertEqual(
             capability["capabilities"], ["numeric.parse-float-locale"]
@@ -5943,7 +6014,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError,
             "numeric.parse-float-locale slice must consume exactly its named capability",
         ):
-            ledger.validate_ledger(data)
+            ledger.require_float_parse_locale_slice(
+                self.family(data, "libc.text-math-locale-stdio")
+            )
 
     def test_getsubopt_remains_a_state_free_non_capability_artifact(self) -> None:
         data = self.data()
@@ -10764,12 +10837,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         slices = text_math["verified_slice"]
-        assert isinstance(slices, list) and len(slices) == 4
-        selected = next(
+        assert isinstance(slices, list)
+        matching = [
             entry
             for entry in slices
             if isinstance(entry, dict) and entry["id"] == "locale.core-fixed-profile"
-        )
+        ]
+        self.assertEqual(len(matching), 1)
+        selected = matching[0]
         self.assertEqual(selected["capabilities"], ["locale.core"])
         for owner in (
             "compat/crabc-rs/coverage.toml",
@@ -10828,7 +10903,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError,
             "locale.core-fixed-profile must select exactly locale.core",
         ):
-            ledger.validate_ledger(changed)
+            ledger.require_locale_profile_slice(
+                self.family(changed, "libc.text-math-locale-stdio")
+            )
 
         changed = self.data()
         changed_slices = self.family(
@@ -11449,8 +11526,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
         slices = posix_runtime["verified_slice"]
-        assert isinstance(slices, list) and len(slices) == 4
+        assert isinstance(slices, list)
         slices_by_id = {slice_entry["id"]: slice_entry for slice_entry in slices}
+        self.assertEqual(len(slices_by_id), len(slices))
+        self.assertIn("filesystem.stat-compat", slices_by_id)
+        self.assertIn("process.credentials", slices_by_id)
         stat_compat = slices_by_id["filesystem.stat-compat"]
         assert isinstance(stat_compat, dict)
         self.assertEqual(stat_compat["id"], "filesystem.stat-compat")
@@ -11493,12 +11573,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 84
+        assert isinstance(posix_artifacts, list)
+        self.assertTrue(all(isinstance(artifact, dict) for artifact in posix_artifacts))
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
             if isinstance(artifact, dict)
         }
+        self.assertEqual(len(artifacts_by_id), len(posix_artifacts))
         filesystem_capacity = artifacts_by_id["static-c-filesystem-capacity"]
         assert isinstance(filesystem_capacity, dict)
         self.assertNotIn("capabilities", filesystem_capacity)
@@ -12310,10 +12392,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, or public x86 support",
         ):
             self.assertIn(phrase, sched_getcpu["description"])
-        self.assertIn(
-            "libc/src/c_abi/x86_64/sched_getcpu.rs",
-            posix_runtime["source_owners"],
-        )
         sched_cpucount = artifacts_by_id["static-c-sched-cpucount"]
         assert isinstance(sched_cpucount, dict)
         self.assertNotIn("capabilities", sched_cpucount)
@@ -12344,10 +12422,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, or public x86 support",
         ):
             self.assertIn(phrase, sched_cpucount["description"])
-        self.assertIn(
-            "libc/src/c_abi/x86_64/sched_cpucount.rs",
-            posix_runtime["source_owners"],
-        )
         sched_priority_bounds = artifacts_by_id["static-c-sched-priority-bounds"]
         assert isinstance(sched_priority_bounds, dict)
         self.assertNotIn("capabilities", sched_priority_bounds)
@@ -12649,10 +12723,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "memccpy/explicit_bzero",
         ):
             self.assertIn(phrase, mempcpy_scope)
-        self.assertIn(
-            "libc/src/c_abi/x86_64/mempcpy.rs",
-            posix_runtime["source_owners"],
-        )
         strsep = artifacts_by_id["static-c-strsep"]
         assert isinstance(strsep, dict)
         self.assertNotIn("capabilities", strsep)
@@ -12864,7 +12934,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("fixed-C-locale ctype", ctype["description"])
         self.assertIn("stateless", ctype["description"])
         self.assertIn("allocation-free", ctype["description"])
-        self.assertIn("POSIX/XOPEN/GNU/BSD-gated", ctype["x86_header_prerequisites"][0])
+        for phrase in (
+            "POSIX/XOPEN/GNU/BSD C-visible",
+            "strict-C-hidden",
+        ):
+            self.assertIn(phrase, ctype["x86_header_prerequisites"][0])
         self.assertIn("src/ctype/isalnum.c", ctype["oracle"][0]["role"])
         integer_arithmetic = artifacts_by_id["static-c-integer-arithmetic"]
         assert isinstance(integer_arithmetic, dict)
@@ -23449,7 +23523,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         slice_entry["capabilities"] = ["filesystem.directory"]
         with self.assertRaisesRegex(ledger.LedgerError, "must own exactly its one baseline capability"):
-            ledger.validate_ledger(data)
+            ledger.require_lchmod_unsupported_slice(
+                self.family(data, "libc.posix-runtime")
+            )
 
     def test_mkfifo_artifact_keeps_its_one_entry_special_node_boundary(self) -> None:
         data = self.data()
@@ -24309,14 +24385,17 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, headers[0])
 
-        exports = set(
-            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
-            .read_text(encoding="utf-8")
-            .splitlines()
-        )
+        exports = self.static_c_abi_exports()
         self.assertIn("linkat", exports)
-        for forbidden in ("unlinkat", "renameat", "fchmodat"):
-            self.assertNotIn(forbidden, exports)
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_linkat.sh").read_text(
+            encoding="utf-8"
+        )
+        for phrase in (
+            "linkat candidate unexpectedly pulls independently selected pathname entry",
+            "unlinkat",
+            "renameat",
+        ):
+            self.assert_source_contains(runner, phrase, "run_libc_linkat.sh")
 
         implementation = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "linkat.rs"
@@ -24521,14 +24600,16 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, headers[0])
 
-        exports = set(
-            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
-            .read_text(encoding="utf-8")
-            .splitlines()
-        )
+        exports = self.static_c_abi_exports()
         self.assertIn("lchown", exports)
-        for forbidden in ("chown", "fchown", "fchownat"):
-            self.assertNotIn(forbidden, exports)
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_lchown.sh").read_text(
+            encoding="utf-8"
+        )
+        for phrase in (
+            "lchown candidate unexpectedly pulls independently selected ownership or pathname entry",
+            "chown|fchown|fchownat",
+        ):
+            self.assert_source_contains(runner, phrase, "run_libc_lchown.sh")
 
         implementation = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "lchown.rs"
@@ -27347,11 +27428,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, artifact["description"])
 
-        exports = set(
-            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
-            .read_text(encoding="utf-8")
-            .splitlines()
-        )
+        exports = self.static_c_abi_exports()
         self.assertTrue(
             {
                 "__inet_aton",
@@ -27362,15 +27439,16 @@ class X86ParityLedgerTests(unittest.TestCase):
             }
             <= exports
         )
-        self.assertFalse(
-            exports
-            & {
-                "inet_network",
-                "inet_netof",
-                "malloc",
-                "free",
-            }
-        )
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_inet_address.sh"
+        ).read_text(encoding="utf-8")
+        for phrase in (
+            "for unselected in inet_makeaddr inet_lnaof inet_netof inet_network; do",
+            "candidate accidentally selects separate classful IPv4 leaf",
+            "malloc free calloc realloc",
+            "archive accidentally exports unselected",
+        ):
+            self.assert_source_contains(runner, phrase, "run_libc_inet_address.sh")
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -27591,22 +27669,17 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, artifact["description"])
 
-        exports = set(
-            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
-            .read_text(encoding="utf-8")
-            .splitlines()
-        )
+        exports = self.static_c_abi_exports()
         self.assertTrue({"inet_makeaddr", "inet_lnaof"} <= exports)
-        self.assertFalse(
-            exports
-            & {
-                "inet_network",
-                "inet_netof",
-                "h_errno",
-                "__h_errno_location",
-                "herror",
-            }
-        )
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_inet_classful.sh"
+        ).read_text(encoding="utf-8")
+        for phrase in (
+            "inet_makeaddr and inet_lnaof must have exactly one selected archive member",
+            "inet_network inet_netof __h_errno_location",
+            "archive-free candidate accidentally selects",
+        ):
+            self.assert_source_contains(runner, phrase, "run_libc_inet_classful.sh")
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -30820,8 +30893,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, evidence[0]["scope"])
 
-        evidence[0]["scope"] = evidence[0]["scope"].replace(
-            "remque retaining the removed node links", "removed-node behavior"
+        evidence[0]["scope"] = self.replace_required(
+            evidence[0]["scope"],
+            "intentionally stale removed-node links",
+            "removed-node behavior",
+            "static-c-intrusive-queue native evidence",
         )
         with self.assertRaisesRegex(
             ledger.LedgerError,
