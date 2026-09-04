@@ -1,8 +1,14 @@
 # Performance completion roadmap
 
+> AArch64 execution and qualification are paused. Preserve this measurement
+> contract as the performance bar for the active native x86-64 program, whose
+> scope and adaptation are governed by [`plan.md`](../../plan.md) and
+> [`x86-64.md`](../../x86-64.md).
+
 ## Status, activation, and ownership
 
-**Status:** active acceptance contract. The current selected results include
+**Status:** preserved measurement contract; native x86 adaptation is active
+under `x86-64.md`. The recorded AArch64 results include
 both passing and red rows; no performance-completion claim is available while a
 mandatory row is red, omitted, or unsupported.
 
@@ -12,16 +18,16 @@ Stable measurement semantics and the current cost model live in
 [`docs/design/performance.md`](../design/performance.md), while detailed runner
 mechanics live in [`compat/perf/README.md`](../../compat/perf/README.md).
 
-Performance work under this contract must preserve the scoped Linux/AArch64,
+Performance work under this contract must preserve the scoped Linux target,
 Linux 5.10, musl-oracle, allocator, and dependency boundaries. It is not a
 universal performance claim, an allocator research program, or permission to
 weaken correctness evidence.
 
 ## Decision and scope
 
-`crabc` will become the demonstrably better Linux/AArch64 runtime for the
-bounded, supported runtime surface. The release gate is intentionally harder
-than a pleasing benchmark screenshot:
+The original Linux/AArch64 scorecard fixes the following release criteria for
+the bounded runtime surface. Apply them to native x86 through the qualification
+contract in `x86-64.md`; do not transfer measured results between targets:
 
 1. **CPU:** `crabc` uses at most **0.90×** musl's user-plus-system CPU time.
 2. **Peak memory:** `crabc` uses at most **0.90×** musl's peak resident memory.
@@ -30,10 +36,12 @@ than a pleasing benchmark screenshot:
    real-program evidence regresses in order to obtain a performance result.
 
 The comparison target is the pinned musl release in
-[`compat/upstreams.toml`](../../compat/upstreams.toml), on Linux/AArch64
-little-endian with the project's Linux 5.10 kernel baseline. Glibc is neither
+[`compat/upstreams.toml`](../../compat/upstreams.toml), on the target-qualified
+Linux/AArch64 reference or native Linux/x86-64 active lane, with the project's
+Linux 5.10 kernel baseline. Glibc is neither
 a comparator nor a fallback. The governing scope in [`SCOPE.md`](../../SCOPE.md)
-continues to apply: x86_64 and other architectures remain out of scope;
+continues to apply: architectures other than the preserved AArch64 reference and
+native x86-64 program remain out of scope;
 mimalloc remains the selected allocation strategy; and optimizations may not
 weaken observable musl-compatible behavior.
 

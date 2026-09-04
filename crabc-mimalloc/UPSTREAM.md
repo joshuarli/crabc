@@ -171,6 +171,10 @@ no-immediate shapes, and full-origin routes remain client-free-only.
 
 ### M1 represented-layout boundary
 
+This section is the frozen AArch64 production-profile layout record. Native
+x86-64 parity must use its own target-qualified layout inventory and evidence;
+the rows below do not transfer AArch64 constants or completion claims.
+
 `provenance-and-represented-layouts` is a finite default-release metadata
 claim, not completion of either `types.h` or `internal.h`. Its C/Rust vector
 uses the selected Linux/AArch64 release preprocessing image and records only

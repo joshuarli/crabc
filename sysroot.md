@@ -1,3 +1,17 @@
+# AArch64 owned CRT/sysroot contract — retained reference
+
+The recorded CRT/sysroot deliverable is complete; full target-runtime Rust
+purity remains blocked by the C allocator. See the
+[design](docs/design/crt-and-sysroot.md) and
+[evidence](docs/evidence/crabc-owned-sysroot.md) for that distinction.
+
+AArch64 implementation and qualification are paused. The original instructions
+below preserve the deliverable's contract; they are not an active work queue.
+The x86 sysroot is part of [`x86-64.md`](x86-64.md), developed alongside native
+mimalloc and requalified after backend promotion under [`plan.md`](plan.md).
+
+---
+
 Implement a complete crabc-owned application CRT and sealed Linux/AArch64
 sysroot.
 
@@ -1306,4 +1320,3 @@ Include representative output from:
 Do not claim “100% pure Rust” merely because the repository’s production
 sources use .rs extensions. The claim is earned only when source, dependency,
 link-input, and final-artifact evidence all agree.
-

@@ -11,8 +11,9 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Compatibility profile](../COMPATIBILITY-PROFILE.md) — supported and
   intentionally limited behavior.
 - [Project status](../STATUS.md) — current completion state and roadmap router.
-- [Native Linux/x86-64 parity goal](../x86-64.md) — staged target-specific
-  implementation and promotion contract; not current public support.
+- [Combined native Linux/x86-64 completion goal](../plan.md), [runtime parity](../x86-64.md),
+  and [native mimalloc](../native-mimalloc.md) — active target-specific
+  implementation and promotion contracts; not current public support.
 - [Private x86-64 owned static sysroot evidence](../compat/x86_64/owned-static-sysroot.md)
   — reproducible installed static artifact and real pthread/TLS consumer;
   neither sysroot-family completion nor public support.
@@ -31,8 +32,7 @@ them; this router should explain ownership, not duplicate command contracts.
   optimization doctrine, and current cost model.
 - [Fixed mimalloc semantic-port design](design/allocator.md) — provenance,
   dependency direction, integration ownership, and promotion boundary for the
-  active Linux/AArch64 allocator compatibility program and its private native
-  x86-64 evidence exception.
+  paused AArch64 allocator record and active native x86-64 compatibility program.
 - [Owned CRT/sysroot design](design/crt-and-sysroot.md) — application startup,
   sealed driver, purity boundary, and runtime ownership.
 - [Source-build design](design/source-build.md) — completed Lua gate through
@@ -62,11 +62,19 @@ them; this router should explain ownership, not duplicate command contracts.
   provenance and the governing superseded-direction decisions.
 - [`crabc-rs` delivery record](history/crabc-rs-delivery-plan.md) — concise
   facade architecture and capability-accounting provenance.
+- [Archived project status](history/project-status-2026-09-04.md) and
+  [paused AArch64 allocator handoff](history/native-mimalloc-aarch64.md) —
+  preserved implementation details and exact-revision evidence, not live queues.
 - [Semantic migration record](history/semantic-migration.md) — original blob
   IDs, loss-prevention ledger, and milestone-to-semantic rename map.
 
 Historical records never override root policy, [`STATUS.md`](../STATUS.md),
 machine-readable contracts, or generated evidence.
+
+Keep live documents short: each fact has one owning contract, design note, or
+report. Guides link to those owners instead of repeating per-leaf scope and
+commit narratives. Archive useful old detail; never relabel it as current
+qualification or append history to an execution plan.
 
 ## Code-adjacent guides
 

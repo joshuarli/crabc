@@ -1,9 +1,10 @@
 # `crabc-rs` design
 
-`crabc-rs` is the idiomatic Linux/AArch64 OS/runtime facade over the shared
-`crabc-core` implementation. It is not a generated C-wrapper crate. Its
-current platform is Linux/AArch64 little-endian with Linux 5.10 as the kernel
-baseline; no second `crabc` architecture is planned.
+`crabc-rs` is the idiomatic OS/runtime facade over the shared `crabc-core`
+implementation. It is not a generated C-wrapper crate. Public support remains
+Linux/AArch64 little-endian with Linux 5.10 as the kernel baseline; native
+x86-64 work is an active, separately qualified program and is not public until
+its acceptance contract is complete.
 
 ## Boundary
 

@@ -1,13 +1,15 @@
 # crabc
 
 `crabc` is a small Rust `no_std` Unix runtime: a libc, dynamic linker, and
-capability-accounted Rust facade for **Linux/AArch64 little-endian**. Its Linux
-kernel baseline is **5.10**.
+capability-accounted Rust facade. Public support remains **Linux/AArch64
+little-endian** (kernel baseline **5.10**); the active completion program is
+the combined native Linux/x86-64 runtime and mimalloc work in [`plan.md`](plan.md).
 
 The project targets the useful modern Unix runtime contract—not an unlimited
-reimplementation of historical libc breadth. It is AArch64-first and
-Linux-only. x86_64, RISC-V, 32-bit, big-endian, and non-Linux `crabc` ports are
-out of scope unless explicitly reopened. `crabc-rs` may later add a separate
+reimplementation of historical libc breadth. AArch64 implementation and
+qualification are paused while the native x86-64 program runs; x86-64 is not
+publicly supported until its runtime promotion gates pass. RISC-V, 32-bit, big-endian, and
+non-Linux `crabc` ports remain out of scope. `crabc-rs` may later add a separate
 macOS/AArch64 libSystem backend; that does not make the libc portable.
 
 Read [`SCOPE.md`](SCOPE.md) for the engineering doctrine,
@@ -18,14 +20,10 @@ for runtime ownership. [`docs/README.md`](docs/README.md) routes design,
 evidence, historical records, and code-adjacent harness guides. Compatibility
 evidence does not promise a native Rust wrapper for every C symbol.
 
-The active acceptance contracts are purpose-led rather than milestone-led:
-[`docs/roadmap/performance-completion.md`](docs/roadmap/performance-completion.md)
-defines the measurable Linux/AArch64 performance bar;
-[`docs/roadmap/software-corpus-validation.md`](docs/roadmap/software-corpus-validation.md)
-defines the sequenced real-software and `crabc-rs` application corpus; and
-[`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) retains the
-future CPython source-build contract. The completed Rust-owned application
-CRT/sysroot and Lua source-build gates are documented in
+[`plan.md`](plan.md) coordinates runtime parity and native allocator completion;
+the [documentation router](docs/README.md) links their detailed performance,
+consumer, and source-build contracts. The recorded AArch64 Rust-owned application
+CRT/sysroot and Lua source-build deliverables are documented in
 [`docs/design/crt-and-sysroot.md`](docs/design/crt-and-sysroot.md) and
 [`docs/design/source-build.md`](docs/design/source-build.md). Their purity
 evidence distinguishes the completed CRT/sysroot boundary from the remaining
@@ -43,7 +41,15 @@ linking, errno, ABI, and AArch64 behavior are treated as core compatibility
 work. Musl is the compatibility oracle; glibc is neither an oracle nor a
 fallback.
 
-## Native AArch64 development
+## Development entrypoints
+
+The active native route is `./scripts/dev-x86_64.sh`, following [`plan.md`](plan.md),
+[`x86-64.md`](x86-64.md), and [`native-mimalloc.md`](native-mimalloc.md). The
+allocator work first requires launcher containment under `.work/` as specified
+by the native mimalloc plan. The AArch64 route below is a paused reference for
+preserving its contracts and frozen evidence.
+
+## Paused AArch64 development reference
 
 The supported development loop is Apple Silicon macOS → Docker → Linux/AArch64.
 The image and compatibility oracles are pinned in
@@ -110,7 +116,7 @@ not built.
 | `ldso/` | `libldso.so`: AArch64 dynamic linker |
 | `crt/` | Rust-produced application CRT start/end objects |
 | `builtins/` | Rust `no_std` compiler-helper archive for final C links |
-| `crabc-core/` | Shared typed `no_std` Linux/AArch64 implementation layer; private native x86-64 primitives exist only for fixed-mimalloc evidence |
+| `crabc-core/` | Shared typed `no_std` implementation layer; public AArch64 contract and staged native x86 foundations |
 | `crabc-rs/` | Idiomatic Rust OS/runtime capabilities |
 | `include/` | Public C headers |
 | `tests/` | Runtime integration tests and C fixtures |

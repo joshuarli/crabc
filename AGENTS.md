@@ -29,15 +29,15 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 | `ldso/` | `crabc-ldso`: AArch64 dynamic linker and private runtime-state owner. `ldso/src/lib.rs` is the target/linkage root; `ldso/src/loader.rs` owns loader algorithms and state. |
 | `crt/` | `crabc-crt`: Rust-produced `crt1.o`, `Scrt1.o`, `rcrt1.o`, `crti.o`, and `crtn.o`; `crt/build.py` owns deterministic object production and provenance. |
 | `builtins/` | Rust `no_std` compiler-helper archive and deterministic builder for `libcrabc-builtins.a`; it replaces foreign target compiler-runtime archives. |
-| `crabc-core/` | Shared typed `no_std` Linux/AArch64 primitives used by the Rust facade. |
+| `crabc-core/` | Shared typed `no_std` primitives used by the Rust facade; public AArch64 contract and staged native x86 foundations. |
 | `crabc-rs/` | Public idiomatic Rust facade, direct probes, and native tests. |
 | `crabc-mimalloc/` | Fixed-upstream allocator provenance and incomplete `#![no_std]` semantic port. Native x86-64 work is active; AArch64 work is paused. It is not a new allocator design or the current production backend. |
 | `include/` | Installed public C headers. |
 | `tests/` | Root Rust integration tests and C fixtures. |
 | `compat/` | ABI, differential, loader, corpus, POSIX, Rust-std, LTO, Rustix, performance, and capability-ledger evidence. |
 | `libc-test-harness/` | Pinned upstream libc-test runner and its oracle evidence. |
-| `docker/` | Pinned Linux/AArch64 development image. |
-| `scripts/dev.sh` | Canonical Docker-first command dispatcher. |
+| `docker/` | Pinned target-specific development images. |
+| `scripts/dev-x86_64.sh` | Active native x86 Docker-first dispatcher; `scripts/dev.sh` preserves the paused AArch64 command surface. |
 | `compat/reports/` | Ignored generated evidence. |
 | `COMPATIBILITY.md` | Generated repository status dashboard; never edit it by hand. |
 
@@ -69,8 +69,9 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 When documentation disagrees, use this precedence:
 
 1. Explicit user direction and this working contract.
-2. `SCOPE.md`, then `COMPATIBILITY-PROFILE.md`, then `STATUS.md` and the
-   applicable roadmap or machine-readable contract.
+2. `SCOPE.md`, then `COMPATIBILITY-PROFILE.md`, then `plan.md` and the
+   applicable execution or machine-readable contract. `STATUS.md` routes
+   current work; it cannot override acceptance criteria.
 3. Executable and machine-readable contracts: manifests, headers, pins,
    ledgers, scripts, and focused tests.
 4. Musl/POSIX/source-oracle evidence for the named behavior.
@@ -82,28 +83,24 @@ record why it is historical.
 
 ## Development and evidence
 
-The supported host path is Apple Silicon macOS → Docker → Linux/AArch64. Use
-`./scripts/dev.sh`; direct `cargo` is appropriate only inside that pinned
-container.
+Active work uses the pinned native Linux/x86-64 environment through
+`./scripts/dev-x86_64.sh`. Direct `cargo` is appropriate only inside the
+relevant pinned environment. Start with the campaign surface:
 
 ```bash
-./scripts/dev.sh image
-./scripts/dev.sh build [cargo args]
-./scripts/dev.sh test [cargo args]
-./scripts/dev.sh crabc-rs
-./scripts/dev.sh compat
-./scripts/dev.sh libc-test functional|math|regression|api|all
-./scripts/dev.sh os-test | pthread-stress | static-pthread-tls
-./scripts/dev.sh signal-process | resolver-network | ldso | corpus
-./scripts/dev.sh rust-std | rust-std-dependent | lto | lto-native-facade
-./scripts/dev.sh sysroot
-./scripts/dev.sh lua [--offline]
-./scripts/dev.sh perf [--label NAME]
-./scripts/dev.sh perf-native [--label NAME]
-./scripts/dev.sh abi-probe | loader-inventory | dashboard | shell
+./scripts/dev-x86_64.sh --help
+./scripts/dev-x86_64.sh campaign-status
+./scripts/dev-x86_64.sh campaign-family FAMILY
+./scripts/dev-x86_64.sh campaign-all
 ```
 
-The detailed runner options and report contracts live next to each harness.
+The allocator lane uses `compat/allocator/run-x86_64.sh` only after the `.work/`
+containment prerequisite in `native-mimalloc.md` is complete. Its standalone
+evidence cannot replace runtime integration. `scripts/dev.sh` and the pinned
+Apple Silicon → Linux/AArch64 workflow are paused reference paths, not commands
+to execute for this goal. Do not emulate AArch64.
+
+Detailed runner options and report contracts live next to each harness.
 `libc-test-harness/run.sh` is a compatibility launcher, not the canonical host
 entry point. `scripts/local-ci.sh` is legacy host-architecture convenience and
 does not replace the pinned native evidence environment.
