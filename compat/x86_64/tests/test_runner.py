@@ -25179,6 +25179,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertNotIn(forbidden, clock_adjtime)
 
         for required in (
+            "#define _POSIX_C_SOURCE 200809L",
             "#include <errno.h>",
             "#include <sys/timex.h>",
             "SYS_clock_adjtime == 305",

@@ -13,6 +13,10 @@
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
 #endif
 
+/* CLOCK_MONOTONIC is a POSIX <time.h> name.  This self-contained C body
+ * requests that surface before any project or oracle header is parsed. */
+#define _POSIX_C_SOURCE 200809L
+
 #include <errno.h>
 #include <stddef.h>
 #include <sys/syscall.h>
