@@ -13,6 +13,7 @@ BUILD = ROOT / "ldso" / "build.rs"
 LOADER = ROOT / "ldso" / "src" / "x86_64_initial_graph.rs"
 GRAPH = ROOT / "ldso" / "src" / "x86_64_general_initial_graph.rs"
 STATE = ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs"
+COMMON_STATE = ROOT / "ldso" / "src" / "x86_64_general_initial_loader_state.rs"
 SOURCE_ROOT = ROOT / "ldso" / "src" / "x86_64_general_initial_tls_runtime_v1_source_root.rs"
 ORDINARY_TLS_ROOT = ROOT / "ldso" / "src" / "x86_64_general_initial_tls_source_root.rs"
 CONSUMER = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "loader_tls_runtime_v1.rs"
@@ -104,6 +105,7 @@ class GeneralLoaderLibcTlsRuntimeV1Tests(unittest.TestCase):
     def test_paired_pre_fs_reservation_rolls_back_both_and_commit_has_no_fallible_successor(self) -> None:
         graph = GRAPH.read_text(encoding="utf-8")
         state = STATE.read_text(encoding="utf-8")
+        common_state = COMMON_STATE.read_text(encoding="utf-8")
 
         self.assertLess(
             graph.index("state.reserve_publication()"),
@@ -126,10 +128,25 @@ class GeneralLoaderLibcTlsRuntimeV1Tests(unittest.TestCase):
         self.assertIn("RuntimeV1PublicationReserved", state)
         self.assertIn("release_loader_tls_runtime_v1_descriptor_reservation", state)
 
-        rollback = state[state.index("pub(crate) fn rollback") : state.index("pub(crate) fn module_id")]
+        abort = state[
+            state.index("pub(crate) fn abort") : state.index(
+                "/// Rolls back a TLS planner failure"
+            )
+        ]
         self.assertLess(
-            rollback.index("release_loader_tls_runtime_v1_descriptor_reservation"),
-            rollback.index("GENERAL_INITIAL_TLS_PUBLICATION"),
+            abort.index("release_loader_tls_runtime_v1_descriptor_reservation"),
+            abort.index("self.loader.abort"),
+        )
+
+        common_rollback = common_state[
+            common_state.index("pub(crate) fn rollback") : common_state.index(
+                "/// Writes and release-publishes"
+            )
+        ]
+        self.assertIn("GENERAL_INITIAL_LOADER_PUBLICATION", common_rollback)
+        self.assertLess(
+            common_rollback.index("GENERAL_INITIAL_LOADER_PUBLICATION"),
+            common_rollback.index("graph.rollback_to_main"),
         )
 
         commit = state[
@@ -140,7 +157,7 @@ class GeneralLoaderLibcTlsRuntimeV1Tests(unittest.TestCase):
         self.assertNotIn("compare_exchange", commit)
         self.assertNotIn("Result<", commit)
         self.assertLess(
-            commit.index("GENERAL_INITIAL_TLS_PUBLICATION.store"),
+            commit.index("self.loader.commit()"),
             commit.index("publish_reserved_loader_tls_runtime_v1"),
         )
 

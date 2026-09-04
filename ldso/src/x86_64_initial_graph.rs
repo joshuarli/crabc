@@ -52,6 +52,9 @@ use core::ffi::c_void;
 #[path = "x86_64_initial_graph_state.rs"]
 mod x86_64_initial_graph_state;
 #[cfg(crabc_general_initial_graph)]
+#[path = "x86_64_general_initial_loader_state.rs"]
+mod x86_64_general_initial_loader_state;
+#[cfg(crabc_general_initial_graph)]
 #[path = "x86_64_general_initial_graph.rs"]
 mod x86_64_general_initial_graph;
 #[cfg(any(
@@ -747,6 +750,18 @@ pub static __crabc_x86_64_fixed_graph_dlfcn_v1: FixedGraphDlfcnV1 = FixedGraphDl
     information: fixed_graph_handle_information,
 };
 
+/// How an object mapping entered the one initial loader transaction.
+///
+/// The map span is recorded together with this provenance rather than
+/// reconstructed from ELF headers at rollback time.  In particular, the
+/// kernel-owned main image is never a transaction rollback candidate.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum ObjectMapProvenance {
+    None,
+    KernelMain,
+    Transaction,
+}
+
 #[derive(Copy, Clone)]
 struct Object {
     base: u64,
@@ -780,6 +795,9 @@ struct Object {
     needed: [usize; MAX_NEEDED],
     needed_count: usize,
     mapped: bool,
+    map_provenance: ObjectMapProvenance,
+    map_span_start: u64,
+    map_span_byte_len: u64,
     tls_image: *const u8,
     tls_filesz: usize,
     tls_memsz: usize,
@@ -817,6 +835,9 @@ const EMPTY_OBJECT: Object = Object {
     needed: [0; MAX_NEEDED],
     needed_count: 0,
     mapped: false,
+    map_provenance: ObjectMapProvenance::None,
+    map_span_start: 0,
+    map_span_byte_len: 0,
     tls_image: core::ptr::null(),
     tls_filesz: 0,
     tls_memsz: 0,
@@ -1862,7 +1883,7 @@ unsafe fn map_elf(
     }
     let runtime_phdr = runtime_phdr?;
     drop(header_mapping);
-    let object = parse_mapped(
+    let mut object = parse_mapped(
         base,
         runtime_phdr,
         phnum,
@@ -1870,6 +1891,9 @@ unsafe fn map_elf(
         allow_bounded_runtime_legacy_tags,
         general_initial_graph,
     )?;
+    object.map_provenance = ObjectMapProvenance::Transaction;
+    object.map_span_start = reserve as u64;
+    object.map_span_byte_len = reserve_len;
     // Successful callers now own the exact reservation and release it through
     // the graph rollback/unload boundary.  Every earlier error drops it.
     core::mem::forget(reservation);

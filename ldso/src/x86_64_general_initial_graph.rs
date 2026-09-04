@@ -2,16 +2,20 @@
 //!
 //! This private package deliberately uses the checked ELF/parser/mapper and
 //! non-TLS relocation primitives in its parent module, but owns no fixed
-//! object shape. Its state and identity rules live in
-//! `x86_64_initial_graph_state.rs`; the older fixed graph remains a separate
-//! regression root.  The default general root remains non-TLS.  Its separate
-//! `crabc_general_initial_tls_materialization_v1` sibling adds only an
-//! initial Variant-II TLS population and retains it in loader-owned state. Its
-//! ordinary cfg is not a RuntimeV1 producer; the separately cfg-selected
-//! general RuntimeV1 handoff still excludes dynamic CRT handoff, general
-//! process/DSO lifecycle ownership, and runtime DSO mapping.
+//! object shape. `x86_64_initial_graph_state.rs` defines identity/topology;
+//! `x86_64_general_initial_loader_state.rs` is the one durable graph/object/
+//! map-provenance owner for both roots. The older fixed graph remains a
+//! separate regression root. The default general root remains non-TLS. Its
+//! separate `crabc_general_initial_tls_materialization_v1` sibling attaches
+//! one initial Variant-II TLS population to that same owner. Its ordinary cfg
+//! is not a RuntimeV1 producer; the separately cfg-selected general RuntimeV1
+//! handoff still excludes dynamic CRT handoff, general process/DSO lifecycle
+//! ownership beyond the immutable initial state, and runtime DSO mapping.
 
 use super::*;
+use super::x86_64_general_initial_loader_state::{
+    GeneralInitialLoaderState, GeneralInitialPreparationStage,
+};
 use super::x86_64_initial_graph_state::{InitialGraphState, ObjectAdmission, ObjectIdentity};
 #[cfg(crabc_general_initial_tls_materialization_v1)]
 use super::x86_64_general_initial_tls_state::GeneralInitialTlsState;
@@ -21,8 +25,8 @@ use super::x86_64_general_initial_tls_state::GeneralInitialTlsState;
 /// # Safety
 ///
 /// `_start` must supply the untouched Linux initial stack and this
-/// interpreter's already self-relocated base. All returned ELF metadata is
-/// retained only while the corresponding mapping remains live.
+/// interpreter's already self-relocated base. A successful initial graph is
+/// moved into the private process-lifetime owner before any constructor runs.
 pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
     // SAFETY: `_start` supplies the unchanged kernel stack and a self-relocated
     // interpreter base. Every object pointer below comes from a checked
@@ -53,54 +57,90 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
 
 #[cfg(not(crabc_general_initial_tls_materialization_v1))]
 unsafe fn run_without_tls(main: Object, main_entry: u64, sp: usize, ldso_base: usize) -> ! {
-    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
-    objects[0] = main;
-
     // `u64::MAX` cannot be a Linux device number. The kernel-owned main
     // mapping therefore cannot alias an fstat-derived DSO identity.
-    let mut graph = InitialGraphState::new(ObjectIdentity {
+    let mut state = GeneralInitialLoaderState::new(ObjectIdentity {
         device: u64::MAX,
         inode: u64::MAX,
-    });
-    if discover_needed(&mut graph, &mut objects, 0).is_none() {
-        rollback(&mut graph, &mut objects);
+    }, main);
+    let discovered = {
+        let (graph, objects) = state
+            .discovery_mut()
+            .unwrap_or_else(|_| fail(b"state\n"));
+        unsafe { discover_needed(graph, objects, 0) }
+    };
+    if discovered.is_none() {
+        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Discovery);
         fail(b"graph\n");
     }
-    if graph.finish_discovery(0).is_err() {
-        rollback(&mut graph, &mut objects);
+    if state.finish_discovery().is_err() {
+        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Discovery);
         fail(b"graph\n");
     }
 
-    let object_count = graph.object_count();
+    let object_count = state.object_count();
     for index in 0..object_count {
-        if relocate(&objects[index], &objects).is_none() {
-            rollback(&mut graph, &mut objects);
+        let objects = state
+            .objects_during_transaction()
+            .unwrap_or_else(|_| fail(b"state\n"));
+        if relocate(&objects[index], objects).is_none() {
+            rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Relocation);
             fail(b"reloc\n");
         }
     }
-    for object in &objects[1..object_count] {
+    for object in &state
+        .objects_during_transaction()
+        .unwrap_or_else(|_| fail(b"state\n"))[1..object_count]
+    {
         if protect_segments(object).is_none() {
-            rollback(&mut graph, &mut objects);
+            rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Protection);
             fail(b"protect\n");
         }
     }
-    for object in &objects[..object_count] {
+    for object in &state
+        .objects_during_transaction()
+        .unwrap_or_else(|_| fail(b"state\n"))[..object_count]
+    {
         if apply_relro(object).is_none() {
-            rollback(&mut graph, &mut objects);
+            rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::Relro);
             fail(b"relro\n");
         }
     }
     if apply_self_relro(ldso_base as u64).is_none() {
-        rollback(&mut graph, &mut objects);
+        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::SelfRelro);
         fail(b"selfrelro\n");
     }
-    let initializers = match preflight_dependency_initializers(&graph, &objects) {
+    let initializers = match preflight_dependency_initializers(
+        state
+            .graph_during_transaction()
+            .unwrap_or_else(|_| fail(b"state\n")),
+        state
+            .objects_during_transaction()
+            .unwrap_or_else(|_| fail(b"state\n")),
+    ) {
         Some(plan) => plan,
         None => {
-            rollback(&mut graph, &mut objects);
+            rollback_general_initial_state(
+                &mut state,
+                GeneralInitialPreparationStage::InitializerPreflight,
+            );
             fail(b"ctorplan\n");
         }
     };
+    if state.prepare().is_err() {
+        rollback_general_initial_state(&mut state, GeneralInitialPreparationStage::InitializerPreflight);
+        fail(b"state\n");
+    }
+    if state.reserve_publication().is_err() {
+        rollback_general_initial_state(
+            &mut state,
+            GeneralInitialPreparationStage::PublicationReservation,
+        );
+        fail(b"publish\n");
+    }
+    // All fallible graph work completed before this move. The retained common
+    // owner is therefore visible before any dependency constructor runs.
+    unsafe { state.commit() };
     // `preflight_dependency_initializers` has read and checked every
     // relocated entry after all object and interpreter RELRO ranges were
     // sealed. Dispatch is consequently an infallible first callback step.
@@ -110,10 +150,10 @@ unsafe fn run_without_tls(main: Object, main_entry: u64, sp: usize, ldso_base: u
 
 /// Runs the bounded general graph's initial TLS materialization transaction.
 ///
-/// The no-TLS sibling above keeps its stack-only ownership.  This sibling
-/// cannot jump until it has committed a loader-owned snapshot, so a direct
-/// `__tls_get_addr` call after entry reaches the same stable module IDs and
-/// DTV slots used for the initial relocations.
+/// Both roots commit the same common graph/object owner. This sibling cannot
+/// jump until it has attached its generation-one TLS facts to that owner, so
+/// a direct `__tls_get_addr` call after entry reaches the same stable module
+/// IDs and DTV slots used for the initial relocations.
 #[cfg(crabc_general_initial_tls_materialization_v1)]
 unsafe fn run_with_initial_tls(
     main: Object,
@@ -129,11 +169,14 @@ unsafe fn run_with_initial_tls(
         main,
     );
     let discovered = {
-        let (graph, objects) = state.graph_and_objects_mut();
+        let (graph, objects) = match state.graph_and_objects_mut() {
+            Ok(parts) => parts,
+            Err(_) => return Err(b"state\n"),
+        };
         unsafe { discover_needed(graph, objects, 0) }
     };
     if discovered.is_none() || state.finish_discovery().is_err() {
-        rollback_initial_tls_state(&mut state);
+        rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Discovery);
         return Err(b"graph\n");
     }
     // This is an initial-TLS root, not a second spelling for the non-TLS
@@ -142,36 +185,56 @@ unsafe fn run_with_initial_tls(
     match state.plan_initial_tls() {
         Ok(true) => {}
         Ok(false) | Err(_) => {
-            rollback_initial_tls_state(&mut state);
+            rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsPlanning);
             return Err(b"tlsplan\n");
         }
     }
 
     for index in 0..state.object_count() {
-        let objects = state.objects();
+        let objects = match state.objects() {
+            Ok(objects) => objects,
+            Err(_) => {
+                rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsRegistry);
+                return Err(b"tlsstate\n");
+            }
+        };
         if unsafe { relocate(&objects[index], objects) }.is_none() {
-            rollback_initial_tls_state(&mut state);
+            rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relocation);
             return Err(b"reloc\n");
         }
     }
     if state.mark_relocated().is_err() {
-        rollback_initial_tls_state(&mut state);
+        rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsRegistry);
         return Err(b"tlsstate\n");
     }
     for index in 1..state.object_count() {
-        if unsafe { protect_segments(&state.objects()[index]) }.is_none() {
-            rollback_initial_tls_state(&mut state);
+        let objects = match state.objects() {
+            Ok(objects) => objects,
+            Err(_) => {
+                rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsRegistry);
+                return Err(b"tlsstate\n");
+            }
+        };
+        if unsafe { protect_segments(&objects[index]) }.is_none() {
+            rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Protection);
             return Err(b"protect\n");
         }
     }
     for index in 0..state.object_count() {
-        if unsafe { apply_relro(&state.objects()[index]) }.is_none() {
-            rollback_initial_tls_state(&mut state);
+        let objects = match state.objects() {
+            Ok(objects) => objects,
+            Err(_) => {
+                rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsRegistry);
+                return Err(b"tlsstate\n");
+            }
+        };
+        if unsafe { apply_relro(&objects[index]) }.is_none() {
+            rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relro);
             return Err(b"relro\n");
         }
     }
     if unsafe { apply_self_relro(ldso_base as u64) }.is_none() {
-        rollback_initial_tls_state(&mut state);
+        rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::SelfRelro);
         return Err(b"selfrelro\n");
     }
 
@@ -180,10 +243,20 @@ unsafe fn run_with_initial_tls(
     // roll back mappings and preserve the incoming FS base. In particular,
     // do not discover a cycle, a zero entry, or a non-executable target after
     // `ARCH_SET_FS`: `commit` deliberately has no fallible successor.
-    let initializers = match preflight_dependency_initializers(state.graph(), state.objects()) {
+    let (graph, objects) = match (state.graph(), state.objects()) {
+        (Ok(graph), Ok(objects)) => (graph, objects),
+        _ => {
+            rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsRegistry);
+            return Err(b"tlsstate\n");
+        }
+    };
+    let initializers = match preflight_dependency_initializers(graph, objects) {
         Some(plan) => plan,
         None => {
-            rollback_initial_tls_state(&mut state);
+            rollback_initial_tls_state(
+                &mut state,
+                GeneralInitialPreparationStage::InitializerPreflight,
+            );
             return Err(b"ctorplan\n");
         }
     };
@@ -193,7 +266,7 @@ unsafe fn run_with_initial_tls(
     // above has already rolled back mappings and left the incoming FS base
     // untouched.
     if state.reject_runtime_tls_growth(state.object_count()).is_ok() {
-        rollback_initial_tls_state(&mut state);
+        rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsRegistry);
         return Err(b"tlsgrowth\n");
     }
     // Reserve the one private committed-state slot before the installer can
@@ -201,7 +274,10 @@ unsafe fn run_with_initial_tls(
     // through `rollback_initial_tls_state`; after a successful installer the
     // commit below has no fallible arbitration left to perform.
     if state.reserve_publication().is_err() {
-        rollback_initial_tls_state(&mut state);
+        rollback_initial_tls_state(
+            &mut state,
+            GeneralInitialPreparationStage::PublicationReservation,
+        );
         return Err(b"tlspublish\n");
     }
 
@@ -211,7 +287,10 @@ unsafe fn run_with_initial_tls(
     // reused here: it performs a descriptor CAS after ARCH_SET_FS.
     #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
     if state.reserve_runtime_v1_publication().is_err() {
-        rollback_initial_tls_state(&mut state);
+        rollback_initial_tls_state(
+            &mut state,
+            GeneralInitialPreparationStage::RuntimeV1Reservation,
+        );
         return Err(b"tlsruntimev1\n");
     }
 
@@ -221,16 +300,17 @@ unsafe fn run_with_initial_tls(
             // `materialize_initial_tls` returns an error only before it can
             // install %fs. Once it returns the coordinates below, commit has
             // no fallible predecessor or rollback path.
-            rollback_initial_tls_state(&mut state);
+            rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsMaterialization);
             return Err(b"tlsinit\n");
         }
     };
 
     // The state installer has performed the sole fallible `ARCH_SET_FS`
-    // transition. Publication was already reserved, so commit only writes the
-    // private snapshot and release-publishes it; the RuntimeV1 sibling writes
-    // its descriptor fields and release-publishes READY last. No error path
-    // remains that could leave a changed FS base without its retained owner.
+    // transition. Publication was already reserved, so commit only writes and
+    // release-publishes the common graph/object owner; the RuntimeV1 sibling
+    // writes its descriptor fields and release-publishes READY last. No error
+    // path remains that could leave a changed FS base without its retained
+    // owner.
     #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
     unsafe { state.commit(installed) };
     #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
@@ -320,8 +400,11 @@ unsafe fn dispatch_dependency_initializers(plan: &DependencyInitializerPlan) {
 }
 
 #[cfg(crabc_general_initial_tls_materialization_v1)]
-unsafe fn rollback_initial_tls_state(state: &mut GeneralInitialTlsState) {
-    state.rollback(|object| unsafe { unmap_object(object) });
+unsafe fn rollback_initial_tls_state(
+    state: &mut GeneralInitialTlsState,
+    stage: GeneralInitialPreparationStage,
+) {
+    state.abort(stage, |object| unsafe { unmap_object(object) });
 }
 
 /// Discover every initial dependency edge in linker encounter order.
@@ -400,36 +483,26 @@ unsafe fn selected_needed_name(name: *const u8, name_len: usize) -> bool {
     true
 }
 
-unsafe fn rollback(graph: &mut InitialGraphState, objects: &mut [Object; MAX_OBJECTS]) {
-    graph.rollback_to_main(|index| unsafe { unmap_object(&objects[index]) });
-    for object in objects.iter_mut().skip(1) {
-        *object = EMPTY_OBJECT;
-    }
+unsafe fn rollback_general_initial_state(
+    state: &mut GeneralInitialLoaderState,
+    stage: GeneralInitialPreparationStage,
+) {
+    state.abort(stage, |object| unsafe { unmap_object(object) });
 }
 
 unsafe fn unmap_object(object: &Object) {
-    if !object.mapped || object.phdr.is_null() || object.phnum == 0 {
+    if object.map_provenance != ObjectMapProvenance::Transaction
+        || !object.mapped
+        || object.map_span_byte_len == 0
+    {
         return;
     }
-    let mut minimum = u64::MAX;
-    let mut maximum = 0u64;
-    for index in 0..object.phnum {
-        let header = object.phdr.add(index * 56);
-        if read_u32(header) != PT_LOAD {
-            continue;
-        }
-        let start = align_down(read_u64(header.add(16)));
-        let Some(end) = read_u64(header.add(16)).checked_add(read_u64(header.add(40))) else {
-            return;
-        };
-        minimum = minimum.min(start);
-        maximum = maximum.max(align_up(end));
-    }
-    if minimum != u64::MAX && maximum > minimum {
-        let _ = syscall2(
-            SYS_MUNMAP,
-            object.base.wrapping_add(minimum) as i64,
-            (maximum - minimum) as i64,
-        );
-    }
+    // `map_elf` retained this exact anonymous reservation span at admission.
+    // Do not reparse mutable mapped ELF headers for a lifetime operation and
+    // never infer a span for the kernel-owned main image.
+    let _ = syscall2(
+        SYS_MUNMAP,
+        object.map_span_start as i64,
+        object.map_span_byte_len as i64,
+    );
 }

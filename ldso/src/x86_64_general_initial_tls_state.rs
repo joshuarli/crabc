@@ -1,11 +1,11 @@
 //! Loader-owned state for one x86-64 general initial TLS population.
 //!
 //! The general initial graph discovers an arbitrary bounded `DT_NEEDED`
-//! topology, but its stack transaction cannot itself retain the facts needed
-//! once the application starts to use GNU Dynamic TLS.  This state keeps the
-//! graph order, object identity, initial module IDs, generation-one registry,
-//! Variant-II template layout, and installed main-thread coordinates together
-//! until they are committed to loader-owned process-lifetime storage.
+//! topology through `x86_64_general_initial_loader_state.rs`, which is the
+//! sole durable owner of graph identity, object metadata, map spans, and TLS
+//! attachment fields. This sidecar plans the initial module registry and
+//! Variant-II allocation against that same object store; it never owns a
+//! duplicate graph or object array.
 //!
 //! The ordinary general-initial-TLS cfg is deliberately not a RuntimeV1
 //! producer. Its explicitly separate `crabc_general_loader_libc_tls_runtime_v1`
@@ -18,18 +18,19 @@
 #![allow(dead_code, unexpected_cfgs)]
 
 use super::*;
-use super::x86_64_initial_graph_state::{InitialGraphState, ObjectIdentity, ObjectState};
+use super::x86_64_general_initial_loader_state::{
+    GeneralInitialLoaderPhase, GeneralInitialLoaderState, GeneralInitialLoaderStateError,
+    GeneralInitialPreparationStage,
+};
+use super::x86_64_initial_graph_state::ObjectIdentity;
 use super::x86_64_initial_tls_registry::{
     InitialTlsGeneration, InitialTlsRegistry, RegistryPhase, RuntimeTlsGrowthError, TlsModuleId,
 };
 use core::mem::MaybeUninit;
+#[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 use core::sync::atomic::{AtomicU8, Ordering};
 
 type GeneralInitialTlsRegistry = InitialTlsRegistry<MAX_OBJECTS, MAX_OBJECTS>;
-
-const GENERAL_INITIAL_TLS_UNPUBLISHED: u8 = 0;
-const GENERAL_INITIAL_TLS_PUBLISHING: u8 = 1;
-const GENERAL_INITIAL_TLS_COMMITTED: u8 = 2;
 
 /// The one-way lifecycle of a general initial TLS transaction.
 ///
@@ -62,6 +63,16 @@ pub(crate) enum GeneralInitialTlsStateError {
     RuntimeV1PublicationUnavailable,
 }
 
+fn map_loader_state_error(error: GeneralInitialLoaderStateError) -> GeneralInitialTlsStateError {
+    match error {
+        GeneralInitialLoaderStateError::InvalidPhase => GeneralInitialTlsStateError::InvalidPhase,
+        GeneralInitialLoaderStateError::GraphIncomplete => GeneralInitialTlsStateError::GraphIncomplete,
+        GeneralInitialLoaderStateError::PublicationUnavailable => {
+            GeneralInitialTlsStateError::PublicationUnavailable
+        }
+    }
+}
+
 /// Exact main-thread coordinates retained by the loader after `ARCH_SET_FS`.
 ///
 /// The mapping remains process-lifetime state in this slice. These fields are
@@ -77,32 +88,68 @@ struct GeneralInitialTlsAllocation {
     module_count: usize,
 }
 
-/// One bounded general initial-TLS transaction and, after commit, its durable
-/// loader-owned snapshot.
+/// One bounded general initial-TLS planner.
 ///
-/// Object indices are graph-order identities.  A TLS-free object owns no
+/// Its `loader` field is the common graph/object owner until commit; the
+/// registry/allocation become a TLS-only sidecar attached to that same owner.
+/// Object indices are graph-order identities. A TLS-free object owns no
 /// module ID, so the registry is the only mapping from object identity/order
 /// to a one-based ELF TLS module number.
 pub(crate) struct GeneralInitialTlsState {
     phase: GeneralInitialTlsPhase,
-    graph: InitialGraphState,
-    objects: [Object; MAX_OBJECTS],
+    loader: GeneralInitialLoaderState,
     registry: GeneralInitialTlsRegistry,
-    allocation: MaybeUninit<GeneralInitialTlsAllocation>,
 }
 
-// Startup is single-threaded until the final jump.  The atomic publication
-// word prevents a second accidental interpreter transaction from overwriting
-// the retained state; no later operation mutates the committed snapshot.
-static GENERAL_INITIAL_TLS_PUBLICATION: AtomicU8 =
-    AtomicU8::new(GENERAL_INITIAL_TLS_UNPUBLISHED);
-// `#[used]` is intentional: the snapshot is process-lifetime loader state,
-// not merely a temporary vehicle for `%fs` installation.  The direct resolver
-// uses the TCB/DTV coordinates, while this private retained record owns the
-// corresponding graph, templates, identity order, and mapping lifetime.
+/// TLS-specific retained coordinates attached to the canonical loader state.
+///
+/// This record deliberately contains no `InitialGraphState` or `[Object; _]`:
+/// those facts are immutable members of `GeneralInitialLoaderState`. Its
+/// visibility is guarded by that owner's acquire/release `Ready` word.
+struct GeneralInitialTlsAttachment {
+    registry: GeneralInitialTlsRegistry,
+    allocation: GeneralInitialTlsAllocation,
+}
+
+// `#[used]` is intentional: the direct resolver uses the TCB/DTV
+// coordinates, while this sidecar retains their generation-one registry and
+// allocation under the common loader owner's publication boundary.
 #[used]
-#[link_section = ".bss.crabc_general_initial_tls_state"]
-static mut GENERAL_INITIAL_TLS_STATE: MaybeUninit<GeneralInitialTlsState> = MaybeUninit::uninit();
+#[link_section = ".bss.crabc_general_initial_tls_attachment"]
+static mut GENERAL_INITIAL_TLS_ATTACHMENT: MaybeUninit<GeneralInitialTlsAttachment> =
+    MaybeUninit::uninit();
+
+/// Writes the TLS-only sidecar before the common loader state becomes Ready.
+///
+/// # Safety
+///
+/// The caller must hold the common loader owner's `Reserved` slot and must
+/// call this exactly once in the non-fallible post-`ARCH_SET_FS` tail.
+unsafe fn publish_initial_tls_attachment(
+    registry: GeneralInitialTlsRegistry,
+    installed: InstalledInitialTls,
+) {
+    let attachment = GeneralInitialTlsAttachment {
+        registry,
+        allocation: GeneralInitialTlsAllocation {
+            mapping: installed.mapping,
+            mapping_byte_len: installed.mapping_byte_len,
+            thread_pointer: installed.thread_pointer,
+            dtv: installed.dtv,
+            dtv_words: installed.dtv_words,
+            module_count: installed.module_count,
+        },
+    };
+    // SAFETY: common-state publication remains `Reserved`, so no reader can
+    // observe this sidecar until its later release store to `Ready`.
+    unsafe {
+        core::ptr::write(
+            core::ptr::addr_of_mut!(GENERAL_INITIAL_TLS_ATTACHMENT)
+                .cast::<GeneralInitialTlsAttachment>(),
+            attachment,
+        );
+    }
+}
 
 // -------------------------------------------------------------------------
 // Private general loader/libc RuntimeV1 descriptor
@@ -277,16 +324,12 @@ unsafe fn publish_reserved_loader_tls_runtime_v1(installed: InstalledInitialTls)
 }
 
 impl GeneralInitialTlsState {
-    /// Begins a stack-owned transaction for a kernel-mapped main image.
+    /// Begins a TLS planner against the canonical general loader transaction.
     pub(crate) fn new(main_identity: ObjectIdentity, main: Object) -> Self {
-        let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
-        objects[0] = main;
         Self {
             phase: GeneralInitialTlsPhase::Discovery,
-            graph: InitialGraphState::new(main_identity),
-            objects,
+            loader: GeneralInitialLoaderState::new(main_identity, main),
             registry: GeneralInitialTlsRegistry::new(),
-            allocation: MaybeUninit::uninit(),
         }
     }
 
@@ -295,23 +338,38 @@ impl GeneralInitialTlsState {
     }
 
     pub(crate) fn object_count(&self) -> usize {
-        self.graph.object_count()
+        self.loader.object_count()
     }
 
     pub(crate) fn graph_and_objects_mut(
         &mut self,
-    ) -> (&mut InitialGraphState, &mut [Object; MAX_OBJECTS]) {
-        (&mut self.graph, &mut self.objects)
+    ) -> Result<
+        (&mut super::x86_64_initial_graph_state::InitialGraphState, &mut [Object; MAX_OBJECTS]),
+        GeneralInitialTlsStateError,
+    > {
+        if self.phase != GeneralInitialTlsPhase::Discovery {
+            return Err(GeneralInitialTlsStateError::InvalidPhase);
+        }
+        self.loader
+            .discovery_mut()
+            .map_err(map_loader_state_error)
     }
 
     /// Returns the sealed initial dependency graph for post-relocation
     /// startup planning. Callers receive no mutation path after discovery.
-    pub(crate) fn graph(&self) -> &InitialGraphState {
-        &self.graph
+    pub(crate) fn graph(
+        &self,
+    ) -> Result<&super::x86_64_initial_graph_state::InitialGraphState, GeneralInitialTlsStateError>
+    {
+        self.loader
+            .graph_during_transaction()
+            .map_err(map_loader_state_error)
     }
 
-    pub(crate) fn objects(&self) -> &[Object; MAX_OBJECTS] {
-        &self.objects
+    pub(crate) fn objects(&self) -> Result<&[Object; MAX_OBJECTS], GeneralInitialTlsStateError> {
+        self.loader
+            .objects_during_transaction()
+            .map_err(map_loader_state_error)
     }
 
     /// Marks the root graph ready once its recursive discovery completed.
@@ -319,9 +377,7 @@ impl GeneralInitialTlsState {
         if self.phase != GeneralInitialTlsPhase::Discovery {
             return Err(GeneralInitialTlsStateError::InvalidPhase);
         }
-        self.graph
-            .finish_discovery(0)
-            .map_err(|_| GeneralInitialTlsStateError::GraphIncomplete)
+        self.loader.finish_discovery().map_err(map_loader_state_error)
     }
 
     /// Plans every initial `PT_TLS` image before a relocation can write a
@@ -335,9 +391,15 @@ impl GeneralInitialTlsState {
         if self.phase != GeneralInitialTlsPhase::Discovery {
             return Err(GeneralInitialTlsStateError::InvalidPhase);
         }
-        let object_count = self.graph.object_count();
+        let object_count = self.loader.object_count();
+        let graph = self
+            .loader
+            .graph_during_transaction()
+            .map_err(map_loader_state_error)?;
         if object_count == 0
-            || (0..object_count).any(|index| self.graph.state(index) != Some(ObjectState::Ready))
+            || (0..object_count).any(|index| {
+                graph.state(index) != Some(super::x86_64_initial_graph_state::ObjectState::Ready)
+            })
         {
             return Err(GeneralInitialTlsStateError::GraphIncomplete);
         }
@@ -348,8 +410,12 @@ impl GeneralInitialTlsState {
         let mut registry = GeneralInitialTlsRegistry::new();
         let mut has_tls = false;
 
+        let objects = self
+            .loader
+            .objects_during_transaction()
+            .map_err(map_loader_state_error)?;
         for index in 0..object_count {
-            let object = &self.objects[index];
+            let object = &objects[index];
             if object.tls_memsz == 0 {
                 continue;
             }
@@ -392,10 +458,17 @@ impl GeneralInitialTlsState {
             return Err(GeneralInitialTlsStateError::Registry);
         }
 
-        for index in 0..object_count {
-            self.objects[index].tls_offset_below_tp = planned_offsets[index];
-            self.objects[index].tls_module_id = planned_ids[index];
+        {
+            let (_, objects) = self
+                .loader
+                .discovery_mut()
+                .map_err(map_loader_state_error)?;
+            for index in 0..object_count {
+                objects[index].tls_offset_below_tp = planned_offsets[index];
+                objects[index].tls_module_id = planned_ids[index];
+            }
         }
+        self.loader.attach_initial_tls().map_err(map_loader_state_error)?;
         self.registry = registry;
         self.phase = GeneralInitialTlsPhase::Planned;
         Ok(has_tls)
@@ -412,7 +485,8 @@ impl GeneralInitialTlsState {
         Ok(())
     }
 
-    /// Reserves the one private loader-state slot before `%fs` can change.
+    /// Seals and reserves the common loader-owned graph before `%fs` can
+    /// change.
     ///
     /// The reservation is deliberately separate from [`materialize_initial_tls`]
     /// so a competing/previous publication fails while every transaction
@@ -424,14 +498,20 @@ impl GeneralInitialTlsState {
             return Err(GeneralInitialTlsStateError::InvalidPhase);
         }
         self.validate_registry_bindings()?;
-        GENERAL_INITIAL_TLS_PUBLICATION
-            .compare_exchange(
-                GENERAL_INITIAL_TLS_UNPUBLISHED,
-                GENERAL_INITIAL_TLS_PUBLISHING,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .map_err(|_| GeneralInitialTlsStateError::PublicationUnavailable)?;
+        match self.loader.phase() {
+            GeneralInitialLoaderPhase::Discovering => {
+                self.loader.prepare().map_err(map_loader_state_error)?;
+            }
+            // A competing transaction can make the first reservation attempt
+            // fail after this state has already sealed its graph. Keep that
+            // local Prepared state retryable; no graph/object mutation occurs
+            // between attempts.
+            GeneralInitialLoaderPhase::Prepared => {}
+            _ => return Err(GeneralInitialTlsStateError::InvalidPhase),
+        }
+        self.loader
+            .reserve_publication()
+            .map_err(map_loader_state_error)?;
         self.phase = GeneralInitialTlsPhase::PublicationReserved;
         Ok(())
     }
@@ -488,8 +568,14 @@ impl GeneralInitialTlsState {
         // exactly the sealed initial IDs and layout.  All prior graph work is
         // complete; the installer either leaves `%fs` untouched or returns a
         // fully installed, process-lifetime mapping.
-        let installed = unsafe { install_initial_tls(&self.objects) }
-            .ok_or(GeneralInitialTlsStateError::Materialization)?;
+        let installed = unsafe {
+            install_initial_tls(
+                self.loader
+                    .objects_during_transaction()
+                    .map_err(map_loader_state_error)?,
+            )
+        }
+        .ok_or(GeneralInitialTlsStateError::Materialization)?;
         // `install_initial_tls` validates every input and either returns
         // before `ARCH_SET_FS` or returns these coordinates by construction.
         // Do not add a fallible check after that syscall: a later failure
@@ -510,31 +596,20 @@ impl GeneralInitialTlsState {
     /// exists.
     #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
     pub(crate) unsafe fn commit(mut self, installed: InstalledInitialTls) {
-        // SAFETY: `run_with_initial_tls` obtains `PublicationReserved` before
-        // it invokes the sole `ARCH_SET_FS` path. `materialize_initial_tls`
-        // moves that exact state to `Materialized` only after successful
-        // installation, so all input validation and publication arbitration
-        // have already completed. This method intentionally contains no
-        // branch or fallible operation after `%fs` changes.
+        // SAFETY: `run_with_initial_tls` obtains the common loader owner's
+        // `PublicationReserved` state before it invokes the sole
+        // `ARCH_SET_FS` path. `materialize_initial_tls` moves this exact
+        // state to `Materialized` only after successful installation, so all
+        // input validation and publication arbitration have already
+        // completed. This method intentionally contains no branch or
+        // fallible operation after `%fs` changes.
         self.phase = GeneralInitialTlsPhase::Committed;
-        self.allocation.write(GeneralInitialTlsAllocation {
-            mapping: installed.mapping,
-            mapping_byte_len: installed.mapping_byte_len,
-            thread_pointer: installed.thread_pointer,
-            dtv: installed.dtv,
-            dtv_words: installed.dtv_words,
-            module_count: installed.module_count,
-        });
-        // SAFETY: publication has exclusive startup ownership and this write
-        // initializes the `MaybeUninit` exactly once before its release store.
-        unsafe {
-            core::ptr::write(
-                core::ptr::addr_of_mut!(GENERAL_INITIAL_TLS_STATE)
-                    .cast::<GeneralInitialTlsState>(),
-                self,
-            );
-        }
-        GENERAL_INITIAL_TLS_PUBLICATION.store(GENERAL_INITIAL_TLS_COMMITTED, Ordering::Release);
+        // SAFETY: the common loader owner is still Reserved, so this sidecar
+        // is initialized before the release-published graph/object state.
+        unsafe { publish_initial_tls_attachment(self.registry, installed) };
+        // SAFETY: all fallible work and the sole FS transition completed; the
+        // shared state is now the immutable graph/object/TLS attachment owner.
+        unsafe { self.loader.commit() };
     }
 
     /// Completes the paired general RuntimeV1 handoff after `ARCH_SET_FS`.
@@ -548,27 +623,15 @@ impl GeneralInitialTlsState {
     #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
     pub(crate) unsafe fn commit_runtime_v1(mut self, installed: InstalledInitialTls) {
         self.phase = GeneralInitialTlsPhase::Committed;
-        self.allocation.write(GeneralInitialTlsAllocation {
-            mapping: installed.mapping,
-            mapping_byte_len: installed.mapping_byte_len,
-            thread_pointer: installed.thread_pointer,
-            dtv: installed.dtv,
-            dtv_words: installed.dtv_words,
-            module_count: installed.module_count,
-        });
-        // SAFETY: the general-state reservation was obtained before
-        // ARCH_SET_FS and this is the one process-lifetime retained snapshot.
-        unsafe {
-            core::ptr::write(
-                core::ptr::addr_of_mut!(GENERAL_INITIAL_TLS_STATE)
-                    .cast::<GeneralInitialTlsState>(),
-                self,
-            );
-        }
-        GENERAL_INITIAL_TLS_PUBLICATION.store(GENERAL_INITIAL_TLS_COMMITTED, Ordering::Release);
+        // SAFETY: both pre-FS reservations succeeded. Attach TLS metadata to
+        // the common graph/object owner before that owner becomes Ready.
+        unsafe { publish_initial_tls_attachment(self.registry, installed) };
+        // SAFETY: the common state reservation was obtained before ARCH_SET_FS
+        // and this is the one process-lifetime retained graph/object snapshot.
+        unsafe { self.loader.commit() };
         // SAFETY: the descriptor reservation and every graph/DTV check were
-        // complete before ARCH_SET_FS. This final release store to READY is
-        // intentionally the last runtime-v1 publication action.
+        // complete before ARCH_SET_FS. The descriptor READY store remains
+        // intentionally last, after the shared graph owner is Ready.
         unsafe { publish_reserved_loader_tls_runtime_v1(installed) };
     }
 
@@ -577,7 +640,11 @@ impl GeneralInitialTlsState {
     /// This function is intentionally unavailable after commit: a general
     /// runtime must first establish reference, thread, and DTV-lifetime rules
     /// before it can ever unmap an initial object or free its TLS storage.
-    pub(crate) fn rollback(&mut self, mut unmap: impl FnMut(&Object)) {
+    pub(crate) fn abort(
+        &mut self,
+        stage: GeneralInitialPreparationStage,
+        unmap: impl FnMut(&Object),
+    ) {
         // No caller may roll back after materialization: a successful install
         // has changed `%fs`, and the only permitted next transition is the
         // non-fallible commit. All actual error paths remain before that
@@ -592,27 +659,21 @@ impl GeneralInitialTlsState {
         if self.phase == GeneralInitialTlsPhase::RuntimeV1PublicationReserved {
             release_loader_tls_runtime_v1_descriptor_reservation();
         }
-        if matches!(
-            self.phase,
-            GeneralInitialTlsPhase::PublicationReserved
-                | GeneralInitialTlsPhase::RuntimeV1PublicationReserved
-        ) {
-            // This state owns the atomic PUBLISHING marker and still has the
-            // incoming FS base. No other initial transaction can observe or
-            // legitimately change it, so a release store is the exact undo
-            // for the successful pre-FS reservation.
-            GENERAL_INITIAL_TLS_PUBLICATION
-                .store(GENERAL_INITIAL_TLS_UNPUBLISHED, Ordering::Release);
-        }
-        let (graph, objects) = (&mut self.graph, &mut self.objects);
-        graph.rollback_to_main(|index| unmap(&objects[index]));
-        for object in objects.iter_mut() {
-            object.tls_module_id = 0;
-            object.tls_offset_below_tp = 0;
-        }
+        // The common owner performs the exact reverse-order object rollback
+        // and, when Reserved, restores its one shared publication word to
+        // Vacant. Slot zero remains kernel-owned and is never presented to
+        // `unmap`.
+        self.loader.abort(stage, unmap);
         self.registry = GeneralInitialTlsRegistry::new();
-        self.allocation = MaybeUninit::uninit();
         self.phase = GeneralInitialTlsPhase::RolledBack;
+    }
+
+    /// Rolls back a TLS planner failure that occurred before the exact stage
+    /// was classified by its caller. Production entry code uses [`abort`] so
+    /// each mapping/relocation/protection/RELRO/preflight path remains named;
+    /// this convenience preserves the narrow unit-test harness.
+    pub(crate) fn rollback(&mut self, unmap: impl FnMut(&Object)) {
+        self.abort(GeneralInitialPreparationStage::TlsPlanning, unmap);
     }
 
     pub(crate) fn module_id(&self, object_index: usize) -> Option<TlsModuleId> {
@@ -639,8 +700,16 @@ impl GeneralInitialTlsState {
             return Err(GeneralInitialTlsStateError::Registry);
         }
         let mut expected_module = 0usize;
-        for index in 0..self.graph.object_count() {
-            let object = &self.objects[index];
+        let graph = self
+            .loader
+            .graph_during_transaction()
+            .map_err(map_loader_state_error)?;
+        let objects = self
+            .loader
+            .objects_during_transaction()
+            .map_err(map_loader_state_error)?;
+        for index in 0..graph.object_count() {
+            let object = &objects[index];
             let registry_id = self.registry.module_id(index);
             if object.tls_memsz == 0 {
                 if registry_id.is_some() || object.tls_module_id != 0 {
@@ -673,9 +742,15 @@ impl GeneralInitialTlsState {
     #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
     fn validate_runtime_v1_preflight(&self) -> Result<(), GeneralInitialTlsStateError> {
         self.validate_registry_bindings()?;
-        let object_count = self.graph.object_count();
+        let object_count = self.loader.object_count();
+        let graph = self
+            .loader
+            .graph_during_transaction()
+            .map_err(map_loader_state_error)?;
         if object_count == 0
-            || (0..object_count).any(|index| self.graph.state(index) != Some(ObjectState::Ready))
+            || (0..object_count).any(|index| {
+                graph.state(index) != Some(super::x86_64_initial_graph_state::ObjectState::Ready)
+            })
         {
             return Err(GeneralInitialTlsStateError::GraphIncomplete);
         }
@@ -722,11 +797,11 @@ mod tests {
     }
 
     #[test]
-    fn planning_assigns_stable_ids_in_graph_order_and_skips_tls_free_objects() {
+    fn planning_attaches_tls_to_the_canonical_loader_objects() {
         let main_image = [1u8, 2, 3, 4];
         let dso_image = [5u8, 6, 7, 8];
         let mut state = GeneralInitialTlsState::new(MAIN, tls_object(&main_image, 16, 8));
-        let (graph, objects) = state.graph_and_objects_mut();
+        let (graph, objects) = state.graph_and_objects_mut().unwrap();
         let tls_free = match graph.admit_mapped(ObjectIdentity { device: 1, inode: 2 }).unwrap() {
             super::super::x86_64_initial_graph_state::ObjectAdmission::New { index } => index,
             other => panic!("unexpected admission: {other:?}"),
@@ -744,6 +819,11 @@ mod tests {
 
         assert!(state.plan_initial_tls().unwrap());
         assert_eq!(state.phase(), GeneralInitialTlsPhase::Planned);
+        assert!(state.loader.has_initial_tls_attachment());
+        let objects = state.objects().unwrap();
+        assert_eq!(objects[0].tls_module_id, 1);
+        assert_eq!(objects[tls_free].tls_module_id, 0);
+        assert_eq!(objects[dso].tls_module_id, 2);
         assert_eq!(state.module_id(0).map(TlsModuleId::get), Some(1));
         assert_eq!(state.module_id(tls_free), None);
         assert_eq!(state.module_id(dso).map(TlsModuleId::get), Some(2));
@@ -768,7 +848,7 @@ mod tests {
         let mut malformed = tls_object(&malformed_image, 4, 3);
         malformed.tls_align = 3;
         let mut state = GeneralInitialTlsState::new(MAIN, tls_object(&main_image, 4, 4));
-        let (graph, objects) = state.graph_and_objects_mut();
+        let (graph, objects) = state.graph_and_objects_mut().unwrap();
         let malformed_child = match graph.admit_mapped(ObjectIdentity { device: 1, inode: 2 }).unwrap() {
             super::super::x86_64_initial_graph_state::ObjectAdmission::New { index } => index,
             other => panic!("unexpected admission: {other:?}"),
@@ -793,6 +873,7 @@ mod tests {
 
     #[test]
     fn pre_fs_publication_reservation_rolls_back_and_allows_retry() {
+        let _publication_guard = GeneralInitialLoaderState::test_publication_guard();
         let image = [7u8; 4];
         let mut first = relocated_single_tls_state(&image);
         first.reserve_publication().unwrap();
@@ -814,10 +895,7 @@ mod tests {
 
         first.rollback(|_| panic!("single-object reservation has no DSO map"));
         assert_eq!(first.phase(), GeneralInitialTlsPhase::RolledBack);
-        assert_eq!(
-            GENERAL_INITIAL_TLS_PUBLICATION.load(Ordering::Acquire),
-            GENERAL_INITIAL_TLS_UNPUBLISHED
-        );
+        assert!(GeneralInitialLoaderState::retained().is_none());
         #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
         assert_eq!(
             unsafe {
@@ -839,10 +917,7 @@ mod tests {
         #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
         assert_eq!(retry.phase(), GeneralInitialTlsPhase::PublicationReserved);
         retry.rollback(|_| panic!("single-object retry has no DSO map"));
-        assert_eq!(
-            GENERAL_INITIAL_TLS_PUBLICATION.load(Ordering::Acquire),
-            GENERAL_INITIAL_TLS_UNPUBLISHED
-        );
+        assert!(GeneralInitialLoaderState::retained().is_none());
         #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
         assert_eq!(
             unsafe {

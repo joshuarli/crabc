@@ -422,6 +422,9 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         state = (ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs").read_text(
             encoding="utf-8"
         )
+        common_state = (
+            ROOT / "ldso" / "src" / "x86_64_general_initial_loader_state.rs"
+        ).read_text(encoding="utf-8")
         graph = (ROOT / "ldso" / "src" / "x86_64_general_initial_graph.rs").read_text(
             encoding="utf-8"
         )
@@ -430,12 +433,36 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             "PublicationReserved",
             "reserve_publication",
             "PublicationUnavailable",
-            "GENERAL_INITIAL_TLS_PUBLISHING",
-            "GENERAL_INITIAL_TLS_COMMITTED",
+            "loader: GeneralInitialLoaderState",
+            "GENERAL_INITIAL_TLS_ATTACHMENT",
             "pre_fs_publication_reservation_rolls_back_and_allows_retry",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, state)
+        for phrase in (
+            "GeneralInitialLoaderPhase",
+            "Vacant",
+            "Discovering",
+            "Prepared",
+            "Reserved",
+            "Ready",
+            "GENERAL_INITIAL_LOADER_PUBLICATION",
+            "pub(crate) fn reserve_publication",
+            "pub(crate) unsafe fn commit",
+            "pub(crate) fn retained",
+        ):
+            with self.subTest(common_state_phrase=phrase):
+                self.assertIn(phrase, common_state)
+        self.assertNotIn("graph: InitialGraphState", state)
+        self.assertNotIn("objects: [Object; MAX_OBJECTS]", state)
+        self.assertLess(
+            common_state.index("pub(crate) fn prepare"),
+            common_state.index("pub(crate) fn reserve_publication"),
+        )
+        self.assertLess(
+            common_state.index("pub(crate) fn reserve_publication"),
+            common_state.index("pub(crate) unsafe fn commit"),
+        )
         self.assertLess(
             graph.index("state.reserve_publication()"),
             graph.index("state.materialize_initial_tls()"),
