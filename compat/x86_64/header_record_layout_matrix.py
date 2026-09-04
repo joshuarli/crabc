@@ -57,6 +57,13 @@ UAPI_RECORD_WRAPPERS = {
     "sys/soundcard.h": "linux/soundcard.h",
     "sys/vt.h": "linux/vt.h",
 }
+# Pinned musl reaches those same UAPI records through these private target
+# leaves.  This is an include-context alias, not a general bits/** fallback.
+UAPI_MUSL_BITS_WRAPPERS = {
+    "sys/kd.h": "bits/kd.h",
+    "sys/soundcard.h": "bits/soundcard.h",
+    "sys/vt.h": "bits/vt.h",
+}
 NA_CATEGORIES = (
     "incomplete",
     "anonymous-only",
@@ -269,7 +276,11 @@ def direct_include_header(
         # The compiler's generated translation unit lies outside both header
         # trees, so its direct include is the only public-header context.
         return primary_header
-    return primary_header if included_header == primary_header else None
+    if included_header == primary_header:
+        return primary_header
+    if UAPI_MUSL_BITS_WRAPPERS.get(primary_header) == included_header:
+        return primary_header
+    return None
 
 
 def _direct_private_header(location: object, header_root: Path, primary_header: str, physical_header: str) -> bool:

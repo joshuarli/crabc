@@ -186,6 +186,22 @@ Layout: <ASTRecordLayout
 
     def test_declared_uapi_root_is_limited_to_the_three_record_wrappers(self) -> None:
         """Physical Linux UAPI records are visible only through their mapped wrapper."""
+        self.assertEqual(
+            MATRIX.UAPI_RECORD_WRAPPERS,
+            {
+                "sys/kd.h": "linux/kd.h",
+                "sys/soundcard.h": "linux/soundcard.h",
+                "sys/vt.h": "linux/vt.h",
+            },
+        )
+        self.assertEqual(
+            MATRIX.UAPI_MUSL_BITS_WRAPPERS,
+            {
+                "sys/kd.h": "bits/kd.h",
+                "sys/soundcard.h": "bits/soundcard.h",
+                "sys/vt.h": "bits/vt.h",
+            },
+        )
         with tempfile.TemporaryDirectory(prefix="crabc-record-uapi-") as temporary:
             root = Path(temporary)
             project = root / "project"
@@ -227,6 +243,54 @@ Layout: <ASTRecordLayout
             (project / "net").mkdir()
             (project / unrelated_wrapper).touch()
             self.assertEqual(records(unrelated_wrapper, "linux/if.h"), [])
+
+    def test_compact_uapi_records_accept_the_musl_bits_indirection(self) -> None:
+        """The mapped musl bits leaf must produce the same UAPI record as the wrapper path."""
+        with tempfile.TemporaryDirectory(prefix="crabc-record-uapi-compact-") as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            reference = root / "reference"
+            uapi = root / "uapi"
+            (candidate / "sys").mkdir(parents=True)
+            (reference / "bits").mkdir(parents=True)
+            (uapi / "linux").mkdir(parents=True)
+            (candidate / "sys" / "kd.h").touch()
+            (reference / "bits" / "kd.h").touch()
+            (uapi / "linux" / "kd.h").touch()
+
+            def compact_record(included_from: Path):
+                return {
+                    "kind": "TranslationUnitDecl",
+                    "inner": [
+                        {
+                            "kind": "RecordDecl",
+                            "id": "uapi-record",
+                            "name": "console_font",
+                            "tagUsed": "struct",
+                            "completeDefinition": True,
+                            "loc": {
+                                "offset": 10,
+                                "line": 1,
+                                "col": 1,
+                                "includedFrom": {"file": str(included_from)},
+                            },
+                        }
+                    ],
+                }
+
+            candidate_records = MATRIX.direct_records(
+                compact_record(candidate / "sys" / "kd.h"), candidate, "sys/kd.h", uapi
+            )
+            reference_records = MATRIX.direct_records(
+                compact_record(reference / "bits" / "kd.h"), reference, "sys/kd.h", uapi
+            )
+            self.assertEqual([record.key for record in candidate_records], ["struct:console_font"])
+            self.assertEqual([record.key for record in reference_records], ["struct:console_font"])
+
+            unrelated = MATRIX.direct_records(
+                compact_record(reference / "bits" / "kd.h"), reference, "net/if.h", uapi
+            )
+            self.assertEqual(unrelated, [])
 
     def test_bits_records_require_the_same_direct_wrapper_context_in_both_trees(self) -> None:
         """A direct bits indirection compares symmetrically; transitive bits do not leak."""
