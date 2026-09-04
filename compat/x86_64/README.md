@@ -52,6 +52,14 @@ compat/x86_64/tests --jobs 4` runs isolated modules with immediate failure
 diagnostics and per-module logs under `.work/python-test-runs/`. Select the
 nearest module while developing; reserve the full campaign for integration.
 
+`./scripts/dev-x86_64.sh core --cached` reuses a checkout-local Cargo target for
+development. Each invocation copies Cargo's exact current test binary into
+private scratch and runs the same serial core tests and fenv code-generation
+check. Builds serialize; private executions may overlap. `core` without the
+flag retains its cold qualification build. Cancellation kills/reaps owned
+children and retains failure logs; cached results do not establish cold-build
+reproducibility.
+
 The installed static sysroot gate runs independent consumers with four workers
 by default. Set `CRABC_X86_64_OWNED_STATIC_CONSUMER_WORKERS=1` for a serial replay
 (valid range: 1–8). The extra same-input serial comparison is disabled unless

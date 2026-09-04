@@ -529,7 +529,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   thread-reference  verify pinned-musl x86 thread observation/yield behavior
   thread-credentials-reference  verify pinned-musl x86 calling-thread credential ABI and behavior
   fs-credentials-reference  verify pinned-musl x86 filesystem-credential ABI and behavior
-  core   run the native x86_64-unknown-linux-musl crabc-core lib tests
+  core [--cached]  run native crabc-core tests (cold qualification by default)
   facade run the bounded native x86_64 crabc-rs direct-facade tests
   facade-record-owning  run the closed native x86_64 record-owning facade aggregate
   libc-syscall  run the isolated x86 C-ABI syscall register probe
@@ -7184,9 +7184,14 @@ case "$command" in
         run_fs_credentials_reference
         ;;
     core)
-        [ "$#" -eq 0 ] || fail "core takes no arguments"
+        [ "$#" -eq 0 ] || { [ "$#" -eq 1 ] && [ "$1" = --cached ]; } ||
+            fail "usage: core [--cached]"
         ensure_image
-        run_core_tests
+        if [ "$#" -eq 1 ]; then
+            run_in_container python3 -B /workspace/compat/x86_64/run_core_tests.py
+        else
+            run_core_tests
+        fi
         ;;
     facade)
         [ "$#" -eq 0 ] || fail "facade takes no arguments"
