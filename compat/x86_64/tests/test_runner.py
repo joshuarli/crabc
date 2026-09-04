@@ -8951,6 +8951,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-std=c++17",
             "nm --undefined-only",
             "mangled",
+            "bits/alltypes.h",
+            "leaked <sys/types.h>",
         ):
             self.assertIn(required, header_runner)
         for required in (
@@ -25216,6 +25218,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "clock_adjtime lacks syscall 305",
             "direct fs initial TLS",
             "env -i",
+            "bits/alltypes.h",
+            "leaked <sys/types.h>",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
@@ -37057,8 +37061,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "setfsuid_header_abi_probe.c",
             "unmangled setfsuid",
             "project trace omitted",
+            "bits/alltypes.h",
+            "leaked <sys/types.h>",
         ):
             self.assertIn(required, header_runner)
+        self.assertNotIn("#include <sys/types.h>", c_header)
+        self.assertNotIn("#include <sys/types.h>", cxx_header)
 
         for required in (
             "SYS_setfsuid == 122",
@@ -37087,8 +37095,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_setfsuid_boundary",
             "setfsuid does not issue syscall 122",
             "candidate unexpectedly pulls",
+            "bits/alltypes.h",
+            "leaked <sys/types.h>",
         ):
             self.assertIn(required, artifact_runner)
+        self.assertNotIn("#include <sys/types.h>", probe)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertIn("setfsuid", static_exports)
         self.assertIn('id = "static-c-setfsuid"', parity_ledger)
@@ -37186,8 +37197,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "setfsgid_header_abi_probe.c",
             "unmangled setfsgid",
             "project trace omitted",
+            "bits/alltypes.h",
+            "leaked <sys/types.h>",
         ):
             self.assertIn(required, header_runner)
+        self.assertNotIn("#include <sys/types.h>", c_header)
+        self.assertNotIn("#include <sys/types.h>", cxx_header)
 
         for required in (
             "SYS_setfsgid == 123",
@@ -37216,8 +37231,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_setfsgid_boundary",
             "setfsgid does not issue syscall 123",
             "candidate unexpectedly pulls",
+            "bits/alltypes.h",
+            "leaked <sys/types.h>",
         ):
             self.assertIn(required, artifact_runner)
+        self.assertNotIn("#include <sys/types.h>", probe)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertIn("setfsgid", static_exports)
         self.assertIn('id = "static-c-setfsgid"', parity_ledger)

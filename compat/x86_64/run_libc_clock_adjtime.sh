@@ -99,6 +99,9 @@ for header in errno.h sys/timex.h sys/time.h sys/select.h \
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project <$header>"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "fixture leaked <sys/types.h> through <sys/timex.h>"
+fi
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
     -I "$ROOT_DIR/include" compat/x86_64/libc_clock_adjtime_probe.c \
     -o "$reference"

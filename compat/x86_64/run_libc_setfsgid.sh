@@ -102,10 +102,13 @@ errno_disassembly="$work_dir/errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_setfsgid_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h stdint.h sys/fsuid.h sys/syscall.h bits/syscall.h sys/types.h; do
+for header in errno.h stdint.h sys/fsuid.h sys/syscall.h bits/syscall.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture omitted project $header"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "fixture leaked <sys/types.h> through <sys/fsuid.h>"
+fi
 
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_setfsgid_probe.c -o "$reference"

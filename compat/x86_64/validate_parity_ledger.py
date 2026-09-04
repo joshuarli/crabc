@@ -408,23 +408,23 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 705,
-        "mismatch": 575,
+        "matched": 719,
+        "mismatch": 561,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "575 comparable header/profile rows have prototype or named declaration-form differences",
+        "561 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {
-        "candidate_only_count": 6915,
+        "candidate_only_count": 4899,
         "incompatible_count": 2080,
         "reference_only_count": 1709,
     },
-    "mismatch_row_count": 575,
+    "mismatch_row_count": 561,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -476,30 +476,30 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 6915,
+    "candidate_only_identity_count": 4899,
     "candidate_only_identity_kind_counts": {
-        "function": 165,
-        "macro": 5993,
-        "record": 50,
-        "typedef": 707,
+        "function": 133,
+        "macro": 4667,
+        "record": 28,
+        "typedef": 71,
     },
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 789,
-        "mismatch": 491,
+        "matched": 803,
+        "mismatch": 477,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "491 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "477 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "matched_identity_count": 293655,
-    "mismatch_row_count": 491,
+    "mismatch_row_count": 477,
     "oracle_not_applicable_candidate_fact_count": 104,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -519,8 +519,8 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 705,
-        "mismatch": 575,
+        "matched": 719,
+        "mismatch": 561,
         "oracle-not-applicable": 1,
     },
     "source_form_difference_count": 2080,
@@ -2768,23 +2768,23 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 423,
+            "candidate_only_callable_count": 224,
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1186,
-                "mismatch": 94,
+                "matched": 1197,
+                "mismatch": 83,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
-                "94 comparable pinned header/profile rows have callable visibility differences",
+                "83 comparable pinned header/profile rows have callable visibility differences",
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
                 "56 project-only header/profile rows remain pending C ABI policy",
             ],
             "matched_callable_count": 34639,
-            "mismatch_row_count": 94,
+            "mismatch_row_count": 83,
             "oracle_not_applicable_candidate_visible_callable_count": 21,
             "oracle_not_applicable_row_count": 1,
             "pinned_public_header_count": 183,
@@ -6625,8 +6625,8 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "491 current comparable declaration-or-macro identity mismatch rows",
-        "789 matched identity rows",
+        "477 current comparable declaration-or-macro identity mismatch rows",
+        "803 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
@@ -6699,7 +6699,7 @@ def require_all_header_callable_feature_visibility_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "94 current comparable callable name/class mismatch rows",
+        "83 current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6996,7 +6996,7 @@ def require_all_header_prototype_layout_artifact(
     for phrase in (
         "still-planned `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "575 current comparable prototype or named source-form mismatch rows",
+        "561 current comparable prototype or named source-form mismatch rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",
@@ -20609,7 +20609,7 @@ def require_setfsgid_artifact(family: Mapping[str, Any]) -> None:
         "include/sys/fsuid.h",
         "include/sys/syscall.h",
         "include/bits/syscall.h",
-        "include/sys/types.h",
+        "include/bits/alltypes.h",
         "compat/x86_64/setfsgid_header_abi_probe.c",
         "compat/x86_64/setfsgid_header_abi_probe.cpp",
         "compat/x86_64/run_setfsgid_header_abi.sh",
@@ -20630,6 +20630,10 @@ def require_setfsgid_artifact(family: Mapping[str, Any]) -> None:
         "scripts/check_structure.py",
     ):
         require(owner in owners, f"static-c-setfsgid source owners omit {owner}")
+    require(
+        "include/sys/types.h" not in owners,
+        "static-c-setfsgid must not retain the x86 sys/types.h umbrella",
+    )
     prerequisites = nonempty_strings(
         artifact["x86_abi_prerequisites"], "static-c-setfsgid.x86_abi_prerequisites"
     )
@@ -20674,6 +20678,8 @@ def require_setfsgid_artifact(family: Mapping[str, Any]) -> None:
             and "SYS_setfsgid=123" in item
             and "unmangled C++ C linkage" in item
             and "sys/fsuid.h" in item
+            and "bits/alltypes.h" in item
+            and "sys/types.h umbrella leak" in item
             for item in headers
         ),
         "static-c-setfsgid must retain its C/C++ header matrix",
@@ -20809,7 +20815,7 @@ def require_setfsuid_artifact(family: Mapping[str, Any]) -> None:
         "include/sys/fsuid.h",
         "include/sys/syscall.h",
         "include/bits/syscall.h",
-        "include/sys/types.h",
+        "include/bits/alltypes.h",
         "compat/x86_64/setfsuid_header_abi_probe.c",
         "compat/x86_64/setfsuid_header_abi_probe.cpp",
         "compat/x86_64/run_setfsuid_header_abi.sh",
@@ -20830,6 +20836,10 @@ def require_setfsuid_artifact(family: Mapping[str, Any]) -> None:
         "scripts/check_structure.py",
     ):
         require(owner in owners, f"static-c-setfsuid source owners omit {owner}")
+    require(
+        "include/sys/types.h" not in owners,
+        "static-c-setfsuid must not retain the x86 sys/types.h umbrella",
+    )
     prerequisites = nonempty_strings(
         artifact["x86_abi_prerequisites"], "static-c-setfsuid.x86_abi_prerequisites"
     )
@@ -20874,6 +20884,8 @@ def require_setfsuid_artifact(family: Mapping[str, Any]) -> None:
             and "SYS_setfsuid=122" in item
             and "unmangled C++ C linkage" in item
             and "sys/fsuid.h" in item
+            and "bits/alltypes.h" in item
+            and "sys/types.h umbrella leak" in item
             for item in headers
         ),
         "static-c-setfsuid must retain its C/C++ header matrix",
@@ -29544,7 +29556,6 @@ def require_clock_adjtime_error_abi_artifact(family: Mapping[str, Any]) -> None:
         "include/sys/timex.h",
         "include/sys/time.h",
         "include/sys/select.h",
-        "include/sys/types.h",
         "include/sys/syscall.h",
         "include/bits/alltypes.h",
         "include/bits/syscall.h",
@@ -29570,6 +29581,10 @@ def require_clock_adjtime_error_abi_artifact(family: Mapping[str, Any]) -> None:
             owner in owners,
             f"static-c-clock-adjtime-error-abi source ownership omits {owner}",
         )
+    require(
+        "include/sys/types.h" not in owners,
+        "static-c-clock-adjtime-error-abi must not retain the x86 sys/types.h umbrella",
+    )
 
     prerequisites = nonempty_strings(
         artifact.get("x86_abi_prerequisites"),
@@ -29632,6 +29647,7 @@ def require_clock_adjtime_error_abi_artifact(family: Mapping[str, Any]) -> None:
         "int (*)(clockid_t, struct timex *)",
         "208-byte align-8",
         "unmangled C++",
+        "bits/alltypes.h",
         "installed-header completion",
     ):
         require(

@@ -12,7 +12,6 @@
 #include <stdint.h>
 #include <sys/fsuid.h>
 #include <sys/syscall.h>
-#include <sys/types.h>
 
 _Static_assert(sizeof(gid_t) == 4 && _Alignof(gid_t) == 4,
     "x86 gid_t ABI");

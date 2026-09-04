@@ -68,6 +68,7 @@ SYS_TYPES_GNU_BSD_NON_OWNER_ROOTS = frozenset(
         "fcntl.h",
         "mqueue.h",
         "spawn.h",
+        "sys/fsuid.h",
         "sys/ipc.h",
         "sys/msg.h",
         "sys/sem.h",
@@ -115,11 +116,12 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-retained-pending-c-abi-policy": 56,
-                "matched": 1186,
-                "mismatch": 94,
+                "matched": 1197,
+                "mismatch": 83,
                 "oracle-not-applicable": 1,
             },
         )
+        self.assertEqual(report["summary"]["candidate_only_callable_count"], 224)
         self.assertFalse(report["summary"]["complete"])
         self.assertFalse(report["scope"]["prototype_or_macro_replacement_equality"])
         self.assertFalse(report["scope"]["noncallable_abi"])

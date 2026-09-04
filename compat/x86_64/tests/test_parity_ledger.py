@@ -3845,14 +3845,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 789,
-                "mismatch": 491,
+                "matched": 803,
+                "mismatch": 477,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 6915, "reference_only": 1709},
+            {"candidate_only": 4899, "reference_only": 1709},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -3872,8 +3872,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 705,
-                "mismatch": 575,
+                "matched": 719,
+                "mismatch": 561,
                 "oracle-not-applicable": 1,
             },
         )
@@ -5022,8 +5022,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "491 current comparable declaration-or-macro identity mismatch rows",
-            "789 matched identity rows",
+            "477 current comparable declaration-or-macro identity mismatch rows",
+            "803 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
@@ -5065,7 +5065,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "94 current comparable callable name/class mismatch rows",
+            "83 current comparable callable name/class mismatch rows",
             "one current oracle-not-applicable `aio.h` row",
             "56 project-only header/profile rows",
             "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -5105,7 +5105,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "still-planned `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "575 current comparable prototype or named source-form mismatch rows",
+            "561 current comparable prototype or named source-form mismatch rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",
@@ -12828,6 +12828,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/errno.rs",
             "libc/src/c_abi/x86_64/syscall.rs",
             "include/sys/timex.h",
+            "include/bits/alltypes.h",
             "compat/x86_64/clock_adjtime_header_abi_probe.c",
             "compat/x86_64/clock_adjtime_header_abi_probe.cpp",
             "compat/x86_64/run_clock_adjtime_header_abi.sh",
@@ -12837,6 +12838,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/run_libc_clock_adjtime.sh",
         ):
             self.assertIn(owner, clock_adjtime["source_owners"])
+        self.assertNotIn("include/sys/types.h", clock_adjtime["source_owners"])
+        self.assertIn("sys/timex.h", clock_adjtime["x86_header_prerequisites"][1])
+        self.assertIn(
+            "bits/alltypes.h", clock_adjtime["x86_header_prerequisites"][1]
+        )
+        self.assertNotIn(
+            "sys/types.h", clock_adjtime["x86_header_prerequisites"][1]
+        )
         self.assertEqual(
             {evidence["command"] for evidence in clock_adjtime["native_evidence"]},
             {"./scripts/dev-x86_64.sh libc-clock-adjtime"},
@@ -31280,6 +31289,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for owner in (
             "libc/src/c_abi/x86_64/setfsgid.rs",
             "include/sys/fsuid.h",
+            "include/bits/alltypes.h",
             "compat/x86_64/setfsgid_header_abi_probe.c",
             "compat/x86_64/setfsgid_header_abi_probe.cpp",
             "compat/x86_64/run_setfsgid_header_abi.sh",
@@ -31288,6 +31298,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/run_libc_setfsgid.sh",
         ):
             self.assertIn(owner, artifact["source_owners"])
+        self.assertNotIn("include/sys/types.h", artifact["source_owners"])
         self.assertEqual(
             {evidence["command"] for evidence in artifact["native_evidence"]},
             {"./scripts/dev-x86_64.sh libc-setfsgid"},
@@ -31341,6 +31352,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             )
         )
         self.assertIn("sys/fsuid.h", artifact["x86_header_prerequisites"][0])
+        self.assertIn("bits/alltypes.h", artifact["x86_header_prerequisites"][0])
+        self.assertNotIn("sys/types.h", artifact["x86_header_prerequisites"][0])
         self.assertIn("SYS_setfsgid=123", artifact["x86_header_prerequisites"][0])
         self.assertIn(
             "libc/src/c_abi/x86_64/setfsgid.rs", family["source_owners"]
@@ -31392,6 +31405,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for owner in (
             "libc/src/c_abi/x86_64/setfsuid.rs",
             "include/sys/fsuid.h",
+            "include/bits/alltypes.h",
             "compat/x86_64/setfsuid_header_abi_probe.c",
             "compat/x86_64/setfsuid_header_abi_probe.cpp",
             "compat/x86_64/run_setfsuid_header_abi.sh",
@@ -31400,6 +31414,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/run_libc_setfsuid.sh",
         ):
             self.assertIn(owner, artifact["source_owners"])
+        self.assertNotIn("include/sys/types.h", artifact["source_owners"])
         self.assertEqual(
             {evidence["command"] for evidence in artifact["native_evidence"]},
             {"./scripts/dev-x86_64.sh libc-setfsuid"},
@@ -31453,6 +31468,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             )
         )
         self.assertIn("sys/fsuid.h", artifact["x86_header_prerequisites"][0])
+        self.assertIn("bits/alltypes.h", artifact["x86_header_prerequisites"][0])
+        self.assertNotIn("sys/types.h", artifact["x86_header_prerequisites"][0])
         self.assertIn("SYS_setfsuid=122", artifact["x86_header_prerequisites"][0])
         self.assertIn(
             "libc/src/c_abi/x86_64/setfsuid.rs", family["source_owners"]

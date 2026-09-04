@@ -62,9 +62,12 @@ done
 header_trace="$work_dir/project-header-trace"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I "$ROOT_DIR/include" -H \
     -fsyntax-only "$C_PROBE" >/dev/null 2>"$header_trace"
-for header in stdint.h sys/fsuid.h sys/syscall.h bits/syscall.h sys/types.h; do
+for header in stdint.h sys/fsuid.h sys/syscall.h bits/syscall.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "project trace omitted <$header>"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "project trace leaked <sys/types.h> through <sys/fsuid.h>"
+fi
 
 printf 'x86 pinned-musl/project sys/fsuid.h setfsgid C/C++ ABI: PASS\n'

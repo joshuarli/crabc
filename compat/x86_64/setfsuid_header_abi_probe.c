@@ -9,7 +9,6 @@
 #include <stdint.h>
 #include <sys/fsuid.h>
 #include <sys/syscall.h>
-#include <sys/types.h>
 
 typedef int (*setfsuid_signature)(uid_t);
 

@@ -5,8 +5,17 @@
 extern "C" {
 #endif
 
+#if defined(__x86_64__)
+/* Keep musl's standalone clockid_t request ahead of sys/time.h so this
+ * time-layout consumer preserves its direct type ownership without importing
+ * sys/types.h itself. */
+#define __NEED_clockid_t
+#include <bits/alltypes.h>
+#include <sys/time.h>
+#else
 #include <sys/time.h>
 #include <sys/types.h>
+#endif
 
 /* Linux NTP status and adjustment state, as exposed by musl 1.2.6. */
 struct ntptimeval {

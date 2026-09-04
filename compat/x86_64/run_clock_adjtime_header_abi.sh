@@ -83,5 +83,8 @@ for header in sys/timex.h sys/time.h sys/select.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "strict C probe did not use the project <$header>"
 done
+if grep -Fq "$ROOT_DIR/include/sys/types.h" "$header_trace"; then
+    fail "strict C probe leaked <sys/types.h> through <sys/timex.h>"
+fi
 
 printf 'x86 pinned-musl/project C/C++ <sys/timex.h> clock_adjtime ABI: PASS\n'

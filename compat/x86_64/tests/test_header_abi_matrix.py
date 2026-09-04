@@ -1172,6 +1172,56 @@ class HeaderAbiMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(profiles), 7)
 
+    def test_fsuid_and_timex_headers_preserve_musl_x86_type_ownership(self) -> None:
+        """Keep the direct identity and time roots out of sys/types.h.
+
+        Pinned musl requests only uid_t/gid_t for sys/fsuid.h and clockid_t
+        for sys/timex.h.  Both headers must retain their narrow direct type
+        closure through every C/C++ feature profile without claiming the
+        GNU/BSD sys/types.h callable umbrella.
+        """
+        checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in checked["rows"]
+        }
+        headers = ("sys/fsuid.h", "sys/timex.h")
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+
+        for header in headers:
+            for profile in profiles:
+                row = rows[(header, profile)]
+                self.assertEqual(row["candidate_status"], "ok")
+                self.assertEqual(row["reference_status"], "ok")
+                self.assertEqual(
+                    row["comparison"],
+                    "matched",
+                    f"{header}:{profile} must retain musl's narrow type closure",
+                )
+                self.assertEqual(
+                    row["difference"],
+                    {
+                        "candidate_only": [],
+                        "candidate_only_count": 0,
+                        "incompatible": [],
+                        "incompatible_count": 0,
+                        "matched_count": row["candidate"]["count"],
+                        "reference_only": [],
+                        "reference_only_count": 0,
+                    },
+                    f"{header}:{profile} must have no ownership or source-form debt",
+                )
+
+        self.assertEqual(len(headers) * len(profiles), 14)
+
     def test_stdarg_header_preserves_musl_x86_variadic_forms(self) -> None:
         """Keep va_list ownership and its direct err.h consumer source-faithful.
 

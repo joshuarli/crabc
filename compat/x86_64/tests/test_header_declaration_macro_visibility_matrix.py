@@ -104,8 +104,8 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 789,
-                "mismatch": 491,
+                "matched": 803,
+                "mismatch": 477,
                 "oracle-not-applicable": 1,
             },
         )
@@ -199,6 +199,31 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
                         names & {fact["name"] for fact in row[field]},
                         f"{header}:{profile} {field} statx identities",
                     )
+
+    def test_fsuid_and_timex_identities_keep_their_narrow_type_closure(self) -> None:
+        """Type consumers must not acquire sys/types.h's GNU/BSD identities."""
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        rows = {
+            (row["header"], row["profile"]): row
+            for row in report["rows"]
+        }
+        profiles = (
+            "c11-bsd",
+            "c11-gnu",
+            "c11-posix-2008",
+            "c11-strict",
+            "c11-xopen-700",
+            "cxx17-gnu",
+            "cxx17-strict",
+        )
+        for header in ("sys/fsuid.h", "sys/timex.h"):
+            for profile in profiles:
+                row = rows[(header, profile)]
+                self.assertEqual(row["comparison"], "matched")
+                self.assertEqual(row["candidate_only"], [])
+                self.assertEqual(row["reference_only"], [])
+
+        self.assertEqual(2 * len(profiles), 14)
 
 
 if __name__ == "__main__":
