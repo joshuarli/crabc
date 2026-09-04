@@ -77,7 +77,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             "toolchain": builder.PINNED_TOOLCHAIN,
             "target": builder.TARGET,
             "selection": {
-                "cargo_home": str(builder.PINNED_CARGO_HOME),
+                "cargo_home": "$CRABC_SOURCE/.work/x86_64/cargo",
                 "rustup_home": str(builder.PINNED_RUSTUP_HOME),
                 "path": f"{builder.PINNED_CARGO_HOME / 'bin'}:{builder.FIXED_HOST_BUILD_PATH}",
                 "rustup_bin": str(builder.PINNED_CARGO_HOME / "bin"),
@@ -312,6 +312,41 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             self.assertNotIn('x86-environment-runtime', command)
             self.assertNotIn('x86-resolver-runtime', command)
 
+    def test_producer_state_stays_in_checkout_without_changing_pinned_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary) / "checkout"
+            checkout.mkdir()
+            with mock.patch.object(builder, "ROOT", checkout):
+                environment = builder.deterministic_environment()
+            for name, child in (("CARGO_HOME", "cargo"), ("TMPDIR", "tmp")):
+                self.assertEqual(
+                    environment.get(name), str(checkout / ".work" / "x86_64" / child)
+                )
+                self.assertTrue(Path(environment[name]).is_dir())
+            self.assertEqual(environment["RUSTUP_HOME"], str(builder.PINNED_RUSTUP_HOME))
+            self.assertEqual(
+                environment["PATH"],
+                f"{builder.PINNED_CARGO_HOME / 'bin'}:{builder.FIXED_HOST_BUILD_PATH}",
+            )
+
+    def test_producer_state_rejects_symlink_escape_before_creating_directories(self) -> None:
+        for relative in (".work", ".work/x86_64", ".work/x86_64/cargo", ".work/x86_64/tmp"):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                checkout = root / "checkout"
+                outside = root / "outside"
+                checkout.mkdir()
+                outside.mkdir()
+                link = checkout / relative
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(outside, target_is_directory=True)
+                with mock.patch.object(builder, "ROOT", checkout):
+                    with self.assertRaisesRegex(builder.BuildError, "build state escapes"):
+                        builder.deterministic_environment()
+                self.assertEqual(list(outside.iterdir()), [])
+                if relative.endswith("/tmp"):
+                    self.assertFalse((checkout / ".work/x86_64/cargo").exists())
+
     def test_deterministic_environment_removes_ambient_target_search_and_tools(self) -> None:
         names = (
             "PATH",
@@ -348,13 +383,15 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         self.assertEqual(
             environment,
             {
-                "CARGO_HOME": str(builder.PINNED_CARGO_HOME),
+                "CARGO_HOME": str(builder.ROOT / ".work/x86_64/cargo"),
+                "TMPDIR": str(builder.ROOT / ".work/x86_64/tmp"),
                 "RUSTUP_HOME": str(builder.PINNED_RUSTUP_HOME),
                 "PATH": f"{builder.PINNED_CARGO_HOME / 'bin'}:{builder.FIXED_HOST_BUILD_PATH}",
                 "CARGO_INCREMENTAL": "0",
                 "LC_ALL": "C",
                 "SOURCE_DATE_EPOCH": "1",
                 "TZ": "UTC",
+                "PYTHONDONTWRITEBYTECODE": "1",
             },
         )
 
@@ -421,7 +458,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             self.assertEqual(
                 producer_tools["selection"],
                 {
-                    "cargo_home": str(cargo_home),
+                    "cargo_home": "$CRABC_SOURCE/.work/x86_64/cargo",
                     "rustup_home": str(rustup_home),
                     "path": f"{cargo_home / 'bin'}:{builder.FIXED_HOST_BUILD_PATH}",
                     "rustup_bin": str(cargo_home / "bin"),
@@ -448,13 +485,15 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 self.assertEqual(
                     kwargs["env"],
                     {
-                        "CARGO_HOME": str(cargo_home),
+                        "CARGO_HOME": str(builder.ROOT / ".work/x86_64/cargo"),
+                        "TMPDIR": str(builder.ROOT / ".work/x86_64/tmp"),
                         "RUSTUP_HOME": str(rustup_home),
                         "PATH": f"{cargo_home / 'bin'}:{builder.FIXED_HOST_BUILD_PATH}",
                         "CARGO_INCREMENTAL": "0",
                         "LC_ALL": "C",
                         "SOURCE_DATE_EPOCH": "1",
                         "TZ": "UTC",
+                        "PYTHONDONTWRITEBYTECODE": "1",
                     },
                 )
 

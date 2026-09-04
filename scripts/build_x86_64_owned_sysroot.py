@@ -108,12 +108,28 @@ def deterministic_environment() -> dict[str, str]:
     The owned-static artifact is meaningful only if its Rust and LLVM producer
     inputs are selected by the pinned evidence image.  In particular, neither
     a caller's ``PATH`` nor its ``CARGO_HOME``/``RUSTUP_HOME`` may redirect a
-    toolchain proxy or target tool.  The two fixed homes are intentionally
-    present so the fixed rustup frontend can find the installed nightly.
+    toolchain proxy or target tool. The executable selection stays pinned,
+    while Cargo's writable registry and producer scratch belong to the checkout.
     """
 
+    work_root = ROOT.resolve() / ".work" / "x86_64"
+    state_paths = {"CARGO_HOME": work_root / "cargo", "TMPDIR": work_root / "tmp"}
+    # Validate both paths before creating either: a late escaping scratch
+    # symlink must not leave behind a newly created Cargo directory.
+    for path in state_paths.values():
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError) as error:
+            raise BuildError(f"unsafe producer build state: {path}") from error
+        if not resolved.is_relative_to(work_root):
+            raise BuildError(f"producer build state escapes checkout: {path}")
+        if resolved.exists() and not resolved.is_dir():
+            raise BuildError(f"producer build state is not a directory: {path}")
+    for path in state_paths.values():
+        path.mkdir(parents=True, exist_ok=True)
+
     return {
-        "CARGO_HOME": str(PINNED_CARGO_HOME),
+        **{name: str(path) for name, path in state_paths.items()},
         "RUSTUP_HOME": str(PINNED_RUSTUP_HOME),
         # Cargo runs a host build script while producing crabc-libc.  Its
         # compiler must remain available, but this is a fixed evidence-image
@@ -125,6 +141,7 @@ def deterministic_environment() -> dict[str, str]:
         "LC_ALL": "C",
         "SOURCE_DATE_EPOCH": "1",
         "TZ": "UTC",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
 
 
@@ -250,7 +267,7 @@ def resolve_pinned_producer_tools() -> dict[str, object]:
         "toolchain": PINNED_TOOLCHAIN,
         "target": TARGET,
         "selection": {
-            "cargo_home": str(PINNED_CARGO_HOME),
+            "cargo_home": "$CRABC_SOURCE/.work/x86_64/cargo",
             "rustup_home": str(PINNED_RUSTUP_HOME),
             "path": f"{PINNED_CARGO_HOME / 'bin'}:{FIXED_HOST_BUILD_PATH}",
             "rustup_bin": str(PINNED_CARGO_HOME / "bin"),
