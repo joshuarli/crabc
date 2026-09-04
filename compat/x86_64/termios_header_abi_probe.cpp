@@ -29,7 +29,10 @@ static_assert(sizeof(cc_t) == 1 && sizeof(speed_t) == 4 &&
 static_assert(NCCS == 32 && sizeof(struct termios) == 60 &&
     alignof(struct termios) == 4, "C++ public termios layout");
 static_assert(__builtin_offsetof(struct termios, c_iflag) == 0 &&
-    __builtin_offsetof(struct termios, c_cc) == 17, "C++ termios prefix offsets");
+    __builtin_offsetof(struct termios, c_cc) == 17 &&
+    __builtin_offsetof(struct termios, __c_ispeed) == 52 &&
+    __builtin_offsetof(struct termios, __c_ospeed) == 56,
+    "C++ termios field offsets");
 static_assert(sizeof(struct winsize) == 8 && alignof(struct winsize) == 2 &&
     __builtin_offsetof(struct winsize, ws_ypixel) == 6, "C++ winsize layout");
 static_assert(CBAUD == 0x100f && CIBAUD == 0x100f0000 &&

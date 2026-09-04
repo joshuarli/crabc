@@ -15,7 +15,9 @@ typedef unsigned char cc_t;
 typedef unsigned int speed_t;
 typedef unsigned int tcflag_t;
 #define NCCS 32
-struct termios { tcflag_t c_iflag, c_oflag, c_cflag, c_lflag; cc_t c_line; cc_t c_cc[NCCS]; speed_t __ispeed, __ospeed; };
+
+/* Keep the public record in the target-owned bits header, as in musl. */
+#include <bits/termios.h>
 
 #define VEOF 4
 #define VEOL 11

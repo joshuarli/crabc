@@ -3,24 +3,14 @@
  *
  * This source checks the public C record and the deliberately bounded
  * termios-control declarations only. It does not link or select a C runtime.
- * The installed project's historical tail member spellings differ from musl's
- * while retaining the same ABI, so the candidate pass names that established
- * spelling explicitly rather than treating a source-name rename as part of
- * this artifact.
+ * The record member spellings are part of this source-level layout contract,
+ * so the project and pinned-musl passes intentionally use the same names.
  */
 
 #define _GNU_SOURCE 1
 
 #include <stddef.h>
 #include <termios.h>
-
-#if defined(CRABC_PROJECT_HEADERS)
-#define CRABC_TERMIOS_ISPEED __ispeed
-#define CRABC_TERMIOS_OSPEED __ospeed
-#else
-#define CRABC_TERMIOS_ISPEED __c_ispeed
-#define CRABC_TERMIOS_OSPEED __c_ospeed
-#endif
 
 _Static_assert(sizeof(cc_t) == 1, "x86 cc_t width");
 _Static_assert(sizeof(speed_t) == 4 && sizeof(tcflag_t) == 4,
@@ -40,9 +30,9 @@ _Static_assert(offsetof(struct termios, c_line) == 16,
     "x86 termios line discipline");
 _Static_assert(offsetof(struct termios, c_cc) == 17,
     "x86 termios control codes");
-_Static_assert(offsetof(struct termios, CRABC_TERMIOS_ISPEED) == 52,
+_Static_assert(offsetof(struct termios, __c_ispeed) == 52,
     "x86 termios input-speed tail");
-_Static_assert(offsetof(struct termios, CRABC_TERMIOS_OSPEED) == 56,
+_Static_assert(offsetof(struct termios, __c_ospeed) == 56,
     "x86 termios output-speed tail");
 
 _Static_assert(sizeof(struct winsize) == 8 && _Alignof(struct winsize) == 2,
