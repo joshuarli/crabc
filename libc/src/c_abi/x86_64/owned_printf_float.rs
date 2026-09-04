@@ -78,7 +78,7 @@ pub(super) unsafe fn pop(args: &mut VaList<'_>) -> Binary80 {
 unsafe extern "C" fn bytes<S: FormatSink>(state: *mut c_void, data: *const u8, count: usize) {
     unsafe {
         let output = &mut *state.cast::<S>();
-        if output.failed() || output.overflowed() { return; }
+        if output.overflowed() { return; }
         if count > c_int::MAX as usize - output.count() { output.set_overflowed(); return; }
         output.bytes(data, count);
     }
@@ -87,7 +87,7 @@ unsafe extern "C" fn bytes<S: FormatSink>(state: *mut c_void, data: *const u8, c
 unsafe extern "C" fn repeat<S: FormatSink>(state: *mut c_void, byte: c_int, count: usize) {
     unsafe {
         let output = &mut *state.cast::<S>();
-        if output.failed() || output.overflowed() { return; }
+        if output.overflowed() { return; }
         if count > c_int::MAX as usize - output.count() { output.set_overflowed(); return; }
         output.repeated(byte as u8, count);
     }

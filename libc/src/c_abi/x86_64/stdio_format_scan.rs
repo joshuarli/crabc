@@ -330,7 +330,13 @@ impl StreamOutput {
 impl FormatSink for StreamOutput {
     unsafe fn byte(&mut self, byte: u8) {
         #[cfg(feature = "x86-owned-static-runtime")]
-        if self.failed { return; }
+        if self.failed {
+            match self.count.checked_add(1) {
+                Some(next) => self.count = next,
+                None => self.overflowed = true,
+            }
+            return;
+        }
         #[cfg(feature = "x86-owned-static-runtime")]
         let status = unsafe { stdio_standard::write_formatted_byte(self.stream, byte) };
         #[cfg(not(feature = "x86-owned-static-runtime"))]
@@ -344,21 +350,52 @@ impl FormatSink for StreamOutput {
         }
     }
     unsafe fn bytes(&mut self, source: *const u8, length: usize) {
-        let mut index = 0usize;
-        while index < length {
-            #[cfg(feature = "x86-owned-static-runtime")]
-            if self.failed { break; }
-            unsafe { self.byte(source.add(index).read()) };
-            index += 1;
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            if !self.failed && unsafe { stdio_standard::write_formatted_bytes(self.stream, source, length) } < 0 {
+                self.failed = true;
+            }
+            match self.count.checked_add(length) {
+                Some(next) => self.count = next,
+                None => self.overflowed = true,
+            }
+            return;
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            let mut index = 0usize;
+            while index < length {
+                unsafe { self.byte(source.add(index).read()) };
+                index += 1;
+            }
         }
     }
     unsafe fn repeated(&mut self, byte: u8, length: usize) {
-        let mut index = 0usize;
-        while index < length {
-            #[cfg(feature = "x86-owned-static-runtime")]
-            if self.failed { break; }
-            unsafe { self.byte(byte) };
-            index += 1;
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            // vfprintf pad emits 256-byte chunks. Preserve callback batching
+            // and logical count even after F_ERR suppresses physical output.
+            let block = [byte; 256];
+            let mut remaining = length;
+            while remaining >= block.len() && !self.failed {
+                unsafe { self.bytes(block.as_ptr(), block.len()); }
+                remaining -= block.len();
+            }
+            if self.failed {
+                match self.count.checked_add(remaining) {
+                    Some(next) => self.count = next,
+                    None => self.overflowed = true,
+                }
+            } else { unsafe { self.bytes(block.as_ptr(), remaining); } }
+            return;
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            let mut index = 0usize;
+            while index < length {
+                unsafe { self.byte(byte) };
+                index += 1;
+            }
         }
     }
     fn count(&self) -> usize { self.count }
@@ -497,6 +534,12 @@ unsafe fn write_number(
         unsafe { output.byte(b'0') };
     }
     unsafe { output.repeated(b'0', zero_precision) };
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        reversed[..digit_count].reverse();
+        unsafe { output.bytes(reversed.as_ptr(), digit_count) };
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     while digit_count != 0 {
         digit_count -= 1;
         unsafe { output.byte(reversed[digit_count]) };

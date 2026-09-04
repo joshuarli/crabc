@@ -1,4 +1,4 @@
-//! Owned-static native x86 descriptor stream engine.
+//! Owned-static native x86 byte stream engine.
 //!
 //! Source map: pinned musl 1.2.6 commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT; see
@@ -13,21 +13,30 @@
 //! for freopen, as in pinned musl.
 //!
 //! The registry owns only dynamic streams; allocation precedes insertion and
-//! freeing follows removal, with neither lifecycle allocator call under a
-//! stream or list lock. getdelim holds its FILE lock during realloc, matching
-//! musl, but never holds the registry lock. Permanent initialization requires
+//! freeing follows removal. New-stream allocation and insertion never invoke
+//! an allocator or application callback under the registry lock. getdelim and
+//! growing memory output hold their FILE lock during realloc, matching musl;
+//! fclose detaches the FILE before flushing/closing its backend. Permanent initialization requires
 //! no heap allocation, including allocator
 //! diagnostics before main. Registry walks hold the list lock before stream
 //! locks. Like fclose in C, stream destruction requires callers to exclude
 //! concurrent use. Recursive locks use Linux thread IDs and private futexes.
 //!
-//! This component supplies descriptor byte streams. The existing formatter and
-//! scanner retain their separately bounded grammar; wide,
-//! memory, cookie, popen, cancellation and fork lock recovery remain separate
+//! `owned_stdio_backends` adds source-mapped fmemopen/open_memstream/fopencookie
+//! to the same buffering, positioning, registry, locking and close lifecycle.
+//! fwrite.c::__fwritex and __stdio_write supply bulk and vectored dispatch;
+//! application callbacks execute without borrowed Rust backend references.
+//! `owned_printf` supplies integer/byte and binary64/binary80 formatting;
+//! `owned_scanf` supplies byte, numeric, scanset and allocated conversions.
+//! Wide stdio, popen, cancellation and fork lock recovery remain separate
 //! integration obligations. This is not completion of the stdio family.
 
 use core::{ffi::{c_char, c_int, c_void}, ptr, sync::atomic::{AtomicI32, Ordering}};
 use super::{c_off_status, c_ssize_status, c_status, errno, raw_syscall};
+
+#[path = "owned_stdio_backends.rs"]
+mod owned_stdio_backends;
+use owned_stdio_backends::Backend;
 
 const BUFSIZ: usize = 1024;
 const UNGET: usize = 8;
@@ -64,6 +73,8 @@ pub struct StandardStream {
     next: *mut StandardStream,
     previous: *mut StandardStream,
     line_buffered: bool,
+    backend: Backend,
+    write_failed: bool,
     storage: [u8; BUFSIZ + UNGET],
 }
 
@@ -73,7 +84,8 @@ impl StandardStream {
             read_position: ptr::null_mut(), read_end: ptr::null_mut(),
             write_position: ptr::null_mut(), owner: AtomicI32::new(0),
             lock_count: 0, next: ptr::null_mut(), previous: ptr::null_mut(),
-            line_buffered: false, storage: [0; BUFSIZ + UNGET] }
+            line_buffered: false, backend: Backend::Descriptor, write_failed: false,
+            storage: [0; BUFSIZ + UNGET] }
     }
 }
 
@@ -108,7 +120,8 @@ unsafe fn initialize_buffer(stream: *mut StandardStream) {
             (*stream).write_position = buffer;
             // musl __fdopen activates line buffering for every writable
             // terminal via TIOCGWINSZ; stderr remains unbuffered.
-            if (*stream).flags & F_NOWR == 0 && (*stream).capacity != 0 {
+            if matches!((*stream).backend, Backend::Descriptor)
+                && (*stream).flags & F_NOWR == 0 && (*stream).capacity != 0 {
                 let mut window_size = [0u16; 4];
                 (*stream).line_buffered = raw_syscall::syscall3(16,
                     (*stream).file_descriptor as i64, 0x5413,
@@ -297,7 +310,6 @@ pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
 }
 
 unsafe fn is_selected_stream(stream: *const StandardStream) -> bool { !stream.is_null() }
-unsafe fn is_descriptor_stream(stream: *const StandardStream) -> bool { !stream.is_null() }
 unsafe fn reject_stream() { unsafe { errno::set_errno(EINVAL); } }
 
 // musl's mode parser admits r/w/a plus b, +, e and x modifiers.
@@ -350,6 +362,14 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut Standard
         }
         // Unpublished dynamic state needs no lock. Establish terminal mode
         // at fdopen time, as musl does, before callers can replace the fd.
+        publish_stream(stream)
+    }
+}
+
+// The caller exclusively owns initialized, unpublished dynamic storage.
+// No allocator or application callback is entered while holding LIST_LOCK.
+unsafe fn publish_stream(stream: *mut StandardStream) -> *mut StandardStream {
+    unsafe {
         initialize_buffer(stream);
         let _list = ListGuard::acquire();
         (*stream).next = OPEN_STREAMS;
@@ -375,8 +395,9 @@ pub unsafe extern "C" fn fopen(path: *const c_char, mode: *const c_char) -> *mut
 
 // musl freopen keeps the original buffer and FILE identity, replacing only
 // descriptor behavior and access flags. Opening an allocation-free temporary
-// descriptor is sufficient here: all owned streams have the same read/write/
-// seek callbacks. Unlike opening a temporary FILE under the old FILE lock,
+// descriptor is sufficient for a descriptor-backed FILE. Memory/cookie FILEs
+// have fd=-1, so dup3/fcntl fails and fclose retires their backend, as in musl.
+// Unlike opening a temporary FILE under the old FILE lock,
 // this cannot acquire the registry lock in stream->registry order. Avoiding
 // that unnecessary allocation also removes musl's temporary-FILE ENOMEM case.
 // The caller holds the stream lock and has attempted fflush first.
@@ -559,7 +580,7 @@ pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
         let result;
         {
             let _guard = StreamGuard::acquire(stream);
-            result = fflush(stream) | c_status(raw_syscall::syscall1(3, (*stream).file_descriptor as i64));
+            result = fflush(stream) | owned_stdio_backends::close(stream);
             (*stream).file_descriptor = -1;
         }
         if !permanent { free(stream.cast()); }
@@ -588,7 +609,7 @@ pub unsafe extern "C" fn fflush(stream: *mut StandardStream) -> c_int {
         let unread = (*stream).read_end.offset_from((*stream).read_position);
         if unread != 0 {
             // musl attempts input synchronization but does not fail fflush on ESPIPE.
-            raw_syscall::syscall3(8, (*stream).file_descriptor as i64, -(unread as i64), 1);
+            owned_stdio_backends::seek(stream, -(unread as i64), 1);
         }
         (*stream).read_position = (*stream).buffer;
         (*stream).read_end = (*stream).buffer;
@@ -615,14 +636,14 @@ pub(crate) unsafe fn flush_all_on_exit() {
 }
 
 unsafe fn prepare_read(stream: *mut StandardStream) -> bool {
-    if !unsafe { is_descriptor_stream(stream) } || !unsafe { is_writable(stream) } {
+    if !unsafe { is_selected_stream(stream) } || !unsafe { is_writable(stream) } {
         return true;
     }
     unsafe { flush_output_held(stream) != EOF }
 }
 
 unsafe fn prepare_write(stream: *mut StandardStream) -> bool {
-    if !unsafe { is_descriptor_stream(stream) } {
+    if !unsafe { is_selected_stream(stream) } {
         return true;
     }
     let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) };
@@ -630,14 +651,9 @@ unsafe fn prepare_write(stream: *mut StandardStream) -> bool {
         return true;
     }
     let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_LSEEK,
-            i64::from((*stream).file_descriptor),
-            -(unread as i64),
-            i64::from(SEEK_CUR),
-        )
+        owned_stdio_backends::seek(stream, -(unread as i64), SEEK_CUR)
     };
-    if c_off_status(result) < 0 {
+    if result < 0 {
         unsafe { mark_error(stream) };
         return false;
     }
@@ -649,7 +665,7 @@ unsafe fn prepare_write(stream: *mut StandardStream) -> bool {
 }
 
 unsafe fn mark_io_started(stream: *mut StandardStream) {
-    if unsafe { is_descriptor_stream(stream) } {
+    if unsafe { is_selected_stream(stream) } {
         unsafe { (*stream).flags |= F_IO_STARTED };
     }
 }
@@ -678,6 +694,9 @@ unsafe fn refill_into(
     }
     if unsafe { (*stream).flags & F_EOF != 0 } {
         return 0;
+    }
+    if !unsafe { matches!((*stream).backend, Backend::Descriptor) } {
+        return unsafe { owned_stdio_backends::read(stream, destination, length) };
     }
 
     let (file_descriptor, buffer, capacity) = unsafe {
@@ -830,31 +849,52 @@ unsafe fn flush_output_held(stream: *mut StandardStream) -> c_int {
         return 0;
     }
 
-    let mut written = 0usize;
-    while written < pending {
-        let result = unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_WRITE,
-                i64::from((*stream).file_descriptor),
-                (*stream).buffer.add(written) as usize as i64,
-                (pending - written) as i64,
-            )
-        };
-        let count = c_ssize_status(result);
-        if count <= 0 {
-            if count == 0 {
-                unsafe { errno::set_errno(EIO) };
-            }
-            unsafe {
-                (*stream).write_position = (*stream).buffer;
-                mark_error(stream);
-            }
-            return EOF;
-        }
-        written += count as usize;
+    unsafe {
+        write_backend_held(stream, ptr::null(), 0);
+        (*stream).write_position = (*stream).buffer;
+        if (*stream).write_failed { EOF } else { 0 }
     }
-    unsafe { (*stream).write_position = (*stream).buffer };
-    0
+}
+
+// musl __stdio_write and backend mwrite/ms_write/cookiewrite: buffered bytes
+// precede the new span, whose partial count alone is returned. Application
+// callbacks receive no outstanding Rust references into stream storage.
+unsafe fn write_backend_held(stream: *mut StandardStream, source: *const u8, length: usize) -> usize {
+    unsafe {
+        (*stream).write_failed = false;
+        if !matches!((*stream).backend, Backend::Descriptor) {
+            if owned_stdio_backends::ignores_writes(stream) { return length; }
+            let pending = (*stream).write_position.offset_from((*stream).buffer) as usize;
+            (*stream).write_position = (*stream).buffer;
+            if pending != 0 && owned_stdio_backends::write(stream, (*stream).buffer, pending) < pending { return 0; }
+            return owned_stdio_backends::write(stream, source, length);
+        }
+        let pending = (*stream).write_position.offset_from((*stream).buffer) as usize;
+        let mut vectors = [IoVec { base: (*stream).buffer.cast(), length: pending },
+            IoVec { base: source as *mut c_void, length }];
+        let mut index = if pending == 0 { 1 } else { 0 };
+        let mut remaining = pending + length;
+        loop {
+            let count = c_ssize_status(raw_syscall::syscall3(raw_syscall::SYS_WRITEV,
+                (*stream).file_descriptor as i64, vectors.as_mut_ptr().add(index) as i64, (2-index) as i64));
+            if count >= 0 && count as usize == remaining {
+                (*stream).write_position = (*stream).buffer;
+                return length;
+            }
+            if count <= 0 {
+                if count == 0 { errno::set_errno(EIO); }
+                (*stream).write_position = (*stream).buffer;
+                (*stream).write_failed = true;
+                mark_error(stream);
+                return if index == 0 { 0 } else { length-vectors[index].length };
+            }
+            let mut count = count as usize;
+            remaining -= count;
+            if count > vectors[index].length { count -= vectors[index].length; index += 1; }
+            vectors[index].base = vectors[index].base.cast::<u8>().add(count).cast();
+            vectors[index].length -= count;
+        }
+    }
 }
 
 pub(crate) unsafe fn write_byte(stream: *mut StandardStream, byte: u8) -> c_int {
@@ -890,13 +930,8 @@ pub(crate) unsafe fn with_formatted_stream(stream: *mut StandardStream, format: 
         if unbuffered {
             // musl calls __stdio_write even for an empty formatted result;
             // unlike ordinary fflush, that validates the output descriptor.
-            if (*stream).write_position == (*stream).buffer {
-                if c_ssize_status(raw_syscall::syscall3(raw_syscall::SYS_WRITE,
-                    (*stream).file_descriptor as i64, (*stream).buffer as i64, 0)) < 0 {
-                    mark_error(stream);
-                }
-            }
-            if flush_output_held(stream) < 0 { result = EOF; }
+            write_backend_held(stream, ptr::null(), 0);
+            if (*stream).write_failed { result = EOF; }
             (*stream).buffer = old_buffer;
             (*stream).capacity = 0;
             (*stream).write_position = old_buffer;
@@ -910,7 +945,21 @@ pub(crate) unsafe fn with_formatted_stream(stream: *mut StandardStream, format: 
 /// # Safety
 /// The caller holds the live stream's lock through with_formatted_stream.
 pub(crate) unsafe fn write_formatted_byte(stream: *mut StandardStream, byte: u8) -> c_int {
-    unsafe { write_byte_held(stream, byte) }
+    unsafe {
+        fwrite_held((&byte as *const u8).cast(), 1, 1, stream);
+        if (*stream).flags & F_ERR != 0 { EOF } else { byte as c_int }
+    }
+}
+
+/// # Safety
+/// The live FILE lock is held by with_formatted_stream; source is readable for
+/// length bytes and does not overlap the stream's mutable buffering storage.
+pub(crate) unsafe fn write_formatted_bytes(stream: *mut StandardStream, source: *const u8, length: usize) -> c_int {
+    unsafe {
+        // vfprintf out observes F_ERR, not a backend's non-error short count.
+        fwrite_held(source.cast(), 1, length, stream);
+        if (*stream).flags & F_ERR != 0 { EOF } else { 0 }
+    }
 }
 
 // The caller owns the stream lock across the complete output operation.
@@ -928,32 +977,15 @@ unsafe fn write_byte_held(stream: *mut StandardStream, byte: u8) -> c_int {
     }
     unsafe { mark_io_started(stream) };
     let capacity = unsafe { (*stream).capacity };
-    if capacity == 0 {
-        let result = unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_WRITE,
-                i64::from((*stream).file_descriptor),
-                ptr::addr_of!(byte) as usize as i64,
-                1,
-            )
-        };
-        if c_ssize_status(result) == 1 {
-            return c_int::from(byte);
-        }
-        unsafe { mark_error(stream) };
-        return EOF;
-    }
-
     unsafe {
         if (*stream).write_position == (*stream).buffer.add(capacity)
-            && flush_output_held(stream) == EOF
+            || ((*stream).line_buffered && byte == b'\n')
         {
-            return EOF;
+            return if write_backend_held(stream, &byte, 1) == 1 { byte as c_int } else { EOF };
         }
         (*stream).write_position.write(byte);
         (*stream).write_position = (*stream).write_position.add(1);
     }
-    if unsafe { (*stream).line_buffered } && byte == b'\n' && unsafe { flush_output_held(stream) } < 0 { return EOF; }
     c_int::from(byte)
 }
 
@@ -967,7 +999,10 @@ pub unsafe extern "C" fn fileno(stream: *mut StandardStream) -> c_int {
         unsafe { reject_stream() };
         return -1;
     }
-    unsafe { (*stream).file_descriptor }
+    unsafe {
+        if (*stream).file_descriptor < 0 { errno::set_errno(9); return -1; }
+        (*stream).file_descriptor
+    }
 }
 
 /// # Safety
@@ -1151,15 +1186,26 @@ unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: 
     }
     unsafe { mark_io_started(stream) };
 
-    let source = source.cast::<u8>();
-    let mut written = 0usize;
-    while written < total {
-        if unsafe { write_byte_held(stream, source.add(written).read()) } == EOF {
-            break;
+    // musl fwrite.c::__fwritex: a span that does not fit bypasses the
+    // ordinary byte loop, preserving partial caller-byte counts after any
+    // pending output. Line buffering emits through the last newline.
+    unsafe {
+        let source = source.cast::<u8>();
+        let available = (*stream).buffer.add((*stream).capacity).offset_from((*stream).write_position) as usize;
+        if total > available { return write_backend_held(stream, source, total) / size; }
+        let mut prefix = 0;
+        if (*stream).line_buffered {
+            prefix = total;
+            while prefix != 0 && *source.add(prefix-1) != b'\n' { prefix -= 1; }
+            if prefix != 0 {
+                let written = write_backend_held(stream, source, prefix);
+                if written < prefix { return written / size; }
+            }
         }
-        written += 1;
+        ptr::copy_nonoverlapping(source.add(prefix), (*stream).write_position, total-prefix);
+        (*stream).write_position = (*stream).write_position.add(total-prefix);
+        count
     }
-    written / size
 }
 
 /// # Safety
@@ -1288,17 +1334,9 @@ pub unsafe extern "C" fn fputs(
         return EOF;
     }
 
-    let mut cursor = source;
-    loop {
-        let byte = unsafe { cursor.read() as u8 };
-        if byte == 0 {
-            return 0;
-        }
-        if unsafe { write_byte_held(stream, byte) } == EOF {
-            return EOF;
-        }
-        cursor = unsafe { cursor.add(1) };
-    }
+    let mut length = 0;
+    while unsafe { *source.add(length) } != 0 { length += 1; }
+    if unsafe { fwrite_held(source.cast(), 1, length, stream) } == length { 0 } else { EOF }
 }
 
 /// # Safety
@@ -1365,7 +1403,7 @@ pub unsafe extern "C" fn fseeko(
     whence: c_int,
 ) -> c_int {
     let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_descriptor_stream(stream) }
+    if !unsafe { is_selected_stream(stream) }
         || (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END)
     {
         unsafe { errno::set_errno(EINVAL) };
@@ -1387,14 +1425,9 @@ pub unsafe extern "C" fn fseeko(
         return EOF;
     }
     let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_LSEEK,
-            i64::from((*stream).file_descriptor),
-            adjusted_offset,
-            i64::from(whence),
-        )
+        owned_stdio_backends::seek(stream, adjusted_offset, whence)
     };
-    if c_off_status(result) < 0 {
+    if result < 0 {
         return EOF;
     }
     unsafe {
@@ -1412,19 +1445,15 @@ pub unsafe extern "C" fn fseeko(
 #[no_mangle]
 pub unsafe extern "C" fn ftello(stream: *mut StandardStream) -> i64 {
     let _guard = unsafe { StreamGuard::acquire(stream) };
-    if !unsafe { is_descriptor_stream(stream) } {
+    if !unsafe { is_selected_stream(stream) } {
         unsafe { reject_stream() };
         return -1;
     }
     let raw_position = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_LSEEK,
-            i64::from((*stream).file_descriptor),
-            0,
-            if unsafe { (*stream).flags & F_APP != 0 && (*stream).write_position != (*stream).buffer } { i64::from(SEEK_END) } else { i64::from(SEEK_CUR) },
-        )
+        owned_stdio_backends::seek(stream, 0,
+            if (*stream).flags & F_APP != 0 && (*stream).write_position != (*stream).buffer { SEEK_END } else { SEEK_CUR })
     };
-    let kernel_position = c_off_status(raw_position);
+    let kernel_position = raw_position;
     if kernel_position < 0 {
         return -1;
     }
@@ -1471,7 +1500,7 @@ pub unsafe extern "C" fn fseek(
 pub unsafe extern "C" fn rewind(stream: *mut StandardStream) {
     let _guard = unsafe { StreamGuard::acquire(stream) };
     let _ = unsafe { fseeko(stream, 0, SEEK_SET) };
-    if unsafe { is_descriptor_stream(stream) } {
+    if unsafe { is_selected_stream(stream) } {
         unsafe { (*stream).flags &= !(F_EOF | F_ERR) };
     }
 }

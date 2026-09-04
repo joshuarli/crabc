@@ -279,12 +279,18 @@ unsafe fn render(output: &mut impl FormatSink, format: *const c_char,
     unsafe {
         let mut cursor = format.cast::<u8>();
         while read_byte(cursor) != 0 {
-            if output.failed() { return Ok(-1); }
             if read_byte(cursor) != b'%' || read_byte(cursor.add(1)) == b'%' {
-                let byte = read_byte(cursor);
-                cursor = cursor.add(if byte == b'%' { 2 } else { 1 });
-                if output.count() == c_int::MAX as usize { return Err(EOVERFLOW); }
-                output.byte(byte);
+                // printf_core batches raw literal bytes and adjacent %%
+                // pairs. This preserves backend short-write boundaries.
+                let start = cursor;
+                while read_byte(cursor) != 0 && read_byte(cursor) != b'%' { cursor = cursor.add(1); }
+                let mut end = cursor;
+                while read_byte(cursor) == b'%' && read_byte(cursor.add(1)) == b'%' {
+                    end = end.add(1); cursor = cursor.add(2);
+                }
+                let length = end.offset_from(start) as usize;
+                if length > c_int::MAX as usize-output.count() { return Err(EOVERFLOW); }
+                output.bytes(start, length);
                 continue;
             }
             cursor = cursor.add(1);
@@ -299,6 +305,9 @@ unsafe fn render(output: &mut impl FormatSink, format: *const c_char,
                 None => None,
             };
             let value = argument(prepared, args, item.position, item.kind);
+            // printf_core extracts the directive's argument before its F_ERR
+            // gate, but does not execute a new conversion (including %n).
+            if output.failed() { return Ok(-1); }
             if item.specifier == b'n' {
                 let Argument::Pointer(pointer) = value else { unreachable!() };
                 store_count(pointer, item.length, output.count());
@@ -348,7 +357,7 @@ pub(super) unsafe fn format_stream(stream: *mut StandardStream, format: *const c
     }
 }
 
-struct DescriptorOutput { fd: c_int, buffer: [u8; 80], pending: usize, count: usize, failed: bool }
+struct DescriptorOutput { fd: c_int, buffer: [u8; 80], pending: usize, count: usize, failed: bool, overflowed: bool }
 impl DescriptorOutput {
     unsafe fn flush(&mut self, force_empty: bool) {
         // vfprintf flushes its temporary unbuffered adapter even when printf
@@ -373,25 +382,28 @@ impl DescriptorOutput {
 }
 impl FormatSink for DescriptorOutput {
     unsafe fn byte(&mut self, byte: u8) {
+        self.count += 1;
         if self.failed { return; }
         if self.pending == self.buffer.len() { unsafe { self.flush(false); } }
         if self.failed { return; }
         self.buffer[self.pending] = byte;
         self.pending += 1;
-        self.count += 1;
     }
     unsafe fn bytes(&mut self, source: *const u8, length: usize) {
         for index in 0..length {
-            if self.failed { break; }
+            if self.failed { self.count += length-index; break; }
             unsafe { self.byte(*source.add(index)); }
         }
     }
     unsafe fn repeated(&mut self, byte: u8, length: usize) {
-        for _ in 0..length { if self.failed { break; } unsafe { self.byte(byte); } }
+        for index in 0..length {
+            if self.failed { self.count += length-index; break; }
+            unsafe { self.byte(byte); }
+        }
     }
     fn count(&self) -> usize { self.count }
-    fn overflowed(&self) -> bool { false }
-    fn set_overflowed(&mut self) { self.failed = true; }
+    fn overflowed(&self) -> bool { self.overflowed }
+    fn set_overflowed(&mut self) { self.overflowed = true; }
     fn failed(&self) -> bool { self.failed }
     fn allow_float(&self) -> bool { true }
     fn allow_errno_message(&self) -> bool { true }
@@ -405,7 +417,7 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format_string: *const c_char, mut a
     unsafe {
         let mut cursor = args.clone();
         let prepared = match prepare(format_string, &mut cursor) { Ok(value) => value, Err(error) => return result(Err(error)) };
-        let mut output = DescriptorOutput { fd, buffer: [0; 80], pending: 0, count: 0, failed: false };
+        let mut output = DescriptorOutput { fd, buffer: [0; 80], pending: 0, count: 0, failed: false, overflowed: false };
         let value = result(render(&mut output, format_string, &mut cursor, &prepared));
         output.flush(true);
         if output.failed { -1 } else { value }
