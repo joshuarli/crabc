@@ -828,6 +828,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   dynamic-main-thread-runtime-v1  run the private real-Scrt1 x86 RuntimeV1 dynamic-libc bridge
   dynamic-main-thread-runtime-v1-target-root  run the feature-gated real-Scrt1 x86 RuntimeV1 target-root admission
   general-dynamic-lifecycle  check general-loader owned CRT/libc initialization and process exit
+  general-relocations  check general COPY, symbol scope, and initial-exec TLS
   ldso-initial-exec-tls  run the fixed x86 DF_STATIC_TLS/TPOFF64 sibling artifact
   ldso-owned-crt-handoff  run the bounded x86 ldso-to-Rust-Scrt1 handoff artifact
   ldso-fixed-graph-introspection  run copied introspection over the fixed x86 loader graph
@@ -5468,6 +5469,7 @@ case "$command" in
     dynamic-main-thread-runtime-v1) ;;
     dynamic-main-thread-runtime-v1-target-root) ;;
     general-dynamic-lifecycle) ;;
+    general-relocations) ;;
     math-special-header-abi|libc-math-special) ;;
     math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
     inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi|service-lifecycle-header-abi) ;;
@@ -9013,6 +9015,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "general-dynamic-lifecycle takes no arguments"
         ensure_image
         run_general_dynamic_lifecycle_tests
+        ;;
+    general-relocations)
+        [ "$#" -eq 0 ] || fail "general-relocations takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_general_relocations.sh
         ;;
     ldso-initial-exec-tls)
         [ "$#" -eq 0 ] || fail "ldso-initial-exec-tls takes no arguments"

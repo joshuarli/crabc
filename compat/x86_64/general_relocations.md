@@ -2,7 +2,7 @@
 
 `ldso/src/x86_64_general_relocation.rs` is the sole relocation transaction
 for the arbitrary admitted initial graph, with or without initial TLS.
-`run_general_relocations.sh` is its pinned native Docker gate. This is an
+`./scripts/dev-x86_64.sh general-relocations` is its pinned native Docker gate. This is an
 initial-loader component, not runtime load/unload or installed shared-product
 closure. RuntimeV1 remains 72 bytes and OwnedCrtHandoffV1 remains 32 bytes;
 the canonical graph, mapping order, retained TLS IDs and lifetime do not change.
@@ -29,7 +29,7 @@ declared extent and the entire actual read against readable `PT_LOAD` memory.
 It does not demand equal sizes or silently truncate to the provider's size.
 Initialized and zero-filled readable source memory are admissible.
 
-The [ELF symbol-visibility contract](https://www.ar.sco.com/developers/gabi/2007-03-26/ch4.symtab.html)
+The [ELF symbol-visibility contract](https://gabi.xinuos.com/elf/05-symtab.html#symbol-visibility)
 requires a defining object's references to its protected symbol to bind
 locally, while other objects use normal global scope. `lookup` enforces that
 rule for ordinary and TLS references. Local/hidden/internal definitions cannot
