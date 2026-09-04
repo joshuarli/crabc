@@ -24,6 +24,12 @@
 //! slots, and terminal page release remain with their owning lifecycle. This
 //! module defines the geometry and raw OS claim only, so arena and OS
 //! provenance cannot be silently interchanged.
+//!
+//! [`OsAlignedPageLayout::for_fresh_page`] also computes the same source
+//! prefix, regular-page capacity, aliases, and clipped PageMap range for
+//! ordinary OS-backed pages. The existing `new`/`allocate` entry points retain
+//! their large-alignment-only contract; process-policy backing consumes the
+//! generalized geometry separately.
 
 use core::mem::size_of;
 use core::ptr::NonNull;
@@ -31,7 +37,7 @@ use core::ptr::NonNull;
 use crabc_core::Errno;
 
 use crate::config::{
-    ARENA_SLICE_SIZE, LARGE_PAGE_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
+    ARENA_SLICE_SIZE, LARGE_PAGE_SIZE, LARGE_MAX_OBJ_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
     PAGE_META_ALIGNMENT,
 };
 use crate::invariants;
@@ -114,6 +120,7 @@ pub(crate) struct OsAlignedPageLayout {
     block_start_offset: usize,
     page_offset: usize,
     page_map_size: usize,
+    reserved: u16,
 }
 
 impl OsAlignedPageLayout {
@@ -135,8 +142,34 @@ impl OsAlignedPageLayout {
         {
             return None;
         }
+        Self::for_fresh_page(config, block_size, alignment)
+    }
 
-        let slice_count = page::singleton_page_slice_count(block_size)?;
+    /// Source `mi_arenas_page_alloc_fresh_area` geometry for both ordinary
+    /// pages and alignment-forced singletons. The metadata prefix is at least
+    /// one source slice even when the requested block alignment is one.
+    /// This selects no arena or VM policy and transfers no backing ownership.
+    pub(crate) fn for_fresh_page(
+        config: MemoryConfig,
+        block_size: usize,
+        block_alignment: usize,
+    ) -> Option<Self> {
+        if block_size == 0 || block_alignment == 0
+            || block_alignment >= PAGE_META_ALIGNMENT
+            || !invariants::is_power_of_two(block_alignment)
+        {
+            return None;
+        }
+        let singleton = block_alignment > PAGE_MAX_OVERALLOC_ALIGN || block_size > LARGE_MAX_OBJ_SIZE;
+        let slice_count = if singleton {
+            page::singleton_page_slice_count(block_size)?
+        } else {
+            page::regular_page_slice_count(crate::size_class::page_kind_for_block_size(block_size)?)?
+        };
+        // `alignment` historically names the OS-aligned prefix. For ordinary
+        // pages the same source quantity is max(block_alignment, PAGE_ALIGN).
+        let alignment = block_alignment.max(ARENA_SLICE_SIZE);
+
         let allocation_size = invariants::size_of_slices(slice_count)?;
         let requested_mapping_length = allocation_size.checked_add(alignment)?;
         let mapping_length = config.good_alloc_size(requested_mapping_length);
@@ -146,7 +179,7 @@ impl OsAlignedPageLayout {
             return None;
         }
 
-        let metadata_slot_count = if slice_count > 2 { 2 } else { slice_count };
+        let metadata_slot_count = if singleton && slice_count > 2 { 2 } else { slice_count };
         let prefix_page_count = invariants::divide_up(
             alignment.checked_add(ARENA_SLICE_SIZE)?,
             ARENA_SLICE_SIZE,
@@ -167,6 +200,12 @@ impl OsAlignedPageLayout {
         }
 
         let block_start_offset = page::page_usable_start_offset(block_size)?;
+        let reserved = if block_alignment > PAGE_MAX_OVERALLOC_ALIGN {
+            1
+        } else {
+            u16::try_from(allocation_size.checked_sub(block_start_offset)? / block_size).ok()?
+        };
+        if reserved == 0 { return None; }
         let page_offset = alignment
             .checked_add(block_start_offset)?
             .checked_sub(metadata_offset)?;
@@ -175,10 +214,11 @@ impl OsAlignedPageLayout {
         // one less than a large page. The complete mapping extent remains in
         // `MemoryId`; page-map reachability and OS ownership are not the same
         // span for blocks above 4 MiB.
-        let mapped_area_size = if block_size > LARGE_PAGE_SIZE {
+        let area_size = block_size.checked_mul(usize::from(reserved))?;
+        let mapped_area_size = if area_size > LARGE_PAGE_SIZE {
             LARGE_PAGE_SIZE.checked_sub(ARENA_SLICE_SIZE)?
         } else {
-            block_size
+            area_size
         };
         let page_map_size = invariants::size_of_slices(
             invariants::slice_count_of_size(mapped_area_size)?,
@@ -196,6 +236,7 @@ impl OsAlignedPageLayout {
             block_start_offset,
             page_offset,
             page_map_size,
+            reserved,
         })
     }
 
@@ -252,6 +293,39 @@ impl OsAlignedPageLayout {
     #[inline]
     pub(crate) const fn page_map_size(self) -> usize {
         self.page_map_size
+    }
+
+    #[inline]
+    pub(crate) const fn reserved(self) -> u16 { self.reserved }
+}
+
+#[cfg(test)]
+mod ordinary_layout_tests {
+    extern crate std;
+    use super::*;
+    use crate::os::PageSize;
+
+    #[test]
+    fn emit_native_fresh_os_page_geometry_trace() {
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(),
+            1 << 20, false, false);
+        let mut ordinal = 0;
+        for alignment in [1, 128 * 1024] {
+            for block_size in [16, 4096, 16384, 128 * 1024, 1024 * 1024,
+                               8 * 1024 * 1024, 64 * 1024 * 1024] {
+                let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment).unwrap();
+                for value in [block_size, usize::from(layout.reserved()), layout.mapping_length(),
+                              layout.alignment(), layout.metadata_offset(), layout.page_offset(),
+                              layout.page_map_size()] {
+                    std::println!("m2.arena.os_page.{ordinal}={value}");
+                    ordinal += 1;
+                }
+                assert!(layout.metadata_commit_size() < layout.alignment());
+                assert!(layout.page_map_size() <= layout.allocation_size());
+                if alignment > PAGE_MAX_OVERALLOC_ALIGN { assert_eq!(layout.reserved(), 1); }
+            }
+        }
+        assert_eq!(ordinal, 98);
     }
 }
 
