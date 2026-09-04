@@ -74,6 +74,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ftw-header-abi  verify selected x86 ftw C/C++ ABI and feature profiles
   pathname-lifecycle-header-abi  verify selected x86 pathname-lifecycle C/C++ ABI profiles
   ioctl-header-abi  verify selected direct sys/ioctl.h C/C++ ABI profile matrix
+  link-header-source-form  verify x86 <link.h> pinned-musl include topology
   sys-io-header-abi  verify x86 sys/io.h inline port-I/O C/C++ ABI and object code
   timeval-transitive-header-abi  verify selected timeval-dependent header layouts across C/C++ profiles
   sys-time-direct-header-abi  verify selected direct sys/time.h C/C++ ABI profiles and C linkage
@@ -2670,6 +2671,10 @@ run_pathname_lifecycle_header_abi() {
 
 run_ioctl_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ioctl_header_abi.sh
+}
+
+run_link_header_source_form() {
+    run_in_container bash /workspace/compat/x86_64/run_link_header_source_form.sh
 }
 
 run_sys_io_header_abi() {
@@ -5355,6 +5360,7 @@ case "$command" in
     libc-rand-r|libc-lrand48) ;;
     feature-profile-control-plane-header-abi) ;;
     terminal-streams-header-topology) ;;
+    link-header-source-form) ;;
 
     *)
         usage >&2
@@ -5488,6 +5494,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ioctl-header-abi takes no arguments"
         ensure_image
         run_ioctl_header_abi
+        ;;
+    link-header-source-form)
+        [ "$#" -eq 0 ] || fail "link-header-source-form takes no arguments"
+        ensure_image
+        run_link_header_source_form
         ;;
     sys-io-header-abi)
         [ "$#" -eq 0 ] || fail "sys-io-header-abi takes no arguments"
