@@ -530,11 +530,20 @@ run_static_mode() {
     local probe=libc_crt_static_tls_probe.c
     local expected_output=PIMBCAF
     local minimum_tls_alignment=4096
-    if [ "$consumer_kind" = allocator ]; then
-        probe=libc_allocator_basic_runtime_v1_probe.c
-        expected_output=ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT
-        minimum_tls_alignment=1
-    fi
+    case "$consumer_kind" in
+        tls) ;;
+        allocator)
+            probe=libc_allocator_basic_runtime_v1_probe.c
+            expected_output=ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT
+            minimum_tls_alignment=1
+            ;;
+        posix)
+            probe=owned_static_posix_probe.c
+            expected_output='owned-static-posix: PASS'
+            minimum_tls_alignment=1
+            ;;
+        *) fail "unknown installed consumer: $consumer_kind" ;;
+    esac
 
     mkdir "$mode_root"
     (
@@ -726,6 +735,14 @@ reference_output="$(env -i "$header_consumer/allocator-reference")" ||
 [ "$reference_output" = ALLOCATOR_BASIC_RUNTIME_V1_ATEXIT ] ||
     fail "pinned-musl allocator reference output drifted: $reference_output"
 
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_posix_probe.c" \
+    -o "$header_consumer/posix-reference"
+reference_output="$(env -i "$header_consumer/posix-reference")" ||
+    fail "pinned-musl POSIX reference failed"
+[ "$reference_output" = 'owned-static-posix: PASS' ] ||
+    fail "pinned-musl POSIX reference output drifted: $reference_output"
+
 common_compile=(
     gcc -std=c11 -D_GNU_SOURCE -fno-pie -ffreestanding -fno-builtin
     -fno-stack-protector -ftls-model=local-exec -nostdinc
@@ -749,6 +766,11 @@ audit_header_dependencies "$builtins_dependency_file" "$primary" \
     -o "$header_consumer/allocator.o"
 audit_header_dependencies "$header_consumer/allocator.d" "$primary" \
     "$ROOT_DIR/compat/x86_64/libc_allocator_basic_runtime_v1_probe.c"
+"${common_compile[@]}" -MD -MF "$header_consumer/posix.d" \
+    -c "$ROOT_DIR/compat/x86_64/owned_static_posix_probe.c" \
+    -o "$header_consumer/posix.o"
+audit_header_dependencies "$header_consumer/posix.d" "$primary" \
+    "$ROOT_DIR/compat/x86_64/owned_static_posix_probe.c"
 grep -Fq "$primary/usr/include/errno.h" "$dependency_file" ||
     fail "consumer dependency trace did not resolve installed errno.h"
 grep -Fq "$primary/usr/include/pthread.h" "$dependency_file" ||
@@ -773,7 +795,11 @@ run_static_mode "$primary" -static "$primary_consumer/allocator-et-exec" "alloca
 run_static_mode "$primary" -static-pie "$primary_consumer/allocator-pie" "allocator static PIE" allocator
 run_static_mode "$extracted" -static "$extracted_consumer/allocator-et-exec" "extracted allocator ET_EXEC" allocator
 run_static_mode "$extracted" -static-pie "$extracted_consumer/allocator-pie" "extracted allocator static PIE" allocator
-for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie; do
+run_static_mode "$primary" -static "$primary_consumer/posix-et-exec" "POSIX ET_EXEC" posix
+run_static_mode "$primary" -static-pie "$primary_consumer/posix-pie" "POSIX static PIE" posix
+run_static_mode "$extracted" -static "$extracted_consumer/posix-et-exec" "extracted POSIX ET_EXEC" posix
+run_static_mode "$extracted" -static-pie "$extracted_consumer/posix-pie" "extracted POSIX static PIE" posix
+for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie posix-et-exec posix-pie; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"
@@ -781,4 +807,4 @@ for mode_root in static-et-exec static-pie allocator-et-exec allocator-pie; do
         "$extracted" "$extracted_consumer/$mode_root" "$mode_root"
 done
 
-printf 'x86 owned static sysroot dual-mode + extracted pthread/TLS and allocator consumers: PASS\n'
+printf 'x86 owned static sysroot dual-mode + extracted TLS, allocator, and POSIX consumers: PASS\n'

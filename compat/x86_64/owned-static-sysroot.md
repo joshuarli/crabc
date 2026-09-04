@@ -1,8 +1,8 @@
 # Private x86-64 owned static sysroot artifact
 
 `./scripts/dev-x86_64.sh owned-static-sysroot` proves one bounded installed
-Linux/x86-64 static TLS and allocator consumers in ordinary `ET_EXEC` and
-static-PIE `ET_DYN` modes, then repeats both from one extracted package. It is a
+Linux/x86-64 static TLS, allocator, and POSIX consumers in ordinary `ET_EXEC`
+and static-PIE `ET_DYN` modes, then repeats them from one extracted package. It is a
 verified prerequisite inside the still-planned `sysroot.static-tls` family and
 the still-planned `sysroot.owned-artifact` family, not either family’s
 completion and not public
@@ -68,7 +68,7 @@ leaves no partial or replaced output tree.
 
 `compat/x86_64/run_owned_static_sysroot.sh` first runs the pinned musl 1.2.6
 behavior reference. It separately records `-nostdinc -isystem
-<installed>/usr/include` dependencies for all four source files, where
+<installed>/usr/include` dependencies for all five source files, where
 only each named source and that installed header tree are admitted. A forged
 host-header record must fail. The installed driver then compiles, links, and
 executes those objects in each static mode through the same installed-tree
@@ -109,6 +109,14 @@ providers' variadic ABI, pathname/symlink, and SIGABRT behavior. The same
 sealed link-receipt and reproducibility checks apply. This does not qualify
 fork while other threads are allocating or concurrent signal-disposition
 mutation; those remain runtime integration obligations.
+
+`owned_static_posix_probe.c` adds environment ownership/mutation, a real
+fork/`execve` environment round trip, and pipe/vector-I/O/readiness/descriptor
+lifecycle through that same installed archive. It uses ordinary C interfaces,
+not fixture-local startup or syscall substitutes. Its musl reference, both
+static modes, and extracted copies share the same source. PATH search,
+spawn/vfork, concurrent environment mutation, and cancellation are not proved
+by this consumer.
 
 ## Deliberately unselected
 
