@@ -1,5 +1,10 @@
 //! Bounded byte-string formatting and scanning for the static Linux/x86-64 C ABI.
 //!
+//! With `x86-owned-static-runtime`, descriptor streams from the owned engine
+//! also enter the existing grammar, and a recursive FILE lock spans the whole
+//! formatting/scanning call. The permanent-only restrictions below describe
+//! the unchanged private fixture feature; the grammar limits apply to both.
+//!
 //! This target-local leaf owns the byte-buffer entries `snprintf`,
 //! `vsnprintf`, `sprintf`, `vsprintf`, `sscanf`, and `vsscanf`, plus the
 //! permanent-stream entries `printf`, `vprintf`, `fprintf`, `vfprintf`,
@@ -1023,10 +1028,13 @@ unsafe fn format_to_stream(
     format: *const c_char,
     args: &mut VaList<'_>,
 ) -> c_int {
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     if !stdio_standard::is_permanent_stream(stream) {
         unsafe { errno::set_errno(EINVAL) };
         return -1;
     }
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let _stream_guard = unsafe { stdio_standard::StreamGuard::acquire(stream) };
     let mut output = StreamOutput::new(stream);
     let valid = unsafe { format_to_sink(&mut output, format, args) };
     if !valid {
@@ -1723,10 +1731,13 @@ unsafe fn scan_from_stream(
     format: *const c_char,
     args: &mut VaList<'_>,
 ) -> c_int {
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     if !stdio_standard::is_permanent_stream(stream) {
         unsafe { errno::set_errno(EINVAL) };
         return EOF;
     }
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let _stream_guard = unsafe { stdio_standard::StreamGuard::acquire(stream) };
     let mut reader = StreamReader::new(stream);
     let mut directive = format.cast::<u8>();
     let mut assignments = 0;

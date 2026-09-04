@@ -582,7 +582,10 @@ mod static_startup;
 mod stack_chk_fail;
 #[path = "process_globals.rs"]
 mod process_globals;
-#[path = "stdio_standard.rs"]
+// The installed aggregate owns allocation-backed descriptor streams and exit
+// flushing; the default fixture preserves its permanent/single-slot contract.
+#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_static_stdio.rs")]
+#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "stdio_standard.rs")]
 mod stdio_standard;
 #[path = "stdio_format_scan.rs"]
 mod stdio_format_scan;

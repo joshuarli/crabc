@@ -205,6 +205,8 @@ pub unsafe extern "C" fn __cxa_finalize(_dso: *mut c_void) {}
 #[no_mangle]
 pub unsafe extern "C" fn exit(status: c_int) -> ! {
     unsafe { __funcs_on_exit() };
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { __stdio_exit() };
     posix_exit::_exit(status)
 }
 
@@ -234,7 +236,7 @@ fn startup_reject() -> ! {
 #[linkage = "weak"]
 pub unsafe extern "C" fn __init_ssp(_entropy: *mut c_void) {}
 
-/// Static-archive fallback for musl's unselected stdio-exit hook.
+/// Owned-static finalization hook, or the private fixture's weak fallback.
 ///
 /// Musl 1.2.6 `src/exit/exit.c` exposes its inert `dummy()` through
 /// `weak_alias(dummy, __stdio_exit)`. Its separate `src/stdio/__stdio_exit.c`
@@ -243,13 +245,16 @@ pub unsafe extern "C" fn __init_ssp(_entropy: *mut c_void) {}
 /// startup/ordinary-exit owner so a stronger application or runtime spelling
 /// can replace it.
 ///
-/// This x86 static startup leaf never calls the fallback: it does not flush streams,
-/// inspect `FILE` state, take stdio locks, or select stdio finalization, allocator,
-/// loader, or a general process-exit policy.
+/// The private fixture does not call its inert fallback. The owned-static
+/// aggregate supplies a strong hook and invokes it after ordinary-exit
+/// callbacks, flushing permanent and registry-owned dynamic streams.
 #[inline(never)]
 #[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn __stdio_exit() {}
+#[cfg_attr(not(feature = "x86-owned-static-runtime"), linkage = "weak")]
+pub unsafe extern "C" fn __stdio_exit() {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { super::stdio_standard::flush_all_on_exit() };
+}
 
 /// Enter a selected static C application after the real x86 CRT installed TLS.
 ///
