@@ -56,8 +56,10 @@ unsafe fn allocate(extra: usize, flags: u32) -> *mut StandardStream {
 /// Open a fixed-size byte memory stream.
 /// # Safety
 /// `mode` is NUL terminated. Non-null `buffer` remains valid for `size` bytes
-/// through close and is writable for a writing mode (w+ also initializes its
-/// first byte). Caller storage is never freed; null storage is owned by FILE.
+/// through close and is writable for a writing mode. For w+, a non-null buffer
+/// must provide at least one writable byte even when size is zero: pinned
+/// musl unconditionally writes the initial NUL in this mode. Caller storage
+/// is never freed; null storage is owned by FILE, including its zero-size sentinel.
 #[no_mangle]
 pub unsafe extern "C" fn fmemopen(buffer: *mut c_void, size: usize, mode: *const c_char) -> *mut StandardStream {
     unsafe {

@@ -116,6 +116,11 @@ static int memories(void)
     record(21,0,NULL,output,size); free(output);
     f=fmemopen(NULL,0,"w+"); if(!f) return 21;
     errno=0; record(22,fgetc(f),f,NULL,0); fclose(f);
+    /* musl's w+ initialization writes a first NUL even for logical size zero;
+     * provide that real byte, independently of the stream's empty capacity. */
+    unsigned char zero_size_sentinel='?';
+    f=fmemopen(&zero_size_sentinel,0,"w+");
+    if(!f || zero_size_sentinel || fclose(f)) return 29;
     output=NULL; size=99; f=open_memstream(&output,&size); if(!f) return 22;
     if(fseek(f,((long)1<<31),SEEK_SET) || fputc('X',f)==EOF) return 23;
     struct rlimit original, constrained;
