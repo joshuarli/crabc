@@ -526,6 +526,47 @@ def failed_test_count(suite: unittest.TestSuite | unittest.TestCase) -> int:
     return 0
 
 
+class ImmediateDiagnosticResult(unittest.TextTestResult):
+    """Retain normal unittest accounting but flush each failure immediately.
+
+    Long modules must not hide the first actionable traceback until their
+    last test finishes. Logs remain worker-private; only diagnostic timing
+    changes, not test selection, assertions, or the parent's result protocol.
+    """
+
+    def emit_latest(self, label: str, records: list) -> None:
+        self.stream.writeln()
+        self.printErrorList(label, records[-1:])
+        self.stream.flush()
+
+    def addFailure(self, test, err) -> None:
+        super().addFailure(test, err)
+        self.emit_latest("FAIL", self.failures)
+
+    def addError(self, test, err) -> None:
+        super().addError(test, err)
+        self.emit_latest("ERROR", self.errors)
+
+    def addSubTest(self, test, subtest, err) -> None:
+        failures, errors = len(self.failures), len(self.errors)
+        super().addSubTest(test, subtest, err)
+        if len(self.failures) != failures:
+            self.emit_latest("FAIL", self.failures)
+        if len(self.errors) != errors:
+            self.emit_latest("ERROR", self.errors)
+
+    def addUnexpectedSuccess(self, test) -> None:
+        super().addUnexpectedSuccess(test)
+        self.stream.writeln(f"\nUNEXPECTED SUCCESS: {self.getDescription(test)}")
+        self.stream.flush()
+
+    def printErrors(self) -> None:
+        # Details were already flushed. TextTestRunner still prints its
+        # ordinary final counts using the untouched result lists.
+        if self.dots or self.showAll:
+            self.stream.writeln()
+
+
 def worker_main(raw_module: str) -> int:
     """Private child entry point; its JSON line is the parent protocol."""
 
@@ -535,7 +576,9 @@ def worker_main(raw_module: str) -> int:
             raise TestPythonError(f"worker test module must be a regular Python file: {raw_module}")
         suite = unittest.defaultTestLoader.discover(str(module.parent), pattern=module.name)
         discovery_errors = failed_test_count(suite)
-        result = unittest.TextTestRunner(verbosity=1, stream=sys.stderr).run(suite)
+        result = unittest.TextTestRunner(
+            verbosity=1, stream=sys.stderr, resultclass=ImmediateDiagnosticResult
+        ).run(suite)
         payload = {
             "tests_run": result.testsRun,
             "failures": len(result.failures),

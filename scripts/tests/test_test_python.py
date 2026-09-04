@@ -212,6 +212,49 @@ class FailureTests(unittest.TestCase):
         self.assertEqual(discovery.returncode, 1)
         self.assertIn("DISCOVERY-ERROR", discovery.stdout)
 
+    def test_failure_traces_are_flushed_before_later_tests_run(self) -> None:
+        module = self.write_module(
+            "test_immediate.py",
+            """\
+import os
+import unittest
+from pathlib import Path
+
+class ImmediateTests(unittest.TestCase):
+    def test_a_failure(self):
+        self.fail("immediate failure detail")
+
+    def test_b_error(self):
+        raise RuntimeError("immediate error detail")
+
+    def test_c_subtest(self):
+        with self.subTest(case="failure"):
+            self.fail("immediate subtest detail")
+
+    def test_d_prior_diagnostics_are_already_on_disk(self):
+        log = Path(os.environ["CRABC_PYTHON_TEST_WORK_ROOT"]) / "stderr.log"
+        text = log.read_text(encoding="utf-8")
+        for message in ("AssertionError: immediate failure detail",
+                        "RuntimeError: immediate error detail",
+                        "AssertionError: immediate subtest detail"):
+            self.assertIn(message, text)
+""",
+        )
+        result = self.invoke("--module", self.relative(module), "--jobs", "1")
+        self.assertEqual(result.returncode, 1)
+        worker = self.only_run_root() / "modules/001-test-immediate"
+        records = [line for line in (worker / "stdout.log").read_text().splitlines()
+                   if line.startswith(RUNNER_MODULE.RESULT_PREFIX)]
+        self.assertEqual(len(records), 1)
+        payload = json.loads(records[0][len(RUNNER_MODULE.RESULT_PREFIX):])
+        self.assertEqual(payload, {
+            "tests_run": 4, "failures": 2, "errors": 1, "discovery_errors": 0
+        })
+        diagnostic = (worker / "stderr.log").read_text()
+        self.assertEqual(diagnostic.count("AssertionError: immediate failure detail"), 1)
+        self.assertEqual(diagnostic.count("RuntimeError: immediate error detail"), 1)
+        self.assertEqual(diagnostic.count("AssertionError: immediate subtest detail"), 1)
+
     def test_timeout_kills_the_worker_process_group(self) -> None:
         timeout = self.write_module(
             "test_timeout.py",
