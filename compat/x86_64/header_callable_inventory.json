@@ -1232,7 +1232,6 @@
         "fnmatch",
         "fopencookie",
         "forkpty",
-        "fprintf",
         "fputc_unlocked",
         "fputs_unlocked",
         "fputwc",
@@ -1241,7 +1240,6 @@
         "fputws_unlocked",
         "fread_unlocked",
         "freopen",
-        "fscanf",
         "ftrylockfile",
         "funlockfile",
         "fwide",
@@ -1351,7 +1349,6 @@
         "posix_spawnp",
         "prctl",
         "preadv2",
-        "printf",
         "process_vm_readv",
         "process_vm_writev",
         "pthread_cond_timedwait",
@@ -1398,7 +1395,6 @@
         "remap_file_pages",
         "renameat",
         "sbrk",
-        "scanf",
         "sem_close",
         "sem_open",
         "sem_timedwait",
@@ -1459,14 +1455,10 @@
         "verr",
         "verrx",
         "vfork",
-        "vfprintf",
-        "vfscanf",
         "vfwprintf",
         "vfwscanf",
         "vhangup",
         "vmsplice",
-        "vprintf",
-        "vscanf",
         "vswprintf",
         "vswscanf",
         "vsyslog",
@@ -1487,6 +1479,23 @@
       ]
     },
     "verified_feature_archives": [
+      {
+        "aliases": [],
+        "evidence_record": "static-c-stdio-permanent-format-scan",
+        "id": "x86-stdio-permanent-format-scan",
+        "members": [
+          "fprintf",
+          "fscanf",
+          "printf",
+          "scanf",
+          "vfprintf",
+          "vfscanf",
+          "vprintf",
+          "vscanf"
+        ],
+        "runner": "compat/x86_64/run_libc_stdio_permanent_format_scan_wave.sh",
+        "state": "verified"
+      },
       {
         "aliases": [],
         "evidence_record": "static-c-allocator-wrapper",
@@ -417263,7 +417272,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "1b899b044392d0c462af37479419d16f5c305f49ab73fd95f59d1de603d5aeb6",
+    "parity_ledger_sha256": "da42ea9531bc4a3dc125a1f35a6e0aa19aa0bfe073a5e8526672c5024b419066",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -436078,8 +436087,8 @@
     "callable_provider_counts": {
       "declared_unverified_feature_archives": 0,
       "default_static": 1119,
-      "unprovided": 336,
-      "verified_feature_archives": 70
+      "unprovided": 328,
+      "verified_feature_archives": 78
     },
     "candidate_external_callable_count": 1525,
     "candidate_public_header_count": 191,

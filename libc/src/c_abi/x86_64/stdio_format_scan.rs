@@ -1,7 +1,9 @@
 //! Bounded byte-string formatting and scanning for the static Linux/x86-64 C ABI.
 //!
-//! This target-local leaf owns exactly `snprintf`, `vsnprintf`, `sprintf`,
-//! `vsprintf`, `sscanf`, and `vsscanf`.  It deliberately selects a useful
+//! This target-local leaf owns the byte-buffer entries `snprintf`,
+//! `vsnprintf`, `sprintf`, `vsprintf`, `sscanf`, and `vsscanf`, plus the
+//! permanent-stream entries `printf`, `vprintf`, `fprintf`, `vfprintf`,
+//! `scanf`, `vscanf`, `fscanf`, and `vfscanf`. It deliberately selects a useful
 //! C-locale integer-and-byte-string grammar rather than pretending that a
 //! formatter declaration is an implementation: output accepts literals,
 //! `%%`, flags `-+ 0#`, numeric or `*` width/precision, integer length forms
@@ -15,11 +17,19 @@
 //! `%n`, and the separately sealed literal non-wide assignment-suppressed
 //! `%*3[abc]` state.
 //!
-//! The implementation is allocation-free and has no `FILE`, stream lock,
-//! locale-object, decimal or long-double floating conversion, wide-character,
-//! scanset grammar outside that separately sealed literal suppressed state,
-//! positional argument, pointer-valued `%p`, or
-//! `printf`/`fprintf`/`scanf`/`fscanf` boundary.  `%a`/`%A` derives its
+//! The byte-string implementation is allocation-free and has no `FILE`,
+//! stream lock, locale-object, decimal or long-double floating conversion,
+//! wide-character, scanset grammar outside that separately sealed literal
+//! suppressed state, positional argument, pointer-valued `%p`, or permanent
+//! stream boundary. Stream formatting uses the same integer and
+//! byte-string grammar but deliberately rejects `%m` and floating `%a`/`%A`;
+//! `%m` is byte-buffer-only. Stream
+//! scanning uses the same integer, `%c`, `%s`, and `%n` grammar through a
+//! one-byte cursor and rejects floating, pointer, wide, and scanset forms.
+//! It accepts only the exact permanent `stdin`, `stdout`, and `stderr` objects:
+//! `printf`/`vprintf` target stdout, `scanf`/`vscanf` target stdin, and the
+//! `f*` variants reject every other pointer. There is no arbitrary FILE,
+//! pathname stream, or fabricated FILE layout. `%a`/`%A` derives its
 //! C-locale binary64 spelling from raw IEEE bits and observes the selected
 //! x86 fenv rounding direction for explicit precision; it does not select a
 //! decimal formatter or reproduce floating exception side effects. Valid C
@@ -52,16 +62,21 @@
 //! | --- | --- |
 //! | `src/stdio/vsnprintf.c`, `vsprintf.c`, `sprintf.c`, `snprintf.c` | byte-buffer count/truncation wrappers and C varargs entry boundary |
 //! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus bare `%m` no-argument errno-message behavior and binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
+//! | `src/stdio/{printf,vprintf,fprintf,vfprintf}.c` | direct/VaList forwarding into the selected formatter and permanent-stream byte sink; stream entries reject floating and all non-permanent FILE pointers |
 //! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
 //! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` format-NUL, raw-literal, `%%`, format-whitespace, assignment-suppressed raw-character, assignment-suppressed token-string, assignment-suppressed scanset, and assignment-suppressed count states: after the string entry boundary establishes input, format-NUL returns the existing assignment count without entering a scanner state or accessing varargs; the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; format whitespace coalesces its run while consuming zero or more input-space bytes without assignment; fixed non-wide `%*3c` consumes three raw bytes without a destination, va_list access, or assignment; fixed non-wide `%*3s` skips C-locale input whitespace before consuming its bounded token without a destination, va_list access, terminator, or assignment; fixed literal non-wide `%*3[abc]` consumes at most three raw `a`/`b`/`c` bytes without input-whitespace skipping, a destination, va_list access, a terminator, or an assignment; and literal non-wide `%*n` reads no source byte and performs no va_list access, count store, or assignment |
+//! | `src/stdio/{scanf,vscanf,fscanf,vfscanf}.c`; `src/internal/intscan.c` | one-byte-lookahead permanent-stream scanner with delimiter preservation, EOF/matching-failure distinction, `%n`, and selected integer/byte-string/character assignments |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
 //! conversion, locale, wide input, scansets outside the sealed literal
 //! suppressed state, positional arguments, stream
 //! buffering/cancellation, floating exception side effects, and error
 //! propagation through its complete `FILE` machinery. None of those owners is
-//! imported here. This leaf is evidence for the named static byte-string
-//! contract only, never a general stdio or x86 runtime claim.
+//! imported here. The stream entries also do not claim wide, floating,
+//! pointer-valued `%p`, positional, general scanset, locale, locking,
+//! cancellation, pathname, or arbitrary-stream behavior. This leaf is evidence
+//! for the named static byte-string and permanent-stream contract only, never a
+//! general stdio or x86 runtime claim.
 //!
 //! The active Linux/AArch64 implementation remains the broader compatibility
 //! owner in `libc/src/c_abi.rs`, including stream, floating, wide, pointer, and
@@ -83,6 +98,10 @@ use core::ffi::{
 };
 
 use super::{errno, error_strings};
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+use super::stdio_standard;
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+use stdio_standard::StandardStream;
 
 const EINVAL: c_int = 22;
 const ERANGE: c_int = 34;
@@ -150,6 +169,22 @@ struct Output {
     capacity: usize,
     count: usize,
     overflowed: bool,
+}
+
+/// Destination-independent formatting sink. The byte grammar is shared by
+/// bounded memory strings and the permanent stream adapter; stream writes go
+/// through `stdio_standard` so its buffering and error state remain the sole
+/// owner of the FILE transition.
+trait FormatSink {
+    unsafe fn byte(&mut self, byte: u8);
+    unsafe fn bytes(&mut self, source: *const u8, length: usize);
+    unsafe fn repeated(&mut self, byte: u8, length: usize);
+    fn count(&self) -> usize;
+    fn overflowed(&self) -> bool;
+    fn set_overflowed(&mut self);
+    fn failed(&self) -> bool;
+    fn allow_float(&self) -> bool;
+    fn allow_errno_message(&self) -> bool;
 }
 
 impl Output {
@@ -246,6 +281,70 @@ impl Output {
     }
 }
 
+impl FormatSink for Output {
+    unsafe fn byte(&mut self, byte: u8) { unsafe { Output::byte(self, byte) } }
+    unsafe fn bytes(&mut self, source: *const u8, length: usize) {
+        unsafe { Output::bytes(self, source, length) }
+    }
+    unsafe fn repeated(&mut self, byte: u8, length: usize) {
+        unsafe { Output::repeated(self, byte, length) }
+    }
+    fn count(&self) -> usize { self.count }
+    fn overflowed(&self) -> bool { self.overflowed }
+    fn set_overflowed(&mut self) { self.overflowed = true; }
+    fn failed(&self) -> bool { false }
+    fn allow_float(&self) -> bool { true }
+    fn allow_errno_message(&self) -> bool { true }
+}
+
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+struct StreamOutput {
+    stream: *mut StandardStream,
+    count: usize,
+    overflowed: bool,
+    failed: bool,
+}
+
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+impl StreamOutput {
+    const fn new(stream: *mut StandardStream) -> Self {
+        Self { stream, count: 0, overflowed: false, failed: false }
+    }
+}
+
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+impl FormatSink for StreamOutput {
+    unsafe fn byte(&mut self, byte: u8) {
+        if unsafe { stdio_standard::write_byte(self.stream, byte) } < 0 {
+            self.failed = true;
+        }
+        match self.count.checked_add(1) {
+            Some(next) => self.count = next,
+            None => self.overflowed = true,
+        }
+    }
+    unsafe fn bytes(&mut self, source: *const u8, length: usize) {
+        let mut index = 0usize;
+        while index < length {
+            unsafe { self.byte(source.add(index).read()) };
+            index += 1;
+        }
+    }
+    unsafe fn repeated(&mut self, byte: u8, length: usize) {
+        let mut index = 0usize;
+        while index < length {
+            unsafe { self.byte(byte) };
+            index += 1;
+        }
+    }
+    fn count(&self) -> usize { self.count }
+    fn overflowed(&self) -> bool { self.overflowed }
+    fn set_overflowed(&mut self) { self.overflowed = true; }
+    fn failed(&self) -> bool { self.failed }
+    fn allow_float(&self) -> bool { false }
+    fn allow_errno_message(&self) -> bool { false }
+}
+
 #[inline]
 unsafe fn parse_decimal(cursor: &mut *const u8) -> usize {
     let mut value = 0usize;
@@ -308,7 +407,7 @@ unsafe fn c_string_length(string: *const c_char, limit: Option<usize>) -> usize 
 }
 
 unsafe fn write_number(
-    output: &mut Output,
+    output: &mut impl FormatSink,
     mut value: u64,
     base: u8,
     uppercase: bool,
@@ -384,7 +483,7 @@ unsafe fn write_number(
 }
 
 unsafe fn write_string(
-    output: &mut Output,
+    output: &mut impl FormatSink,
     string: *const c_char,
     width: usize,
     precision: Option<usize>,
@@ -407,7 +506,7 @@ unsafe fn write_string(
     }
 }
 
-unsafe fn write_character(output: &mut Output, character: u8, width: usize, flags: u8) {
+unsafe fn write_character(output: &mut impl FormatSink, character: u8, width: usize, flags: u8) {
     let padding = width.saturating_sub(1);
     if flags & FLAG_MINUS == 0 {
         unsafe { output.repeated(b' ', padding) };
@@ -462,7 +561,7 @@ unsafe fn should_round_hexadecimal(
 /// default trailing-zero elision, and current-rounding-mode precision rounding
 /// without selecting musl's decimal big-integer formatter or libm.
 unsafe fn write_hex_float(
-    output: &mut Output,
+    output: &mut impl FormatSink,
     value: f64,
     width: usize,
     precision: Option<usize>,
@@ -592,11 +691,11 @@ unsafe fn write_hex_float(
     // contract before iterating through synthetic trailing zeroes. This keeps
     // an enormous zero-capacity count query bounded.
     if output
-        .count
+        .count()
         .checked_add(emitted_length)
         .is_none_or(|count| count > c_int::MAX as usize)
     {
-        output.overflowed = true;
+        output.set_overflowed();
         return;
     }
     let padding = width.saturating_sub(total_length);
@@ -640,17 +739,15 @@ unsafe fn write_hex_float(
     }
 }
 
-unsafe fn format_to_buffer(
-    destination: *mut c_char,
-    capacity: usize,
+unsafe fn format_to_sink<S: FormatSink>(
+    output: &mut S,
     format: *const c_char,
     args: &mut VaList<'_>,
-) -> c_int {
-    let mut output = Output::new(destination.cast::<u8>(), capacity);
+) -> bool {
     let mut cursor = format.cast::<u8>();
     loop {
-        if output.overflowed || output.count > c_int::MAX as usize {
-            return unsafe { output.finish() };
+        if output.overflowed() || output.count() > c_int::MAX as usize {
+            return false;
         }
         let current = unsafe { read_byte(cursor) };
         if current == 0 {
@@ -709,8 +806,8 @@ unsafe fn format_to_buffer(
         if width > c_int::MAX as usize
             || precision.is_some_and(|value| value > c_int::MAX as usize)
         {
-            output.overflowed = true;
-            return unsafe { output.finish() };
+            output.set_overflowed();
+            return false;
         }
         let length = unsafe { parse_length(&mut cursor) };
         let specifier = unsafe { read_byte(cursor) };
@@ -718,7 +815,7 @@ unsafe fn format_to_buffer(
             // An incomplete conversion has no portable C behavior.  Make the
             // selected boundary deterministic rather than emitting it as text.
             unsafe { errno::set_errno(EINVAL) };
-            return -1;
+            return false;
         }
         cursor = cursor.wrapping_add(1);
 
@@ -752,7 +849,7 @@ unsafe fn format_to_buffer(
                 };
                 unsafe {
                     write_number(
-                        &mut output,
+                        output,
                         magnitude,
                         10,
                         false,
@@ -780,7 +877,7 @@ unsafe fn format_to_buffer(
                 };
                 unsafe {
                     write_number(
-                        &mut output,
+                        output,
                         value,
                         base,
                         specifier == b'X',
@@ -794,17 +891,17 @@ unsafe fn format_to_buffer(
             }
             b'c' if length == Length::None => {
                 let character = unsafe { args.next_arg::<c_int>() as u8 };
-                unsafe { write_character(&mut output, character, width, flags) };
+                unsafe { write_character(output, character, width, flags) };
             }
             b's' if length == Length::None => {
                 let string = unsafe { args.next_arg::<*const c_char>() };
-                unsafe { write_string(&mut output, string, width, precision, flags) };
+                unsafe { write_string(output, string, width, precision, flags) };
             }
-            b'a' | b'A' if matches!(length, Length::None | Length::L) => {
+            b'a' | b'A' if output.allow_float() && matches!(length, Length::None | Length::L) => {
                 let value = unsafe { args.next_arg::<f64>() };
                 unsafe {
                     write_hex_float(
-                        &mut output,
+                        output,
                         value,
                         width,
                         precision,
@@ -813,11 +910,11 @@ unsafe fn format_to_buffer(
                     )
                 };
             }
-            b'm' if length == Length::None => {
+            b'm' if output.allow_errno_message() && length == Length::None => {
                 let message = error_strings::error_message(unsafe { errno::get_errno() });
                 unsafe {
                     write_string(
-                        &mut output,
+                        output,
                         message.as_ptr().cast::<c_char>(),
                         width,
                         precision,
@@ -825,12 +922,26 @@ unsafe fn format_to_buffer(
                     )
                 };
             }
-            b'n' => unsafe { assign_count(args, length, output.count) },
+            b'n' => unsafe { assign_count(args, length, output.count()) },
             _ => {
                 unsafe { errno::set_errno(EINVAL) };
-                return -1;
+                return false;
             }
         }
+    }
+    !output.failed() && !output.overflowed() && output.count() <= c_int::MAX as usize
+}
+
+unsafe fn format_to_buffer(
+    destination: *mut c_char,
+    capacity: usize,
+    format: *const c_char,
+    args: &mut VaList<'_>,
+) -> c_int {
+    let mut output = Output::new(destination.cast::<u8>(), capacity);
+    let valid = unsafe { format_to_sink(&mut output, format, args) };
+    if !valid && !output.overflowed {
+        return -1;
     }
     unsafe { output.finish() }
 }
@@ -904,6 +1015,91 @@ pub unsafe extern "C" fn sprintf(
     mut args: ...,
 ) -> c_int {
     unsafe { format_to_buffer(destination, usize::MAX, format, &mut args) }
+}
+
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+unsafe fn format_to_stream(
+    stream: *mut StandardStream,
+    format: *const c_char,
+    args: &mut VaList<'_>,
+) -> c_int {
+    if !stdio_standard::is_permanent_stream(stream) {
+        unsafe { errno::set_errno(EINVAL) };
+        return -1;
+    }
+    let mut output = StreamOutput::new(stream);
+    let valid = unsafe { format_to_sink(&mut output, format, args) };
+    if !valid {
+        if output.overflowed() {
+            unsafe { errno::set_errno(EOVERFLOW) };
+        }
+        return -1;
+    }
+    output.count as c_int
+}
+
+/// Format to the permanently owned standard output stream.
+///
+/// This boundary intentionally admits only the exact permanent stream objects
+/// owned by `stdio_standard`; it does not construct or inspect a public FILE
+/// layout, and it leaves stdout buffered until an explicit `fflush`.
+#[no_mangle]
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+/// # Safety
+///
+/// `format` must be a readable NUL-terminated string and each variadic
+/// argument must have the promoted type required by the selected grammar.
+/// The call writes only to the exact permanent `stdout` object owned by this
+/// module; callers must not assume it is flushed until `fflush(stdout)`.
+pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
+    let stream = unsafe { stdio_standard::stdout };
+    unsafe { format_to_stream(stream, format, &mut args) }
+}
+
+#[no_mangle]
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+/// # Safety
+///
+/// `format` must be a readable NUL-terminated string and `args` must contain
+/// the promoted values required by the selected grammar. The forwarded list
+/// is consumed during the call and targets only the permanent `stdout`.
+pub unsafe extern "C" fn vprintf(
+    format: *const c_char,
+    mut args: VaList,
+) -> c_int {
+    let stream = unsafe { stdio_standard::stdout };
+    unsafe { format_to_stream(stream, format, &mut args) }
+}
+
+/// Format to one of the three permanent standard streams.
+#[no_mangle]
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+/// # Safety
+///
+/// `stream` must be exactly one of this module's permanent `stdin`, `stdout`,
+/// or `stderr` objects (no fabricated or general `FILE` value); `format` must
+/// be readable through NUL and variadic arguments must match the grammar.
+pub unsafe extern "C" fn fprintf(
+    stream: *mut StandardStream,
+    format: *const c_char,
+    mut args: ...,
+) -> c_int {
+    unsafe { format_to_stream(stream, format, &mut args) }
+}
+
+#[no_mangle]
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+/// # Safety
+///
+/// `stream` must be exactly one of the permanent standard-stream objects;
+/// `format` must be NUL-terminated and `args` must contain the required
+/// promoted values. The `VaList` is forwarded directly and consumed in place.
+pub unsafe extern "C" fn vfprintf(
+    stream: *mut StandardStream,
+    format: *const c_char,
+    mut args: VaList,
+) -> c_int {
+    unsafe { format_to_stream(stream, format, &mut args) }
 }
 
 #[derive(Clone, Copy)]
@@ -1395,4 +1591,361 @@ pub unsafe extern "C" fn sscanf(
     mut args: ...,
 ) -> c_int {
     unsafe { scan_from_string(input, format, &mut args) }
+}
+
+/// One-byte-lookahead reader used by the permanent-stream scanner. A peeked
+/// byte is not part of the consumed count and is returned through `ungetc` on
+/// exit, so conversion delimiters remain available to later `fgetc` calls.
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+struct StreamReader {
+    stream: *mut StandardStream,
+    pending: Option<u8>,
+    consumed: usize,
+}
+
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+impl StreamReader {
+    const fn new(stream: *mut StandardStream) -> Self {
+        Self { stream, pending: None, consumed: 0 }
+    }
+
+    unsafe fn peek(&mut self) -> c_int {
+        if let Some(byte) = self.pending {
+            return c_int::from(byte);
+        }
+        let byte = unsafe { stdio_standard::read_byte(self.stream) };
+        if byte >= 0 {
+            self.pending = Some(byte as u8);
+        }
+        byte
+    }
+
+    unsafe fn take(&mut self) -> c_int {
+        let byte = if let Some(byte) = self.pending.take() {
+            c_int::from(byte)
+        } else {
+            unsafe { stdio_standard::read_byte(self.stream) }
+        };
+        if byte >= 0 {
+            self.consumed = self.consumed.saturating_add(1);
+        }
+        byte
+    }
+
+    unsafe fn finish(&mut self) {
+        if let Some(byte) = self.pending.take() {
+            let _ = unsafe { stdio_standard::ungetc(byte as c_int, self.stream) };
+        }
+    }
+}
+
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+unsafe fn scan_integer_stream(
+    reader: &mut StreamReader,
+    width: usize,
+    requested: ScanBase,
+) -> Option<(u64, bool)> {
+    let mut used = 0usize;
+    if width == 0 || unsafe { reader.peek() } < 0 {
+        return None;
+    }
+    let mut negative = false;
+    if matches!(unsafe { reader.peek() }, c if c == c_int::from(b'+') || c == c_int::from(b'-')) {
+        negative = unsafe { reader.peek() } == c_int::from(b'-');
+        unsafe { reader.take() };
+        used += 1;
+        if used == width || unsafe { reader.peek() } < 0 {
+            return None;
+        }
+    }
+    let mut base = match requested {
+        ScanBase::Decimal | ScanBase::UnsignedDecimal => 10u8,
+        ScanBase::Octal => 8,
+        ScanBase::Hex | ScanBase::HexUpper => 16,
+        ScanBase::Auto => 0,
+    };
+    let mut value = 0u64;
+    let mut digits = 0usize;
+    if unsafe { reader.peek() } == c_int::from(b'0') && (base == 0 || base == 16) {
+        unsafe { reader.take() };
+        used += 1;
+        digits = 1;
+        base = if base == 0 { 8 } else { 16 };
+        if used < width && matches!(unsafe { reader.peek() }, c if c == c_int::from(b'x') || c == c_int::from(b'X')) {
+            unsafe { reader.take() };
+            used += 1;
+            digits = 0;
+            if used == width {
+                return None;
+            }
+            let Some(digit) = digit_value(unsafe { reader.peek() } as u8) else { return None };
+            if digit >= 16 {
+                return None;
+            }
+            base = 16;
+        }
+    } else if base == 0 {
+        base = 10;
+    }
+    let mut overflowed = false;
+    while used < width {
+        let current = unsafe { reader.peek() };
+        if current < 0 {
+            break;
+        }
+        let Some(digit) = digit_value(current as u8) else { break };
+        if digit >= base {
+            break;
+        }
+        if value > (u64::MAX - u64::from(digit)) / u64::from(base) {
+            overflowed = true;
+        } else if !overflowed {
+            value = value * u64::from(base) + u64::from(digit);
+        }
+        unsafe { reader.take() };
+        used += 1;
+        digits += 1;
+    }
+    if digits == 0 {
+        return None;
+    }
+    if overflowed {
+        unsafe { errno::set_errno(ERANGE) };
+        value = u64::MAX;
+        negative = false;
+    }
+    Some((value, negative))
+}
+
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+unsafe fn scan_from_stream(
+    stream: *mut StandardStream,
+    format: *const c_char,
+    args: &mut VaList<'_>,
+) -> c_int {
+    if !stdio_standard::is_permanent_stream(stream) {
+        unsafe { errno::set_errno(EINVAL) };
+        return EOF;
+    }
+    let mut reader = StreamReader::new(stream);
+    let mut directive = format.cast::<u8>();
+    let mut assignments = 0;
+    loop {
+        let format_byte = unsafe { read_byte(directive) };
+        if format_byte == 0 {
+            unsafe { reader.finish() };
+            return assignments;
+        }
+        if ascii_space(format_byte) {
+            while ascii_space(unsafe { read_byte(directive) }) {
+                directive = directive.wrapping_add(1);
+            }
+            while matches!(unsafe { reader.peek() }, c if c >= 0 && ascii_space(c as u8)) {
+                unsafe { reader.take() };
+            }
+            continue;
+        }
+        if format_byte != b'%' {
+            let current = unsafe { reader.peek() };
+            if current < 0 {
+                unsafe { reader.finish() };
+                return if assignments == 0 { EOF } else { assignments };
+            }
+            if current as u8 != format_byte {
+                unsafe { reader.finish() };
+                return assignments;
+            }
+            unsafe { reader.take() };
+            directive = directive.wrapping_add(1);
+            continue;
+        }
+        directive = directive.wrapping_add(1);
+        if unsafe { read_byte(directive) } == b'%' {
+            while matches!(unsafe { reader.peek() }, c if c >= 0 && ascii_space(c as u8)) {
+                unsafe { reader.take() };
+            }
+            let current = unsafe { reader.peek() };
+            if current < 0 {
+                unsafe { reader.finish() };
+                return if assignments == 0 { EOF } else { assignments };
+            }
+            if current != c_int::from(b'%') {
+                unsafe { reader.finish() };
+                return assignments;
+            }
+            unsafe { reader.take() };
+            directive = directive.wrapping_add(1);
+            continue;
+        }
+        let suppress = if unsafe { read_byte(directive) } == b'*' {
+            directive = directive.wrapping_add(1);
+            true
+        } else {
+            false
+        };
+        let width = unsafe { parse_decimal(&mut directive) };
+        let length = unsafe { parse_length(&mut directive) };
+        let specifier = unsafe { read_byte(directive) };
+        if specifier == 0 {
+            unsafe { errno::set_errno(EINVAL); reader.finish() };
+            return assignments;
+        }
+        directive = directive.wrapping_add(1);
+        match specifier {
+            b'd' | b'i' | b'u' | b'o' | b'x' | b'X' => {
+                while matches!(unsafe { reader.peek() }, c if c >= 0 && ascii_space(c as u8)) {
+                    unsafe { reader.take() };
+                }
+                let base = match specifier {
+                    b'd' => ScanBase::Decimal,
+                    b'i' => ScanBase::Auto,
+                    b'u' => ScanBase::UnsignedDecimal,
+                    b'o' => ScanBase::Octal,
+                    b'x' => ScanBase::Hex,
+                    b'X' => ScanBase::HexUpper,
+                    _ => unreachable!(),
+                };
+                let Some((value, negative)) = (unsafe {
+                    scan_integer_stream(&mut reader, if width == 0 { usize::MAX } else { width }, base)
+                }) else {
+                    let eof = unsafe { reader.peek() } < 0;
+                    unsafe { reader.finish() };
+                    return if eof && assignments == 0 { EOF } else { assignments };
+                };
+                if !suppress {
+                    if specifier == b'd' || specifier == b'i' {
+                        unsafe { assign_signed(args, length, value, negative) };
+                    } else {
+                        unsafe { assign_unsigned(args, length, value, negative) };
+                    }
+                    assignments += 1;
+                }
+            }
+            b'c' if length == Length::None => {
+                let requested = if width == 0 { 1 } else { width };
+                let destination = if suppress {
+                    core::ptr::null_mut()
+                } else {
+                    unsafe { args.next_arg::<*mut c_char>() }
+                };
+                let mut copied = 0usize;
+                while copied < requested {
+                    let byte = unsafe { reader.take() };
+                    if byte < 0 {
+                        unsafe { reader.finish() };
+                        return if copied == 0 && assignments == 0 { EOF } else { assignments };
+                    }
+                    if !destination.is_null() {
+                        unsafe { destination.add(copied).write(byte as u8 as c_char) };
+                    }
+                    copied += 1;
+                }
+                if !suppress {
+                    assignments += 1;
+                }
+            }
+            b's' if length == Length::None => {
+                while matches!(unsafe { reader.peek() }, c if c >= 0 && ascii_space(c as u8)) {
+                    unsafe { reader.take() };
+                }
+                let destination = if suppress {
+                    core::ptr::null_mut()
+                } else {
+                    unsafe { args.next_arg::<*mut c_char>() }
+                };
+                let limit = if width == 0 { usize::MAX } else { width };
+                let mut copied = 0usize;
+                while copied < limit {
+                    let byte = unsafe { reader.peek() };
+                    if byte < 0 || ascii_space(byte as u8) {
+                        break;
+                    }
+                    unsafe { reader.take() };
+                    if !destination.is_null() {
+                        unsafe { destination.add(copied).write(byte as u8 as c_char) };
+                    }
+                    copied += 1;
+                }
+                if copied == 0 {
+                    let eof = unsafe { reader.peek() } < 0;
+                    unsafe { reader.finish() };
+                    return if eof && assignments == 0 { EOF } else { assignments };
+                }
+                if !destination.is_null() {
+                    unsafe { destination.add(copied).write(0) };
+                }
+                if !suppress {
+                    assignments += 1;
+                }
+            }
+            b'n' => {
+                if !suppress {
+                    unsafe { assign_count(args, length, reader.consumed) };
+                }
+            }
+            _ => {
+                unsafe { errno::set_errno(EINVAL); reader.finish() };
+                return assignments;
+            }
+        }
+    }
+}
+
+/// Scan from the permanently owned standard input stream.
+#[no_mangle]
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+/// # Safety
+///
+/// `format` must be a readable NUL-terminated string and each destination
+/// pointer in the variadic list must be non-null, writable, and correctly
+/// typed for its selected conversion. The call reads only permanent `stdin`.
+pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
+    let stream = unsafe { stdio_standard::stdin };
+    unsafe { scan_from_stream(stream, format, &mut args) }
+}
+
+#[no_mangle]
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+/// # Safety
+///
+/// `format` must be NUL-terminated; every destination in the forwarded list
+/// must be non-null, writable, and correctly typed for its selected conversion.
+/// The list is consumed directly while reading permanent `stdin`.
+pub unsafe extern "C" fn vscanf(
+    format: *const c_char,
+    mut args: VaList,
+) -> c_int {
+    let stream = unsafe { stdio_standard::stdin };
+    unsafe { scan_from_stream(stream, format, &mut args) }
+}
+
+#[no_mangle]
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+/// # Safety
+///
+/// `stream` must be exactly permanent `stdin`, `stdout`, or `stderr`, never a
+/// fabricated/general `FILE`; `format` must be NUL-terminated and each scan
+/// destination must be valid for its selected conversion.
+pub unsafe extern "C" fn fscanf(
+    stream: *mut StandardStream,
+    format: *const c_char,
+    mut args: ...,
+) -> c_int {
+    unsafe { scan_from_stream(stream, format, &mut args) }
+}
+
+#[no_mangle]
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+/// # Safety
+///
+/// `stream` must be exactly one of the permanent standard-stream objects;
+/// `format` must be NUL-terminated and every forwarded scan destination must
+/// be non-null, writable, and correctly typed. The `VaList` is consumed
+/// directly without reconstruction.
+pub unsafe extern "C" fn vfscanf(
+    stream: *mut StandardStream,
+    format: *const c_char,
+    mut args: VaList,
+) -> c_int {
+    unsafe { scan_from_stream(stream, format, &mut args) }
 }

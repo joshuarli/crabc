@@ -214,8 +214,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             {
                 "declared_unverified_feature_archives": 0,
                 "default_static": 1119,
-                "unprovided": 336,
-                "verified_feature_archives": 70,
+                "unprovided": 328,
+                "verified_feature_archives": 78,
             },
         )
         self.assertEqual(

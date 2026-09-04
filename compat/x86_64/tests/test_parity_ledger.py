@@ -67,8 +67,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 50)
         self.assertEqual(report["verified_artifact_count"], 377)
-        self.assertEqual(report["feature_archive_count"], 27)
-        self.assertEqual(report["verified_feature_archive_count"], 27)
+        self.assertEqual(report["feature_archive_count"], 28)
+        self.assertEqual(report["verified_feature_archive_count"], 28)
         self.assertEqual(report["planned_feature_archive_count"], 0)
         self.assertEqual(report["header_layout_probe_count"], 55)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -135,9 +135,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             data, self.verified_records(data)
         )
         self.assertEqual(report, {
-            "feature_archive_count": 27,
+            "feature_archive_count": 28,
             "planned_feature_archive_count": 0,
-            "verified_feature_archive_count": 27,
+            "verified_feature_archive_count": 28,
         })
 
         feature_archives = data["feature_archive"]
@@ -3900,9 +3900,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(disposition["candidate_external_callable_count"], 1525)
         self.assertEqual(disposition["default_static_callable_count"], 1119)
-        self.assertEqual(disposition["verified_feature_callable_count"], 70)
+        self.assertEqual(disposition["verified_feature_callable_count"], 78)
         self.assertEqual(disposition["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(disposition["unprovided_callable_count"], 336)
+        self.assertEqual(disposition["unprovided_callable_count"], 328)
         self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
         self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
@@ -3919,10 +3919,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(provider_audit["candidate_external_callable_count"], 1525)
         self.assertEqual(provider_audit["default_static_callable_count"], 1119)
-        self.assertEqual(provider_audit["verified_feature_callable_count"], 70)
-        self.assertEqual(provider_audit["verified_feature_profile_count"], 27)
+        self.assertEqual(provider_audit["verified_feature_callable_count"], 78)
+        self.assertEqual(provider_audit["verified_feature_profile_count"], 28)
         self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 0)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 336)
+        self.assertEqual(provider_audit["unprovided_callable_count"], 328)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])
@@ -5523,7 +5523,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -5641,7 +5641,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -5746,7 +5746,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -5884,7 +5884,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -5949,7 +5949,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -6022,7 +6022,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -6774,7 +6774,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -6835,7 +6835,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -6915,6 +6915,37 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(changed)
 
+    def test_stdio_permanent_format_scan_remains_opt_in_and_standard_stream_only(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        ledger.require_stdio_permanent_format_scan_artifact(family)
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 77
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-permanent-format-scan"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn(
+            "compat/x86_64/libc_stdio_permanent_format_scan_wave_probe.c",
+            artifact["source_owners"],
+        )
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stdio-permanent-format-scan"},
+        )
+        artifact["description"] = artifact["description"].replace(
+            "frozen default archive remains unchanged", "frozen default archive changed"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed private description"
+        ):
+            ledger.validate_ledger(data)
+
     def test_stdio_permanent_line_io_remains_a_closed_non_capability_artifact(
         self,
     ) -> None:
@@ -6922,7 +6953,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7012,7 +7043,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7103,7 +7134,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7195,7 +7226,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7296,7 +7327,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7401,7 +7432,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7500,7 +7531,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7594,7 +7625,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7688,7 +7719,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7788,7 +7819,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7886,7 +7917,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -7986,7 +8017,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -8064,7 +8095,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -8157,7 +8188,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -8249,7 +8280,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -8311,7 +8342,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -8411,7 +8442,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifacts_by_id = {
             entry["id"]: entry for entry in artifacts if isinstance(entry, dict)
         }
@@ -8489,7 +8520,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -8574,7 +8605,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -8660,7 +8691,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("math.elementary-long-double", text_math["capabilities"])
         self.assertIn("math.special", text_math["capabilities"])
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -9196,7 +9227,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -9286,7 +9317,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -9374,7 +9405,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -9467,7 +9498,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -9558,7 +9589,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -9656,7 +9687,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -9748,7 +9779,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -9839,7 +9870,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -9928,7 +9959,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10026,7 +10057,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10124,7 +10155,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10224,7 +10255,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10321,7 +10352,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10515,7 +10546,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10599,7 +10630,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10684,7 +10715,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10758,7 +10789,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10833,7 +10864,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10902,7 +10933,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts
@@ -10964,7 +10995,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 76
+        assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
             entry
             for entry in artifacts

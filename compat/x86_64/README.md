@@ -1747,8 +1747,8 @@ work, and `libc.c-abi-compat` retains final provider selection, ordinary
 archive extraction, behavior, and C-ABI closure.
 
 `header-callable-disposition` regenerates the compiler-derived callable
-inventory, then checks that its 1,119 default-static, 70 verified
-feature-provider, and 336 deferred names form one exact primary partition.
+inventory, then checks that its 1,119 default-static, 78 verified
+feature-provider, and 328 deferred names form one exact primary partition.
 Its deferred groups distinguish planned semantic providers from compiler
 builtins, consumer-supplied callbacks, and oracle-declared no-provider names;
 the project-only addressable atomic names are now selected default-static
@@ -1756,12 +1756,25 @@ providers. It neither performs archive extraction nor claims runtime behavior,
 declaration parity, family promotion, final C-ABI closure, or public x86
 support.
 
+`libc-stdio-permanent-format-scan` runs the opt-in
+`x86-stdio-permanent-format-scan` archive proof for exactly
+`printf`/`vprintf`/`fprintf`/`vfprintf` and
+`scanf`/`vscanf`/`fscanf`/`vfscanf`. It proves the default archive remains
+unchanged and the opt-in delta is exactly those eight names, then exercises
+buffered permanent standard streams, direct/VaList calls, bounded integer,
+string, character, whitespace, suppression, and `%n` scanning, delimiter
+preservation, matching failure, EOF, and explicit `EINVAL` rejection for
+unsupported `%p`, `%m`, and floating grammar. It admits only the exact
+permanent `stdin`/`stdout`/`stderr` objects; fabricated or general `FILE`
+values, pathname streams, wide/positional/scanset/locale/locking behavior,
+and default export promotion remain excluded.
+
 `header-callable-provider-linkage-audit` separately uses the checked inventory
-to ordinarily extract the 1,119 current default-static and 70 verified
+to ordinarily extract the 1,119 current default-static and 78 verified
 feature-provider callable members from isolated exact Cargo profiles. It checks
 replacement-symbol extractability and weak same-address aliases, while the
 dedicated environment and resolver runners retain replacement-provider
-selection and behavior. Its 336-name unprovided complement remains explicit:
+selection and behavior. Its 328-name unprovided complement remains explicit:
 this is selected-provider archive evidence, not full callable closure, runtime
 behavior, family promotion, or public x86 support.
 

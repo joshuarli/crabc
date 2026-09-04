@@ -280,14 +280,15 @@ static int check_scanning(void)
 #ifdef CRABC_STDIO_FORMAT_SCAN_FREESTANDING
 static int check_candidate_limitations(void)
 {
-    char output[32] = { 'X', '\0' };
+    char output[32] = { 'X', 'Y', 'Z', 'Q' };
     float floating = 91.0F;
     void *pointer = (void *)0;
     int result;
 
     errno = 0;
     result = snprintf(output, sizeof(output), "%f", 1.0);
-    if (result != -1 || errno != EINVAL)
+    if (result != -1 || errno != EINVAL || output[0] != 'X' ||
+        output[1] != 'Y' || output[2] != 'Z' || output[3] != 'Q')
         return 1;
 
     errno = 0;

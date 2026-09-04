@@ -276,7 +276,7 @@ unsafe fn ensure_standard_streams() {
 }
 
 #[inline]
-fn is_permanent_stream(stream: *const StandardStream) -> bool {
+pub(crate) fn is_permanent_stream(stream: *const StandardStream) -> bool {
     stream == ptr::addr_of!(STDIN_STREAM)
         || stream == ptr::addr_of!(STDOUT_STREAM)
         || stream == ptr::addr_of!(STDERR_STREAM)
@@ -590,7 +590,7 @@ unsafe fn refill_into(
 ///
 /// `stream` must be one exported permanent pointer or the still-active pointer
 /// returned by this module's `fopen`; callers must serialize its access.
-unsafe fn read_byte(stream: *mut StandardStream) -> c_int {
+pub(crate) unsafe fn read_byte(stream: *mut StandardStream) -> c_int {
     // SAFETY: this initializes only permanent private state before dereference.
     unsafe { ensure_standard_streams() };
     // SAFETY: this predicate dereferences only the exact static pathname slot.
@@ -638,7 +638,7 @@ unsafe fn read_byte(stream: *mut StandardStream) -> c_int {
 ///
 /// `stream` must be one selected owned stream record. Its state is externally
 /// serialized for this lock-free artifact.
-unsafe fn flush_output(stream: *mut StandardStream) -> c_int {
+pub(crate) unsafe fn flush_output(stream: *mut StandardStream) -> c_int {
     // SAFETY: the caller supplies one initialized selected stream record.
     if !unsafe { is_writable(stream) } {
         return 0;
@@ -698,7 +698,7 @@ unsafe fn flush_output(stream: *mut StandardStream) -> c_int {
 ///
 /// `stream` must be one exported permanent pointer or the still-active pointer
 /// returned by this module's `fopen`; callers must serialize its access.
-unsafe fn write_byte(stream: *mut StandardStream, byte: u8) -> c_int {
+pub(crate) unsafe fn write_byte(stream: *mut StandardStream, byte: u8) -> c_int {
     // SAFETY: this initializes permanent private state before dereference.
     unsafe { ensure_standard_streams() };
     // SAFETY: this predicate dereferences only the exact static pathname slot.

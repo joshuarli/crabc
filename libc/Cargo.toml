@@ -15,6 +15,10 @@ bench = false
 
 [features]
 default = []
+# Permanent stdin/stdout/stderr formatted-I/O forwarding is a distinct opt-in
+# archive: the frozen byte-string format/scan default surface remains unchanged
+# until its stream-specific evidence and export registration are integrated.
+x86-stdio-permanent-format-scan = []
 # Private Linux/x86-64 parity evidence for the same C allocator backend used
 # by the active AArch64 runtime. Keeping this opt-in prevents the existing
 # dependency-free selected-static artifacts from silently acquiring bundled C

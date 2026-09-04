@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "f2e8b8fcab8f0dfdd526392de73fb5c952347be078f9e691d4fa12ed0af6f326",
+    "callable_inventory_sha256": "d8e49e7d6d1a6d39c079d8b5a663b44ff9cc441d34435f784ce4d5bc2858f28b",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "1b899b044392d0c462af37479419d16f5c305f49ab73fd95f59d1de603d5aeb6",
+    "parity_ledger_sha256": "da42ea9531bc4a3dc125a1f35a6e0aa19aa0bfe073a5e8526672c5024b419066",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "missing_reference_declaration_groups": [],
@@ -1179,7 +1179,6 @@
           "fmemopen",
           "fnmatch",
           "fopencookie",
-          "fprintf",
           "fputc_unlocked",
           "fputs_unlocked",
           "fputwc",
@@ -1188,7 +1187,6 @@
           "fputws_unlocked",
           "fread_unlocked",
           "freopen",
-          "fscanf",
           "ftrylockfile",
           "funlockfile",
           "fwide",
@@ -1220,7 +1218,6 @@
           "open_wmemstream",
           "pclose",
           "popen",
-          "printf",
           "putc_unlocked",
           "putchar_unlocked",
           "putw",
@@ -1228,7 +1225,6 @@
           "putwc_unlocked",
           "putwchar",
           "putwchar_unlocked",
-          "scanf",
           "setbuf",
           "setbuffer",
           "setlinebuf",
@@ -1245,12 +1241,8 @@
           "ungetwc",
           "vasprintf",
           "vdprintf",
-          "vfprintf",
-          "vfscanf",
           "vfwprintf",
           "vfwscanf",
-          "vprintf",
-          "vscanf",
           "vswprintf",
           "vswscanf",
           "vwprintf",
@@ -1563,6 +1555,19 @@
     "kind": "candidate-external-callable-primary-disposition",
     "verified_feature_archives": [
       {
+        "id": "x86-stdio-permanent-format-scan",
+        "members": [
+          "fprintf",
+          "fscanf",
+          "printf",
+          "scanf",
+          "vfprintf",
+          "vfscanf",
+          "vprintf",
+          "vscanf"
+        ]
+      },
+      {
         "id": "x86-allocator-runtime",
         "members": [
           "aligned_alloc",
@@ -1785,7 +1790,7 @@
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 327
+      "planned-provider": 319
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1796,8 +1801,8 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 336,
-    "verified_feature_callable_count": 70
+    "unprovided_callable_count": 328,
+    "verified_feature_callable_count": 78
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {
@@ -1816,7 +1821,7 @@
       "exact missing-reference declaration roster",
       "native x86 inventory regeneration plus checked report"
     ],
-    "expected_transition": "Completed as a non-promoting checked disposition: all 1,525 current candidate external callable names receive exact accounting records, including statx as a planned libc.posix-runtime provider, six project-only addressable atomic names with selected default-static providers, and six selected opt-in interval-timer, file-handle, spawn-file-actions, process-exec, temporary-name, and pthread-spin feature archives owning twenty-three names. The 327 planned-provider names remain provider/archive work. Declaration parity remains red despite the zero missing reference declaration names until the independent declaration/macro matrix and remaining header obligations close.",
+    "expected_transition": "Completed as a non-promoting checked disposition: all 1,525 current candidate external callable names receive exact accounting records, including statx as a planned libc.posix-runtime provider, six project-only addressable atomic names with selected default-static providers, and seven selected opt-in interval-timer, file-handle, spawn-file-actions, process-exec, temporary-name, pthread-spin, and permanent-stream-formatted-I/O feature archives owning thirty-one names. The 319 planned-provider names remain provider/archive work. Declaration parity remains red despite the zero missing reference declaration names until the independent declaration/macro matrix and remaining header obligations close.",
     "family_aggregate_command": "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts",
     "focused_evidence_command": "./scripts/dev-x86_64.sh header-callable-disposition",
     "negative_scope": "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support.",

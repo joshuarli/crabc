@@ -88,7 +88,10 @@
 //! allocation-free wide strings/memory, Unicode classification/simple case,
 //! code-point collation, and terminal-column width,
 //! bounded permanent stdin/stdout/stderr byte/block I/O with explicit flushing, selected
-//! allocation-free byte-buffer formatting and NUL-string scanning,
+//! allocation-free byte-buffer formatting and NUL-string scanning; the
+//! opt-in `x86-stdio-permanent-format-scan` feature additionally composes the
+//! eight integer/byte-string formatted entries over those exact permanent
+//! streams without widening the frozen default archive,
 //! plus one fixed regular-file pathname stream/position-buffering slot and
 //! one bounded immediately-unlinked `tmpfile` route over that same slot,
 //! intmax-arithmetic,

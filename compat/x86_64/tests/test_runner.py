@@ -1928,7 +1928,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-filesystem-directory",
             "libc-filesystem-extensions",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-format-scan|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
@@ -19717,7 +19717,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(f'pub unsafe extern "C" fn {symbol}', implementation)
             self.assertIn(symbol, static_export_names)
             self.assertIn(symbol, fixture)
-        self.assertEqual(implementation.count("# Safety"), len(symbols))
+        self.assertEqual(implementation.count("# Safety"), len(symbols) + 8)
         for required in (
             "musl 1.2.6 release commit",
             "src/stdio/vfprintf.c",
@@ -19771,6 +19771,57 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-stdio-format-scan", dispatcher)
         self.assertIn("run_libc_stdio_format_scan.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_permanent_format_scan_is_opt_in(self) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_permanent_format_scan_wave_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_permanent_format_scan_wave.sh"
+        ).read_text(encoding="utf-8")
+        dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(encoding="utf-8")
+        for required in (
+            "pub unsafe extern \"C\" fn printf",
+            "pub unsafe extern \"C\" fn vprintf",
+            "pub unsafe extern \"C\" fn fprintf",
+            "pub unsafe extern \"C\" fn vfprintf",
+            "pub unsafe extern \"C\" fn scanf",
+            "pub unsafe extern \"C\" fn vscanf",
+            "pub unsafe extern \"C\" fn fscanf",
+            "pub unsafe extern \"C\" fn vfscanf",
+            "is_permanent_stream",
+            "allow_errno_message",
+        ):
+            self.assertIn(required, implementation)
+        for required in (
+            "call_vfprintf(stdout, \"vf=%d\\n\", 12)",
+            "%*c%c",
+            "(FILE *)(uintptr_t)1",
+            "errno != EINVAL",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "x86-stdio-permanent-format-scan",
+            "default archive export surface drifted",
+            "feature-delta",
+            "--no-undefined",
+            "-nostdlib -static",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertIn('id = "static-c-stdio-permanent-format-scan"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-permanent-format-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-permanent-format-scan", dispatcher)
+        self.assertIn("run_libc_stdio_permanent_format_scan_wave.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_integer_scan_stays_narrow(self) -> None:
         implementation = (

@@ -217,17 +217,17 @@ owner = "libc.headers-layouts"
 command = "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit"
 candidate_external_callable_count = 1525
 default_static_callable_count = 1119
-verified_feature_callable_count = 70
-verified_feature_profile_count = 27
+verified_feature_callable_count = 78
+verified_feature_profile_count = 28
 declared_unverified_feature_callable_count = 0
-unprovided_callable_count = 336
+unprovided_callable_count = 328
 topology_only_profile_count = 1
 ordinary_archive_extraction = true
 uses_whole_archive = false
 full_callable_closure = false
 family_promotion = false
 public_support = false
-description = "The native selected-provider audit builds the no-feature default archive plus 27 isolated exact Cargo feature requests, including the `x86-process-exec` profile whose ordinary archive extraction owns exactly the eight process-exec callables and the `x86-temporary-names` profile whose extraction owns exactly `tempnam` and `tmpnam`. It uses ordinary archive extraction for all declared default and verified feature providers, checks each declared replacement symbol is extractable from both profiles, proves weak same-address alias contracts, and retains the named crypt/allocator composition's intentionally rejected direct baseline through its dedicated evidence. Dedicated environment and resolver evidence retains replacement-provider selection and behavior. It records the finite 336-name unprovided complement instead of claiming full callable closure, runtime behavior, header-family promotion, or public x86 support."
+description = "The native selected-provider audit builds the no-feature default archive plus 28 isolated exact Cargo feature requests, including the `x86-process-exec` profile whose ordinary archive extraction owns exactly the eight process-exec callables, the `x86-temporary-names` profile whose extraction owns exactly `tempnam` and `tmpnam`, and the `x86-stdio-permanent-format-scan` profile whose extraction owns exactly the eight permanent-stream formatted-I/O callables. It uses ordinary archive extraction for all declared default and verified feature providers, checks each declared replacement symbol is extractable from both profiles, proves weak same-address alias contracts, and retains the named crypt/allocator composition's intentionally rejected direct baseline through its dedicated evidence. Dedicated environment and resolver evidence retains replacement-provider selection and behavior. It records the finite 328-name unprovided complement instead of claiming full callable closure, runtime behavior, header-family promotion, or public x86 support."
 
 [callable_disposition]
 id = "header-callable-disposition"
@@ -238,9 +238,9 @@ contract = "compat/x86_64/header_callable_disposition.toml"
 report = "compat/x86_64/header_callable_disposition.json"
 candidate_external_callable_count = 1525
 default_static_callable_count = 1119
-verified_feature_callable_count = 70
+verified_feature_callable_count = 78
 declared_unverified_feature_callable_count = 0
-unprovided_callable_count = 336
+unprovided_callable_count = 328
 missing_reference_declaration_name_count = 0
 missing_reference_declaration_record_count = 0
 missing_reference_declaration_routing_complete = true
@@ -249,7 +249,7 @@ header_declaration_parity_complete = false
 final_provider_archive_closure_complete = false
 family_promotion = false
 public_support = false
-description = "The checked compiler-derived disposition routes all 1,525 selected external callable names through current default or verified-feature provider assignments, exact planned semantic owners, compiler-builtin, consumer-supplied, or oracle-declared-no-provider records. The project-only addressable stdatomic declarations have selected default-static providers, while `x86-interval-timers`, `x86-pthread-spin-operations`, `x86-process-exec`, and `x86-temporary-names` own their selected feature callables, including the eight process-exec names `execl`, `execle`, `execlp`, `execv`, `execve`, `execvp`, `execvpe`, and `fexecve`, without making their source-only header policy public support. The 327 remaining planned-provider names and zero current missing pinned-musl declaration names do not make this routing pass declaration parity. It excludes archive extraction, runtime semantics, final C ABI provider/archive closure, header-family promotion, and public x86 support."
+description = "The checked compiler-derived disposition routes all 1,525 selected external callable names through current default or verified-feature provider assignments, exact planned semantic owners, compiler-builtin, consumer-supplied, or oracle-declared-no-provider records. The project-only addressable stdatomic declarations have selected default-static providers, while `x86-interval-timers`, `x86-pthread-spin-operations`, `x86-process-exec`, `x86-temporary-names`, and `x86-stdio-permanent-format-scan` own their selected feature callables, including the eight process-exec names `execl`, `execle`, `execlp`, `execv`, `execve`, `execvp`, `execvpe`, and `fexecve`, without making their source-only header policy public support. The 319 remaining planned-provider names and zero current missing pinned-musl declaration names do not make this routing pass declaration parity. It excludes archive extraction, runtime semantics, final C ABI provider/archive closure, header-family promotion, and public x86 support."
 
 [selected_header_install_projection]
 id = "x86-selected-header-install-projection"

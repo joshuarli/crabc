@@ -553,6 +553,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-a64l  run the opt-in static x86 crabc-libc radix-64 decoder slice
   libc-stdio-standard  run the static x86 crabc-libc permanent standard-stream slice
   libc-stdio-format-scan  run the static x86 crabc-libc byte-string format/scan slice
+  libc-stdio-permanent-format-scan  run the opt-in permanent-stream formatted-I/O slice
   libc-stdio-integer-scan  run the static x86 crabc-libc bounded integer-source scan slice
   stdio-octal-hex-scan-header-abi  compile C11/C++17 scanf declaration/linkage evidence
   libc-stdio-octal-hex-scan  run the static x86 crabc-libc bounded octal/uppercase-hex scan slice
@@ -5284,7 +5285,7 @@ case "$command" in
     libc-filesystem-extensions) ;;
     libc-lchmod-unsupported) ;;
     libc-fopen64-alias) ;;
-    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
+    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-format-scan|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-affinity) ;;
     libc-pthread-cpuclock) ;;
@@ -7574,6 +7575,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-stdio-format-scan takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_stdio_format_scan.sh
+        ;;
+    libc-stdio-permanent-format-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-permanent-format-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_permanent_format_scan_wave.sh
         ;;
     libc-stdio-integer-scan)
         [ "$#" -eq 0 ] || fail "libc-stdio-integer-scan takes no arguments"
