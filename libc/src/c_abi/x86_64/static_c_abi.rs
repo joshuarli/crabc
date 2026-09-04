@@ -649,6 +649,9 @@ mod filesystem_access;
 mod fchdir;
 #[path = "mktemp.rs"]
 mod mktemp;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "temporary_objects.rs"]
+mod temporary_objects;
 // These legacy name generators are intentionally opt-in. They preserve
 // pinned-musl's racy absent-name observation and compose only with the
 // separately audited allocation/string-duplication baseline.

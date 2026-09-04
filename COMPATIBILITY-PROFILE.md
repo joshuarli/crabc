@@ -117,7 +117,10 @@ exclusive `openat` creation with `O_CLOEXEC` and mode `0600`, and owned
 descriptor-relative unlink-on-drop cleanup. The staged x86 C ABI has historical
 `mktemp` plus opt-in `tempnam`/`tmpnam` name-selection leaves, but all three
 remain racy or ambient C pathname facilities rather than safe Rust APIs or
-temporary-object ownership contracts. Linux `name_to_handle_at` and
+temporary-object ownership contracts. The owned x86 runtime additionally
+selects the five `mkstemp`/`mkostemp`/`mkstemps`/`mkostemps`/`mkdtemp` creation
+entries: exclusive files/directories with caller-owned cleanup and musl's
+template/flag semantics. Linux `name_to_handle_at` and
 `open_by_handle_at` remain authority-bearing file-handle operations and are
 documented C-only here; crabc-rs does not provide a generic file-handle or
 filesystem-confinement framework.
