@@ -13,8 +13,43 @@
 #[allow(dead_code)]
 #[path = "errno.rs"]
 mod errno;
+#[cfg(not(crabc_general_dynamic_lifecycle))]
 #[path = "dynamic_main_thread_runtime_v1.rs"]
 mod dynamic_main_thread_runtime_v1;
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "dynamic_main_thread_runtime_v1_lifecycle.rs"]
+mod dynamic_main_thread_runtime_v1;
+
+// These are the same ABI/state owners used by the selected static runtime;
+// the dynamic composition supplies a loader-owned TLS image instead.
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "process_exit.rs"]
+mod process_exit;
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "environment.rs"]
+mod environment;
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "auxv_observation.rs"]
+mod auxv_observation;
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "startup_security.rs"]
+mod startup_security;
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "issetugid.rs"]
+mod issetugid;
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "syscall.rs"]
+#[allow(dead_code)]
+mod raw_syscall;
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "immediate_termination.rs"]
+mod immediate_termination;
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "posix_exit.rs"]
+mod posix_exit;
+#[cfg(crabc_general_dynamic_lifecycle)]
+#[path = "stack_chk_fail.rs"]
+mod stack_chk_fail;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {

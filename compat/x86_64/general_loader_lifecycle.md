@@ -47,8 +47,10 @@ Runtime mapping/unload and reference counts, `dlclose`, worker DTV growth,
 fork interaction, constructor-triggered loading, exit from constructors or
 destructors, and full reentrant exit semantics remain separate work. The
 once-only recursive callback test is not a claim about recursive `exit()`.
-Initializers still run before entry to the application CRT; moving dispatch
-behind libc startup and executable preinit requires the owned startup seam.
+This standalone dependency witness runs initializers before application CRT
+entry. Combining the feature with the general dynamic-main-thread RuntimeV1
+mode instead defers dispatch behind libc startup and executable preinit; see
+[owned general dynamic startup and process exit](general_dynamic_lifecycle.md).
 
 ## Native evidence
 

@@ -4,17 +4,17 @@
 //!
 //! The entry is deliberately minimal and leaves the original initial stack
 //! untouched until normal Rust startup parses it. An ELF interpreter has
-//! already relocated this image; `%rdx` is deliberately not consumed as a
-//! finalizer because pinned musl 1.2.6 x86-64 `Scrt1.o` passes a null finalizer
-//! to `__libc_start_main` instead.
+//! already relocated this image. Default mode preserves pinned musl 1.2.6's
+//! null-finalizer convention. Explicit owned lifecycle mode captures `%rdx`
+//! and authenticates it against the private owned handoff before libc entry.
 
 mod x86_64_array_boundaries;
 mod x86_64_dynamic_startup;
 
 pub use x86_64_dynamic_startup::__crabc_x86_64_dynamic_start;
 
-// This private marker is a future crabc-loader admission check, not an ELF
-// export or a current loader-to-CRT handoff. Pinned musl ignores it, which
+// This private marker is the crabc-loader's owned-entry admission check, not
+// an ELF export or the lifecycle handoff record. Pinned musl ignores it, which
 // keeps this evidence executable with the declared C/POSIX oracle.
 core::arch::global_asm!(
     r#"
@@ -30,6 +30,7 @@ core::arch::global_asm!(
 "#,
 );
 
+#[cfg(not(crabc_general_dynamic_lifecycle))]
 core::arch::global_asm!(
     r#"
     .intel_syntax noprefix
@@ -47,6 +48,31 @@ _start:
     ud2
     .size _start, .-_start
 
+    .att_syntax prefix
+    .section .note.GNU-stack,"",@progbits
+"#,
+    startup = sym __crabc_x86_64_dynamic_start,
+);
+
+// Only the owned dynamic lifecycle mode consumes the loader's conventional
+// rtld_fini register. Preserve it as the second Rust argument before any
+// call, then authenticate it against the existing owned handoff record.
+#[cfg(crabc_general_dynamic_lifecycle)]
+core::arch::global_asm!(
+    r#"
+    .intel_syntax noprefix
+    .section .text._start,"ax",@progbits
+    .global _start
+    .type _start,@function
+_start:
+    mov r15, rsp
+    mov rsi, rdx
+    xor ebp, ebp
+    and rsp, -16
+    mov rdi, r15
+    call {startup}
+    ud2
+    .size _start, .-_start
     .att_syntax prefix
     .section .note.GNU-stack,"",@progbits
 "#,

@@ -32,10 +32,13 @@ same general graph and retains dependency legacy init/fini plus init/fini
 arrays in its canonical owner. Initialization follows dependency order;
 process finalization reverses that order and claims each object once. The
 loader passes its private finalizer address through the conventional x86-64
-`rdx` entry register. It composes with initial TLS but does not yet compose
-the owned CRT/shared-libc executable lifecycle, runtime `dlopen`/`dlclose`,
-worker TLS, or installed dynamic products. See the
+`rdx` entry register. With the general dynamic-main-thread RuntimeV1 feature,
+it defers initialization to the authenticated owned CRT/libc composition,
+after libc state and executable preinit are ready. This does not select
+runtime `dlopen`/`dlclose`, worker TLS, or installed dynamic products. See the
 [native lifecycle contract and evidence](../compat/x86_64/general_loader_lifecycle.md).
+The [owned dynamic startup/exit evidence](../compat/x86_64/general_dynamic_lifecycle.md)
+specifies the real startup composition and its remaining product boundary.
 
 ## Usage
 

@@ -141,7 +141,10 @@ impl InitialProcess {
 /// dynamic libc owns lifecycle invocation itself, so its launch behavior must
 /// not be used to infer whether these callback arguments were consumed.
 #[no_mangle]
-pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(initial_stack: *const usize) -> ! {
+pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(
+    initial_stack: *const usize,
+    #[cfg(crabc_general_dynamic_lifecycle)] loader_finalizer: Option<LifecycleHook>,
+) -> ! {
     let process = match unsafe { InitialProcess::parse(initial_stack) } {
         Some(process) => process,
         None => startup_reject(),
@@ -151,6 +154,16 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(initial_stack: *const usiz
     // weak object: that would fault on the required foreign-musl null path.
     let handoff = unsafe { __crabc_x86_64_owned_crt_handoff_value() };
     let rtld_fini = unsafe { configure_owned_loader_handoff(handoff) };
+    #[cfg(crabc_general_dynamic_lifecycle)]
+    let rtld_fini = {
+        // A foreign-loader/null handoff cannot authorize a register value.
+        // Match the captured rdx address against the validated owned record
+        // before passing it into libc or invoking any executable callbacks.
+        match (loader_finalizer, rtld_fini) {
+            (Some(register), Some(record)) if register as usize == record as usize => Some(register),
+            _ => startup_reject(),
+        }
+    };
     // This private Scrt1 build mode is selected only by the general
     // RuntimeV1 main-thread evidence. Its main image provides the companion
     // directly, so this is neither a weak fallback nor a libc.so import. A

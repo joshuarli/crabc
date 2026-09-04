@@ -166,7 +166,8 @@ compile_error!("general loader/libc TLS RuntimeV1 is disjoint from fixed Runtime
 // The dynamic-main-thread bridge is a fourth, explicitly dependent general
 // RuntimeV1 cfg. It admits one Rust-produced Scrt1.o shape and one
 // main-resident attachment before libc startup; it does not reuse the fixed
-// owned-CRT carrier or acquire its loader-owned lifecycle/finalizer state.
+// owned-CRT graph. With the general lifecycle feature it reuses the record
+// layout to authenticate the conventional rdx finalizer and defer callbacks.
 #[cfg(all(
     crabc_dynamic_main_thread_runtime_v1,
     not(crabc_general_loader_libc_tls_runtime_v1)
@@ -503,16 +504,16 @@ struct InstalledInitialTls {
 #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
 const MAX_OWNED_CRT_MAIN_ARRAY_ENTRIES: usize = 16;
 
-// This record is compiled only into the third private sibling artifact.  The
-// older no-TLS and GNU-Dynamic-TLS runners do not even export its name: their
-// fixed direct-main transfer remains byte-for-byte a no-CRT-handoff boundary.
-#[cfg(crabc_owned_crt_handoff)]
+// The fixed owned-CRT sibling and general owned lifecycle composition share
+// this record layout, not graph algorithms or state. Older fixed no-TLS and
+// GNU-Dynamic-TLS direct-main artifacts retain their no-handoff boundary.
+#[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 const OWNED_CRT_HANDOFF_MAGIC: u64 = if cfg!(crabc_owned_crt_handoff_malformed) {
     0
 } else {
     0x4352_4142_435f_4831
 };
-#[cfg(crabc_owned_crt_handoff)]
+#[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 const OWNED_CRT_HANDOFF_VERSION: u32 = 1;
 #[cfg(crabc_owned_crt_handoff)]
 const OWNED_CRT_STATE_UNPUBLISHED: u8 = 0;
@@ -523,15 +524,15 @@ const OWNED_CRT_STATE_CONSTRUCTORS_COMPLETE: u8 = 2;
 #[cfg(crabc_owned_crt_handoff)]
 const OWNED_CRT_STATE_FINALIZED: u8 = 3;
 
-#[cfg(crabc_owned_crt_handoff)]
+#[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 type OwnedCrtLifecycleHook = unsafe extern "C" fn();
 
 /// Exact post-relocation wire consumed by the Rust-produced private Scrt1.o.
 ///
-/// This is deliberately a data symbol rather than a register convention.  It
+/// This data record authenticates the general composition's rdx address. It
 /// is self-relocated before the interpreter enters Rust and sealed with this
 /// interpreter's final RELRO transition before the executable can read it.
-#[cfg(crabc_owned_crt_handoff)]
+#[cfg(any(crabc_owned_crt_handoff, all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
 #[repr(C)]
 pub struct OwnedCrtHandoffV1 {
     magic: u64,
@@ -2635,6 +2636,9 @@ unsafe fn relocation_value(
                     && visibility == 0
                     && section == 0
                 {
+                    #[cfg(crabc_general_initial_lifecycle)]
+                    return Some(x86_64_general_initial_lifecycle::owned_crt_handoff_address());
+                    #[cfg(not(crabc_general_initial_lifecycle))]
                     return Some(0);
                 }
                 return None;

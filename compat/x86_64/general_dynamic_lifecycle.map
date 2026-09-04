@@ -1,0 +1,10 @@
+{
+  global:
+    __libc_start_main;
+    __errno_location;
+    __environ; environ; _environ; ___environ; getenv;
+    __getauxval; getauxval; issetugid;
+    __stack_chk_fail;
+    atexit; __cxa_atexit; __cxa_finalize; exit; _exit; _Exit;
+  local: *;
+};

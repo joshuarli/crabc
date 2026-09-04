@@ -216,19 +216,25 @@ def parse_args() -> argparse.Namespace:
             "RuntimeV1 attachment before __libc_start_main"
         ),
     )
+    parser.add_argument(
+        "--general-dynamic-lifecycle",
+        action="store_true",
+        help="build owned Scrt1.o with RuntimeV1 validation and authenticated rdx finalization",
+    )
     return parser.parse_args()
 
 
 def selected_objects(args: argparse.Namespace) -> tuple[ObjectSpec, ...]:
     """Return the audited object contract for one explicit private build mode."""
 
-    if not args.dynamic_main_thread_runtime_v1:
+    if not args.dynamic_main_thread_runtime_v1 and not args.general_dynamic_lifecycle:
         return OBJECTS
     return tuple(
         replace(
             spec,
             undefined_symbols=spec.undefined_symbols
             + (X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY,),
+            entry_contract=("owned-dynamic-pie-entry" if args.general_dynamic_lifecycle else spec.entry_contract),
         )
         if spec.name == "Scrt1.o"
         else spec
@@ -541,7 +547,7 @@ def audit_entry_machine_code(
     }
     if spec.entry_contract == "static-pie-entry":
         required_machine_sequences["syscall"] = b"\x0f\x05"
-    elif spec.entry_contract not in {"ordinary-static-entry", "dynamic-pie-entry"}:
+    elif spec.entry_contract not in {"ordinary-static-entry", "dynamic-pie-entry", "owned-dynamic-pie-entry"}:
         raise BuildError(f"{path}: machine audit is invalid for {spec.entry_contract}")
     missing = [
         instruction
@@ -563,11 +569,13 @@ def audit_entry_machine_code(
     if R_X86_64_PLT32 not in relocation_types:
         raise BuildError(f"{path}: startup entry lacks its direct Rust handoff")
     direct_handoff_symbol: str | None = None
-    if spec.entry_contract == "dynamic-pie-entry":
+    if spec.entry_contract in {"dynamic-pie-entry", "owned-dynamic-pie-entry"}:
         # This literal early-entry sequence preserves only `%rsp` in r15 and
         # calls the Rust handoff. In particular it never captures `%rdx` as a
         # guessed loader finalizer: musl 1.2.6 x86-64 Scrt1 passes null.
         expected_prefix = b"\x49\x89\xe7\x31\xed\x48\x83\xe4\xf0\x4c\x89\xff\xe8"
+        if spec.entry_contract == "owned-dynamic-pie-entry":
+            expected_prefix = b"\x49\x89\xe7\x48\x89\xd6\x31\xed\x48\x83\xe4\xf0\x4c\x89\xff\xe8"
         if not entry_bytes.startswith(expected_prefix) or not entry_bytes.endswith(b"\x0f\x0b"):
             raise BuildError(f"{path}: dynamic entry does not retain the bounded musl-shaped handoff")
         direct_handoffs = [
@@ -601,8 +609,8 @@ def audit_entry_machine_code(
                 else {}
             ),
             **(
-                {"loader_finalizer": "null-musl-x86_64-convention"}
-                if spec.entry_contract == "dynamic-pie-entry"
+                {"loader_finalizer": ("authenticated-owned-rdx" if spec.entry_contract == "owned-dynamic-pie-entry" else "null-musl-x86_64-convention")}
+                if spec.entry_contract in {"dynamic-pie-entry", "owned-dynamic-pie-entry"}
                 else {}
             ),
         },
@@ -662,7 +670,12 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 "crabc_x86_64_" + spec.name.removesuffix(".o").replace(".", "_"),
                 *(
                     ["--cfg", "crabc_dynamic_main_thread_runtime_v1"]
-                    if args.dynamic_main_thread_runtime_v1 and spec.name == "Scrt1.o"
+                    if (args.dynamic_main_thread_runtime_v1 or args.general_dynamic_lifecycle) and spec.name == "Scrt1.o"
+                    else []
+                ),
+                *(
+                    ["--cfg", "crabc_general_dynamic_lifecycle"]
+                    if args.general_dynamic_lifecycle and spec.name == "Scrt1.o"
                     else []
                 ),
                 str(source),
@@ -688,6 +701,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 "ordinary-static-entry",
                 "static-pie-entry",
                 "dynamic-pie-entry",
+                "owned-dynamic-pie-entry",
             }:
                 machine_contract, machine_record = audit_entry_machine_code(
                     spec, destination, objdump, environment
@@ -716,6 +730,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "target": TARGET,
         "scope": "bounded-static-and-private-dynamic-startup",
         "dynamic_main_thread_runtime_v1": args.dynamic_main_thread_runtime_v1,
+        "general_dynamic_lifecycle": args.general_dynamic_lifecycle,
         "toolchain": PINNED_TOOLCHAIN,
         "objects": object_records,
         "commands": {"name": commands_path.name, "sha256": sha256_file(commands_path)},

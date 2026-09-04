@@ -24,6 +24,29 @@ const FINALIZING: u8 = 3;
 const FINALIZED: u8 = 4;
 const CALLBACK_CAPACITY: usize = MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES + 1;
 
+// The existing 32-byte owned CRT record carries the dependency callback; TLS
+// coordinates remain in the separate, unchanged 72-byte RuntimeV1 record.
+// The finalizer field also authenticates the address transported in rdx.
+#[cfg(crabc_dynamic_main_thread_runtime_v1)]
+static OWNED_CRT_HANDOFF: OwnedCrtHandoffV1 = OwnedCrtHandoffV1 {
+    magic: OWNED_CRT_HANDOFF_MAGIC,
+    version: OWNED_CRT_HANDOFF_VERSION,
+    abi_size: core::mem::size_of::<OwnedCrtHandoffV1>() as u32,
+    dependency_constructors: owned_dependency_constructors,
+    process_fini: process_finalizer,
+};
+
+#[cfg(crabc_dynamic_main_thread_runtime_v1)]
+pub(super) fn owned_crt_handoff_address() -> u64 {
+    core::ptr::addr_of!(OWNED_CRT_HANDOFF) as usize as u64
+}
+
+/// Called by the owned CRT only after libc state and executable preinit.
+#[cfg(crabc_dynamic_main_thread_runtime_v1)]
+unsafe extern "C" fn owned_dependency_constructors() {
+    unsafe { GeneralInitialLoaderState::retained().unwrap().lifecycle().unwrap().initialize() };
+}
+
 /// One mapped object's callbacks in forward execution order. Object index
 /// preserves the connection to canonical map/TLS ownership without pointers
 /// into the movable startup transaction.

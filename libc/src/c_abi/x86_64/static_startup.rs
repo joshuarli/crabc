@@ -47,12 +47,9 @@ use super::{
 
 const MAX_STARTUP_POINTERS: usize = 1 << 20;
 const MAX_AUXV_ENTRIES: usize = 4096;
-const ATEXIT_CAPACITY: usize = 32;
 const AT_NULL: usize = 0;
 
 type MainFunction = unsafe extern "C" fn(c_int, *const *const c_char, *const *const c_char) -> c_int;
-type ExitFunction = unsafe extern "C" fn(*mut c_void);
-type PlainExitFunction = unsafe extern "C" fn();
 type LifecycleFunction = unsafe extern "C" fn();
 
 #[derive(Clone, Copy)]
@@ -96,110 +93,11 @@ unsafe fn startup_vectors(argc: c_int, argv: *const *const c_char) -> Option<Sta
     None
 }
 
-/// One no-allocation ordinary-exit registration.
-///
-/// The data is private to the selected static startup path. Registrations
-/// occur during single-threaded startup/application setup; broader concurrent
-/// and reentrant exit semantics remain outside this artifact's contract.
-#[derive(Clone, Copy)]
-struct ExitRegistration {
-    callback: Option<ExitFunction>,
-    argument: *mut c_void,
-}
-
-impl ExitRegistration {
-    const EMPTY: Self = Self {
-        callback: None,
-        argument: core::ptr::null_mut(),
-    };
-}
-
-static mut ATEXIT_REGISTRATIONS: [ExitRegistration; ATEXIT_CAPACITY] =
-    [ExitRegistration::EMPTY; ATEXIT_CAPACITY];
-static mut ATEXIT_COUNT: usize = 0;
-static mut ATEXIT_FINISHED: bool = false;
-
-/// Register a C++-ABI-shaped ordinary-exit callback in the fixed static block.
-///
-/// The selected static runtime does not own DSO finalization. Its `_dso`
-/// parameter is therefore retained only for ABI compatibility with the musl
-/// entry point and does not select any DSO-specific semantics.
-#[no_mangle]
-pub unsafe extern "C" fn __cxa_atexit(
-    callback: Option<ExitFunction>,
-    argument: *mut c_void,
-    _dso: *mut c_void,
-) -> c_int {
-    if callback.is_none() || unsafe { ATEXIT_FINISHED || ATEXIT_COUNT == ATEXIT_CAPACITY } {
-        return -1;
-    }
-    let count = unsafe { ATEXIT_COUNT };
-    // SAFETY: `count` is bounded by the condition above. Function and data
-    // pointers share the AMD64 machine-word calling representation used by
-    // this musl-compatible ABI boundary.
-    unsafe {
-        ATEXIT_REGISTRATIONS[count] = ExitRegistration {
-            callback,
-            argument,
-        };
-        ATEXIT_COUNT = count + 1;
-    }
-    0
-}
-
-unsafe extern "C" fn invoke_plain_exit(argument: *mut c_void) {
-    // SAFETY: `atexit` records only a non-null C ABI no-argument function
-    // pointer in this machine-word slot.
-    let callback: PlainExitFunction = unsafe { core::mem::transmute(argument) };
-    unsafe { callback() };
-}
-
-/// Register a C `atexit` callback in the fixed static block.
-#[no_mangle]
-pub unsafe extern "C" fn atexit(callback: Option<PlainExitFunction>) -> c_int {
-    let Some(callback) = callback else {
-        return -1;
-    };
-    unsafe {
-        __cxa_atexit(
-            Some(invoke_plain_exit),
-            core::mem::transmute(callback),
-            core::ptr::null_mut(),
-        )
-    }
-}
-
-/// Dispatch registered ordinary-exit callbacks in LIFO order.
-///
-/// Each entry is cleared before invocation. A normal handler that registers
-/// another callback therefore adds it above the current consumed slot and it
-/// is selected by the same reverse walk; no callback can be observed twice.
-#[no_mangle]
-pub unsafe extern "C" fn __funcs_on_exit() {
-    loop {
-        let registration = unsafe {
-            if ATEXIT_COUNT == 0 {
-                ATEXIT_FINISHED = true;
-                return;
-            }
-            ATEXIT_COUNT -= 1;
-            let index = ATEXIT_COUNT;
-            let registration = ATEXIT_REGISTRATIONS[index];
-            ATEXIT_REGISTRATIONS[index] = ExitRegistration::EMPTY;
-            registration
-        };
-        if let Some(callback) = registration.callback {
-            unsafe { callback(registration.argument) };
-        }
-    }
-}
-
-/// Static compatibility no-op for the C++ ABI finalization entry point.
-///
-/// Like musl's corresponding entry point, this deliberately leaves ordinary
-/// registrations for `exit`'s LIFO dispatch instead of adding DSO filtering.
-#[no_mangle]
-pub unsafe extern "C" fn __cxa_finalize(_dso: *mut c_void) {}
+// Both process compositions retain this one registration implementation;
+// static startup continues to own its no-loader exit sequence below.
+#[path = "process_exit.rs"]
+mod process_exit;
+pub use process_exit::{atexit, __cxa_atexit, __cxa_finalize, __funcs_on_exit};
 
 /// Run the fixed ordinary-exit dispatch and terminate the whole process.
 #[no_mangle]

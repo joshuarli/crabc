@@ -152,6 +152,7 @@ unsafe fn run_without_tls(main: Object, main_entry: u64, sp: usize, ldso_base: u
     // `preflight_dependency_initializers` has read and checked every
     // relocated entry after all object and interpreter RELRO ranges were
     // sealed. Dispatch is consequently an infallible first callback step.
+    #[cfg(not(all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
     unsafe { dispatch_dependency_initializers(&initializers) };
     jump(main_entry as usize, sp)
 }
@@ -333,6 +334,10 @@ unsafe fn run_with_initial_tls(
     // Publication made the TLS snapshot durable before the first dependency
     // constructor can observe it. The plan was fully preflighted above, so
     // this is the non-fallible post-publication callback phase.
+    // The owned dynamic startup composition invokes this retained plan only
+    // after libc startup and executable preinit. Other roots preserve their
+    // established interpreter-side dependency initialization boundary.
+    #[cfg(not(all(crabc_general_initial_lifecycle, crabc_dynamic_main_thread_runtime_v1)))]
     unsafe { dispatch_dependency_initializers(&initializers) };
     unsafe { jump(main_entry as usize, sp) }
 }
