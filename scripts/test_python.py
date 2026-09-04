@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import math
 import os
 import signal
 import stat
@@ -133,30 +134,38 @@ def module_paths_in_directory(directory: Path, pattern: str) -> list[Path]:
     if Path(pattern).name != pattern:
         raise TestPythonError(f"test pattern must match filenames only: {pattern}")
 
+    def on_walk_error(error: OSError) -> None:
+        reason = error.strerror or str(error)
+        raise TestPythonError(f"discovery error: unable to read selected directory: {reason}")
+
     modules: list[Path] = []
-    for current, directories, filenames in os.walk(directory, followlinks=False):
-        current_path = Path(current)
-        for name in directories:
-            if (current_path / name).is_symlink():
-                raise TestPythonError(
-                    f"discovery error: selected directory contains a symlink: "
-                    f"{relative_to_repository(current_path / name)}"
-                )
-        for name in filenames:
-            path = current_path / name
-            if not fnmatch.fnmatch(name, pattern):
-                continue
-            if path.is_symlink():
-                raise TestPythonError(
-                    f"discovery error: selected test module is a symlink: "
-                    f"{relative_to_repository(path)}"
-                )
-            if not path.is_file():
-                raise TestPythonError(
-                    f"discovery error: selected test module is not a regular file: "
-                    f"{relative_to_repository(path)}"
-                )
-            modules.append(path.resolve(strict=True))
+    try:
+        walked = os.walk(directory, followlinks=False, onerror=on_walk_error)
+        for current, directories, filenames in walked:
+            current_path = Path(current)
+            for name in directories:
+                if (current_path / name).is_symlink():
+                    raise TestPythonError(
+                        f"discovery error: selected directory contains a symlink: "
+                        f"{relative_to_repository(current_path / name)}"
+                    )
+            for name in filenames:
+                path = current_path / name
+                if not fnmatch.fnmatch(name, pattern):
+                    continue
+                if path.is_symlink():
+                    raise TestPythonError(
+                        f"discovery error: selected test module is a symlink: "
+                        f"{relative_to_repository(path)}"
+                    )
+                if not path.is_file():
+                    raise TestPythonError(
+                        f"discovery error: selected test module is not a regular file: "
+                        f"{relative_to_repository(path)}"
+                    )
+                modules.append(path.resolve(strict=True))
+    except OSError as error:
+        on_walk_error(error)
     return sorted(modules, key=relative_to_repository)
 
 
@@ -219,6 +228,9 @@ def worker_environment(paths: WorkerPaths, run_root: Path) -> dict[str, str]:
             "CRABC_PYTHON_TEST_WORK_ROOT": str(paths.root),
             "CRABC_PYTHON_TEST_SCRATCH": str(paths.scratch),
             "CRABC_PYTHON_TEST_REPORTS": str(paths.reports),
+            # The allocator unit modules import `compat/allocator/run.py`,
+            # whose own temporary/report roots are selected at import time.
+            "CRABC_WORK_DIR": str(paths.root),
         }
     )
     return environment
@@ -266,9 +278,11 @@ def worker_payload(path: Path) -> dict[str, int] | None:
             decoded = json.loads(line.removeprefix(RESULT_PREFIX))
         except json.JSONDecodeError:
             return None
+        if not isinstance(decoded, dict):
+            return None
         expected = {"tests_run", "failures", "errors", "discovery_errors"}
         if set(decoded) != expected or any(
-            not isinstance(value, int) or value < 0 for value in decoded.values()
+            type(value) is not int or value < 0 for value in decoded.values()
         ):
             return None
         return decoded
@@ -285,6 +299,29 @@ def group_is_alive(process_group: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def process_group_has_live_members(process_group: int) -> bool:
+    """Detect non-zombie descendants left in a finished worker's group."""
+
+    if not group_is_alive(process_group):
+        return False
+    try:
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdecimal():
+                continue
+            try:
+                fields = (entry / "stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
+                state, group = fields[0], int(fields[2])
+            except (IndexError, OSError, ValueError):
+                continue
+            if group == process_group and state not in ("X", "Z"):
+                return True
+    except OSError:
+        # The worker group still exists but `/proc` could not establish that
+        # it is zombie-only. Treat it as live rather than silently passing.
+        return True
+    return False
 
 
 def terminate_worker_group(worker: ActiveWorker) -> None:
@@ -319,10 +356,10 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
 
     elapsed = time.monotonic() - worker.started_at
     exit_code = worker.process.returncode
-    if status is not None:
-        return ModuleResult(worker.index, worker.module, status, elapsed, 0, exit_code, worker.paths)
-
     payload = worker_payload(worker.paths.stdout)
+    if status is not None:
+        tests_run = 0 if payload is None else payload["tests_run"]
+        return ModuleResult(worker.index, worker.module, status, elapsed, tests_run, exit_code, worker.paths)
     if payload is None:
         return ModuleResult(
             worker.index,
@@ -396,7 +433,11 @@ def run_modules(modules: Sequence[Path], jobs: int, timeout_seconds: float, run_
                 worker = active[index]
                 if worker.process.poll() is not None:
                     worker.process.wait()
-                    results.append(completed_result(worker))
+                    if process_group_has_live_members(worker.process.pid):
+                        terminate_worker_group(worker)
+                        results.append(completed_result(worker, "process-group-leak"))
+                    else:
+                        results.append(completed_result(worker))
                     del active[index]
                     made_progress = True
                 elif now - worker.started_at >= timeout_seconds:
@@ -527,8 +568,8 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         args.jobs = min(max(1, os.cpu_count() or 1), DEFAULT_JOBS_CAP)
     if not 1 <= args.jobs <= MAX_JOBS:
         parser.error(f"--jobs must be between 1 and {MAX_JOBS}")
-    if args.timeout <= 0:
-        parser.error("--timeout must be greater than zero")
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("--timeout must be finite and greater than zero")
     return args
 
 

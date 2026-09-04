@@ -2101,10 +2101,13 @@ capability can authorize a later route.
 
 ## Isolated allocator Python unit tests
 
-The source-only Python unit suite is safe to split by test module: its
-checked-in tests read contracts and source, use mocks, or create temporary
-fixtures. Run it through `scripts/test_python.py` to keep each module's Python
-globals and temporary state isolated while using a bounded number of processes:
+The current source-only allocator unit suite has been audited for module-level
+parallel execution: its checked-in tests read contracts and source, use mocks,
+or create temporary fixtures. `test_runner.py` and `test_upstream_stress.py`
+also import runners that select mutable roots from `CRABC_WORK_DIR`, so the
+helper supplies that variable per worker. Run this audited suite through
+`scripts/test_python.py` to keep module globals and runner-owned temporary
+state isolated with a bounded number of processes:
 
 ```sh
 python3 scripts/test_python.py --directory compat/allocator/tests
@@ -2119,13 +2122,19 @@ and captured-log directories beneath a retained
 default; `--timeout` changes that per-module bound. The runner reports only a
 short ordered failure summary and paths to its logs, rejects traversal and
 symlinked selections before allocating a run root, and fails when discovery or
-a module runs zero tests. Timeout and interruption signal the initial worker
-process group and reap its direct worker. A test that deliberately creates a
-new session can escape normal Unix process-group containment; this unit suite
-does not do so.
+a module runs zero tests. Timeout, interruption, and a normal worker exit that
+leaves a live descendant in its original process group all terminate that
+group; the latter is reported as `PROCESS-GROUP-LEAK`. A test that deliberately
+creates a new session can still escape normal Unix process-group containment;
+this unit suite does not do so.
 
-This is a unit-test convenience, not a replacement for the contained native
-allocator launcher or a source of runtime qualification evidence.
+Process and `TMPDIR` separation are not a filesystem sandbox. The helper does
+not make arbitrary suites safe to parallelize, and its private environment
+variables cannot contain a test that explicitly writes shared repository
+paths, `CRABC_WORK_DIR`, Cargo state, or reports. Audit any other suite's
+mutable inputs before using it. This is a unit-test convenience, not a
+replacement for the contained native allocator launcher or a source of runtime
+qualification evidence.
 
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:

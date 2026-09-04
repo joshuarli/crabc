@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -10,12 +11,18 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/test_python.py"
 RUNS_ROOT = ROOT / ".work/python-test-runs"
+SPEC = importlib.util.spec_from_file_location("crabc_test_python", RUNNER)
+assert SPEC is not None and SPEC.loader is not None
+RUNNER_MODULE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = RUNNER_MODULE
+SPEC.loader.exec_module(RUNNER_MODULE)
 
 
 class PythonTestRunnerTests(unittest.TestCase):
@@ -65,6 +72,14 @@ class PythonTestRunnerTests(unittest.TestCase):
         self.assertEqual(len(self.run_roots), 1)
         return self.run_roots[0]
 
+    def assert_stopped(self, pid: int, message: str) -> None:
+        state_path = Path(f"/proc/{pid}/stat")
+        for _ in range(40):
+            if not state_path.exists() or state_path.read_text(encoding="utf-8").split()[2] == "Z":
+                return
+            time.sleep(0.05)
+        self.fail(message)
+
     def test_directory_workers_overlap_and_receive_private_checkout_roots(self) -> None:
         suite = self.fixture_root / "parallel"
         suite.mkdir()
@@ -85,6 +100,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(temporary.parent, work_root)
         self.assertEqual(scratch.parent, work_root)
         self.assertEqual(reports.parent, work_root)
+        self.assertEqual(Path(os.environ["CRABC_WORK_DIR"]), work_root)
         coordinate = run_root / "coordination"
         coordinate.mkdir(exist_ok=True)
         (coordinate / (Path(__file__).stem + ".started")).write_text(str(time.monotonic()), encoding="utf-8")
@@ -185,15 +201,72 @@ class TimeoutTests(unittest.TestCase):
         self.assertIn("TIMEOUT", result.stdout)
         run_root = self.only_run_root()
         child_pid = int((run_root / "modules/001-test-timeout/child-pid").read_text(encoding="utf-8"))
-        state_path = Path(f"/proc/{child_pid}/stat")
-        for _ in range(40):
-            if not state_path.exists() or state_path.read_text(encoding="utf-8").split()[2] == "Z":
-                break
-            time.sleep(0.05)
-        self.assertTrue(
-            not state_path.exists() or state_path.read_text(encoding="utf-8").split()[2] == "Z",
-            "timeout left the worker descendant running",
+        self.assert_stopped(child_pid, "timeout left the worker descendant running")
+
+    def test_clean_worker_exit_with_a_live_descendant_fails_closed(self) -> None:
+        leak = self.write_module(
+            "test_leak.py",
+            """\
+import os
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+class LeakTests(unittest.TestCase):
+    def test_returns_without_reaping_a_descendant(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        Path(os.environ["CRABC_PYTHON_TEST_WORK_ROOT"]).joinpath("child-pid").write_text(str(child.pid), encoding="utf-8")
+""",
         )
+
+        result = self.invoke("--module", self.relative(leak), "--jobs", "1")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("PROCESS-GROUP-LEAK", result.stdout)
+        run_root = self.only_run_root()
+        child_pid = int((run_root / "modules/001-test-leak/child-pid").read_text(encoding="utf-8"))
+        self.assert_stopped(child_pid, "normal worker exit left its descendant running")
+
+    def test_malformed_worker_protocol_records_fail_closed(self) -> None:
+        for name, payload in (("test_protocol_list.py", "[]"), ("test_protocol_bool.py", '{"tests_run":true,"failures":0,"errors":0,"discovery_errors":0}')):
+            with self.subTest(module=name):
+                module = self.write_module(
+                    name,
+                    f"""\
+import os
+import sys
+import unittest
+
+class ProtocolTests(unittest.TestCase):
+    def test_replaces_the_worker_record(self):
+        payload = {payload!r}
+        print("CRABC_PYTHON_TEST_RESULT " + payload, flush=True)
+        os._exit(0)
+""",
+                )
+                result = self.invoke("--module", self.relative(module), "--jobs", "1")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("WORKER-PROTOCOL-ERROR", result.stdout)
+
+    def test_nonfinite_timeouts_and_unreadable_walks_fail_closed(self) -> None:
+        for timeout in ("nan", "inf", "-inf"):
+            with self.subTest(timeout=timeout):
+                result = self.invoke(
+                    "--module", "scripts/tests/test_test_python.py", f"--timeout={timeout}"
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("finite", result.stderr)
+
+        def unreadable_walk(_directory: Path, *, followlinks: bool, onerror: object):
+            self.assertFalse(followlinks)
+            assert callable(onerror)
+            onerror(PermissionError(13, "Permission denied", str(self.fixture_root)))
+            return iter(())
+
+        with mock.patch.object(RUNNER_MODULE.os, "walk", side_effect=unreadable_walk):
+            with self.assertRaisesRegex(RUNNER_MODULE.TestPythonError, "unable to read selected directory"):
+                RUNNER_MODULE.module_paths_in_directory(self.fixture_root, "test_*.py")
 
     def test_symlinked_selection_is_rejected_before_allocating_a_run_root(self) -> None:
         escape = self.fixture_root / "escape"
