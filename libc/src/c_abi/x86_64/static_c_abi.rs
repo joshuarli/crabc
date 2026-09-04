@@ -20,7 +20,8 @@
 //! signal action/mask and one direct pending-state observation, one three-symbol
 //! POSIX signal-set mutation leaf, one pure GNU signal-set predicate, one
 //! paired GNU signal-set binary-operation leaf, separate fixed realtime-
-//! maximum macro and realtime-minimum direct bridges, one historical SIGALRM
+//! maximum macro and realtime-minimum direct bridges, one direct
+//! getitimer/setitimer interval-timer control pair, one historical SIGALRM
 //! interval-timer adapter, bounded process-signal execution, a direct
 //! legacy single-signal pause wait, and fixed-minimum
 //! alternate signal-stack behavior,
@@ -381,6 +382,9 @@ mod signal_realtime_max;
 mod signal_realtime_min;
 #[path = "signal_alarm.rs"]
 mod signal_alarm;
+#[cfg(feature = "x86-interval-timers")]
+#[path = "interval_timers.rs"]
+mod interval_timers;
 // This historical microsecond interval-timer adapter mutates process-global
 // ITIMER_REAL state. Keep its one-symbol C ABI evidence opt-in so the frozen
 // default archive remains distinct from this private timer leaf.

@@ -314,6 +314,7 @@ pub(crate) const SYS_DUP: i64 = 32;
 pub(crate) const SYS_DUP2: i64 = 33;
 pub(crate) const SYS_PAUSE: i64 = 34;
 pub(crate) const SYS_NANOSLEEP: i64 = 35;
+pub(crate) const SYS_GETITIMER: i64 = 36;
 pub(crate) const SYS_SETITIMER: i64 = 38;
 pub(crate) const SYS_SOCKET: i64 = 41;
 pub(crate) const SYS_CONNECT: i64 = 42;
