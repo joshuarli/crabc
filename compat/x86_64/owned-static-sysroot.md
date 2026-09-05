@@ -174,7 +174,7 @@ standard streams, forwarded va_lists, long strings, and allocated results.
 The digest-checked wide parser source and owned FILE callbacks are mapped in
 `owned_wide_format.rs`; there is no foreign FILE representation. Both wide
 probes run unchanged against pinned musl and all four installed product arms.
-The 24 bounded jobs now cover 80 installed binaries.
+The 24 bounded jobs now cover 84 installed binaries.
 
 Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
 installed link: initialized attributes, private guarded and caller-owned
@@ -211,6 +211,11 @@ is beneath that consumer's private directory; this is not a racy name-only API.
 through installed allocation/directory/thread owners. Its private directory
 tree checks sorting, traversal, and musl's cancellation-disabled walk followed
 by restored-state delivery. It does not invent a cancellation guard for `scandir`.
+
+`owned_static_ipc_readiness_consumer.c` composes worker-owned Unix socketpairs
+and ephemeral loopback TCP endpoints with poll/epoll, scatter/gather I/O,
+half-close, and error cleanup. It uses no external service or fixed port and
+does not establish syscall cancellation behavior.
 
 Each POSIX job also links the calendar and TZif probes described in
 [`owned_calendar.md`](owned_calendar.md). Local conversion, normalization,

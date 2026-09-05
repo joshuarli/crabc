@@ -32,6 +32,7 @@ readonly -a CONSUMER_EVIDENCE_PATHS=(
     posix-et-exec/temp posix-pie/temp posix-et-exec/spawn posix-pie/spawn
     posix-et-exec/calendar posix-pie/calendar posix-et-exec/tzif posix-pie/tzif
     posix-et-exec/filesystem posix-pie/filesystem
+    posix-et-exec/ipc posix-pie/ipc
     stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends
     stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie
     stdio-et-exec/wide stdio-pie/wide
@@ -832,6 +833,11 @@ run_static_mode() {
             minimum_tls_alignment=1
             candidate_arguments=("$mode_root/directory")
             ;;
+        ipc)
+            probe=owned_static_ipc_readiness_consumer.c
+            expected_output=''
+            minimum_tls_alignment=1
+            ;;
         calendar)
             probe=owned_calendar_probe.c
             minimum_tls_alignment=1
@@ -1064,6 +1070,8 @@ run_static_mode() {
             "$label process spawning" spawn
         run_static_mode "$installed_root" "$mode" "$mode_root/filesystem" \
             "$label filesystem clients" filesystem
+        run_static_mode "$installed_root" "$mode" "$mode_root/ipc" \
+            "$label local IPC/readiness" ipc
         run_static_mode "$installed_root" "$mode" "$mode_root/calendar" \
             "$label calendar" calendar "$printf_matrix_reference.calendar"
         run_static_mode "$installed_root" "$mode" "$mode_root/tzif" \
@@ -1558,6 +1566,13 @@ touch "$header_consumer/directory/alpha" "$header_consumer/directory/beta"
 timeout 30s env -i "$header_consumer/filesystem-reference" "$header_consumer/directory" \
     >"$header_consumer/filesystem-reference-output" || fail "pinned-musl filesystem clients failed"
 [ ! -s "$header_consumer/filesystem-reference-output" ] || fail "filesystem reference emitted output"
+
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_ipc_readiness_consumer.c" \
+    -o "$header_consumer/ipc-reference"
+timeout 30s env -i "$header_consumer/ipc-reference" >"$header_consumer/ipc-reference-output" ||
+    fail "pinned-musl local IPC/readiness failed"
+[ ! -s "$header_consumer/ipc-reference-output" ] || fail "IPC reference emitted output"
 
 "$ORACLE_CC" -std=c11 -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_pthread_tls_aggregate_probe.c" \
