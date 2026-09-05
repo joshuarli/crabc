@@ -368,6 +368,12 @@ const MAX_RELR_BYTE_LEN: usize = MAX_RELR_ENTRIES * ELF64_RELR_SIZE;
 // (including the stack-canary slot) without claiming a full pthread TCB.
 const TLS_TCB_PREFIX_SIZE: usize = 64;
 const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 2;
+// The installed libc owns this signal-handler-safe opaque cancellation-state
+// pointer. Fresh main/worker allocations leave it zero; libc publishes before
+// callbacks/handler unmask and clears before state reclamation. The loader
+// never dereferences, copies from another thread, or rewrites it during growth.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+const TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET: usize = 32;
 const TLS_DTV_WORDS: usize = MAX_OBJECTS + 1;
 const TLS_DTV_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
 const TLS_MODULE_SIZE_TABLE_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();

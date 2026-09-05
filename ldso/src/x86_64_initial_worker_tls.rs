@@ -121,6 +121,7 @@ mod tests {
         assert_eq!(unsafe { read_thread_pointer() }, before);
         assert_ne!(first.thread_pointer, second.thread_pointer);
         for block in [first, second] {
+            assert_eq!(unsafe { *block.thread_pointer.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() }, 0);
             assert_eq!(block.thread_pointer as usize % 4096, 0);
             assert!(block.mapping as usize + core::mem::size_of::<AllocationNode>()
                 <= block.thread_pointer as usize - 4096);

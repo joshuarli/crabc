@@ -298,6 +298,9 @@ mod tests {
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
         let original = unsafe { *block.dtv.add(1) };
         unsafe { *(original as *mut u8) = 99; }
+        // The adjacent opaque cancellation-state slot belongs to libc, not to
+        // a DTV descriptor or the loader's allocation token.
+        unsafe { *block.thread_pointer.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() = 0x12345; }
         let runtime_image = [41u8, 43, 47];
         let mut modules = [initial[0], Object { tls_image: runtime_image.as_ptr(), tls_filesz: 3,
             tls_memsz: 127, tls_align: 4096, tls_module_id: 2, ..EMPTY_OBJECT }, EMPTY_OBJECT];
@@ -326,6 +329,7 @@ mod tests {
         assert_eq!(unsafe { resolve(first, 2, 0) } as usize, runtime_address);
         assert!(unsafe { resolve(first, 3, 0) }.is_null());
         assert_eq!(unsafe { *block.dtv }, 1, "RuntimeV1 generation1 must not be rewritten");
+        assert_eq!(unsafe { *block.thread_pointer.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() }, 0x12345);
         assert_eq!(unsafe { release(block.thread_pointer) }, 0);
         assert_eq!(unsafe { release(block.thread_pointer) }, 0);
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);

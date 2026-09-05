@@ -37,6 +37,15 @@ new module storage is copied from relocated templates with the ELF alignment
 phase and zeroed TBSS. Prepared-but-abandoned generations unmap only their own
 storage and cannot change a live thread's view.
 
+The existing aligned FS+32 slot is reserved for libc's opaque
+`SelectedWorkerCancellation *` cancellation-state pointer, not a ThreadControl
+pointer. It is zero in fresh main/worker allocations, is never copied
+from another thread, and survives descriptor growth unchanged. libc owns
+release publication before callbacks/handler unmask, signal-safe acquire
+lookup and clear/reclamation lifetime. ldso never dereferences it or calls
+the pthread owner while locked. FS+40 remains the compiler's process guard;
+neither reservation expands RuntimeV1 or the existing TCB allocation extent.
+
 This descriptor layout and retained-generation storage are crabc ownership
 machinery, not musl's private `struct pthread` or signal-barrier implementation.
 Published old views remain mapped for in-flight readers and for TLS images
