@@ -32,8 +32,9 @@ use core::{
 )))]
 compile_error!("the x86 POSIX spawn-attribute initializer requires little-endian Linux/x86-64");
 
-// This is the installed `<spawn.h>` `posix_spawnattr_t` layout. It stays
-// private because the selected C boundary owns only zero initialization.
+// This is the installed `<spawn.h>` `posix_spawnattr_t` layout. It remains
+// module-private API machinery: the initializer writes it, and owned_spawn
+// reads it only in the separately selected owned runtime composition.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(super) struct PosixSpawnAttr {

@@ -1,10 +1,11 @@
 //! Private Linux/x86-64 PATH-search process-image replacement boundary.
 //!
 //! This leaf owns `execvp`, strong `__execvpe`, and weak same-address
-//! `execvpe`. It composes selected `getenv`/`__environ`, byte-string search,
-//! and the direct `execve` sibling, but it does not inspect C varargs or map
-//! argv storage. It is not spawn/fork/runtime integration or public x86
-//! support.
+//! `execvpe`. It composes selected `getenv`/`__environ` and raw execve, but
+//! does not inspect C varargs or map argv storage. The owned runtime also
+//! consumes its private raw PATH adapter from the suspended-parent spawn
+//! child, without accessing shared TLS errno. Private fixture selection and
+//! public architecture-support claims remain unchanged.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -20,7 +21,9 @@ compile_error!("the x86 execvp PATH leaf requires little-endian Linux/x86-64");
 
 use core::{ffi::{c_char, c_int}, ptr};
 
-use super::{environment, errno, process_exec_env, raw_syscall};
+use super::{environment, errno, process_exec_env};
+#[cfg(feature = "x86-owned-static-runtime")]
+use super::raw_syscall;
 
 const ENOENT: c_int = 2;
 const EACCES: c_int = 13;
@@ -65,7 +68,22 @@ unsafe fn record_error(error: c_int, slot: *mut c_int) -> i64 {
     -(error as i64)
 }
 
-/// Shared musl PATH algorithm with no errno/TLS/allocator access. Spawn passes
+// The private exec fixture retains its established direct-exec archive owner
+// and TLS errno translation. Only owned composition needs the raw child seam;
+// selecting it must not silently change the older fixture's extraction graph.
+unsafe fn execute_candidate(path: *const c_char, argv: *const *const c_char,
+    envp: *const *const c_char) -> i64 {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { raw_syscall::syscall3(59, path as i64, argv as i64, envp as i64) }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    unsafe {
+        let result = super::process_exec::execve_result(path, argv, envp);
+        if result < 0 { -(*errno::__errno_location() as i64) } else { result as i64 }
+    }
+}
+
+/// Shared musl PATH algorithm. In owned composition it has no errno/TLS or
+/// allocator access; legacy selection retains its direct-exec owner. Spawn passes
 /// its parent's inherited PATH, not envp's PATH. An optional parent-owned slot
 /// records each source errno transition across CLONE_VM, including a failed
 /// candidate followed by successful exec; the suspended parent publishes it.
@@ -84,7 +102,7 @@ pub(super) unsafe fn execvpe_raw(
         return -(ENOENT as i64);
     }
     if unsafe { *delimiter(file, b'/') } != 0 {
-        let result = unsafe { raw_syscall::syscall3(59, file as i64, argv as i64, envp as i64) };
+        let result = unsafe { execute_candidate(file, argv, envp) };
         if result < 0 { unsafe { record_error(-result as c_int, error_slot); } }
         return result;
     }
@@ -145,7 +163,7 @@ pub(super) unsafe fn execvpe_raw(
                 )
             };
 
-            let result = unsafe { raw_syscall::syscall3(59, candidate.as_ptr() as i64, argv as i64, envp as i64) };
+            let result = unsafe { execute_candidate(candidate.as_ptr().cast(), argv, envp) };
             if result >= 0 {
                 // Linux execve never normally returns a successful result;
                 // preserve any unexpected non-error return rather than

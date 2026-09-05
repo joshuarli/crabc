@@ -15,9 +15,9 @@
 //!
 //! The six allocating functions use the already evidenced x86 C allocator
 //! boundary through `malloc` and `free`; they do not introduce an allocator or
-//! broaden the default static archive.  POSIX spawn execution, `posix_spawn`
-//! and `posix_spawnp`, process creation, fork/vfork/clone, exec, attributes,
-//! cancellation, atfork state, and child supervision remain outside scope.
+//! broaden the default static archive. The opt-in owned runtime's
+//! `owned_spawn` consumes these same records; execution, cancellation, and
+//! child ownership remain outside this private record-lifecycle fixture.
 //!
 //! A valid initialized caller-owned record and valid NUL-terminated pathname
 //! are required exactly as in musl.  Invalid file descriptors return the
@@ -51,8 +51,8 @@ pub(super) struct PosixSpawnFileActions {
 /// On x86-64 this is 40 bytes, while the flexible `path[]` begins at byte
 /// offset 36 after the two links, four integer fields, and the LP64 `mode_t`
 /// word.  The trailing four bytes are struct padding included in musl's
-/// `sizeof *op` allocation.  Keeping the explicit links is necessary even
-/// though execution belongs to the future spawn aggregate.
+/// `sizeof *op` allocation. Both links are consumed by `owned_spawn` to
+/// execute the public action list in insertion order.
 #[repr(C)]
 pub(super) struct FdOp {
     pub(super) next: *mut FdOp,

@@ -19,8 +19,49 @@ static int reap(pid_t pid, int expected) {
     CHECK(waitpid(pid,&status,0)==pid && WIFEXITED(status) && WEXITSTATUS(status)==expected);
     return 0;
 }
+/* Isolated Linux/x86 syscall denial; no kernel-header/runtime dependency. */
+struct filter_instruction { unsigned short code; unsigned char yes, no; unsigned value; };
+struct filter_program { unsigned short count; struct filter_instruction *instructions; };
+static long raw_prctl(long operation, long value, long pointer) {
+    register long fourth __asm__("r10")=0;
+    register long fifth __asm__("r8")=0;
+    long result;
+    __asm__ volatile("syscall" : "=a"(result) : "a"(157L), "D"(operation),
+        "S"(value), "d"(pointer), "r"(fourth), "r"(fifth) : "rcx", "r11", "memory");
+    return result;
+}
+static int denied_spawn(const char *mode) {
+    unsigned syscall_number=!strcmp(mode,"deny-clone") ? 56 : !strcmp(mode,"deny-exec") ? 59 : 293;
+    int expected=syscall_number==56 ? EAGAIN : syscall_number==59 ? EACCES : EMFILE;
+    struct filter_instruction instructions[]={
+        {0x20,0,0,0}, {0x15,0,1,syscall_number},
+        {0x06,0,0,0x50000|(unsigned)expected}, {0x06,0,0,0x7fff0000}
+    };
+    struct filter_program program={4,instructions};
+    sigset_t before, after, blocked;
+    sigemptyset(&blocked); sigaddset(&blocked,SIGUSR2);
+    CHECK(!sigprocmask(SIG_BLOCK,&blocked,NULL));
+    CHECK(!sigprocmask(SIG_SETMASK,NULL,&before));
+    CHECK(!raw_prctl(38,1,0) && !raw_prctl(22,2,(long)&program));
+    char *arguments[]={"spawn-child","child","basic",NULL};
+    char *environment[]={"SPAWN_TOKEN=child-environment",NULL};
+    for (int attempt=0;attempt<3;attempt++) {
+        pid_t pid=-123; errno=ENOSPC;
+        CHECK(posix_spawn(&pid,"/proc/self/exe",NULL,NULL,arguments,environment)==expected && pid==-123);
+        CHECK(errno==(syscall_number==56 ? ENOSPC : expected));
+        CHECK(!sigprocmask(SIG_SETMASK,NULL,&after));
+        for (int signal=1;signal<65;signal++)
+            CHECK(sigismember(&before,signal)==sigismember(&after,signal));
+        struct sigaction action;
+        CHECK(!sigaction(SIGABRT,NULL,&action)); /* shared lock was released */
+        int fd=dup(0); CHECK(fd==3 && !close(fd));
+        CHECK(waitpid(-1,NULL,WNOHANG)==-1 && errno==ECHILD);
+    }
+    return 23;
+}
 static int child(int argc, char **argv) {
     CHECK(argc>=3 && getenv("SPAWN_TOKEN") && !strcmp(getenv("SPAWN_TOKEN"),"child-environment"));
+    if (!strncmp(argv[2],"deny-",5)) return denied_spawn(argv[2]);
     if (!strncmp(argv[2],"abort-",6)) {
         if (!strcmp(argv[2],"abort-ignore")) signal(SIGABRT,SIG_IGN);
         if (!strcmp(argv[2],"abort-handler")) signal(SIGABRT,returning_handler);
@@ -77,6 +118,12 @@ int main(int argc, char **argv) {
         arguments[2]=(char *)abort_modes[i];
         CHECK(!posix_spawn(&pid,"/proc/self/exe",NULL,NULL,arguments,child_environment));
         int status; CHECK(waitpid(pid,&status,0)==pid && WIFSIGNALED(status) && WTERMSIG(status)==SIGABRT);
+    }
+    arguments[2]="basic";
+    const char *denied_modes[]={"deny-clone","deny-exec","deny-pipe"};
+    for (int i=0;i<3;i++) {
+        arguments[2]=(char *)denied_modes[i];
+        CHECK(!posix_spawn(&pid,"/proc/self/exe",NULL,NULL,arguments,child_environment) && !reap(pid,23));
     }
     arguments[2]="basic";
     CHECK(!setenv("PATH",argv[1],1));
