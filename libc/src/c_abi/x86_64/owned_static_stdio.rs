@@ -1,4 +1,4 @@
-//! Owned-static native x86 byte stream engine.
+//! Owned native x86 byte/wide stream engine.
 //!
 //! Source map: pinned musl 1.2.6 commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT; see
@@ -28,15 +28,20 @@
 //! application callbacks execute without borrowed Rust backend references.
 //! `owned_printf` supplies integer/byte and binary64/binary80 formatting;
 //! `owned_scanf` supplies byte, numeric, scanset and allocated conversions.
-//! `owned_stdio_process` supplies popen/pclose and their private shell-spawn
-//! seam, also used by system. Wide stdio, cancellation and fork lock recovery remain separate
-//! integration obligations. This is not completion of the stdio family.
+//! `owned_wide_stdio` adds orientation, captured CTYPE and wide byte-buffered
+//! I/O to this same FILE. `owned_stdio_process` supplies popen/pclose through
+//! the shared spawn owner, also used by system. `owned_wide_format` consumes
+//! the held wide and stack-string adapters. Remaining stdio extension and
+//! cancellation integration obligations are separate; fork preparation
+//! consumes the narrow registry triplet. This is not stdio-family completion.
 
 use core::{ffi::{c_char, c_int, c_void}, ptr, sync::atomic::{AtomicI32, Ordering}};
 use super::{c_off_status, c_ssize_status, c_status, errno, raw_syscall};
 
 #[path = "owned_stdio_backends.rs"]
 mod owned_stdio_backends;
+#[path = "owned_wide_stdio.rs"]
+mod owned_wide_stdio;
 #[path = "owned_stdio_process.rs"]
 mod owned_stdio_process;
 use owned_stdio_backends::Backend;
@@ -62,11 +67,16 @@ const SEEK_END: c_int = 2;
 struct IoVec { base: *mut c_void, length: usize }
 
 /// Opaque FILE state. Only pointers returned by this engine are valid.
+/// Orientation is zero until first byte/wide admission and is reset only by
+/// successful freopen. A nonzero fwide/wide-I/O admission snapshots CTYPE;
+/// later setlocale/uselocale changes do not retarget this FILE's codec.
 #[repr(C)]
 pub struct StandardStream {
     flags: u32,
     file_descriptor: c_int,
     pipe_pid: c_int,
+    orientation: i8,
+    wide_locale: Option<bool>,
     buffer: *mut u8,
     capacity: usize,
     read_position: *mut u8,
@@ -84,7 +94,8 @@ pub struct StandardStream {
 
 impl StandardStream {
     const fn new(fd: c_int, flags: u32, capacity: usize) -> Self {
-        Self { flags, file_descriptor: fd, pipe_pid: 0, buffer: ptr::null_mut(), capacity,
+        Self { flags, file_descriptor: fd, pipe_pid: 0, orientation: 0, wide_locale: None,
+            buffer: ptr::null_mut(), capacity,
             read_position: ptr::null_mut(), read_end: ptr::null_mut(),
             write_position: ptr::null_mut(), owner: AtomicI32::new(0),
             lock_count: 0, next: ptr::null_mut(), previous: ptr::null_mut(),
@@ -479,6 +490,7 @@ pub unsafe extern "C" fn freopen(path: *const c_char, mode: *const c_char, strea
         // fail, and does not let a flush failure prevent a successful reopen.
         fflush(stream);
         let reopened = reopen_descriptor(path, mode, stream);
+        if reopened { (*stream).orientation = 0; (*stream).wide_locale = None; }
         drop(guard);
         if reopened { return stream; }
         // Registry removal cannot happen under the held FILE lock: a global
@@ -699,7 +711,56 @@ unsafe fn prepare_write(stream: *mut StandardStream) -> bool {
 
 unsafe fn mark_io_started(stream: *mut StandardStream) {
     if unsafe { is_selected_stream(stream) } {
-        unsafe { (*stream).flags |= F_IO_STARTED };
+        unsafe {
+            (*stream).flags |= F_IO_STARTED;
+            if (*stream).orientation == 0 { (*stream).orientation = -1; }
+        }
+    }
+}
+
+unsafe fn orient_byte(stream: *mut StandardStream) {
+    unsafe { if (*stream).orientation == 0 { (*stream).orientation = -1; } }
+}
+
+// Synchronous wide-parser bridge. The outer formatter/scanner owns one FILE
+// guard across every callback; none of these helpers lends a Rust reference
+// into the FILE to application code or lets the pointer escape.
+pub(crate) unsafe fn wide_get_held(stream: *mut StandardStream) -> u32 { unsafe { owned_wide_stdio::get_held(stream) } }
+pub(crate) unsafe fn wide_put_held(stream: *mut StandardStream, character: c_int) -> u32 { unsafe { owned_wide_stdio::put_held(character, stream) } }
+pub(crate) unsafe fn wide_unget_held(stream: *mut StandardStream, character: u32) -> u32 { unsafe { owned_wide_stdio::ungetwc(character, stream) } }
+pub(crate) unsafe fn wide_orient_held(stream: *mut StandardStream, mode: c_int) -> c_int { unsafe { owned_wide_stdio::orient(stream, mode) } }
+pub(crate) unsafe fn wide_error_held(stream: *mut StandardStream) -> c_int { unsafe { ((*stream).flags & F_ERR != 0) as c_int } }
+pub(crate) unsafe fn wide_format_begin_held(stream: *mut StandardStream) -> c_int {
+    unsafe { let old = (*stream).flags & F_ERR; (*stream).flags &= !F_ERR; old as c_int }
+}
+pub(crate) unsafe fn wide_format_end_held(stream: *mut StandardStream, old: c_int) -> c_int {
+    unsafe { let error = wide_error_held(stream); (*stream).flags |= old as u32; error }
+}
+
+// Source vswprintf/vswscanf use unregistered stack FILEs. These narrow helpers
+// preserve that allocation-free ownership and 256-byte buffer boundary. The
+// callback cannot retain the FILE or any private buffer after returning.
+pub(crate) unsafe fn with_wide_output_buffer(destination: *mut c_int, capacity: usize,
+    format: impl FnOnce(*mut StandardStream) -> c_int) -> c_int {
+    unsafe {
+        if capacity == 0 { return -1; }
+        let mut stream = StandardStream::new(-1, F_NORD, 256);
+        stream.backend = Backend::WideBounded { output: destination, remaining: capacity-1 };
+        let stream = ptr::addr_of_mut!(stream);
+        let _guard = StreamGuard::acquire(stream);
+        let result = format(stream);
+        write_backend_held(stream, ptr::null(), 0);
+        if result >= 0 && result as usize >= capacity { -1 } else { result }
+    }
+}
+pub(crate) unsafe fn with_wide_input_string(source: *const c_int,
+    scan: impl FnOnce(*mut StandardStream) -> c_int) -> c_int {
+    unsafe {
+        let mut stream = StandardStream::new(-1, F_NOWR, 256);
+        stream.backend = Backend::WideString { input: source };
+        let stream = ptr::addr_of_mut!(stream);
+        let _guard = StreamGuard::acquire(stream);
+        scan(stream)
     }
 }
 
@@ -822,6 +883,7 @@ pub(crate) unsafe fn read_byte(stream: *mut StandardStream) -> c_int {
 pub(crate) unsafe fn with_scanned_stream(stream: *mut StandardStream, scan: impl FnOnce() -> c_int) -> c_int {
     unsafe {
         let _guard = StreamGuard::acquire(stream);
+        orient_byte(stream);
         if !is_readable(stream) { mark_error(stream); return EOF; }
         if !prepare_read(stream) { return EOF; }
         mark_io_started(stream);
@@ -842,6 +904,7 @@ unsafe fn read_byte_held(stream: *mut StandardStream) -> c_int {
         unsafe { reject_stream() };
         return EOF;
     }
+    unsafe { orient_byte(stream); }
     if !unsafe { is_readable(stream) } {
         unsafe { mark_error(stream) };
         return EOF;
@@ -947,10 +1010,12 @@ pub(crate) unsafe fn with_formatted_stream(stream: *mut StandardStream, format: 
         let _guard = StreamGuard::acquire(stream);
         let old_error = (*stream).flags & F_ERR;
         (*stream).flags &= !F_ERR;
+        orient_byte(stream);
         if !is_writable(stream) || !prepare_write(stream) {
             (*stream).flags |= F_ERR | old_error;
             return EOF;
         }
+        mark_io_started(stream); // __towrite orients even an empty printf.
         let mut temporary = [0u8; 80];
         let old_buffer = (*stream).buffer;
         let unbuffered = (*stream).capacity == 0;
@@ -1001,6 +1066,7 @@ unsafe fn write_byte_held(stream: *mut StandardStream, byte: u8) -> c_int {
         unsafe { reject_stream() };
         return EOF;
     }
+    unsafe { orient_byte(stream); }
     if !unsafe { is_writable(stream) } {
         unsafe { mark_error(stream) };
         return EOF;
@@ -1109,6 +1175,7 @@ pub unsafe extern "C" fn fread(
 
 // The caller exclusively owns the initialized stream through the transfer.
 unsafe fn fread_held(destination: *mut c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
+    unsafe { if (*stream).orientation == 0 { (*stream).orientation = -1; } }
     if size == 0 || count == 0 {
         return 0;
     }
@@ -1197,9 +1264,7 @@ pub unsafe extern "C" fn fwrite(
 
 // The caller exclusively owns the initialized stream through the transfer.
 unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
-    if size == 0 || count == 0 {
-        return 0;
-    }
+    unsafe { orient_byte(stream); }
     let Some(total) = size.checked_mul(count) else {
         unsafe {
             mark_error(stream);
@@ -1223,6 +1288,7 @@ unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: 
     // ordinary byte loop, preserving partial caller-byte counts after any
     // pending output. Line buffering emits through the last newline.
     unsafe {
+        if total == 0 { return if size == 0 { 0 } else { count }; }
         let source = source.cast::<u8>();
         let available = (*stream).buffer.add((*stream).capacity).offset_from((*stream).write_position) as usize;
         if total > available { return write_backend_held(stream, source, total) / size; }
@@ -1320,6 +1386,7 @@ pub unsafe extern "C" fn fgets(
         return ptr::null_mut();
     }
     if count <= 1 {
+        unsafe { if (*stream).orientation == 0 { (*stream).orientation = -1; } }
         if count == 1 {
             unsafe { destination.write(0) };
             return destination;

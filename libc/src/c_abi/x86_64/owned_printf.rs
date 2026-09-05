@@ -10,7 +10,7 @@
 //!
 //! The supported owned grammar is byte c/s, signed/unsigned integer lengths,
 //! n, p, m, binary64/binary80 a/e/f/g, flags and positional width/precision.
-//! Wide conversion remains an EINVAL prerequisite. The C locale
+//! Wide c/s conversions share the existing fixed-profile locale codecs. The C locale
 //! has no thousands grouping, so the apostrophe flag has no output effect.
 //! Unlike musl's underspecified invalid-format paths, mixed argument numbering
 //! and conflicts between ABI extraction classes fail before output/va_arg.
@@ -97,7 +97,11 @@ fn kind(length: Length, specifier: u8) -> Result<Kind, c_int> {
         },
         b'n' => Kind::Pointer,
         b'c' if length == Length::None => Kind::Int,
+        b'c' if length == Length::L => Kind::Uint,
+        b'C' if length == Length::None => Kind::Uint,
         b's' | b'p' if length == Length::None => Kind::Pointer,
+        b's' if length == Length::L => Kind::Pointer,
+        b'S' if length == Length::None => Kind::Pointer,
         b'm' if length == Length::None => Kind::None,
         b'a' | b'A' | b'e' | b'E' | b'f' | b'F' | b'g' | b'G'
             if matches!(length, Length::None | Length::L) => Kind::Double,
@@ -274,6 +278,54 @@ unsafe fn emit(output: &mut impl FormatSink, item: &Conversion, value: Argument,
     }
 }
 
+// vfprintf.c C/S case: determine the complete encoded prefix before emitting
+// any padding; precision counts bytes but never splits a multibyte character.
+// The current call locale, not FILE's wide orientation snapshot, governs a
+// byte-format wide conversion. There is no numeric/fenv work in this pass.
+unsafe fn emit_wide(output: &mut impl FormatSink, value: Argument,
+    width: usize, precision: Option<usize>, flags: u8) -> Result<(), c_int> {
+    unsafe {
+        let mut character = [0i32; 2];
+        let (source, maximum) = match value {
+            Argument::Integer(value) => {
+                if value == 0 {
+                    if output.count().checked_add(width.max(1)).is_none_or(|n| n > c_int::MAX as usize) { return Err(EOVERFLOW); }
+                    write_character(output, 0, width, flags); return Ok(());
+                }
+                character[0] = value as c_int;
+                (character.as_ptr(), usize::MAX)
+            }
+            Argument::Pointer(pointer) => (pointer.cast::<c_int>().cast_const(), precision.unwrap_or(usize::MAX)),
+            _ => unreachable!(),
+        };
+        let mut cursor = source;
+        let mut length = 0;
+        let mut encoded = [0u8; 4];
+        while length < maximum && *cursor != 0 {
+            let count = super::super::locale_multibyte::encode_for_locale(encoded.as_mut_ptr().cast(), *cursor,
+                super::super::locale_multibyte::locale_ctype_is_utf8());
+            if count == usize::MAX { return Err(errno::get_errno()); }
+            if count > maximum-length { break; }
+            length += count; cursor = cursor.add(1);
+            if length > c_int::MAX as usize { return Err(EOVERFLOW); }
+        }
+        let total = width.max(length);
+        if output.count().checked_add(total).is_none_or(|n| n > c_int::MAX as usize) { return Err(EOVERFLOW); }
+        if flags & FLAG_MINUS == 0 { output.repeated(b' ', width.saturating_sub(length)); }
+        let mut written = 0; cursor = source;
+        while written < length {
+            let count = super::super::locale_multibyte::encode_for_locale(encoded.as_mut_ptr().cast(), *cursor,
+                super::super::locale_multibyte::locale_ctype_is_utf8());
+            if count == usize::MAX { return Err(errno::get_errno()); }
+            if count > length-written { break; }
+            output.bytes(encoded.as_ptr(), count);
+            written += count; cursor = cursor.add(1);
+        }
+        if flags & FLAG_MINUS != 0 { output.repeated(b' ', width.saturating_sub(length)); }
+        Ok(())
+    }
+}
+
 unsafe fn render(output: &mut impl FormatSink, format: *const c_char,
     args: &mut VaList<'_>, prepared: &Prepared) -> Result<c_int, c_int> {
     unsafe {
@@ -316,6 +368,11 @@ unsafe fn render(output: &mut impl FormatSink, format: *const c_char,
             if let Argument::Float(value) = value {
                 owned_printf_float::render(output, value, item.kind == Kind::LongDouble,
                     width, precision, flags, item.specifier)?;
+                continue;
+            }
+            if matches!(item.specifier, b'C' | b'S')
+                || item.length == Length::L && matches!(item.specifier, b'c' | b's') {
+                emit_wide(output, value, width, precision, flags)?;
                 continue;
             }
             // Measure before emitting padding. This is printf_core's INT_MAX

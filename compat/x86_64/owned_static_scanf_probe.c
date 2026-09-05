@@ -112,13 +112,14 @@ static int allocations(void)
     close(saved_stdin);
     clearerr(stdin);
 #ifdef CRABC_OWNED_SCANF
-    /* Deliberate byte-only limitation, not a musl wide-conversion claim. */
-    int wide_storage = 123;
+    /* Owned wide destinations share the source byte parser and allocation. */
+    int wide_storage[8] = {0};
     errno = 0;
-    if (sscanf("wide", "%ls", &wide_storage) != EOF || errno != EINVAL || wide_storage != 123) return 21;
-    a = (char *)(uintptr_t)1;
+    if (sscanf("wide", "%ls", wide_storage) != 1 || errno || wide_storage[0]!='w' || wide_storage[4]) return 21;
+    int *allocated_wide = NULL;
     errno = 0;
-    if (sscanf("wide", "%mls", &a) != EOF || errno != EINVAL || a != (char *)(uintptr_t)1) return 22;
+    if (sscanf("wide", "%mls", &allocated_wide) != 1 || errno || !allocated_wide || allocated_wide[0]!='w' || allocated_wide[4]) return 22;
+    free(allocated_wide);
 #endif
     unlink(path);
     return 0;

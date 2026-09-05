@@ -3,10 +3,12 @@
 //! With `x86-owned-static-runtime`, `owned_printf` selects the shared owned
 //! byte-buffer/FILE/descriptor/allocation formatter: positional arguments,
 //! integer/string/count/pointer/%m and binary64/binary80 decimal/hexadecimal
-//! conversion through `owned_printf_float`. Wide conversion is excluded. Owned
+//! conversion through `owned_printf_float`, plus wide c/s conversion. Owned
 //! scanning selects `owned_scanf`: byte scansets, integer/float conversion,
 //! widths/suppression, positional pointers and `%m` allocation. A recursive
-//! FILE lock spans each stream call. Wide scanning is still excluded.
+//! FILE lock spans each stream call, including wide destinations.
+//! `owned_wide_format` supplies wide-format printf/scanf over the same FILE,
+//! byte/numeric engines and allocation-free wide-string adapters.
 //! The narrower formatting/permanent-stream restrictions below
 //! describe the unchanged private fixture feature, not the owned formatter.
 //!
@@ -116,6 +118,9 @@ use stdio_standard::StandardStream;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_printf.rs"]
 mod owned_printf;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_wide_format.rs"]
+mod owned_wide_format;
 
 const EINVAL: c_int = 22;
 const ERANGE: c_int = 34;

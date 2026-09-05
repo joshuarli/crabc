@@ -16,8 +16,9 @@
 //! holds the real FILE's lock across admission, every read, allocation and
 //! final lookahead restoration; no cursor or callback pointer escapes. The
 //! string path shares the same grammar and stops before its NUL terminator.
-//! Wide character destinations are rejected with EINVAL before output writes;
-//! this is not a wide scanf or complete stdio-family claim. The existing
+//! Wide character destinations use the retained upstream mbrtowc/mbstate_t
+//! branch and the same allocation cleanup. Wide-format scanf is a separate
+//! entry/parser; this is not a complete stdio-family claim. The existing
 //! strto* scanner's private callback contract remains untouched.
 
 use super::*;

@@ -1,6 +1,7 @@
 //! Closed owned FILE backends, translated from musl 1.2.6 (MIT), commit
 //! 9fa28ece75d8a2191de7c5bb53bed224c5947417: `src/stdio/fmemopen.c`
-//! mread/mwrite/mseek, `open_memstream.c` ms_write/ms_seek, and
+//! mread/mwrite/mseek, `open_memstream.c` ms_write/ms_seek,
+//! `open_wmemstream.c` wms_write/wms_seek, and
 //! `fopencookie.c` cookieread/cookiewrite/cookieseek/cookieclose.
 //! See compat/upstreams.toml for the fixed source/license pin.
 //!
@@ -14,6 +15,8 @@
 //! Growing output preserves musl's distinction between the current position
 //! published through sizep and the high-water length used by SEEK_END; an
 //! overwrite does not truncate the old tail. Expanded storage is zero-filled.
+//! Wide growing storage publishes wchar_t-unit positions; its private decoder
+//! state survives split byte writes and is cleared by every successful seek.
 //! Non-error short memory/cookie writes do not manufacture F_ERR, including
 //! ms_write's realloc failure; fflush follows upstream output-state semantics.
 
@@ -21,13 +24,22 @@ use super::*;
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
-pub(super) enum Backend { Descriptor, Fixed(Fixed), Growing(Growing), Cookie(Cookie) }
+pub(super) enum Backend {
+    Descriptor, Fixed(Fixed), Growing(Growing), WideGrowing(WideGrowing), Cookie(Cookie),
+    WideBounded { output: *mut c_int, remaining: usize },
+    WideString { input: *const c_int },
+}
 #[derive(Clone, Copy)]
 pub(super) struct Fixed { position: usize, length: usize, size: usize, buffer: *mut u8, mode: u8 }
 #[derive(Clone, Copy)]
 pub(super) struct Growing {
     output: *mut *mut c_char, size: *mut usize, position: usize,
     buffer: *mut u8, length: usize, space: usize,
+}
+#[derive(Clone, Copy)]
+pub(super) struct WideGrowing {
+    output: *mut *mut c_int, size: *mut usize, position: usize,
+    buffer: *mut c_int, length: usize, space: usize, state: u32,
 }
 #[derive(Clone, Copy)]
 pub(super) struct Cookie { data: *mut c_void, functions: CookieIoFunctions }
@@ -98,7 +110,69 @@ pub unsafe extern "C" fn open_memstream(output: *mut *mut c_char, size: *mut usi
         if buffer.is_null() { free(stream.cast()); return ptr::null_mut(); }
         *buffer = 0; *output = buffer.cast(); *size = 0;
         (*stream).backend = Backend::Growing(Growing { output, size, position: 0, buffer, length: 0, space: 0 });
+        (*stream).orientation = -1;
         publish_stream(stream)
+    }
+}
+
+/// Open a growing wide output stream with caller-owned published storage.
+/// # Safety
+/// Output and size are writable, disjoint objects that outlive FILE. Writes
+/// may realloc/invalidate the earlier pointer; inspect published storage only
+/// after flush/close and free the final allocation after close. The stream
+/// captures current CTYPE and publishes positions in wchar_t units.
+#[no_mangle]
+pub unsafe extern "C" fn open_wmemstream(output: *mut *mut c_int, size: *mut usize) -> *mut StandardStream {
+    unsafe {
+        let stream = allocate(0, F_NORD);
+        if stream.is_null() { return stream; }
+        let buffer = malloc(4).cast::<c_int>();
+        if buffer.is_null() { free(stream.cast()); return ptr::null_mut(); }
+        *buffer = 0; *output = buffer; *size = 0;
+        (*stream).capacity = 0;
+        (*stream).backend = Backend::WideGrowing(WideGrowing {
+            output, size, position: 0, buffer, length: 0, space: 0, state: 0,
+        });
+        owned_wide_stdio::orient(stream, 1);
+        publish_stream(stream)
+    }
+}
+
+// musl open_wmemstream.c::wms_write. Space growth uses incoming byte count
+// as a conservative wide-element bound. Decoder state survives split writes;
+// a seek resets it. FILE owns only this state, never the published allocation.
+unsafe fn write_wide(stream: *mut StandardStream, source: *const u8, length: usize, mut state: WideGrowing) -> usize {
+    unsafe {
+        let Some(end) = state.position.checked_add(length) else { return 0; };
+        if end >= state.space {
+            let Some(minimum) = end.checked_add(1) else { return 0; };
+            let Some(doubled) = state.space.checked_mul(2).and_then(|n| n.checked_add(1)) else { return 0; };
+            let space = doubled | minimum;
+            if space > isize::MAX as usize / 4 { return 0; }
+            let buffer = realloc(state.buffer.cast(), space*4).cast::<c_int>();
+            if buffer.is_null() { return 0; }
+            ptr::write_bytes(buffer.add(state.space), 0, space-state.space);
+            state.buffer = buffer; state.space = space; *state.output = buffer;
+        }
+        let mut consumed = 0;
+        let mut position = state.position;
+        while consumed < length {
+            let mut wide = 0;
+            let count = super::super::locale_multibyte::decode_for_stream(&mut wide,
+                source.add(consumed).cast(), length-consumed, &mut state.state,
+                super::super::locale_multibyte::locale_ctype_is_utf8(), false);
+            if count == usize::MAX {
+                (*stream).backend = Backend::WideGrowing(state); return 0;
+            }
+            if count == usize::MAX-1 { break; }
+            *state.buffer.add(position) = wide;
+            if count == 0 { break; }
+            position += 1; consumed += count;
+        }
+        state.position = position; state.length = state.length.max(position);
+        *state.size = position;
+        (*stream).backend = Backend::WideGrowing(state);
+        length
     }
 }
 
@@ -125,6 +199,7 @@ pub unsafe extern "C" fn fopencookie(data: *mut c_void, mode: *const c_char, fun
 pub(super) unsafe fn read(stream: *mut StandardStream, destination: *mut u8, length: usize) -> usize {
     unsafe {
         match (*stream).backend {
+            Backend::WideString { input } => read_wide_string(stream, destination, length, input),
             Backend::Fixed(mut state) => {
                 let remaining = state.length.saturating_sub(state.position);
                 let count = length.min(remaining);
@@ -217,6 +292,9 @@ pub(super) unsafe fn write(stream: *mut StandardStream, source: *const u8, lengt
                 count as usize
             }
             Backend::Descriptor => unreachable!(),
+            Backend::WideGrowing(state) => write_wide(stream, source, length, state),
+            Backend::WideBounded { output, remaining } => write_wide_bounded(stream, source, length, output, remaining),
+            Backend::WideString { .. } => unreachable!(),
         }
     }
 }
@@ -238,6 +316,8 @@ pub(super) unsafe fn seek(stream: *mut StandardStream, offset: i64, whence: c_in
             }
             Backend::Fixed(state) => (state.position, state.length, state.size),
             Backend::Growing(state) => (state.position, state.length, isize::MAX as usize),
+            Backend::WideGrowing(state) => (state.position, state.length, isize::MAX as usize / 4),
+            Backend::WideBounded { .. } | Backend::WideString { .. } => { errno::set_errno(29); return -1; }
         };
         let base = [0, position, length][whence as usize];
         let Some(target) = (base as i64).checked_add(offset).filter(|n| *n >= 0 && *n as usize <= maximum) else {
@@ -246,9 +326,67 @@ pub(super) unsafe fn seek(stream: *mut StandardStream, offset: i64, whence: c_in
         match &mut (*stream).backend {
             Backend::Fixed(state) => state.position = target as usize,
             Backend::Growing(state) => state.position = target as usize,
+            Backend::WideGrowing(state) => { state.position = target as usize; state.state = 0; }
             _ => unreachable!(),
         }
         target
+    }
+}
+
+// musl vswprintf.c::sw_write: keep a complete wchar_t prefix and report the
+// incoming byte length even after destination truncation. Invalid encoding
+// marks the real FILE; every write/flush leaves the caller prefix terminated.
+unsafe fn write_wide_bounded(stream: *mut StandardStream, source: *const u8, length: usize,
+    mut output: *mut c_int, mut remaining: usize) -> usize {
+    unsafe {
+        let mut consumed = 0;
+        while remaining != 0 && consumed < length {
+            let mut state = 0;
+            let count = super::super::locale_multibyte::decode_for_stream(output,
+                source.add(consumed).cast(), length-consumed, &mut state,
+                super::super::locale_multibyte::locale_ctype_is_utf8(), true);
+            if count == usize::MAX {
+                *output = 0; (*stream).write_failed = true; mark_error(stream);
+                (*stream).backend = Backend::WideBounded { output, remaining };
+                return usize::MAX;
+            }
+            consumed += count.max(1); output = output.add(1); remaining -= 1;
+        }
+        *output = 0;
+        (*stream).backend = Backend::WideBounded { output, remaining };
+        length
+    }
+}
+
+// musl vswscanf.c::wstring_read. Encode a bounded chunk before publishing
+// any readable bytes. Its NUL terminator ends input but is not an input byte;
+// malformed wide source leaves errno from conversion without inventing F_ERR.
+unsafe fn read_wide_string(stream: *mut StandardStream, destination: *mut u8,
+    length: usize, mut input: *const c_int) -> usize {
+    unsafe {
+        if input.is_null() { return 0; }
+        let mut count = 0;
+        let utf8 = super::super::locale_multibyte::locale_ctype_is_utf8();
+        while count < (*stream).capacity {
+            let character = *input;
+            if character == 0 { input = ptr::null(); break; }
+            let mut encoded = [0u8; 4];
+            let size = super::super::locale_multibyte::encode_for_locale(encoded.as_mut_ptr().cast(), character, utf8);
+            if size == usize::MAX {
+                (*stream).read_position = (*stream).buffer; (*stream).read_end = (*stream).buffer;
+                return 0;
+            }
+            if size > (*stream).capacity-count { break; }
+            ptr::copy_nonoverlapping(encoded.as_ptr(), (*stream).buffer.add(count), size);
+            count += size; input = input.add(1);
+        }
+        (*stream).backend = Backend::WideString { input };
+        (*stream).read_position = (*stream).buffer;
+        (*stream).read_end = (*stream).buffer.add(count);
+        if length == 0 || count == 0 { return 0; }
+        *destination = *(*stream).read_position;
+        (*stream).read_position = (*stream).read_position.add(1);
+        1
     }
 }
 

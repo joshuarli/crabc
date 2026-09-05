@@ -188,7 +188,7 @@ struct DecodeOutcome {
 }
 
 #[inline]
-fn locale_ctype_is_utf8() -> bool {
+pub(super) fn locale_ctype_is_utf8() -> bool {
     super::locale_objects::current_ctype_override().unwrap_or_else(global_ctype_is_utf8)
 }
 
@@ -633,6 +633,22 @@ pub unsafe extern "C" fn mbrtowc(
     outcome.result
 }
 
+// FILE orientation snapshots only the fixed-profile CTYPE choice, not a
+// mutable locale object. The held caller owns state/output; wide FILE wrappers
+// also scope the thread locale so callbacks retain source observations.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn decode_for_stream(wide: *mut c_int, source: *const c_char,
+    count: usize, state: &mut u32, utf8: bool, legacy: bool) -> usize {
+    let outcome = unsafe { decode_mbrtowc(*state, source, count, utf8) };
+    *state = outcome.next_state;
+    if outcome.error || legacy && outcome.result == MB_RET_INCOMPLETE {
+        unsafe { errno::set_errno(EILSEQ); }
+        return MB_RET_ILSEQ;
+    }
+    if outcome.writes_wide && !wide.is_null() { unsafe { wide.write(outcome.wide); } }
+    outcome.result
+}
+
 /// Encode one C-locale code unit or UTF-8 code point.
 ///
 /// `destination`, when non-null, must have room for four bytes. Musl ignores
@@ -644,6 +660,12 @@ pub unsafe extern "C" fn wcrtomb(
     wide: c_int,
     _state: *mut MbState,
 ) -> usize {
+    unsafe { encode_for_locale(destination, wide, locale_ctype_is_utf8()) }
+}
+
+// Shared source wcrtomb kernel: public conversions use current CTYPE while
+// oriented FILE callers supply their immutable fixed-profile snapshot.
+pub(super) unsafe fn encode_for_locale(destination: *mut c_char, wide: c_int, utf8: bool) -> usize {
     if destination.is_null() {
         return 1;
     }
@@ -653,7 +675,7 @@ pub unsafe extern "C" fn wcrtomb(
         unsafe { core::ptr::write(destination, wide as c_char) };
         return 1;
     }
-    if !locale_ctype_is_utf8() {
+    if !utf8 {
         if !is_codeunit(wide_unsigned) {
             // SAFETY: this C conversion error belongs to the calling thread.
             unsafe { errno::set_errno(EILSEQ) };
