@@ -127,7 +127,7 @@ impl DynamicThreadLocalBacking {
     }
 
     #[cfg(test)]
-    const fn test_image(count: usize) -> Self {
+    pub(crate) const fn test_image(count: usize) -> Self {
         Self {
             count,
             memid: MemoryId::none(),

@@ -11,6 +11,12 @@ sequence.  Rust deliberately refuses a direct second mutable attachment;
 the C source returns the existing default Theap.  Both records mean that the
 recursive entry keeps one current owner.
 
+The fixed native Rust batch also records the process-once race/reentry,
+preflight-cancellation retry, post-claim PageMap failure retention, persistent
+compiler-TLS reentry and failed-exit recovery, and every nonpristine
+later-worker root rejection.  Those are separate ownership and failure
+matrices, not additional C/Rust state equivalences.
+
 This is private native Linux/x86-64 evidence for the named source paths.  It
 does not claim a public allocator API, runtime callback integration, automatic
 pthread cleanup, process-shutdown parity, or completion of the metadata and
@@ -75,8 +81,10 @@ EXPECTED_SCOPE = {
     "constructor_or_callback_integration_claimed": False,
     "emulation_accepted": False,
     "explicit_process_and_worker_thread_route_only": True,
+    "failure_and_ownership_matrix_recorded": True,
     "general_allocator_or_api_claimed": False,
     "general_process_shutdown_claimed": False,
+    "initial_thread_auto_init_claimed": False,
     "metadata_completion_claimed": False,
     "native_linux_x86_64_required": True,
     "one_current_owner_on_recursive_entry": True,
@@ -84,6 +92,7 @@ EXPECTED_SCOPE = {
     "public_crabc_support": False,
     "public_x86_libc_or_ldso_support": False,
     "runtime_lifecycle_callback_parity_claimed": False,
+    "rust_failure_matrix_c_equivalence_claimed": False,
     "rust_direct_second_mutable_owner_refused": True,
     "thread_recovery_after_explicit_teardown_only": True,
 }
@@ -101,6 +110,8 @@ EXPECTED_C_ELF = {
 # Hashes are of the exact upstream line intervals, not of local ports.
 EXPECTED_SOURCE_ANCHORS = (
     ("src/prim/prim.c", 29, 46, "6d2be652e1c17c43fc281807cde2f15d8b9ffee28bd294639d8628eceefe3712"),
+    ("src/prim/prim-tls.c", 25, 34, "221a9d4e332edeb6e8f8dfe315d596577f971ff93aba4388249b6a0555ec300a"),
+    ("src/prim/prim-tls.c", 211, 252, "7ae305733f0b7937fd36255b3440b04ff22a29e0a3ebff40ed3a898ae5b99b62"),
     ("src/init.c", 305, 360, "8b5a6af8d90da7f2cb33cf5c6211c9325234840d57a54c25be891e49e4d354e5"),
     ("src/init.c", 377, 422, "eaa34dbcd2df052853490df70c9f8ed19b481bb9d1363a0bf61331758f2fb165"),
     ("src/init.c", 448, 481, "478b40823b940f620731b48121f6da86b4c288c97b9ddddcd03e915e92b11a25"),
@@ -125,8 +136,24 @@ EXPECTED_LIFECYCLE_CHECKS = (
         "source": "crabc-mimalloc/src/process_init.rs",
     },
     {
+        "filter": "process_init::tests::preflight_rejection_leaves_process_startup_cold_and_ticket_zero_unselected",
+        "source": "crabc-mimalloc/src/process_init.rs",
+    },
+    {
+        "filter": "process_init::tests::process_main_binds_metadata_before_global_page_map_failure",
+        "source": "crabc-mimalloc/src/process_init.rs",
+    },
+    {
         "filter": "thread_local::tests::persistent_compiler_tls_owner_rejects_reentry_then_recovers_the_same_owner",
         "source": "crabc-mimalloc/src/thread_local.rs",
+    },
+    {
+        "filter": "thread_local::tests::persistent_compiler_tls_owner_retains_failed_exit_for_one_source_ordered_retry",
+        "source": "crabc-mimalloc/src/thread_local.rs",
+    },
+    {
+        "filter": "main_heap_thread::tests::later_thread_rejects_every_nonpristine_source_root_before_ticket_or_metadata_mutation",
+        "source": "crabc-mimalloc/src/main_heap_thread.rs",
     },
 )
 

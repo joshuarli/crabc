@@ -19,8 +19,10 @@
     "constructor_or_callback_integration_claimed": false,
     "emulation_accepted": false,
     "explicit_process_and_worker_thread_route_only": true,
+    "failure_and_ownership_matrix_recorded": true,
     "general_allocator_or_api_claimed": false,
     "general_process_shutdown_claimed": false,
+    "initial_thread_auto_init_claimed": false,
     "metadata_completion_claimed": false,
     "native_linux_x86_64_required": true,
     "one_current_owner_on_recursive_entry": true,
@@ -28,6 +30,7 @@
     "public_crabc_support": false,
     "public_x86_libc_or_ldso_support": false,
     "runtime_lifecycle_callback_parity_claimed": false,
+    "rust_failure_matrix_c_equivalence_claimed": false,
     "rust_direct_second_mutable_owner_refused": true,
     "thread_recovery_after_explicit_teardown_only": true
   },
@@ -73,6 +76,18 @@
       "start_line": 29,
       "end_line": 46,
       "sha256": "6d2be652e1c17c43fc281807cde2f15d8b9ffee28bd294639d8628eceefe3712"
+    },
+    {
+      "member": "src/prim/prim-tls.c",
+      "start_line": 25,
+      "end_line": 34,
+      "sha256": "221a9d4e332edeb6e8f8dfe315d596577f971ff93aba4388249b6a0555ec300a"
+    },
+    {
+      "member": "src/prim/prim-tls.c",
+      "start_line": 211,
+      "end_line": 252,
+      "sha256": "7ae305733f0b7937fd36255b3440b04ff22a29e0a3ebff40ed3a898ae5b99b62"
     },
     {
       "member": "src/init.c",

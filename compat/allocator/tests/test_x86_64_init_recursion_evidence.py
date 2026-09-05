@@ -104,8 +104,11 @@ class InitRecursionEvidenceTests(unittest.TestCase):
         self.assertEqual(schema["upstream"], evidence.EXPECTED_UPSTREAM)
         self.assertEqual(schema["profile"], evidence.EXPECTED_PROFILE)
         self.assertTrue(schema["scope"]["explicit_process_and_worker_thread_route_only"])
+        self.assertTrue(schema["scope"]["failure_and_ownership_matrix_recorded"])
         self.assertTrue(schema["scope"]["rust_direct_second_mutable_owner_refused"])
         self.assertFalse(schema["scope"]["automatic_pthread_destructor_claimed"])
+        self.assertFalse(schema["scope"]["initial_thread_auto_init_claimed"])
+        self.assertFalse(schema["scope"]["rust_failure_matrix_c_equivalence_claimed"])
         self.assertFalse(schema["scope"]["metadata_completion_claimed"])
         self.assertNotIn("mi_process_done();", evidence.C_TRACE_PROBE)
         self.assertEqual(schema["trace"]["expected_values"], evidence.EXPECTED_TRACE_VALUES)
@@ -114,6 +117,8 @@ class InitRecursionEvidenceTests(unittest.TestCase):
         mutations = (
             lambda value: value["scope"].update({"metadata_completion_claimed": True}),
             lambda value: value["scope"].update({"runtime_lifecycle_callback_parity_claimed": True}),
+            lambda value: value["scope"].update({"failure_and_ownership_matrix_recorded": False}),
+            lambda value: value["scope"].update({"rust_failure_matrix_c_equivalence_claimed": True}),
             lambda value: value["source_anchors"][0].update({"start_line": 306}),
             lambda value: value["trace"]["expected_values"].update(
                 {"trace.init_recursion.recovery_default_initialized": 0}
@@ -141,7 +146,11 @@ class InitRecursionEvidenceTests(unittest.TestCase):
             "compared_value_count": len(evidence.EXPECTED_TRACE_VALUES),
             "status": "matched",
         })
-        self.assertEqual(len(report["lifecycle_checks"]), 3)
+        self.assertEqual(len(report["lifecycle_checks"]), 7)
+        self.assertEqual(
+            report["lifecycle_checks"][-1]["filter"],
+            "main_heap_thread::tests::later_thread_rejects_every_nonpristine_source_root_before_ticket_or_metadata_mutation",
+        )
 
         report = self.complete_report()
         report["provenance"] = {"execution_mode": "emulated", "host_architecture": "x86_64"}

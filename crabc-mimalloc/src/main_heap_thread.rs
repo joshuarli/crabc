@@ -6,7 +6,8 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-282,305-360,377-421,
 // 448-481`, `src/theap.c:89-152,228-306,414-449`, `src/page.c:214-243`,
-// `src/threadlocal.c:205-214`, and `src/heap.c:103-126`.
+// `src/threadlocal.c:205-214`, `src/prim/prim-tls.c:25-34,211-252`, and
+// `src/heap.c:103-126`.
 
 //! Later-thread attachment to the process-static main heap.
 //!
@@ -43,10 +44,12 @@ use core::ffi::c_void;
 use crate::arena::ArenaView;
 use crate::bootstrap::{TheapPageSession, empty_default_theap_ptr, theap_page_session_sealed};
 use crate::compiler_tls::{
-    cached_theap, current_thread_identity, default_theap, dynamic_backing_peek,
-    fast_slot_peek, is_empty_dynamic_backing, set_cached_theap, set_default_theap,
-    set_fast_slot,
+    cached_theap, clear_dynamic_backing, current_thread_identity, default_theap,
+    dynamic_backing_peek, fast_slot_peek, is_empty_dynamic_backing, set_cached_theap,
+    set_default_theap, set_fast_slot,
 };
+#[cfg(test)]
+use crate::compiler_tls::{DynamicThreadLocalBacking, install_dynamic_backing};
 use crate::deferred_free::DeferredFreeInvocationError;
 #[cfg(test)]
 use crate::deferred_free::{DeferredFreeTestCallback, DeferredFreeTestObserver};
@@ -2037,6 +2040,133 @@ mod tests {
         })
         .join()
         .expect("root-rejection lifecycle completes");
+    }
+
+    /// The later-thread constructor may consume a generic TLD ticket only
+    /// from the complete source empty-root image.  A stale root can name a
+    /// different lifecycle, so every root variant must refuse before it can
+    /// prepare metadata, link a Theap, increment either thread count, or
+    /// overwrite the caller's diagnostic root.  This is the Rust ownership
+    /// boundary corresponding to `src/init.c`'s warning that TLS access can
+    /// recursively allocate during thread initialization.
+    #[test]
+    fn later_thread_rejects_every_nonpristine_source_root_before_ticket_or_metadata_mutation() {
+        #[derive(Clone, Copy)]
+        enum ForeignRoot {
+            DynamicBackingAbsent,
+            DynamicBackingNonempty,
+            FastSlot,
+            DefaultTheap,
+            CachedTheap,
+        }
+
+        for root in [
+            ForeignRoot::DynamicBackingAbsent,
+            ForeignRoot::DynamicBackingNonempty,
+            ForeignRoot::FastSlot,
+            ForeignRoot::DefaultTheap,
+            ForeignRoot::CachedTheap,
+        ] {
+            thread::spawn(move || {
+                let (storage, subprocess) = fixture();
+                let metadata = MetaAllocator::test_static_owner();
+                let mut main = unsafe {
+                    MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+                }
+                .expect("ticket zero attaches the process main images");
+                let main_heap = main.shared_main_heap_lease().unwrap();
+
+                thread::scope(|scope| {
+                    let worker = scope.spawn(move || {
+                        let mut foreign_dynamic = DynamicThreadLocalBacking::test_image(1);
+                        let mut foreign_fast = 0xfeed_faceusize;
+                        let mut foreign_default = Theap::empty();
+                        let mut foreign_cached = Theap::empty();
+                        match root {
+                            ForeignRoot::DynamicBackingAbsent => clear_dynamic_backing(),
+                            ForeignRoot::DynamicBackingNonempty => {
+                                install_dynamic_backing(NonNull::from(&mut foreign_dynamic))
+                            }
+                            ForeignRoot::FastSlot => {
+                                set_fast_slot(Some(NonNull::from(&mut foreign_fast).cast()))
+                            }
+                            ForeignRoot::DefaultTheap => {
+                                set_default_theap(NonNull::from(&mut foreign_default))
+                            }
+                            ForeignRoot::CachedTheap => {
+                                set_cached_theap(NonNull::from(&mut foreign_cached))
+                            }
+                        }
+
+                        assert!(matches!(
+                            unsafe {
+                                MainHeapThreadAttachment::begin_with_test_metadata(
+                                    main_heap,
+                                    metadata,
+                                    memory_config(),
+                                )
+                            },
+                            Err(MainHeapThreadAttachmentBeginError::Rejected(
+                                MainHeapThreadAttachmentError::RootsNotPristine
+                            ))
+                        ));
+                        assert_eq!(subprocess.total_thread_count(), 1);
+                        assert_eq!(subprocess.live_thread_count(), 1);
+                        assert_eq!(storage.test_shared_later_theap_count(), 0);
+                        assert!(
+                            !metadata.test_is_bound_for(memory_config(), subprocess),
+                            "root rejection must precede detached-metadata preparation"
+                        );
+
+                        match root {
+                            ForeignRoot::DynamicBackingAbsent => {
+                                assert!(dynamic_backing_peek().is_none());
+                            }
+                            ForeignRoot::DynamicBackingNonempty => {
+                                assert_eq!(
+                                    dynamic_backing_peek().map(NonNull::as_ptr),
+                                    Some(NonNull::from(&mut foreign_dynamic).as_ptr()),
+                                );
+                                // The one-slot image remains live on this
+                                // stack; the rejected constructor observed
+                                // its root identity without dereferencing it.
+                                assert_eq!(
+                                    foreign_dynamic.count(),
+                                    1,
+                                );
+                                clear_dynamic_backing();
+                            }
+                            ForeignRoot::FastSlot => {
+                                assert_eq!(
+                                    fast_slot_peek().map(NonNull::as_ptr),
+                                    Some(NonNull::from(&mut foreign_fast).as_ptr().cast()),
+                                );
+                                set_fast_slot(None);
+                            }
+                            ForeignRoot::DefaultTheap => {
+                                assert_eq!(
+                                    default_theap().as_ptr(),
+                                    NonNull::from(&mut foreign_default).as_ptr(),
+                                );
+                                set_default_theap(empty_default_theap());
+                            }
+                            ForeignRoot::CachedTheap => {
+                                assert_eq!(
+                                    cached_theap().as_ptr(),
+                                    NonNull::from(&mut foreign_cached).as_ptr(),
+                                );
+                                set_cached_theap(empty_default_theap());
+                            }
+                        }
+                    });
+                    worker.join().expect("foreign-root worker completes");
+                });
+
+                main.teardown().expect("foreign roots changed no main state");
+            })
+            .join()
+            .expect("each root-rejection lifecycle completes");
+        }
     }
 
     #[test]
