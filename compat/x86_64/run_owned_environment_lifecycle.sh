@@ -16,26 +16,55 @@ readonly NORMAL_SCENARIO=normal
 readonly ALLOCATION_SCENARIO=allocation-failure
 declare -a link_identity_records=()
 
-[ "$#" -le 1 ] || {
-    printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
-provided_dynamic="${1:-}"
+
+provided_static=''
+provided_dynamic=''
+dynamic_was_supplied=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] || usage
+            [ -z "$provided_static" ] || usage
+            provided_static="$2"
+            shift 2
+            ;;
+        --*)
+            usage
+            ;;
+        *)
+            [ -z "$provided_dynamic" ] || usage
+            provided_dynamic="$1"
+            dynamic_was_supplied=1
+            shift
+            ;;
+    esac
+done
+if [ -n "$provided_static" ]; then
+    provided_static="$(realpath -e "$provided_static")"
+fi
 if [ -n "$provided_dynamic" ]; then
     provided_dynamic="$(realpath -e "$provided_dynamic")"
 fi
 
-python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY'
 from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
 temporary = Path(sys.argv[2])
-product = Path(sys.argv[3]) if sys.argv[3] else None
+static_product = Path(sys.argv[3]) if sys.argv[3] else None
+dynamic_product = Path(sys.argv[4]) if sys.argv[4] else None
 if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / ".work"):
     raise SystemExit("owned environment-lifecycle TMPDIR must be a physical checkout .work directory")
-if product and (not product.is_dir() or not product.is_relative_to(root / ".work")):
-    raise SystemExit("owned environment-lifecycle dynamic product must be a checkout .work directory")
+for product, name in ((static_product, "static"), (dynamic_product, "dynamic")):
+    if product and (not product.is_dir() or not product.is_relative_to(root / ".work")):
+        raise SystemExit(
+            f"owned environment-lifecycle {name} product must be a checkout .work directory"
+        )
 PY
 
 readonly work="$(mktemp -d "$TMPDIR/owned-environment-lifecycle.XXXXXX")"
@@ -241,20 +270,26 @@ for scenario in "$NORMAL_SCENARIO" "$ALLOCATION_SCENARIO"; do
         chroot "$work/oracle-root" "${command[@]}"
 done
 
-if [ "$#" -eq 0 ]; then
+static_product=''
+if [ -n "$provided_static" ]; then
+    static_product="$provided_static"
+elif [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
         --output "$work/static-product" >"$work/static-build.json"
-    assert_static_providers "$work/static-product/usr/lib/libc.a" \
+    static_product="$work/static-product"
+fi
+if [ -n "$static_product" ]; then
+    assert_static_providers "$static_product/usr/lib/libc.a" \
         "$work/static-symbols.txt"
     for mode in static static-pie; do
         receipt="$work/consumer-$mode.receipt.json"
         (
             cd "$work"
-            "$work/static-product/bin/crabc-cc" "-$mode" \
+            "$static_product/bin/crabc-cc" "-$mode" \
                 --link-receipt "$(basename "$receipt")" "$work/workload.o" \
                 -o "$work/consumer-$mode"
         )
-        validate_sealed_link "$work/static-product" "$work/workload.o" \
+        validate_sealed_link "$static_product" "$work/workload.o" \
             "$work/consumer-$mode" "$receipt" "$mode"
         mkdir "$work/$mode-root"
         cp "$work/consumer-$mode" "$work/$mode-root/consumer"

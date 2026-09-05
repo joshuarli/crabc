@@ -38,6 +38,17 @@ status/stdout/stderr transcripts. The runner also proves that a forged retained
 identity is rejected by a fresh shared-validator result; receipt and product
 tampering are covered by that validator's focused tests.
 
+The runner accepts `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`.
+With no arguments it builds both disposable products. A positional dynamic
+product preserves the existing dynamic-only replay and does not build or run a
+static product. `--static-sysroot` selects a physical checkout `.work` static
+product for the static/static-PIE pair; if it is the only argument, the runner
+still builds its disposable dynamic product for the installed-driver object
+and dynamic portion. Giving both product paths reuses both sealed products and
+does not invoke either producer. This is a bounded primary/reproduction/
+extracted-static replay seam, not a family receipt or a claim that any family
+closure gate has passed.
+
 The workload serializes every environment access. It checks copied replacement,
 all-match removal, clear, no-overwrite, and the direct-vector/borrowed-value
 boundaries. A disposable child installs a narrow seccomp filter that returns `ENOMEM` for

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -105,7 +106,7 @@ class OwnedEnvironmentLifecycleTests(unittest.TestCase):
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertLess(
-            runner.index("validate_sealed_link \"$work/static-product\""),
+            runner.index("validate_sealed_link \"$static_product\""),
             runner.index('compare_oracle "$mode"'),
         )
         self.assertLess(
@@ -116,6 +117,37 @@ class OwnedEnvironmentLifecycleTests(unittest.TestCase):
             runner.rindex("\nretain_link_identities\n"),
             runner.rindex("\nassert_retained_identity_tampering_rejected"),
         )
+
+    def test_static_replay_parser_rejects_a_missing_sysroot_path(self) -> None:
+        result = subprocess.run(
+            ["bash", str(RUNNER), "--static-sysroot"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            result.stderr,
+            f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n",
+        )
+
+    def test_static_replay_parser_keeps_one_dynamic_positional_product(self) -> None:
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "provided_static=''",
+            "provided_dynamic=''",
+            "dynamic_was_supplied=0",
+            "--static-sysroot)",
+            "[ -z \"$provided_dynamic\" ] || usage",
+            "owned environment-lifecycle {name} product must be a checkout .work directory",
+            "elif [ \"$dynamic_was_supplied\" -eq 0 ]; then",
+            'static_product="$provided_static"',
+        ):
+            self.assertIn(required, runner)
 
     def test_dynamic_case_and_dispatch_remain_registered(self) -> None:
         qualification = QUALIFICATION.read_text(encoding="utf-8")
