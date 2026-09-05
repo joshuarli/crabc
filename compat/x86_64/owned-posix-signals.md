@@ -83,13 +83,26 @@ providers and public spelling roster remain unchanged.
 
 ## Runner and qualification boundary
 
-Run `./scripts/dev-x86_64.sh owned-posix-signals [DYNAMIC_SYSROOT]`. Without an
-argument, it builds installed static and dynamic products and runs ordinary
-static, static PIE, dynamic PIE and dynamic non-PIE; both dynamic forms use
-kernel and direct interpreter entry. A supplied installed/extracted dynamic
-product drives compilation and all four dynamic cells. Its physical directory
-must be under this checkout's `.work` tree. The family coordinator separately
-owns second static builds and static package extraction.
+The runner accepts `run_owned_posix_signals.sh [--static-sysroot STATIC_SYSROOT]
+[DYNAMIC_SYSROOT]` inside the pinned native environment. With no arguments it
+builds both products. A positional dynamic product alone retains the four
+existing dynamic cells. Supplying only `--static-sysroot` builds the dynamic
+product used for compilation; supplying both products invokes neither producer.
+Either static form runs ordinary static and static PIE alongside dynamic PIE
+and non-PIE through kernel and direct interpreter entry: all ten scenarios in
+six candidate cells. The public dispatcher retains its existing positional
+`./scripts/dev-x86_64.sh owned-posix-signals [DYNAMIC_SYSROOT]` interface.
+
+Supplied products must be physical directories under this checkout's `.work`
+tree. Empty, option-valued, repeated or extra arguments fail before evidence
+creation or a producer invocation; complete supplied product manifests and
+payloads are validated at the same boundary. `owned_posix_product_evidence.py`
+validates each static and dynamic link against its product, shared workload
+object, receipt, link trace and ELF contract. `signal-full.json` retains those
+four link identities and the selected static manifest hash when static cells
+run. Replaying primary, reproduction and extracted static products supports the
+six required static cells; the family collector owns their joint receipt and
+object-identity comparison. This runner does not establish family closure.
 
 `owned_posix_signals.py` compiles one workload object with the selected installed
 `crabc-cc-dynamic` and links that exact object to musl and every candidate.
