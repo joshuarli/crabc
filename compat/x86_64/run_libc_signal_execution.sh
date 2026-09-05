@@ -140,7 +140,7 @@ fi
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+    -C relocation-model=static -C code-model=small -C panic=abort -C codegen-units=1
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
@@ -160,7 +160,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
 fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_SIGNAL_EXECUTION_FREESTANDING \
-    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -I"$ROOT_DIR/include" -Wl,--gc-sections -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_signal_execution_probe.c \
     compat/x86_64/libc_signal_execution_start.S "$archive" -o "$candidate"

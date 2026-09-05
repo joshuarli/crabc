@@ -289,6 +289,14 @@ fixture also qualifies pending `msync` cancellation before kernel validation;
 it makes no file-durability claim. Every fixture child is released and reaped,
 and successful fixtures remove their scratch directory.
 
+`owned_signal_wait_cancellation_probe.c` qualifies the shared `sigtimedwait`,
+`sigwaitinfo`, and `sigwait` cancellation boundary. Pending enabled and masked
+requests leave queued signals and caller output untouched; disabled requests
+consume the queued signal. Actual blocked waits cover all three cancellation
+states, while an ordinary interrupt retries without publishing `EINTR`.
+The fixture also preserves musl's `sigwait` error convention and timeout
+validation order. Signal masks remain intact through user cleanup.
+
 `owned_semaphore_wait_cancellation_probe.c` isolates the source's mandatory
 cancellation check before consuming an available token. Its companion
 `owned_semaphore_cancellation_probe.c` qualifies owned `sem_wait` and the new

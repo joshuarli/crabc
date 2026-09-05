@@ -262,8 +262,9 @@ pub extern "C" fn sigqueue(process_id: c_int, signal: c_int, value: SigValue) ->
 /// `mask` must be readable for its first eight-byte kernel signal word.
 /// `info` must be null or valid writable storage for one complete x86 public
 /// 128-byte `siginfo_t`; `timeout` must be null or a valid readable x86
-/// `struct timespec`. Their lifetimes must cover the kernel call. This direct
-/// static leaf deliberately omits musl's cancellation-point machinery.
+/// `struct timespec`. Their lifetimes must cover the kernel call. The owned
+/// runtime uses musl's cancellation-point boundary; the standalone leaf keeps
+/// its raw syscall profile.
 #[no_mangle]
 pub unsafe extern "C" fn sigtimedwait(
     mask: *const c_void,
@@ -273,6 +274,19 @@ pub unsafe extern "C" fn sigtimedwait(
     loop {
         // SAFETY: the caller owns all three pointer contracts. Linux x86
         // consumes one eight-byte mask word as pinned musl does.
+        #[cfg(feature = "x86-owned-static-runtime")]
+        let result = unsafe {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_RT_SIGTIMEDWAIT,
+                mask as usize as i64,
+                info as usize as i64,
+                timeout as usize as i64,
+                KERNEL_SIGSET_SIZE,
+                0,
+                0,
+            )
+        };
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
         let result = unsafe {
             raw_syscall::syscall4(
                 raw_syscall::SYS_RT_SIGTIMEDWAIT,

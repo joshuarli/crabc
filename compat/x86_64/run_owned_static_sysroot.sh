@@ -800,6 +800,11 @@ run_static_mode() {
             expected_output=''
             minimum_tls_alignment=1
             ;;
+        signal-wait-cancellation)
+            probe=owned_signal_wait_cancellation_probe.c
+            expected_output="$(cat "$printf_matrix_reference")"
+            minimum_tls_alignment=1
+            ;;
         semaphore-wait-cancellation)
             probe=owned_semaphore_wait_cancellation_probe.c
             expected_output="$(cat "$printf_matrix_reference")"
@@ -1115,6 +1120,8 @@ run_static_mode() {
             "$label sleep-wait cancellation" sleep-wait-cancellation "$printf_matrix_reference.sleep-wait-cancellation"
         run_static_mode "$installed_root" "$mode" "$mode_root/open-lock-cancellation" \
             "$label open/lock cancellation" open-lock-cancellation "$printf_matrix_reference.open-lock-cancellation"
+        run_static_mode "$installed_root" "$mode" "$mode_root/signal-wait-cancellation" \
+            "$label signal wait cancellation" signal-wait-cancellation "$printf_matrix_reference.signal-wait-cancellation"
         run_static_mode "$installed_root" "$mode" "$mode_root/semaphore-wait-cancellation" \
             "$label semaphore wait cancellation" semaphore-wait-cancellation "$printf_matrix_reference.semaphore-wait-cancellation"
         run_static_mode "$installed_root" "$mode" "$mode_root/semaphore-cancellation" \
@@ -1508,6 +1515,14 @@ env -i "$header_consumer/open-lock-cancellation-reference" "$header_consumer/ope
     fail "pinned-musl open/lock cancellation reference failed"
 grep -qx owned-open-lock-cancellation-ok "$printf_matrix_reference.open-lock-cancellation" ||
     fail "pinned-musl open/lock cancellation completion missing"
+
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_signal_wait_cancellation_probe.c" \
+    -o "$header_consumer/signal-wait-cancellation-reference"
+env -i "$header_consumer/signal-wait-cancellation-reference" >"$printf_matrix_reference.signal-wait-cancellation" ||
+    fail "pinned-musl signal-wait cancellation reference failed"
+grep -qx owned-signal-wait-cancellation-ok "$printf_matrix_reference.signal-wait-cancellation" ||
+    fail "pinned-musl signal-wait cancellation completion missing"
 
 "$ORACLE_CC" -std=c11 -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_semaphore_wait_cancellation_probe.c" \
