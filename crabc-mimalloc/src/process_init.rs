@@ -106,12 +106,14 @@ pub(crate) struct ProcessMainInitializationStorage {
     vm_policy_ptr: AtomicPtr<VmPolicy>,
     subprocess: AtomicPtr<MainSubprocess>,
     page_map_storage: AtomicPtr<ProcessPageMapStorage>,
+    startup_reservations: UnsafeCell<MaybeUninit<crate::arena::StartupArenaReservationOutcomes>>,
 }
 
 // SAFETY: `process_once` makes COLD -> INITIALIZING exclusive and retains its
 // private lock until the final state is Release-published. The final
 // configuration, optional VM policy, subprocess, and PageMap-storage pointer
-// are written before READY's Release publication and never replaced. A live
+// and startup reservation outcomes are written before READY's Release
+// publication and never replaced. A live
 // `ProcessMainThread` remains current-thread-only through its contained main
 // attachment; READY leases are immutable process-root witnesses only.
 unsafe impl Sync for ProcessMainInitializationStorage {}
@@ -126,6 +128,7 @@ impl ProcessMainInitializationStorage {
             vm_policy_ptr: AtomicPtr::new(core::ptr::null_mut()),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
             page_map_storage: AtomicPtr::new(core::ptr::null_mut()),
+            startup_reservations: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
 
@@ -584,7 +587,7 @@ impl ProcessMainInitializationStorage {
         // detached metadata identity is bound but has no backing; and the
         // exact selected PageMap has
         // been initialized before compiler-TLS root publication.
-        let attachment = match unsafe {
+        let mut attachment = match unsafe {
             MainStaticTheapAttachment::begin_after_heap_foundation(foundation, selection)
         } {
             Ok(attachment) => attachment,
@@ -593,6 +596,19 @@ impl ProcessMainInitializationStorage {
                 return Err(ProcessMainInitError::InitialThread(error));
             }
         };
+
+        // Source startup reserves huge memory first and regular memory next,
+        // after the default Theap/TLS attachment exists. Failed reservations
+        // do not prevent READY; their exact cleanup owners remain retained.
+        let reservations = if let Some(process) = vm_process {
+            // SAFETY: this source once winner still owns startup; attachment
+            // just completed and no process-ready or page client exists.
+            unsafe { attachment.with_startup_vm_random(|random| {
+                process.subprocess().arena_backing().reserve_startup_options(process,
+                    config, metadata, random)
+            }) }
+        } else { crate::arena::StartupArenaReservationOutcomes::empty() };
+        unsafe { (*self.startup_reservations.get()).write(reservations) };
 
         self.publish_terminal_state_and_release_with_hook(completion, READY, before_release);
 
@@ -942,6 +958,13 @@ unsafe impl Send for ProcessMainReadyLease {}
 unsafe impl Sync for ProcessMainReadyLease {}
 
 impl ProcessMainReadyLease {
+    pub(crate) fn startup_reservation_outcomes(self)
+        -> Result<crate::arena::StartupArenaReservationOutcomes, ProcessMainInitError> {
+        self.ensure_ready()?;
+        // SAFETY: READY Release follows the immutable startup outcome write.
+        Ok(unsafe { (*self.storage.startup_reservations.get()).assume_init() })
+    }
+
     #[inline]
     pub(crate) fn root(self) -> Result<NonNull<PageMapHeader>, ProcessMainInitError> {
         self.ensure_ready()?;
@@ -1371,6 +1394,60 @@ mod tests {
         })
         .join()
         .expect("process-main initialization test thread completes");
+    }
+
+    #[test]
+    fn huge_failed_startup_reservation_preserves_the_later_regular_option() {
+        thread::spawn(|| {
+            let fault = crate::os::fault::install(crate::os::fault::Plan::at(
+                crate::os::fault::Point::HugeMap, 1, crabc_core::Errno::NOMEM));
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let mut options = resolved_vm_options();
+            options.set(crate::config::VmOption::ReserveHugeOsPages, 1);
+            options.set(crate::config::VmOption::ReserveHugeOsPagesAt, 0);
+            options.set(crate::config::VmOption::UseNumaNodes, 1);
+            options.set(crate::config::VmOption::ReserveOsMemory,
+                (crate::config::ARENA_MIN_SIZE / crate::config::KIB) as i64);
+            let mut owner = unsafe { storage.initialize_with_test_components_and_vm_options(config,
+                options, main_static, subprocess, metadata, page_map_storage) }.unwrap();
+            let ready = owner.ready().unwrap();
+            let results = ready.startup_reservation_outcomes().unwrap();
+            assert_eq!(results.huge, Some(Err(crabc_core::Errno::NOMEM)));
+            assert_eq!(results.regular, Some(Ok(())));
+            assert_eq!(fault.observed(), 1);
+            assert_eq!(subprocess.arena_backing().registry().count(), 1);
+            assert!(!subprocess.arena_backing().huge_cleanup_pending());
+            owner.teardown().unwrap();
+        }).join().unwrap();
+    }
+
+    #[test]
+    fn huge_startup_attempt_precedes_the_explicit_regular_reservation() {
+        thread::spawn(|| {
+            let fault = crate::os::fault::install(crate::os::fault::Plan::at_pair(
+                crate::os::fault::Point::HugeMap, 1, crate::os::fault::Point::Map, 1,
+                crabc_core::Errno::NOMEM));
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let mut options = resolved_vm_options();
+            options.set(crate::config::VmOption::ReserveHugeOsPages, 1);
+            options.set(crate::config::VmOption::ReserveHugeOsPagesAt, 0);
+            options.set(crate::config::VmOption::UseNumaNodes, 1);
+            options.set(crate::config::VmOption::ReserveOsMemory,
+                (crate::config::ARENA_MIN_SIZE / crate::config::KIB) as i64);
+            let mut owner = unsafe { storage.initialize_with_test_components_and_vm_options(config,
+                options, main_static, subprocess, metadata, page_map_storage) }.unwrap();
+            let results = owner.ready().unwrap().startup_reservation_outcomes().unwrap();
+            assert_eq!(results.huge, Some(Err(crabc_core::Errno::NOMEM)));
+            assert_eq!(results.regular, Some(Ok(())),
+                "source aligned allocation retries by overmapping after its direct candidate fails");
+            assert_eq!(fault.secondary_observed(), 2,
+                "the direct failure and overmap retry both occur after the huge attempt");
+            assert_eq!(subprocess.arena_backing().registry().count(), 1);
+            fault.set(crate::os::fault::Plan::disabled());
+            owner.teardown().unwrap();
+        }).join().unwrap();
     }
 
     #[test]

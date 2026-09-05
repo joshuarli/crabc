@@ -145,10 +145,11 @@ pub(crate) enum VmOption {
     PageCommitOnDemand = 13,
     ArenaIsNumaLocal = 14,
     MinimalPurgeSize = 15,
+    ReserveOsMemory = 16,
 }
 
 impl VmOption {
-    pub(crate) const ALL: [Self; 16] = [
+    pub(crate) const ALL: [Self; 17] = [
         // Keep the selected descriptors in their `src/options.c:111-177`
         // order.  The source initializes every descriptor in declaration
         // order at process start; the omitted non-VM descriptors stay outside
@@ -159,6 +160,7 @@ impl VmOption {
         Self::AllowLargeOsPages,
         Self::ReserveHugeOsPages,
         Self::ReserveHugeOsPagesAt,
+        Self::ReserveOsMemory,
         Self::PurgeDelay,
         Self::UseNumaNodes,
         Self::DisallowOsAlloc,
@@ -192,6 +194,7 @@ impl VmOption {
             Self::PageCommitOnDemand => b"page_commit_on_demand",
             Self::ArenaIsNumaLocal => b"arena_is_numa_local",
             Self::MinimalPurgeSize => b"minimal_purge_size",
+            Self::ReserveOsMemory => b"reserve_os_memory",
         }
     }
 
@@ -215,7 +218,8 @@ impl VmOption {
             | Self::DisallowArenaAlloc
             | Self::PageCommitOnDemand
             | Self::ArenaIsNumaLocal
-            | Self::MinimalPurgeSize => None,
+            | Self::MinimalPurgeSize
+            | Self::ReserveOsMemory => None,
         }
     }
 
@@ -226,7 +230,7 @@ impl VmOption {
             Self::PurgeDecommits => 1,
             // `MI_DEFAULT_ALLOW_LARGE_OS_PAGES` and
             // `MI_DEFAULT_RESERVE_HUGE_OS_PAGES` on normal Linux.
-            Self::AllowLargeOsPages | Self::ReserveHugeOsPages => 0,
+            Self::AllowLargeOsPages | Self::ReserveHugeOsPages | Self::ReserveOsMemory => 0,
             // `src/options.c:117`.
             Self::ReserveHugeOsPagesAt => -1,
             // `src/options.c:122`.
@@ -260,7 +264,7 @@ impl VmOption {
     const fn has_size_in_kib(self) -> bool {
         matches!(
             self,
-            Self::ArenaReserve | Self::ArenaMaxObjectSize | Self::MinimalPurgeSize
+            Self::ArenaReserve | Self::ArenaMaxObjectSize | Self::MinimalPurgeSize | Self::ReserveOsMemory
         )
     }
 }
@@ -331,7 +335,7 @@ impl VmOptionSlot {
 /// copy from silently changing process policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct VmOptions {
-    slots: [VmOptionSlot; 16],
+    slots: [VmOptionSlot; 17],
 }
 
 impl VmOptions {
@@ -356,6 +360,7 @@ impl VmOptions {
                 VmOptionSlot::new(VmOption::PageCommitOnDemand.default_value()),
                 VmOptionSlot::new(VmOption::ArenaIsNumaLocal.default_value()),
                 VmOptionSlot::new(VmOption::MinimalPurgeSize.default_value()),
+                VmOptionSlot::new(VmOption::ReserveOsMemory.default_value()),
             ],
         }
     }
@@ -970,6 +975,7 @@ mod tests {
                 VmOption::AllowLargeOsPages,
                 VmOption::ReserveHugeOsPages,
                 VmOption::ReserveHugeOsPagesAt,
+                VmOption::ReserveOsMemory,
                 VmOption::PurgeDelay,
                 VmOption::UseNumaNodes,
                 VmOption::DisallowOsAlloc,
@@ -1007,6 +1013,7 @@ mod tests {
 
     #[test]
     fn vm_size_options_preserve_the_source_kib_suffix_rules() {
+        assert_eq!(parse_source_option_value(VmOption::ReserveOsMemory, b"2MiB"), Some(2 * 1024));
         assert_eq!(
             parse_source_option_value(VmOption::ArenaReserve, b"2"),
             Some(1),

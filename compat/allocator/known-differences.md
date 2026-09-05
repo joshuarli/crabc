@@ -1780,6 +1780,42 @@ transfer capability.
   authorize a public allocator control, a general lifecycle policy, or backend
   promotion.
 
+### `CRABC-MI-HUGE-FREE-TRACKING-OWNERSHIP` — retained cleanup bookkeeping
+
+- **Source:** pinned v3.5.0 `src/arena.c:2167-2222` reserves/manages a huge
+  prefix and frees it after unpublished manage rejection;
+  `src/os.c:845-853` attempts every huge primitive free without retaining
+  errors. `src/init.c:566-579` invokes huge options before regular reservation
+  and ignores either reservation error.
+- **Rust contract:** `arena_huge::PendingHugeCleanup` retains every exact
+  failed owner. Only a failed manage requires `HugeReleaseMetadata`, sized
+  at one bit per primitive page and allocated through the already-bound
+  detached metadata owner outside the regular arena lock. There is no new
+  page-count cap. Successful reservations and an unavailable first primitive
+  allocate no tracking metadata. `HugeOsRawReleaseRetry` owns its tracker by
+  value; a raw retry cannot repeat a successful unmap or source statistics.
+- **Difference:** source C discards free errors. Rust can delay the first free
+  pass if it cannot obtain tracking metadata, retaining the complete huge
+  allocation. It retains failed pages after that pass and rejects additional
+  huge reservations until explicit cleanup consumes the pending owners.
+  Regular reservations remain independent. After the last huge page is gone,
+  `MetaRelease` retains an entry-rejected tracker for exact-owner retry and
+  keeps post-claim failures terminal. No tracker reference is given a forged
+  static lifetime, and no huge allocation is reclassified as ordinary VM.
+- **Evidence:** `allocator-huge-reservation` compares 69 pinned policy values
+  and runs ten focused native tests, including missing metadata, a failed
+  middle page, repeated raw failure, metadata-entry recursion after raw
+  cleanup, and huge-before-regular startup with the source overmap retry.
+  Simulated primitive recorders and anonymous registry fixtures do not prove
+  hardware huge-page allocation. The normal native allocator performance
+  smoke is recorded as `m2-huge-cleanup-ownership`; it measures the unaffected
+  successful allocation path, not a performance band for injected failures.
+- **Boundary:** private native allocator ownership and startup only. This is
+  not C fault-recovery parity, diagnostic-callback parity, M2 closure, backend
+  promotion, or AArch64 qualification. Retain the bookkeeping while failed
+  syscalls need explicit Rust ownership; remove it only with another proved
+  owner preserving every live primitive page.
+
 ### `CRABC-MI-OS-ON-DEMAND-ARENA-REFUSAL` — accepted pinned-upstream safety correction
 
 - **Upstream/Rust:** pinned mimalloc v3.5.0

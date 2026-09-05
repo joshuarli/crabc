@@ -2500,3 +2500,13 @@ limit. Both fixtures use anonymous memory to simulate successful huge
 primitives. The report `allocator/x86_64/huge-registry.json` records that
 boundary explicitly; it does not qualify kernel huge allocation, startup,
 failed-page cleanup storage, or M2 closure.
+
+### Native huge reservation and retained cleanup
+
+`./compat/allocator/run-x86_64.sh allocator-huge-reservation` compares 69
+values from unchanged pinned interleave/free policy functions and runs ten
+focused Rust tests for metadata-backed failed-page ownership and startup
+reservation order. The C fixture explicitly records downstream primitives;
+it does not require or prove hardware huge-page success. The report is
+`allocator/x86_64/huge-reservation.json`. The regular aligned-map retry after
+an injected direct-map failure remains source behavior, including at startup.

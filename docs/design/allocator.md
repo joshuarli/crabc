@@ -280,11 +280,34 @@ The native `allocator-huge-registry` differential compares eight registry,
 provenance, and pinned-accounting values with fixed C and runs three Rust
 ownership tests. Both fixtures use anonymous memory to simulate already
 successful huge primitives; this is not huge-kernel allocation evidence.
-Reservation/startup invocation remains separate: it needs process-owned
-storage for the unbounded-by-policy failed-page bitset before the source
-free pass can safely retain arbitrary failed primitive pages. This boundary
-neither borrows a temporary tracker into process storage nor replaces huge
-memory with a regular mapping, and does not close M2.
+The source `reserve_huge_at` and `reserve_huge_interleaved` callers now live
+in `arena_huge.rs`. They preserve node normalization, remainder distribution,
+per-node timeout arithmetic, first-error exit, and successful partial
+primitive prefixes. Only unpublished manage rejection allocates failed-page
+tracking: `HugeReleaseMetadata` obtains exactly the required word count from
+the already-bound detached metadata allocator, outside the regular reserve
+lock. Successful reservations and unavailable first primitives allocate no
+tracker. `HugeOsAllocation::release_with_tracker` transfers that storage into
+`HugeOsRawReleaseRetry`; it never stores a forged static slice. Every source
+free runs once even after an error, and raw retry touches only failed pages
+without repeating statistics. If metadata is unavailable, the whole huge
+allocation remains unreleased. A final metadata-entry rejection retains its
+exact tracker capability after the last raw page disappears; terminal
+metadata errors remain diagnostic state.
+
+`ProcessMainInitializationStorage` invokes huge options before explicit
+regular reservation after the main-thread attachment exists, using only the
+default Theap random field for huge and regular aligned hints in that order. It records both source outcomes
+before publishing READY and, like C, continues after reservation failure.
+The `ReserveOsMemory` VM descriptor preserves the source KiB parsing/order;
+explicit regular reservations also use source multi-arena splitting.
+The private `allocator-huge-reservation` command compares 69 source policy
+values and runs ten ownership/startup fault tests. The C policy functions
+are extracted unchanged from the pinned archive; their downstream primitive
+recorders are explicit simulation, not hardware huge-page qualification.
+The safety bookkeeping difference and performance scope are recorded in
+`compat/allocator/known-differences.md`. Hardware huge-page success, diagnostic
+callbacks, broader lifecycle qualification, and M2 closure remain open.
 
 The source's OS-only fallback needs one narrow safety correction. When
 `disallow_arena_alloc=1` combines with `page_commit_on_demand=1`, pinned

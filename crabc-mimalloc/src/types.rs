@@ -5656,6 +5656,23 @@ impl Theap {
         !self.heap.load(core::sync::atomic::Ordering::Relaxed).is_null()
     }
 
+    /// Borrows only the source default Theap's random field for OS hints.
+    /// It never creates a mutable reference spanning page queues or links.
+    ///
+    /// # Safety
+    /// The pointer names a live caller-owned Theap. The caller exclusively
+    /// owns its random state and prevents initialization/teardown throughout
+    /// the callback. The callback must not access that state through aliases.
+    pub(crate) unsafe fn with_os_reservation_random_at<R>(
+        pointer: NonNull<Self>, operation: impl FnOnce(Option<&mut TheapRandomImage>) -> R,
+    ) -> R {
+        let initialized = !unsafe { (*pointer.as_ptr()).heap.load(core::sync::atomic::Ordering::Relaxed) }.is_null();
+        let random = if initialized {
+            Some(unsafe { &mut *core::ptr::addr_of_mut!((*pointer.as_ptr()).random) })
+        } else { None };
+        operation(random)
+    }
+
     /// Returns the concrete source allocation provenance retained across
     /// `_mi_theap_init`'s empty-image copy. This is an observation only; it
     /// does not transfer the matching Malloc/Arena release capability.

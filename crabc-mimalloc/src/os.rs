@@ -871,11 +871,17 @@ impl VmPolicy {
     }
 
     #[inline]
-    fn reserve_huge_os_pages(&self) -> i64 { self.option_value(VmOption::ReserveHugeOsPages) }
+    pub(crate) fn reserve_huge_os_pages(&self) -> i64 { self.option_value(VmOption::ReserveHugeOsPages) }
 
     #[inline]
-    fn reserve_huge_os_pages_at(&self) -> i64 {
+    pub(crate) fn reserve_huge_os_pages_at(&self) -> i64 {
         self.option_value(VmOption::ReserveHugeOsPagesAt)
+    }
+
+    /// Source startup reads the signed KiB option, then performs its unsigned
+    /// byte multiplication. Keep that distinct from option_get_size callers.
+    pub(crate) fn reserve_os_memory_kib(&self) -> i64 {
+        self.option_value(VmOption::ReserveOsMemory)
     }
 
     #[inline]
@@ -1631,6 +1637,7 @@ impl Mapping {
     /// Attempts the exact one-GiB source huge-page primitive at a claimed
     /// high-address hint. There is no regular mmap fallback on this path.
     fn map_huge_page_at(policy: &VmPolicy, config: MemoryConfig, hint: usize) -> Result<Self> {
+        fault_before(FaultPoint::HugeMap)?;
         Self::map_unix_policy(
             policy,
             config,
@@ -2615,6 +2622,17 @@ pub(crate) struct HugeOsRejectedPrimitive {
 }
 
 impl HugeOsRejectedPrimitive {
+    /// Builds a real mapped, source-accounted cleanup failure for the upper
+    /// owner tests. The caller arms the exact Unmap failure before entering.
+    #[cfg(test)]
+    pub(crate) fn test_rejected_cleanup_for_process(process: VmProcess<'_>, config: MemoryConfig) -> Self {
+        let mut mapping = Mapping::map_for_process(process, config, HUGE_PAGE_SIZE, 1,
+            MapAccess::Committed, false, None).unwrap();
+        let error = mapping.unmap_for_process(process, HUGE_PAGE_SIZE, true)
+            .expect_err("test source adjustment-free must fail");
+        Self { error, mapping }
+    }
+
     #[inline]
     pub(crate) const fn error(&self) -> Errno { self.error }
 
@@ -2647,63 +2665,66 @@ impl fmt::Debug for HugeOsRejectedPrimitive {
 /// in this case, so the exact allocation remains available to retry with a
 /// sufficiently sized buffer.
 #[must_use = "a huge allocation remains live when its release tracker is too small"]
-pub(crate) struct HugeOsReleaseTrackingFailure<'a> {
+pub(crate) struct HugeOsReleaseTrackingFailure<'a, Tracker> {
     allocation: HugeOsAllocation<'a>,
+    tracker: Tracker,
     required_words: usize,
 }
 
-impl<'a> HugeOsReleaseTrackingFailure<'a> {
+impl<'a, Tracker> HugeOsReleaseTrackingFailure<'a, Tracker> {
     #[inline]
     pub(crate) const fn required_words(&self) -> usize { self.required_words }
 
     #[inline]
-    pub(crate) fn into_allocation(self) -> HugeOsAllocation<'a> { self.allocation }
+    pub(crate) fn into_parts(self) -> (HugeOsAllocation<'a>, Tracker) { (self.allocation, self.tracker) }
 }
 
 /// The exact failed primitive-page set after a full source huge-page free
 /// pass. Every page was attempted and received its normal source statistics
 /// transition; only set bits still name live mappings and may be retried.
 #[must_use = "failed huge-page releases retain raw-only retry state"]
-pub(crate) struct HugeOsRawReleaseRetry<'a, 'bits> {
+pub(crate) struct HugeOsRawReleaseRetry<'a, Tracker> {
     process: VmProcess<'a>,
     base: NonNull<u8>,
     page_count: usize,
     memory: MemoryId,
     source_error: Errno,
-    failed_pages: &'bits mut [usize],
+    failed_pages: Tracker,
     failed_words: usize,
 }
 
 /// Error from a raw-only retry of a previously source-accounted huge page.
 #[must_use = "a raw retry failure retains its exact failed-page set"]
-pub(crate) struct HugeOsRawReleaseFailure<'a, 'bits> {
+pub(crate) struct HugeOsRawReleaseFailure<'a, Tracker> {
     error: Errno,
-    retry: HugeOsRawReleaseRetry<'a, 'bits>,
+    retry: HugeOsRawReleaseRetry<'a, Tracker>,
 }
 
-impl<'a, 'bits> HugeOsRawReleaseFailure<'a, 'bits> {
+impl<'a, Tracker> HugeOsRawReleaseFailure<'a, Tracker> {
     #[inline]
     pub(crate) const fn error(&self) -> Errno { self.error }
 
     #[inline]
-    pub(crate) fn into_retry(self) -> HugeOsRawReleaseRetry<'a, 'bits> { self.retry }
+    pub(crate) fn into_retry(self) -> HugeOsRawReleaseRetry<'a, Tracker> { self.retry }
 }
 
-impl<'a, 'bits> HugeOsRawReleaseRetry<'a, 'bits> {
+impl<'a, Tracker: AsRef<[usize]> + AsMut<[usize]>> HugeOsRawReleaseRetry<'a, Tracker> {
     /// Returns the original aggregate huge-memory provenance. Individual
     /// failed pages remain the only live ranges represented by this retry
     /// token, but their source owner and original memory kind stay explicit.
     #[inline]
     pub(crate) const fn memory_id(&self) -> MemoryId { self.memory }
 
+    pub(crate) const fn source_error(&self) -> Errno { self.source_error }
+
     /// Retries all and only the failed primitive unmaps. It keeps walking the
     /// complete failed set after an error just as the source free loop keeps
     /// walking later pages. No source statistic is repeated: the original
     /// process-accounted pass already performed it for every marked bit.
-    pub(crate) fn retry_raw(self) -> core::result::Result<(), HugeOsRawReleaseFailure<'a, 'bits>> {
+    pub(crate) fn retry_raw(mut self) -> core::result::Result<Tracker, HugeOsRawReleaseFailure<'a, Tracker>> {
         let mut first_error = None;
         for page in 0..self.page_count {
-            if !huge_release_bit_is_set(self.failed_pages, page) {
+            if !huge_release_bit_is_set(self.failed_pages.as_ref(), page) {
                 continue;
             }
             let address = match huge_page_address(self.base, page) {
@@ -2723,7 +2744,7 @@ impl<'a, 'bits> HugeOsRawReleaseRetry<'a, 'bits> {
                 Err(error) => Err(error),
             };
             match result {
-                Ok(()) => huge_release_bit_clear(self.failed_pages, page),
+                Ok(()) => huge_release_bit_clear(self.failed_pages.as_mut(), page),
                 Err(error) => {
                     first_error.get_or_insert(error);
                 }
@@ -2731,17 +2752,17 @@ impl<'a, 'bits> HugeOsRawReleaseRetry<'a, 'bits> {
         }
         match first_error {
             Some(error) => Err(HugeOsRawReleaseFailure { error, retry: self }),
-            None => Ok(()),
+            None => Ok(self.failed_pages),
         }
     }
 
     #[cfg(test)]
-    fn failed_page(&self, page: usize) -> bool {
-        page < self.page_count && huge_release_bit_is_set(self.failed_pages, page)
+    pub(crate) fn failed_page(&self, page: usize) -> bool {
+        page < self.page_count && huge_release_bit_is_set(self.failed_pages.as_ref(), page)
     }
 }
 
-impl<'a, 'bits> fmt::Debug for HugeOsRawReleaseRetry<'a, 'bits> {
+impl<'a, Tracker> fmt::Debug for HugeOsRawReleaseRetry<'a, Tracker> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("HugeOsRawReleaseRetry")
@@ -2826,34 +2847,50 @@ impl<'a> HugeOsAllocation<'a> {
     pub(crate) fn release_for_process<'bits>(
         self,
         failed_pages: &'bits mut [usize],
-    ) -> core::result::Result<(), HugeOsReleaseFailure<'a, 'bits>> {
+    ) -> core::result::Result<(), HugeOsReleaseFailure<'a, &'bits mut [usize]>> {
+        // SAFETY: this exclusive borrowed slice is stable for the retry token's lifetime.
+        unsafe { self.release_with_tracker(failed_pages) }.map(|_| ())
+    }
+
+    /// Runs the source free pass while moving the failed-page storage into
+    /// any retry owner. Success returns storage only after all pages are gone.
+    ///
+    /// # Safety
+    /// The tracker's AsRef/AsMut projections must name the same exclusive,
+    /// initialized buffer at every call, including after moving the tracker.
+    /// Its size and contents may not change except through the returned
+    /// mutable projection until this method or retry_raw returns the tracker.
+    pub(crate) unsafe fn release_with_tracker<Tracker: AsRef<[usize]> + AsMut<[usize]>>(
+        self, mut tracker: Tracker,
+    ) -> core::result::Result<Tracker, HugeOsReleaseFailure<'a, Tracker>> {
         let required_words = self.release_tracking_words();
-        if failed_pages.len() < required_words {
+        if tracker.as_ref().len() < required_words {
             return Err(HugeOsReleaseFailure::Tracking(
                 HugeOsReleaseTrackingFailure {
                     allocation: self,
+                    tracker,
                     required_words,
                 },
             ));
         }
-        for word in &mut failed_pages[..required_words] {
+        for word in &mut tracker.as_mut()[..required_words] {
             *word = 0;
         }
         let first_error = release_huge_pages_with(
             self.base,
             self.page_count,
-            failed_pages,
+            tracker.as_mut(),
             |address| free_huge_page_for_process(self.process, address),
         );
         match first_error {
-            None => Ok(()),
+            None => Ok(tracker),
             Some(error) => Err(HugeOsReleaseFailure::FailedPages(HugeOsRawReleaseRetry {
                 process: self.process,
                 base: self.base,
                 page_count: self.page_count,
                 memory: self.memory,
                 source_error: error,
-                failed_pages,
+                failed_pages: tracker,
                 failed_words: required_words,
             })),
         }
@@ -2864,12 +2901,12 @@ impl<'a> HugeOsAllocation<'a> {
 /// before any syscall (insufficient tracking) or owns precisely the compact
 /// set of source-accounted raw retries.
 #[must_use = "a failed huge release retains an explicit owner"]
-pub(crate) enum HugeOsReleaseFailure<'a, 'bits> {
-    Tracking(HugeOsReleaseTrackingFailure<'a>),
-    FailedPages(HugeOsRawReleaseRetry<'a, 'bits>),
+pub(crate) enum HugeOsReleaseFailure<'a, Tracker> {
+    Tracking(HugeOsReleaseTrackingFailure<'a, Tracker>),
+    FailedPages(HugeOsRawReleaseRetry<'a, Tracker>),
 }
 
-impl<'a, 'bits> HugeOsReleaseFailure<'a, 'bits> {
+impl<'a, Tracker> HugeOsReleaseFailure<'a, Tracker> {
     #[inline]
     pub(crate) fn error(&self) -> Option<Errno> {
         match self {
@@ -4156,6 +4193,7 @@ pub(crate) enum FaultPoint {
     Cpu = 10,
     ThreadYield = 11,
     Entropy = 12,
+    HugeMap = 13,
 }
 
 #[cfg(not(any(test, feature = "native-runtime-test-fault")))]
@@ -4275,6 +4313,10 @@ pub(crate) mod fault {
 
         pub(crate) fn observed(&self) -> usize {
             OBSERVED.load(Ordering::Acquire)
+        }
+
+        pub(crate) fn secondary_observed(&self) -> usize {
+            SECOND_OBSERVED.load(Ordering::Acquire)
         }
     }
 
@@ -5593,6 +5635,7 @@ mod tests {
         let first = release_huge_pages_with(base, 3, &mut failed, |address| {
             let page = (address.as_ptr().addr() - base.as_ptr().addr()) / HUGE_PAGE_SIZE;
             observed[count] = page;
+            std::println!("m2.huge.free.{count}={page}");
             count += 1;
             if page == 0 || page == 2 {
                 Err(Errno::NOMEM)
@@ -5605,6 +5648,16 @@ mod tests {
         assert_eq!(count, 3, "source free continues after the first primitive error");
         assert_eq!(observed, [0, 1, 2]);
         assert_eq!(failed[0], 0b101, "only still-live primitive mappings are retained");
+        let mut wide = [0usize; 2];
+        let mut calls = 0;
+        let error = release_huge_pages_with(base, 65, &mut wide, |address| {
+            let page = (address.as_ptr().addr() - base.as_ptr().addr()) / HUGE_PAGE_SIZE;
+            calls += 1;
+            if page == 1 || page == 64 { Err(Errno::NOMEM) } else { Ok(()) }
+        });
+        assert_eq!(error, Some(Errno::NOMEM));
+        assert_eq!(calls, 65);
+        assert_eq!(wide, [2, 1], "failed ownership spans tracker words without a page cap");
     }
 
     #[test]
@@ -5632,7 +5685,7 @@ mod tests {
         };
         fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
         let failure = match retry.retry_raw() {
-            Ok(()) => panic!("the injected raw retry must retain its one failed page"),
+            Ok(_) => panic!("the injected raw retry must retain its one failed page"),
             Err(failure) => failure,
         };
         assert_eq!(failure.error(), Errno::NOMEM);
@@ -5643,6 +5696,35 @@ mod tests {
             after_source_free,
             "raw retries must not repeat a source-accounted free event",
         );
+    }
+
+    #[test]
+    fn huge_release_moves_owned_tracking_with_the_exact_failed_page_set() {
+        let fault = fault::install(fault::Plan::disabled());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let config = MemoryConfig::detect(current_startup());
+        let allocation = HugeOsAllocation::test_registry_allocation(process, config, 3);
+        let tracker = std::vec![0usize; 1].into_boxed_slice();
+        let tracker_address = tracker.as_ptr();
+        fault.set(fault::Plan::at(fault::Point::Unmap, 2, Errno::NOMEM));
+        // SAFETY: Box owns one stable exclusive word buffer until it is
+        // returned by the successful release/retry transition.
+        let failure = match unsafe { allocation.release_with_tracker(tracker) } {
+            Err(failure) => failure, Ok(_) => panic!("second primitive release fails"),
+        };
+        let HugeOsReleaseFailure::FailedPages(retry) = failure else { panic!("failed page owner"); };
+        assert!(!retry.failed_page(0));
+        assert!(retry.failed_page(1));
+        assert!(!retry.failed_page(2));
+        let source_statistics = subprocess.vm_statistics().snapshot();
+        let moved = std::boxed::Box::new(retry);
+        fault.set(fault::Plan::disabled());
+        let tracker = (*moved).retry_raw().unwrap_or_else(|_| panic!("raw retry"));
+        assert_eq!(tracker.as_ptr(), tracker_address);
+        assert_eq!(&*tracker, &[0]);
+        assert_eq!(subprocess.vm_statistics().snapshot(), source_statistics);
     }
 
     #[test]
@@ -5674,7 +5756,7 @@ mod tests {
             }
         };
         assert_eq!(failure.required_words(), 1);
-        let _allocation = failure.into_allocation();
+        let _allocation = failure.into_parts().0;
         assert_eq!(subprocess.vm_statistics().snapshot().reserved_current, HUGE_PAGE_SIZE as i64);
     }
 

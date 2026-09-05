@@ -1113,6 +1113,22 @@ impl MainStaticTheapAttachment {
         })
     }
 
+    /// Supplies the current default random image to initial OS reservations.
+    ///
+    /// # Safety
+    /// The caller has just completed this attachment and still owns process
+    /// startup before READY publication, page sessions, or later-thread
+    /// attachment. No alias may mutate the default random field during the
+    /// callback; ordinary metadata may use its separate detached Theap.
+    pub(crate) unsafe fn with_startup_vm_random<R>(
+        &mut self, operation: impl FnOnce(Option<&mut crate::random::TheapRandomImage>) -> R,
+    ) -> R {
+        debug_assert!(self.ensure_current().is_ok());
+        debug_assert!(self.storage.process_page_session_is_cold());
+        let pointer = NonNull::new(self.storage.theap.image.get()).expect("static Theap slot");
+        unsafe { Theap::with_os_reservation_random_at(pointer, operation) }
+    }
+
     /// Borrows this exact ticket-zero owner as the bounded static page
     /// session. The mutable borrow keeps the TLD, static Heap/Theap images,
     /// compiler-TLS roots, and main teardown authority alive for every page

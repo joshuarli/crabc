@@ -419,7 +419,7 @@
         ],
         "evidence_check_ids": [],
         "missing_conditions": [
-          "Typed huge-page and Linux mbind owners, actual reserve/timeout/free accounting, option and arena placement policy, diagnostics, and native failure/rollback differential evidence."
+          "Qualify hardware huge-page allocation, placement, timeout/free accounting and diagnostics across the complete native matrix. The distinct process huge owner, interleave/startup option callers, and metadata-backed failed-page cleanup have bounded native policy/fault evidence; simulated primitives do not close this branch."
         ]
       },
       {

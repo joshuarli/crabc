@@ -73,10 +73,18 @@ The native process huge-registry installation boundary maps pinned
 `arena_owned::ProcessArenaBacking::install_owned_huge_allocation` and the
 existing `arena::manage_in_place`. `ArenaOsAllocation::Huge` retains the
 consuming `os::HugeOsAllocation`; the ordinary mapping variant cannot stand
-in for it. This is an installation prerequisite, not the startup/reservation
-caller or huge-page cleanup closure. Native evidence is
-`compat/allocator/x86_64_huge_registry_evidence.py` with explicitly simulated
-successful primitive storage on both C and Rust sides.
+in for it. `arena_huge.rs` additionally maps `src/arena.c:2167-2222`
+(at/interleave reservation), `src/os.c:772-853` (huge prefix/free loop), and
+`src/init.c:566-579` (huge-before-regular startup reservation) to the typed
+reservation and pending-cleanup owners. `process_init.rs` invokes those
+options after main-thread attachment; `types.rs`/`main_theap.rs` lend only the
+current default random field for the source hint call. `config::VmOption`
+includes `src/options.c:133-134`'s `reserve_os_memory` descriptor in declaration
+order. Native evidence is `compat/allocator/x86_64_huge_registry_evidence.py`
+and `compat/allocator/x86_64_huge_reservation_evidence.py`; explicitly
+simulated successful primitive storage/recorders do not qualify hardware
+huge-page allocation. Rust's owned failed-page tracker is documented in the
+known-differences register.
 
 
 The dedicated full-regular medium/large/non-direct-small/direct-small post-exit

@@ -67,7 +67,8 @@ pub(crate) use selection::{ArenaReservationPlan, ArenaSearch};
 
 #[path = "arena_owned.rs"]
 mod owned;
-pub(crate) use owned::{ArenaPageCommitError, ProcessArenaBacking, ProcessArenaInstallFailure};
+pub(crate) use owned::{ArenaPageCommitError, ProcessArenaBacking, ProcessArenaInstallFailure,
+    HugeArenaReserveError, HugeArenaCleanupError, StartupArenaReservationOutcomes};
 
 // Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
 // an arena-local delay because the one-thread slice has no source subprocess

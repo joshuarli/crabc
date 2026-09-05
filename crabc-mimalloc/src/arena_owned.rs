@@ -16,7 +16,7 @@
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crabc_core::Errno;
 
@@ -28,6 +28,10 @@ use crate::types::{Arena, MemoryId, MemoryKind};
 
 #[path = "arena_purge.rs"]
 mod purge;
+
+#[path = "arena_huge.rs"]
+mod huge;
+pub(crate) use huge::{HugeArenaReserveError, HugeArenaCleanupError, StartupArenaReservationOutcomes};
 
 const EMPTY: u8 = 0;
 const INITIALIZING: u8 = 1;
@@ -117,6 +121,9 @@ impl OwnedArenaAllocation {
 /// here releases a published mapping while a page/bitmap view can exist.
 pub(crate) struct ProcessArenaBacking {
     reserve_lock: PrivateLock,
+    huge_reservation_lock: PrivateLock,
+    huge_cleanup_retained: AtomicBool,
+    huge_cleanup: UnsafeCell<Option<huge::PendingHugeCleanup>>,
     registry: ArenaRegistry,
     slots: [ArenaAllocationSlot; MAX_ARENAS],
     purge_expire: crate::atomic::AtomicI64Value,
@@ -126,12 +133,18 @@ pub(crate) struct ProcessArenaBacking {
 // SAFETY: the lock exclusively owns all unpublished slot transitions. Once
 // published, slots and mappings are never moved or released. Their shared VM
 // transitions touch only caller-owned source ranges and atomic statistics.
+// The separate huge reservation lock exclusively owns pending cleanup and its
+// metadata tracker. Its lock may acquire reserve_lock, never the reverse; the
+// metadata allocator is called only after reserve_lock has been released.
 unsafe impl Sync for ProcessArenaBacking {}
 
 impl ProcessArenaBacking {
     pub(crate) const fn new() -> Self {
         Self {
             reserve_lock: PrivateLock::new(),
+            huge_reservation_lock: PrivateLock::new(),
+            huge_cleanup_retained: AtomicBool::new(false),
+            huge_cleanup: UnsafeCell::new(None),
             registry: ArenaRegistry::new(core::ptr::null_mut()),
             slots: [const { ArenaAllocationSlot::new() }; MAX_ARENAS],
             purge_expire: crate::atomic::AtomicI64Value::new(0),
@@ -340,8 +353,7 @@ impl ProcessArenaBacking {
             ArenaOsAllocation::Regular(mapping) => memory.kind() == MemoryKind::Os
                 && memory.is_pinned() == mapping.is_large()
                 && memory.initially_zero() == mapping.initially_zero()
-                && memory.initially_committed() == mapping.initially_committed()
-                && managed_size <= ARENA_MAX_SIZE,
+                && memory.initially_committed() == mapping.initially_committed(),
             ArenaOsAllocation::Huge(_) => memory.kind() == MemoryKind::OsHuge
                 && memory.is_pinned() && memory.initially_committed() && managed_size == size,
         };
@@ -485,7 +497,7 @@ impl ProcessArenaBacking {
         for size in [Some(plan.primary_size), plan.fallback_size].into_iter().flatten() {
             let stats = process.subprocess().vm_statistics();
             if plan.adjust_committed { stats.committed_adjust_decrease(size); }
-            let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large) };
+            let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large, None) };
             if let Some(id) = result { return Some(id); }
             if plan.adjust_committed { stats.committed_adjust_increase(size); }
             if self.retained_release_error().is_some() { return None; }
@@ -493,17 +505,38 @@ impl ProcessArenaBacking {
         None
     }
 
+    /// Explicit source regular reservation used after huge startup options.
+    /// It may span multiple source arenas; the allocation owner retains any
+    /// suffix after partial registry publication.
+    ///
+    /// # Safety
+    /// This is the process's sole arena group with immutable configuration.
+    /// Published ranges remain process-lived, and no teardown overlaps. Any
+    /// random image is exclusively borrowed from the current default Theap.
+    pub(crate) unsafe fn reserve_os_memory_for_process(
+        &'static self, process: VmProcess<'static>, config: MemoryConfig, size: usize,
+        access: MapAccess, allow_large: bool, random: Option<&mut crate::random::TheapRandomImage>,
+    ) -> Result<ArenaId, Errno> {
+        if size > crate::config::MAX_ALLOC_SIZE { return Err(Errno::NOMEM); }
+        let size = size.checked_add(crate::config::ARENA_SLICE_SIZE - 1)
+            .map(|size| size & !(crate::config::ARENA_SLICE_SIZE - 1))
+            .filter(|size| *size <= crate::config::MAX_ALLOC_SIZE).ok_or(Errno::NOMEM)?;
+        let _guard = self.reserve_lock.lock()?;
+        if self.retained_release_error().is_some() { return Err(Errno::NOMEM); }
+        unsafe { self.reserve_one_locked(process, config, size, access, allow_large, random) }.ok_or(Errno::NOMEM)
+    }
+
     /// Source `mi_reserve_os_memory_ex2` regular aligned map/manage/free.
     /// A failed map trim or unpublished manage cleanup retains the exact
     /// still-active owner in a terminal slot, never an untracked raw address.
     unsafe fn reserve_one_locked(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
-        size: usize, access: MapAccess, allow_large: bool,
+        size: usize, access: MapAccess, allow_large: bool, random: Option<&mut crate::random::TheapRandomImage>,
     ) -> Option<ArenaId> {
         // Reserve a cleanup slot before acquiring any new OS ownership.
         let slot = self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY)?;
         let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
-            size, ARENA_ALIGNMENT, access, allow_large, None);
+            size, ARENA_ALIGNMENT, access, allow_large, random);
         let (mut mapping, memory, already_failed_cleanup) = match allocation {
             Ok(allocation) => {
                 let (mapping, memory) = allocation.into_mapping_and_memory();
@@ -740,6 +773,24 @@ mod tests {
         assert_eq!(huge.memory_id().kind(), MemoryKind::OsHuge);
         assert_eq!(backing.registry().count(), 1);
         assert!(huge.release_for_process(&mut [0]).is_ok());
+    }
+
+    #[test]
+    fn explicit_regular_reservation_preserves_multi_arena_source_spans() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = process();
+        let arena = unsafe { backing.reserve_os_memory_for_process(process, config(),
+            17 * crate::config::GIB, MapAccess::Committed, false, None) }.unwrap();
+        assert_eq!(backing.registry.count(), 2);
+        let parent = unsafe { &*arena.as_ptr() };
+        let child = unsafe { backing.registry.arena_at(1) }.unwrap();
+        assert_eq!(parent.memid.kind(), MemoryKind::Os);
+        assert_eq!(parent.total_size, 17 * crate::config::GIB);
+        assert_eq!(child.parent, arena.as_ptr());
+        assert_eq!(child.memid.kind(), MemoryKind::None);
+        assert_eq!(unsafe { backing.allocation_for_arena(child) }.unwrap().allocation.length(),
+            Ok(17 * crate::config::GIB));
     }
 
     #[test]
