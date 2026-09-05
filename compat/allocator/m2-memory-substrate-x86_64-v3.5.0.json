@@ -1,25 +1,11 @@
 {
   "components": [
     {
-      "checks": [],
       "id": "vm-primitives",
-      "native_status": "partial",
-      "remaining_conditions": [
-        "Qualify native reserve, commit, decommit, purge, reset, and release failure ownership through pinned-C differential evidence."
-      ],
-      "source_map_records": [
-        { "required_status": "partial", "unit_id": "os-allocation-policy" },
-        { "required_status": "partial", "unit_id": "linux-unix-primitives" },
-        { "required_status": "partial", "unit_id": "primitive-interface" }
-      ],
-      "source_units": ["src/os.c", "src/prim/unix/prim.c"],
-      "unqualified_failure_matrix": [
-        {
-          "id": "virtual-memory-route-and-provenance",
-          "required_evidence": ["native C/Rust reserve-commit-release differential", "failure-owner unit inventory"],
-          "source_scope": "src/os.c and src/prim/unix/prim.c allocation, commit, and release routes"
-        }
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
+        "inventory_sha256": "cf4bef55fc4ff3bb5e59f222568e739538b1dbb0051801bfbe4e31262962c9fc"
+      }
     },
     {
       "checks": [],
@@ -211,7 +197,8 @@
     "x86-64-bounded-component-source-definitions",
     "x86-64-page-map-c-rust-differentials",
     "x86-64-page-map-focused-source-test-batch",
-    "x86-64-bitmap-source-and-native-evidence"
+    "x86-64-bitmap-source-and-native-evidence",
+    "x86-64-vm-primitives-fixed-profile-c-rust-and-owner-evidence"
   ],
   "milestone": {
     "completion_rule": "M2 is complete only when all eight native x86-64 components have complete target-local source boundaries, closed failure matrices, and their declared native C/Rust and Rust evidence.",

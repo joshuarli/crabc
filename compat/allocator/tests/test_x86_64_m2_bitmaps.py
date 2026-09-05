@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from test_runner import RUNNER
+from test_x86_64_m2_vm import NativeVmAssemblyTests
 
 
 class NativeBitmapAssemblyTests(unittest.TestCase):
@@ -103,7 +104,13 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
     def report_arguments(self):
         summary = self.summary()
         evidence = self.bitmap_evidence()
-        checks = RUNNER._m2_x86_64_bitmap_check_records(summary, evidence)
+        vm_evidence = NativeVmAssemblyTests.vm_evidence(summary)
+        checks = RUNNER._m2_x86_64_vm_check_records(summary, vm_evidence)
+        for check in summary['components'][0]['checks'][1:]:
+            checks.append({'component': 'vm-primitives', 'command': ['/workspace/.work/prepared-test'],
+                           'id': check['id'], 'passed_test_count': 1, 'target': check['target'],
+                           'evidence_scope': 'focused-source-test-batch'})
+        checks.extend(RUNNER._m2_x86_64_bitmap_check_records(summary, evidence))
         for check in summary['components'][3]['checks']:
             row = {'component': 'page-map', 'command': ['/workspace/.work/prepared-test'],
                    'id': check['id'], 'passed_test_count': 1, 'target': check['target']}
@@ -120,7 +127,7 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             'pin': RUNNER.load_pin(), 'summary': summary, 'source_attestation': {'status': 'clean'},
             'source_contract_evidence': {'status': 'passed'},
             'bounded_source_evidence': {'status': 'passed', 'record_count': len(records), 'records': records},
-            'focused_checks': checks, 'bitmap_evidence': evidence,
+            'focused_checks': checks, 'bitmap_evidence': evidence, 'vm_evidence': vm_evidence,
         }
 
     def test_report_contains_actual_bitmap_checks_without_promoting_partial_components(self):
